@@ -19,7 +19,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.api.deps import get_bundle_signer, get_ca
+from app.api.deps import get_bundle_signer, get_ca, get_storage
+from app.artifacts.storage import LocalArtifactStorage
 from app.config import Settings, get_settings
 from app.db.base import Base, get_session
 from app.main import app
@@ -60,13 +61,21 @@ def signer(tmp_path) -> BundleSigner:
 
 
 @pytest.fixture
+def artifact_storage(tmp_path) -> LocalArtifactStorage:
+    return LocalArtifactStorage(tmp_path / "artifacts")
+
+
+@pytest.fixture
 def settings() -> Settings:
     return get_settings()
 
 
 @pytest.fixture
 def client(
-    session_factory: sessionmaker, ca: CertificateAuthority, signer: BundleSigner
+    session_factory: sessionmaker,
+    ca: CertificateAuthority,
+    signer: BundleSigner,
+    artifact_storage: LocalArtifactStorage,
 ) -> Iterator[TestClient]:
     def override() -> Iterator[Session]:
         with session_factory() as session:
@@ -75,6 +84,7 @@ def client(
     app.dependency_overrides[get_session] = override
     app.dependency_overrides[get_ca] = lambda: ca
     app.dependency_overrides[get_bundle_signer] = lambda: signer
+    app.dependency_overrides[get_storage] = lambda: artifact_storage
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

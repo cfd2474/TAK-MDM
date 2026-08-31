@@ -42,6 +42,9 @@ def build(session: Session, device: Device) -> dict[str, Any]:
         "state_version": device.state_version,
         # Values only — no provenance, no conflicts, no policy names.
         "policy": payload.get("values", {}),
+        # Required apps resolved to concrete artifacts: hashes to verify against and
+        # URLs to fetch. The policy says what; this says exactly which bytes.
+        "apps": payload.get("apps", []),
     }
 
 

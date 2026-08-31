@@ -32,9 +32,12 @@ services:
     environment:
       TAKMDM_DATABASE_URL: postgresql+psycopg://takmdm:takmdm@db:5432/takmdm
       TAKMDM_PKI_DIR: /pki
+      TAKMDM_ARTIFACT_DIR: /artifacts
       TAKMDM_SERVER_URL: https://localhost:8443
     volumes:
       - ./pki:/pki
+      # Uploaded APKs live outside the image so a rebuild does not discard them.
+      - ./artifacts:/artifacts
     ports:
       # Bound to loopback only. This port bypasses the proxy and therefore bypasses
       # mTLS — convenient for admin curl during development, and exactly the

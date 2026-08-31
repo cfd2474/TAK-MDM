@@ -28,6 +28,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
+    AppPackageFile,
     Assignment,
     AssignmentScope,
     Device,
@@ -35,6 +36,7 @@ from app.db.models import (
     Policy,
     PolicyVersion,
 )
+from app.services import packages
 from app.policies.registry import PolicyTypeError, registry
 from app.policies.resolver import (
     AssignmentInput,
@@ -102,17 +104,90 @@ def compute(session: Session, device: Device) -> EffectivePolicy:
     return resolve(str(device.id), gather_assignments(session, device))
 
 
-def refresh(session: Session, device: Device) -> EffectivePolicy:
-    """Recompute, store, and bump ``state_version`` if the device-facing values moved."""
+def resolve_required_apps(
+    session: Session, values: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    """Turn ``APP_CATALOG.required_apps`` into concrete, downloadable files.
+
+    The policy states intent ("com.atakmap.app, at least version 52400"); this
+    resolves it against the uploaded catalog into the exact artifacts the agent
+    should fetch and verify.
+
+    Apps with nothing uploaded yet are reported with ``available: false`` rather
+    than omitted — an app that is required but missing is a fact the operator needs
+    to see, not an absence to be silently tidied away.
+    """
+    catalog = values.get("APP_CATALOG") or {}
+    required = catalog.get("required_apps") or []
+    resolved: list[dict[str, Any]] = []
+
+    for entry in required:
+        package_name = entry.get("package_name")
+        if not package_name:
+            continue
+
+        version = None
+        pinned = entry.get("artifact_sha256")
+        if pinned:
+            # An explicitly pinned artifact wins over "latest satisfying the floor".
+            pinned_file = session.scalar(
+                select(AppPackageFile).where(AppPackageFile.artifact_sha256 == pinned).limit(1)
+            )
+            version = pinned_file.version if pinned_file else None
+        if version is None:
+            version = packages.resolve_for_policy(
+                session, package_name, min_version_code=entry.get("min_version_code")
+            )
+
+        if version is None:
+            resolved.append({"package_name": package_name, "available": False})
+            continue
+
+        resolved.append(
+            {
+                "package_name": package_name,
+                "available": True,
+                "version_code": version.version_code,
+                "version_name": version.version_name,
+                "auto_update": entry.get("auto_update", True),
+                "files": [
+                    {
+                        "role": file.role.value,
+                        "file_name": file.file_name,
+                        "split_name": file.split_name,
+                        "sha256": file.artifact_sha256,
+                        "size_bytes": file.artifact.size_bytes if file.artifact else None,
+                        "url": f"/api/v1/device/artifacts/{file.artifact_sha256}",
+                    }
+                    for file in sorted(version.files, key=lambda f: (f.role.value, f.file_name))
+                ],
+            }
+        )
+
+    return sorted(resolved, key=lambda item: item["package_name"])
+
+
+def refresh(session: Session, device: Device) -> dict[str, Any]:
+    """Recompute, store, and bump ``state_version`` if the device-facing state moved.
+
+    Returns the stored payload rather than the resolver's own object: the payload
+    carries the resolved ``apps``, which the resolver knows nothing about.
+    """
     effective = compute(session, device)
     payload = effective.as_dict()
+    payload["apps"] = resolve_required_apps(session, payload["values"])
 
     cache = session.get(EffectivePolicyCache, device.id)
     # A device that has never been computed starts from an empty desired state, not
     # from "unknown" — otherwise its first read would register as a change.
-    previous_values = cache.payload.get("values", {}) if cache else {}
+    previous = cache.payload if cache else {}
+    previous_state = (previous.get("values", {}), previous.get("apps", []))
 
-    if previous_values != payload["values"]:
+    # Resolved apps are compared too, not just policy values. Uploading a new build
+    # of a required app changes what the device must do without changing a single
+    # word of policy — comparing values alone would leave the fleet on the old
+    # version indefinitely.
+    if previous_state != (payload["values"], payload["apps"]):
         device.state_version += 1
 
     if cache is None:
@@ -124,7 +199,7 @@ def refresh(session: Session, device: Device) -> EffectivePolicy:
     cache.computed_at = datetime.now(timezone.utc)
 
     session.flush()
-    return effective
+    return payload
 
 
 def get_effective(session: Session, device: Device) -> dict[str, Any]:
@@ -132,7 +207,7 @@ def get_effective(session: Session, device: Device) -> dict[str, Any]:
     cache = session.get(EffectivePolicyCache, device.id)
     if cache is not None and not cache.stale:
         return cache.payload
-    return refresh(session, device).as_dict()
+    return refresh(session, device)
 
 
 def preview(
@@ -188,6 +263,20 @@ def invalidate(session: Session, device_ids: Iterable[uuid.UUID]) -> None:
     for cache in session.scalars(
         select(EffectivePolicyCache).where(EffectivePolicyCache.device_id.in_(ids))
     ):
+        cache.stale = True
+    session.flush()
+
+
+def invalidate_all(session: Session) -> None:
+    """Mark every device's cache stale.
+
+    Used when the app catalog changes. Working out exactly which devices reference a
+    package would mean re-resolving every stacked policy; at this fleet size a blanket
+    flag is cheaper and cannot miss one. It costs nothing spurious either — the
+    recompute only bumps ``state_version`` for devices whose resolved state actually
+    moved.
+    """
+    for cache in session.scalars(select(EffectivePolicyCache)):
         cache.stale = True
     session.flush()
 

@@ -395,6 +395,99 @@ class DeviceCommand(Base):
         return now < self.expires_at and self.attempts < self.max_attempts
 
 
+# --------------------------------------------------------------------------- #
+# Artifacts and app packages
+# --------------------------------------------------------------------------- #
+
+
+class PartRole(str, enum.Enum):
+    BASE = "base"
+    SPLIT = "split"
+    OBB = "obb"
+
+
+class Artifact(Base):
+    """A content-addressed blob. The digest is the primary key (D8)."""
+
+    __tablename__ = "artifact"
+
+    sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    media_type: Mapped[str] = mapped_column(String(128), default="application/octet-stream")
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+
+class AppPackage(Base):
+    """An Android application, tracked across versions.
+
+    ``signature_sha256`` is pinned at first upload. Android refuses an update whose
+    signing certificate differs from the installed app, so a mismatch here is a
+    guaranteed on-device failure — caught at upload, where the error can say why.
+    """
+
+    __tablename__ = "app_package"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    package_name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    label: Mapped[str | None] = mapped_column(String(255), default=None)
+    signature_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
+    signature_scheme: Mapped[str | None] = mapped_column(String(8), default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+    versions: Mapped[list[AppPackageVersion]] = relationship(
+        back_populates="package",
+        cascade="all, delete-orphan",
+        order_by="AppPackageVersion.version_code",
+        lazy="selectin",
+    )
+
+    @property
+    def latest_version(self) -> AppPackageVersion | None:
+        return self.versions[-1] if self.versions else None
+
+
+class AppPackageVersion(Base):
+    __tablename__ = "app_package_version"
+    __table_args__ = (
+        UniqueConstraint("package_id", "version_code", name="uq_package_version_code"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    package_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("app_package.id", ondelete="CASCADE"), index=True
+    )
+    version_code: Mapped[int] = mapped_column(Integer)
+    version_name: Mapped[str | None] = mapped_column(String(128), default=None)
+    min_sdk: Mapped[int | None] = mapped_column(Integer, default=None)
+    target_sdk: Mapped[int | None] = mapped_column(Integer, default=None)
+    uploaded_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+    package: Mapped[AppPackage] = relationship(back_populates="versions")
+    files: Mapped[list[AppPackageFile]] = relationship(
+        back_populates="version", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class AppPackageFile(Base):
+    """One installable part: the base APK, a split, or an OBB expansion file."""
+
+    __tablename__ = "app_package_file"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("app_package_version.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[PartRole] = mapped_column(Enum(PartRole, native_enum=False, length=8))
+    file_name: Mapped[str] = mapped_column(String(255))
+    split_name: Mapped[str | None] = mapped_column(String(128), default=None)
+    artifact_sha256: Mapped[str] = mapped_column(
+        String(64), ForeignKey("artifact.sha256", ondelete="RESTRICT"), index=True
+    )
+
+    version: Mapped[AppPackageVersion] = relationship(back_populates="files")
+    artifact: Mapped[Artifact] = relationship(lazy="selectin")
+
+
 class EffectivePolicyCache(Base):
     """Memoized resolver output for one device, invalidated on any input change.
 

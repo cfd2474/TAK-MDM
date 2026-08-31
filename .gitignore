@@ -6,7 +6,11 @@ __pycache__/
 .vscode/
 *.db
 
+# Uploaded APKs and their extracted splits. Leading slash matters: an unanchored
+# "artifacts/" would also exclude the app/artifacts source package.
+/artifacts/
+
 # Device CA. The private key here can mint any device identity — never commit it.
-pki/
+/pki/
 *.key
 *.pem

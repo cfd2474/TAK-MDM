@@ -168,6 +168,48 @@ rather than surprising a device that resurfaces weeks later.
 between that and `state_version` is the fleet's convergence lag — "the server has v7"
 and "the device is running v7" are different claims.
 
+## App packages
+
+Upload an APK or XAPK and the server reads what it actually is — package name,
+version, SDK levels, and signing certificate all come from the file, not from form
+fields:
+
+```bash
+curl -F file=@atak.xapk -F label=ATAK localhost:8000/api/v1/packages
+```
+
+XAPK and APKS containers are **unpacked server-side** into base APK, splits, and OBB
+files, each stored content-addressed by SHA-256. The device then opens one
+`PackageInstaller` session and writes parts whose hashes it already knows, instead of
+unzipping a large archive with a second copy on disk.
+
+Two things are rejected at upload rather than on a device in the field:
+
+- **A signing certificate that does not match the stored one.** Android refuses such
+  an update, so it would fail on every tablet with no useful message.
+- **`targetSdk` below API 24.** Android 16 blocks the install outright
+  (`INSTALL_FAILED_DEPRECATED_SDK_VERSION`).
+
+The response includes `provisioning_checksum` — base64url of the signing
+certificate hash, which is exactly the value
+`PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM` needs. Upload the agent APK, set the
+result as `TAKMDM_AGENT_SIGNATURE_CHECKSUM`, and QR provisioning payloads start
+generating.
+
+A policy that requires an app is resolved into concrete artifacts in the desired
+state, so the agent gets hashes to verify against and URLs to fetch:
+
+```json
+"apps": [{ "package_name": "com.atakmap.app", "available": true, "version_code": 52400,
+           "files": [{ "role": "base", "sha256": "…", "size_bytes": 91234567,
+                       "url": "/api/v1/device/artifacts/…" }] }]
+```
+
+Downloads honour `Range`, so a transfer that drops at 80% resumes rather than
+restarting — which on these links is the difference between installing and never
+installing. An app that is required but not yet uploaded appears with
+`available: false` rather than being silently omitted.
+
 > FCM push is not wired up. Devices poll on a jittered ~15 minute interval. Push was
 > always a latency optimization, never a correctness dependency, so adding it later
 > changes no protocol.

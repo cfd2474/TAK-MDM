@@ -8,7 +8,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.db.models import CommandStatus, CommandType, ComplianceStatus, EnrollmentState
+from app.db.models import (
+    CommandStatus,
+    CommandType,
+    ComplianceStatus,
+    EnrollmentState,
+    PartRole,
+)
 
 
 class ORMModel(BaseModel):
@@ -234,6 +240,47 @@ class EnrollResponse(BaseModel):
     # Enrollment is the right moment to establish this trust: it is the one exchange
     # already authenticated by a secret the operator handed over out of band.
     bundle_signing_public_key: str
+
+
+# --------------------------------------------------------------------------- #
+# App packages
+# --------------------------------------------------------------------------- #
+
+
+class PackageFileRead(ORMModel):
+    role: PartRole
+    file_name: str
+    split_name: str | None
+    artifact_sha256: str
+
+
+class PackageVersionRead(ORMModel):
+    id: uuid.UUID
+    version_code: int
+    version_name: str | None
+    min_sdk: int | None
+    target_sdk: int | None
+    uploaded_at: datetime
+    files: list[PackageFileRead]
+
+
+class PackageRead(ORMModel):
+    id: uuid.UUID
+    package_name: str
+    label: str | None
+    signature_sha256: str | None
+    signature_scheme: str | None
+    created_at: datetime
+    versions: list[PackageVersionRead]
+
+
+class PackageUploadResult(BaseModel):
+    package: PackageRead
+    version: PackageVersionRead
+    signature_sha256: str | None
+    # base64url of the signing certificate hash — exactly the value
+    # PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM wants for QR provisioning.
+    provisioning_checksum: str | None
 
 
 # --------------------------------------------------------------------------- #

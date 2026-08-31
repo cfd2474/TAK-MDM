@@ -1,12 +1,14 @@
 from fastapi import FastAPI
 
 from app.api.routers import (
+    artifacts,
     assignments,
     checkin,
     commands,
     effective,
     enrollment,
     inventory,
+    packages,
     policies,
     policy_types,
 )
@@ -25,6 +27,8 @@ app.include_router(effective.router)
 app.include_router(enrollment.router)
 app.include_router(checkin.router)
 app.include_router(commands.router)
+app.include_router(packages.router)
+app.include_router(artifacts.router)
 
 
 @app.get("/healthz", tags=["ops"])

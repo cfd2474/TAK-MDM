@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     # Base URL devices use to reach this server. Goes into provisioning payloads.
     server_url: str = "https://mdm.example.org"
 
+    # --- Artifact storage ----------------------------------------------------
+    artifact_dir: Path = Path("artifacts")
+    # 2 GiB. XAPKs with OBB payloads get large; nginx has a matching limit.
+    max_upload_bytes: int = 2 * 1024 * 1024 * 1024
+
     # --- Device identity PKI -------------------------------------------------
     pki_dir: Path = Path("pki")
     ca_common_name: str = "TAK-MDM Device CA"

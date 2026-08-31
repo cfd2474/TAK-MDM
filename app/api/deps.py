@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.db.base import get_session
 from app.db.models import Device, DeviceCertificate, EnrollmentState
+from app.artifacts.storage import ArtifactStorage, LocalArtifactStorage
 from app.security.bundle import BundleSigner
 from app.security.ca import CertificateAuthority, CertificateError
 
@@ -48,6 +49,18 @@ def _bundle_signer(pki_dir: str) -> BundleSigner:
 def get_bundle_signer(settings: Settings = Depends(get_settings)) -> BundleSigner:
     """Signs desired-state bundles. Overridable in tests."""
     return _bundle_signer(str(settings.pki_dir))
+
+
+@lru_cache
+def _artifact_storage(artifact_dir: str) -> LocalArtifactStorage:
+    from pathlib import Path
+
+    return LocalArtifactStorage(Path(artifact_dir))
+
+
+def get_storage(settings: Settings = Depends(get_settings)) -> ArtifactStorage:
+    """Content-addressed blob store. Overridable in tests and swappable for S3."""
+    return _artifact_storage(str(settings.artifact_dir))
 
 
 def require_device(device_id: uuid.UUID, session: Session = Depends(get_db)) -> Device:

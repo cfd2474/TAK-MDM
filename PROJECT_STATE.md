@@ -9,21 +9,22 @@ update after every completed step.
 
 ## Current status
 
-**Phase:** Chunk 3 complete. Awaiting review before Chunk 4.
+**Phase:** Chunk 4 complete. Awaiting review before Chunk 5.
 
 - ✅ Requirements gathered
 - ✅ Architecture written → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - ✅ **Chunk 1 complete** — policy stacking engine
 - ✅ **Chunk 2 complete** — enrollment, device PKI, mTLS auth
-- ✅ **Chunk 3 complete** — desired-state protocol, signed bundles, command queue.
-  121 tests passing.
-- ⏸️ **Blocked on approval** to begin Chunk 4
+- ✅ **Chunk 3 complete** — desired-state protocol, signed bundles, command queue
+- ✅ **Chunk 4 complete** — content-addressed artifacts, APK/XAPK pipeline,
+  resumable device download. 168 tests passing.
+- ⏸️ **Blocked on approval** to begin Chunk 5
 
-Chunks 1–2 are pushed to `origin/main`.
+Chunks 1–3 plus the Docker stack are pushed to `origin/main`.
 
-> **Before Chunk 4/5:** the R1 and R6 hardware questions are still unanswered and
-> both are load-bearing for app and file delivery. One session with an XCover6 Pro
-> settles them.
+> **Before Chunk 5:** R1 and R6 remain unanswered and Chunk 5 is built directly on
+> them. The agent's file-push and install paths are the things they govern. One
+> session with an XCover6 Pro pointed at the running Docker stack settles both.
 
 ---
 
@@ -222,11 +223,72 @@ is correct but means a command waits up to that long. FCM was always specified a
 latency optimization only (D7), never a correctness dependency — adding it later
 changes no protocol, only how quickly a device notices.
 
+### ✅ Chunk 4 — Artifact store and APK pipeline (COMPLETE)
+
+Everything a device downloads, addressed by content hash. The server understands
+what it is being handed rather than trusting the uploader's word for it.
+
+1. **Content-addressed storage** — sha256-keyed blobs behind a storage interface,
+   with a sharded local-filesystem backend. S3/MinIO slots in behind the same
+   interface later without touching callers.
+2. **Binary manifest (AXML) parser** — Android's `AndroidManifest.xml` is compiled
+   binary XML, so package name, version code, and SDK levels cannot be read without
+   decoding it. Resource-id fallback for APKs whose attribute name strings are empty.
+3. **Signature extraction** — APK Signing Block v2/v3, falling back to the v1
+   PKCS#7 block in `META-INF`. Modern APKs are frequently v2-only, so v1-only
+   parsing would fail on exactly the builds we care about.
+4. **Upload pipeline** — inspect, then **unpack XAPK/APKS server-side** into base +
+   splits + OBB as separate content-addressed artifacts (D13), so the device opens
+   one `PackageInstaller` session and writes parts it already has hashes for.
+5. **Models and admin API** — packages, versions, files; upload, list, delete.
+   **Signature pinning enforced at upload**: a new version whose signing certificate
+   differs from the installed one *will* fail on device, so reject it here where the
+   error is legible.
+6. **Device-facing download** — mTLS, `Range` support for resumable transfer over
+   bad links, and desired-state integration so a required app carries the hashes and
+   sizes the agent needs to fetch and verify.
+7. **Tests** — including a synthetic APK builder (real AXML, real v2 signing block)
+   so the parsers are tested against actual binary structures.
+
+**Exit criteria:** an APK or XAPK can be uploaded, is correctly identified, has its
+signing certificate extracted, is stored content-addressed with splits separated,
+is rejected if it would break signature pinning, and can be resumably downloaded by
+an enrolled device that found it in its desired state.
+
+**Exit criteria met**, with 168 tests passing and a full end-to-end run against the
+Docker stack: an XAPK uploaded, unpacked into base + split + OBB, resolved into a
+device's desired state, and downloaded over mTLS via interrupted-then-resumed range
+requests with every hash verifying.
+
+Delivered: [app/artifacts/](app/artifacts/) (storage, `axml`, `apk`, `bundles`),
+[app/services/packages.py](app/services/packages.py),
+[app/api/routers/packages.py](app/api/routers/packages.py),
+[app/api/routers/artifacts.py](app/api/routers/artifacts.py),
+[tests/apk_fixtures.py](tests/apk_fixtures.py).
+
+**Bonus delivered:** the v2 signing certificate hash *is*
+`PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM`, base64url-encoded. Uploading the
+agent APK now returns it directly, unblocking the QR provisioning payloads that were
+withheld in Chunk 2. Set it as `TAKMDM_AGENT_SIGNATURE_CHECKSUM` once the agent
+exists (Chunk 5).
+
+#### Decisions taken during implementation
+
+| # | Decision | Rationale |
+|---|---|---|
+| D36 | AXML and signing-block parsers written by hand rather than depending on androguard | androguard is a large malware-analysis framework; this needs a few hundred lines of well-specified format handling. Tested against synthetic APKs built with real binary structures, not mocks. |
+| D37 | Signature extraction tries **v2/v3 before v1** | Apps targeting modern SDK levels are routinely signed v2-only with no `META-INF` block at all, so a v1-first (or v1-only) implementation fails on exactly the builds this fleet cares about. |
+| D38 | `state_version` tracks resolved **apps** as well as policy values | Uploading a new build changes what a device must do without changing a single word of policy. Comparing values alone would leave the fleet on the old version indefinitely. |
+| D39 | A catalog change invalidates **every** device's cache | Working out precisely which devices reference a package means re-resolving every stacked policy. A blanket flag is cheaper at this fleet size and cannot miss one — and costs nothing spurious, since the recompute only bumps `state_version` where the resolved state actually moved. |
+| D40 | Splits are classified by the manifest's `split` attribute, never by filename | Archives whose parts were renamed would otherwise be misclassified, and the base APK picked at random. |
+| D41 | Artifact download is authorized by **enrollment**, not per-device | The digest is unguessable and the content is something an operator chose to publish. Scoping per device would also defeat the deduplication the store is built on. |
+| D42 | Artifact deletion is reference-counted across versions | Two versions sharing an unchanged OBB must not have it deleted out from under one of them. |
+| D43 | `refresh` returns the stored payload, not the resolver's object | Found by test: the resolver knows nothing about resolved apps, so returning its object silently dropped them on any cache miss. |
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |
 |---|---|---|
-| 4 | Artifact store | Content-addressed storage, APK/XAPK upload, server-side split extraction, signature validation |
 | 5 | Kotlin agent | Device Owner baseline, reconciler loop, `PackageInstaller`, file push |
 | 6 | Knox layer | `OemPolicyApplier`, KSP restriction-bundle generation, KPE licensing, SDK fallbacks |
 | 7 | TAK pack | ATAK policy type: data packages, `.pref` files, plugin sets, cert enrollment |
@@ -269,6 +331,14 @@ changes no protocol, only how quickly a device notices.
   around mixed SoC vendors. Corrected the Knox SDK deprecation rationale behind D11.
 - **2026-08-30** — Q2 closed: ATAK server is configured on the EUD, no upstream
   integration needed.
+- **2026-08-31** — **Chunk 4 complete.** 168 tests passing, plus an end-to-end run
+  against the Docker stack. Hand-written AXML and APK-signing-block parsers, so the
+  server reads identity, version, and signing certificate out of an upload rather
+  than trusting the uploader. Signature pinning and the API 24 `targetSdk` floor are
+  enforced at upload, where the error is legible, instead of failing opaquely on a
+  tablet. XAPKs unpack server-side into content-addressed base/split/OBB parts, and
+  device download supports `Range` so an interrupted transfer resumes. Uploading the
+  agent APK now yields the provisioning checksum that had blocked QR payloads.
 - **2026-08-31** — **Local Docker stack** added (out of band, at user request):
   Postgres + API + nginx mTLS terminator, with a one-shot PKI init because nginx
   must read the device CA at startup. All three migrations verified against real
