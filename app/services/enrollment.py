@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
+    ComplianceStatus,
     Device,
     DeviceCertificate,
     DeviceGroup,
@@ -140,6 +141,12 @@ def enroll_device(
         # The old key is gone with the wipe; leaving its certificate valid would
         # leave a usable identity outstanding.
         revoke_device_certificates(session, device, reason="re-enrollment")
+        # A wiped device has definitively applied nothing, whatever it reported
+        # before. Claiming otherwise would leave the console showing a compliance
+        # verdict for a state that no longer exists on the hardware.
+        device.acked_state_version = 0
+        device.compliance_status = ComplianceStatus.UNKNOWN
+        device.compliance_detail = None
 
     issued = ca.sign_csr(
         csr_pem,

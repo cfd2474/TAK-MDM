@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.db.models import EnrollmentState
+from app.db.models import CommandStatus, CommandType, ComplianceStatus, EnrollmentState
 
 
 class ORMModel(BaseModel):
@@ -36,6 +36,9 @@ class DeviceRead(ORMModel):
     agent_version: str | None
     enrollment_state: EnrollmentState
     state_version: int
+    acked_state_version: int
+    compliance_status: ComplianceStatus
+    compliance_detail: str | None
     last_checkin_at: datetime | None
     created_at: datetime
 
@@ -227,15 +230,84 @@ class EnrollResponse(BaseModel):
     ca_certificate_pem: str
     not_valid_after: datetime
     state_version: int
+    # Pinned by the agent at enrollment to verify every later desired-state bundle.
+    # Enrollment is the right moment to establish this trust: it is the one exchange
+    # already authenticated by a secret the operator handed over out of band.
+    bundle_signing_public_key: str
+
+
+# --------------------------------------------------------------------------- #
+# Commands
+# --------------------------------------------------------------------------- #
+
+
+class CommandCreate(BaseModel):
+    command_type: CommandType
+    params: dict[str, Any] = Field(default_factory=dict)
+    ttl_hours: int | None = Field(default=None, ge=1, le=8760)
+    max_attempts: int = Field(default=5, ge=1, le=50)
+
+
+class CommandRead(ORMModel):
+    id: uuid.UUID
+    device_id: uuid.UUID
+    command_type: CommandType
+    params: dict[str, Any]
+    status: CommandStatus
+    created_at: datetime
+    expires_at: datetime
+    dispatched_at: datetime | None
+    completed_at: datetime | None
+    attempts: int
+    max_attempts: int
+    result: dict[str, Any] | None
+    error: str | None
+
+
+class CommandEnvelope(BaseModel):
+    """The trimmed form handed to a device."""
+
+    id: uuid.UUID
+    command_type: CommandType
+    params: dict[str, Any]
+    expires_at: datetime
+
+
+# --------------------------------------------------------------------------- #
+# Check-in
+# --------------------------------------------------------------------------- #
+
+
+class CommandResultReport(BaseModel):
+    command_id: uuid.UUID
+    succeeded: bool
+    result: dict[str, Any] | None = None
+    error: str | None = None
 
 
 class CheckinRequest(BaseModel):
+    # What the device currently holds. Used to decide whether to resend the bundle.
     state_version: int | None = None
+    # What it has actually applied — not the same claim (D28).
+    applied_state_version: int | None = None
+    apply_errors: list[str] = Field(default_factory=list)
+
     agent_version: str | None = None
     os_version: str | None = None
+    results: list[CommandResultReport] = Field(default_factory=list)
+    # Escape hatch for an agent whose local cache is gone.
+    force_full: bool = False
 
 
 class CheckinResponse(BaseModel):
     device_id: uuid.UUID
     state_version: int
+    generated_at: datetime
     policy_changed: bool
+    # Omitted when the device already holds the current version — the bandwidth
+    # saving that makes frequent check-in viable on a metered link.
+    desired_state: dict[str, Any] | None = None
+    signature: str | None = None
+    commands: list[CommandEnvelope] = Field(default_factory=list)
+    next_checkin_seconds: int
+    unknown_command_ids: list[str] = Field(default_factory=list)

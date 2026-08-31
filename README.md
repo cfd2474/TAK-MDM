@@ -89,6 +89,41 @@ bearer token to expire while a device is dark for a month.
 The device CA is generated on first use under `pki/` (gitignored). That private key
 can mint any device identity — treat it as the crown jewel.
 
+## Check-in: desired state, not commands
+
+The device says which version it holds; the server replies with the current
+declarative state **only if that differs**, and the agent diffs and converges
+locally.
+
+```
+POST /api/v1/device/checkin
+  { state_version: 6, applied_state_version: 6, results: [...] }
+→ { state_version: 7,
+    desired_state: { schema_version, device_id, state_version, policy },
+    signature: "<ed25519>",
+    commands: [ { id, command_type, params, expires_at } ],
+    next_checkin_seconds: 847 }
+```
+
+This is the core of the offline design. A device dark for three weeks receives one
+document and catches up — it never replays an ordered backlog whose intermediate
+steps have been overtaken. Bundles are Ed25519-signed over canonical JSON, verified
+independently of TLS, and deterministic per `(device, state_version)` so they can be
+cached or relayed.
+
+Alongside it sits a small queue for genuinely momentary actions — `reboot`, `lock`,
+`wipe`, `locate`, `screenshot`, `clear_app_data`. These are delivered at-least-once
+until acknowledged, so they must be idempotent, and each expires on a per-type TTL
+rather than surprising a device that resurfaces weeks later.
+
+`Device.acked_state_version` records what the device confirmed it applied. The gap
+between that and `state_version` is the fleet's convergence lag — "the server has v7"
+and "the device is running v7" are different claims.
+
+> FCM push is not wired up. Devices poll on a jittered ~15 minute interval. Push was
+> always a latency optimization, never a correctness dependency, so adding it later
+> changes no protocol.
+
 ## Layout
 
 | Path | Contents |

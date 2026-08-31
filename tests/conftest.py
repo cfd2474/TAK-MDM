@@ -19,10 +19,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.api.deps import get_ca
+from app.api.deps import get_bundle_signer, get_ca
 from app.config import Settings, get_settings
 from app.db.base import Base, get_session
 from app.main import app
+from app.security.bundle import BundleSigner
 from app.security.ca import CertificateAuthority
 
 
@@ -54,13 +55,18 @@ def ca(tmp_path) -> CertificateAuthority:
 
 
 @pytest.fixture
+def signer(tmp_path) -> BundleSigner:
+    return BundleSigner.load_or_create(tmp_path / "pki")
+
+
+@pytest.fixture
 def settings() -> Settings:
     return get_settings()
 
 
 @pytest.fixture
 def client(
-    session_factory: sessionmaker, ca: CertificateAuthority
+    session_factory: sessionmaker, ca: CertificateAuthority, signer: BundleSigner
 ) -> Iterator[TestClient]:
     def override() -> Iterator[Session]:
         with session_factory() as session:
@@ -68,6 +74,7 @@ def client(
 
     app.dependency_overrides[get_session] = override
     app.dependency_overrides[get_ca] = lambda: ca
+    app.dependency_overrides[get_bundle_signer] = lambda: signer
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

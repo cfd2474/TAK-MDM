@@ -9,15 +9,21 @@ update after every completed step.
 
 ## Current status
 
-**Phase:** Chunk 2 complete. Awaiting review before Chunk 3.
+**Phase:** Chunk 3 complete. Awaiting review before Chunk 4.
 
 - ✅ Requirements gathered
 - ✅ Architecture written → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - ✅ **Chunk 1 complete** — policy stacking engine
-- ✅ **Chunk 2 complete** — enrollment, device PKI, mTLS auth. 86 tests passing.
-- ⏸️ **Blocked on approval** to begin Chunk 3
+- ✅ **Chunk 2 complete** — enrollment, device PKI, mTLS auth
+- ✅ **Chunk 3 complete** — desired-state protocol, signed bundles, command queue.
+  121 tests passing.
+- ⏸️ **Blocked on approval** to begin Chunk 4
 
-Chunk 1 is pushed to `origin/main`.
+Chunks 1–2 are pushed to `origin/main`.
+
+> **Before Chunk 4/5:** the R1 and R6 hardware questions are still unanswered and
+> both are load-bearing for app and file delivery. One session with an XCover6 Pro
+> settles them.
 
 ---
 
@@ -162,11 +168,64 @@ window, and revocation — but possession of the private key is proven only by t
 handshake at the proxy. **That proxy must strip the header from inbound requests, and
 the app must never be exposed directly.** Not yet enforced in code; see R7.
 
+### ✅ Chunk 3 — Desired-state check-in protocol (COMPLETE)
+
+The piece that makes the offline story real. A device dark for three weeks wakes,
+receives one declarative desired state, and converges — rather than replaying an
+ordered backlog it cannot safely reorder.
+
+1. **Desired-state document** — a device-facing projection of the effective policy,
+   stripped of provenance and conflicts. Admins get the "why"; devices get only what
+   they must act on.
+2. **Ed25519 bundle signing** — a signing key separate from the device CA, with
+   canonical JSON serialization so the signature is reproducible byte-for-byte. The
+   agent receives the public key at enrollment. Cheap now, and it is what makes a
+   future LAN-relay or sneakernet delivery path possible without redesign (D9).
+3. **Transient command queue** — `REBOOT`, `LOCK`, `WIPE`, `LOCATE`, `SCREENSHOT`,
+   `CLEAR_APP_DATA`. Each with a TTL, delivered at-least-once and idempotent, expired
+   rather than delivered when stale.
+4. **Full check-in endpoint** — device sends its `state_version` and results; server
+   returns the desired state **only when it has changed**, plus live commands and a
+   jittered next-check-in hint to avoid a thundering herd.
+5. **Convergence reporting** — devices report the version they actually applied and
+   any failures. `Device.acked_state_version` separates "the server has v7" from
+   "the device is running v7", which is the distinction a fleet dashboard lives on.
+6. **Admin endpoints** — enqueue and inspect commands, view a device's desired state
+   and convergence status.
+7. **Tests.**
+
+**Exit criteria met.** All of it, with 121 tests passing.
+
+Delivered: [app/security/bundle.py](app/security/bundle.py),
+[app/services/desired_state.py](app/services/desired_state.py),
+[app/services/commands.py](app/services/commands.py),
+[app/api/routers/checkin.py](app/api/routers/checkin.py),
+[app/api/routers/commands.py](app/api/routers/commands.py).
+
+#### Decisions taken during implementation
+
+| # | Decision | Rationale |
+|---|---|---|
+| D28 | `Device.acked_state_version` is tracked separately from `state_version` | "The server has v7" and "the device is running v7" are different claims. Conflating them is how a console reports compliance it never verified. The gap between them *is* the fleet's convergence lag. |
+| D29 | The signed bundle contains **no timestamp or nonce** — it is deterministic per `(device, state_version)` | Because `state_version` moves exactly when values move (D17), the same version always yields byte-identical JSON and the same signature. That makes a bundle a cacheable, relayable artifact, which is the entire point of signing independently of TLS (D9). Per-response data lives in the envelope. |
+| D30 | The desired state is a **projection**: values only, no provenance, no policy names, no conflicts | Admins need the "why"; devices do not. Shipping it would put the fleet's policy structure and group topology on every tablet, including any that gets lost. |
+| D31 | Commands are delivered **at-least-once** and must be idempotent; staleness is enforced **on read** | A device that dies mid-execution must get the command again — at-most-once silently drops actions on exactly the intermittent links this design exists for. Expiring on read means no window where a device collects a command the console already considers dead. |
+| D32 | TTL defaults vary by command type | A `LOCATE` from three weeks ago answers a question nobody is still asking (6h); a `WIPE` on a lost device stays worth executing as long as it might reappear (30d). |
+| D33 | The bundle signing key is separate from the device CA key | Different job, different blast radius, different rotation cadence. Rotating the bundle key re-signs bundles; rotating the CA key invalidates every device identity. |
+| D34 | Command results are matched against `(device_id, command_id)`, never the id alone | Otherwise one enrolled device could acknowledge — and thereby cancel — another device's pending wipe. |
+| D35 | `alembic/script.py.mako` pre-imports `Text` and `app.db.base`; new NOT NULL columns need an explicit `server_default` | Autogenerate emits both bare `Text()` and `app.db.base.UtcDateTime` without importing them, and infers no server default from a Python-side default — so a generated migration would `NameError`, or fail on Postgres against a table that already has rows. Verified by migrating a seeded database. |
+
+#### Deferred
+
+FCM push is **not implemented**. Devices poll on a jittered ~15 min interval, which
+is correct but means a command waits up to that long. FCM was always specified as a
+latency optimization only (D7), never a correctness dependency — adding it later
+changes no protocol, only how quickly a device notices.
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |
 |---|---|---|
-| 3 | Check-in protocol | Desired-state endpoint, signed bundles, TTL'd transient command queue |
 | 4 | Artifact store | Content-addressed storage, APK/XAPK upload, server-side split extraction, signature validation |
 | 5 | Kotlin agent | Device Owner baseline, reconciler loop, `PackageInstaller`, file push |
 | 6 | Knox layer | `OemPolicyApplier`, KSP restriction-bundle generation, KPE licensing, SDK fallbacks |
@@ -210,6 +269,14 @@ the app must never be exposed directly.** Not yet enforced in code; see R7.
   around mixed SoC vendors. Corrected the Knox SDK deprecation rationale behind D11.
 - **2026-08-30** — Q2 closed: ATAK server is configured on the EUD, no upstream
   integration needed.
+- **2026-08-31** — **Chunk 3 complete.** 121 tests passing. Desired-state check-in
+  over mTLS: signed Ed25519 bundles sent only when the state changed, a TTL'd
+  at-least-once command queue, and convergence tracking that separates server intent
+  from device reality. Caught three migration defects before they shipped —
+  autogenerate emitted `Text()` and `app.db.base.UtcDateTime` without importing
+  either, and added NOT NULL columns with no `server_default`, which fails on
+  Postgres against a table with existing rows. Fixed the Alembic template so the
+  import half cannot recur (D35).
 - **2026-08-30** — **Chunk 2 complete.** 86 tests passing. Device identity is a
   hardware-backed EC P-256 keypair with an mTLS client certificate from an internal
   CA; enrollment tokens are hashed at rest and scope a device into its groups/tags so

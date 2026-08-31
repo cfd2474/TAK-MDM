@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import fetch_or_404, get_ca, get_db
+from app.api.deps import fetch_or_404, get_bundle_signer, get_ca, get_db
 from app.api.schemas import (
     EnrollmentTokenCreate,
     EnrollmentTokenCreated,
@@ -20,6 +20,7 @@ from app.api.schemas import (
 )
 from app.config import Settings, get_settings
 from app.db.models import EnrollmentToken
+from app.security.bundle import BundleSigner
 from app.security.ca import CertificateAuthority, CertificateError
 from app.services import provisioning
 from app.services.enrollment import EnrollmentError, create_token, enroll_device, revoke_token
@@ -118,6 +119,7 @@ def enroll(
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     ca: CertificateAuthority = Depends(get_ca),
+    signer: BundleSigner = Depends(get_bundle_signer),
 ) -> EnrollResponse:
     """Device-facing. The enrollment token is the credential; no mTLS yet."""
     try:
@@ -146,4 +148,5 @@ def enroll(
         ca_certificate_pem=result.ca_certificate_pem,
         not_valid_after=result.not_valid_after,
         state_version=result.device.state_version,
+        bundle_signing_public_key=signer.public_key_base64(),
     )

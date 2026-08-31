@@ -55,6 +55,40 @@ class AssignmentScope(str, enum.Enum):
     TAG = "tag"
 
 
+class ComplianceStatus(str, enum.Enum):
+    """Whether a device has actually converged on its desired state."""
+
+    UNKNOWN = "unknown"  # never reported
+    COMPLIANT = "compliant"  # applied the current state_version cleanly
+    DEGRADED = "degraded"  # applied, but some items failed
+    FAILED = "failed"  # could not apply
+
+
+class CommandType(str, enum.Enum):
+    """Transient one-shots.
+
+    Deliberately excludes anything expressible as policy. Installing an app is
+    desired state, not a command — a device offline for three weeks must converge on
+    the current intent, not replay a backlog. Only genuinely momentary actions belong
+    here (D6).
+    """
+
+    REBOOT = "reboot"
+    LOCK = "lock"
+    WIPE = "wipe"
+    LOCATE = "locate"
+    SCREENSHOT = "screenshot"
+    CLEAR_APP_DATA = "clear_app_data"
+
+
+class CommandStatus(str, enum.Enum):
+    PENDING = "pending"
+    DISPATCHED = "dispatched"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    EXPIRED = "expired"
+
+
 # --------------------------------------------------------------------------- #
 # Devices and grouping
 # --------------------------------------------------------------------------- #
@@ -87,8 +121,16 @@ class Device(Base):
         Enum(EnrollmentState, native_enum=False, length=16), default=EnrollmentState.PENDING
     )
     # Monotonic counter bumped whenever the device's desired state changes. The
-    # check-in protocol (Chunk 3) keys off this to decide whether to send a bundle.
+    # check-in protocol keys off this to decide whether to send a bundle.
     state_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # What the device confirmed it actually applied. The gap between this and
+    # state_version is the fleet's convergence lag — "the server has v7" and "the
+    # device is running v7" are different claims and a dashboard needs both.
+    acked_state_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    compliance_status: Mapped[ComplianceStatus] = mapped_column(
+        Enum(ComplianceStatus, native_enum=False, length=16), default=ComplianceStatus.UNKNOWN
+    )
+    compliance_detail: Mapped[str | None] = mapped_column(Text, default=None)
     last_checkin_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
 
@@ -304,6 +346,53 @@ class DeviceCertificate(Base):
     revoked_reason: Mapped[str | None] = mapped_column(String(128), default=None)
 
     device: Mapped[Device] = relationship(lazy="selectin")
+
+
+class DeviceCommand(Base):
+    """A queued transient action for one device.
+
+    Delivery is at-least-once: a command stays deliverable until acknowledged, so a
+    device that goes dark mid-execution gets it again. Every command type is
+    therefore required to be idempotent — rebooting an already-rebooted device or
+    wiping an already-wiped one is harmless.
+
+    ``expires_at`` is what keeps the queue honest offline. A `LOCATE` issued three
+    weeks ago answers a question nobody is still asking; it expires rather than
+    surprising a device that just came back on the air.
+    """
+
+    __tablename__ = "device_command"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("device.id", ondelete="CASCADE"), index=True
+    )
+    command_type: Mapped[CommandType] = mapped_column(
+        Enum(CommandType, native_enum=False, length=24)
+    )
+    params: Mapped[dict] = mapped_column(JsonDict, default=dict)
+    status: Mapped[CommandStatus] = mapped_column(
+        Enum(CommandStatus, native_enum=False, length=16),
+        default=CommandStatus.PENDING,
+        index=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime)
+    dispatched_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+    completed_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+
+    result: Mapped[dict | None] = mapped_column(JsonDict, default=None)
+    error: Mapped[str | None] = mapped_column(Text, default=None)
+
+    def is_live(self, *, now: datetime) -> bool:
+        """Still worth delivering: not finished, not expired, not out of attempts."""
+        if self.status in (CommandStatus.SUCCEEDED, CommandStatus.FAILED, CommandStatus.EXPIRED):
+            return False
+        return now < self.expires_at and self.attempts < self.max_attempts
 
 
 class EffectivePolicyCache(Base):

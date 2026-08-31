@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from app.api.routers import (
     assignments,
     checkin,
+    commands,
     effective,
     enrollment,
     inventory,
@@ -23,6 +24,7 @@ app.include_router(assignments.router)
 app.include_router(effective.router)
 app.include_router(enrollment.router)
 app.include_router(checkin.router)
+app.include_router(commands.router)
 
 
 @app.get("/healthz", tags=["ops"])

@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     # --- Enrollment ----------------------------------------------------------
     enrollment_token_ttl_hours: int = 168  # 7 days
 
+    # --- Check-in ------------------------------------------------------------
+    # WorkManager's periodic floor is 15 minutes, so anything lower is wishful.
+    checkin_interval_seconds: int = 900
+    # Spread wake-ups so a fleet that lost power together does not return as a
+    # thundering herd.
+    checkin_jitter_ratio: float = 0.2
+
     # --- Agent APK, for provisioning payloads --------------------------------
     agent_package_name: str = "org.takmdm.agent"
     agent_admin_receiver: str = "org.takmdm.agent/.MdmDeviceAdminReceiver"

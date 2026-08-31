@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.db.base import get_session
 from app.db.models import Device, DeviceCertificate, EnrollmentState
+from app.security.bundle import BundleSigner
 from app.security.ca import CertificateAuthority, CertificateError
 
 
@@ -35,6 +36,18 @@ def get_ca(settings: Settings = Depends(get_settings)) -> CertificateAuthority:
     return _certificate_authority(
         str(settings.pki_dir), settings.ca_common_name, settings.ca_validity_days
     )
+
+
+@lru_cache
+def _bundle_signer(pki_dir: str) -> BundleSigner:
+    from pathlib import Path
+
+    return BundleSigner.load_or_create(Path(pki_dir))
+
+
+def get_bundle_signer(settings: Settings = Depends(get_settings)) -> BundleSigner:
+    """Signs desired-state bundles. Overridable in tests."""
+    return _bundle_signer(str(settings.pki_dir))
 
 
 def require_device(device_id: uuid.UUID, session: Session = Depends(get_db)) -> Device:

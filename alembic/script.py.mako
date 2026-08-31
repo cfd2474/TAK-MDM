@@ -11,6 +11,9 @@ from collections.abc import Sequence
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import Text  # autogenerate emits a bare Text() inside JSONB variants
+
+import app.db.base  # autogenerate emits app.db.base.UtcDateTime for timestamps
 ${imports if imports else ""}
 
 revision: str = ${repr(up_revision)}
