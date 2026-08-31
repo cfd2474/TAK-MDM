@@ -488,6 +488,57 @@ class AppPackageFile(Base):
     artifact: Mapped[Artifact] = relationship(lazy="selectin")
 
 
+class ManagedFile(Base):
+    """An arbitrary file an admin has published: a zip, a .pref, a cert, a map source.
+
+    Separate from :class:`AppPackage` because APKs are inspected and validated against
+    Android-specific structure, while these are opaque payloads whose meaning comes
+    entirely from the policy that places them.
+    """
+
+    __tablename__ = "managed_file"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    original_filename: Mapped[str] = mapped_column(String(255))
+    media_type: Mapped[str] = mapped_column(String(128), default="application/octet-stream")
+    # Detected at upload, so the policy layer can refuse to mark a non-archive for
+    # extraction instead of failing on the device.
+    is_archive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    artifact_sha256: Mapped[str] = mapped_column(
+        String(64), ForeignKey("artifact.sha256", ondelete="RESTRICT"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+    artifact: Mapped[Artifact] = relationship(lazy="selectin")
+
+
+class DeviceFileSelection(Base):
+    """An optional file a device's user chose to install (F4).
+
+    The server offers; the device reports back what was taken. Recording it here is
+    what lets an admin see which optional items are actually out in the fleet,
+    rather than only what was made available.
+    """
+
+    __tablename__ = "device_file_selection"
+    __table_args__ = (
+        UniqueConstraint("device_id", "file_id", name="uq_device_file_selection"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("device.id", ondelete="CASCADE"), index=True
+    )
+    file_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("managed_file.id", ondelete="CASCADE"), index=True
+    )
+    applied_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+    file: Mapped[ManagedFile] = relationship(lazy="selectin")
+
+
 class EffectivePolicyCache(Base):
     """Memoized resolver output for one device, invalidated on any input change.
 

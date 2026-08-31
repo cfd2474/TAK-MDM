@@ -9,7 +9,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import fetch_or_404, get_db
-from app.api.schemas import AssignmentCreate, AssignmentRead, AssignmentUpdate
+from app.api.schemas import (
+    AssignmentCreate,
+    AssignmentRead,
+    AssignmentUpdate,
+    PolicyTargets,
+    PolicyTargetsResult,
+)
 from app.db.models import Assignment, AssignmentScope, Device, DeviceGroup, Policy, Tag
 from app.services import effective_policy as eff
 
@@ -74,6 +80,98 @@ def create_assignment(
     eff.invalidate_for_assignment(session, assignment)
     session.commit()
     return _to_read(assignment)
+
+
+targets_router = APIRouter(prefix="/api/v1/policies", tags=["assignments"])
+
+
+@targets_router.put("/{policy_id}/targets", response_model=PolicyTargetsResult)
+def set_policy_targets(
+    policy_id: uuid.UUID,
+    payload: PolicyTargets,
+    session: Session = Depends(get_db),
+) -> PolicyTargetsResult:
+    """Assign one policy to many targets in a single call (F2).
+
+    Policy-first, mirroring how an operator actually works: open the policy, then
+    pick everything it covers. The assignment-centric endpoint would need one call
+    per device, which turns a 200-tablet rollout into 200 requests that can half-fail.
+
+    ``mode="replace"`` makes the request describe the policy's complete target set,
+    so removals happen too — otherwise unassigning would need a separate pass and
+    the two could drift.
+    """
+    policy: Policy = fetch_or_404(session, Policy, policy_id, "policy")
+
+    pinned = None
+    if payload.pinned_version is not None:
+        pinned = next(
+            (v for v in policy.versions if v.version == payload.pinned_version), None
+        )
+        if pinned is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                f"policy {policy.name!r} has no version {payload.pinned_version}",
+            )
+
+    requested: set[tuple[AssignmentScope, uuid.UUID]] = set()
+    for scope, ids in (
+        (AssignmentScope.DEVICE, payload.device_ids),
+        (AssignmentScope.GROUP, payload.group_ids),
+        (AssignmentScope.TAG, payload.tag_ids),
+    ):
+        target_model, label, _ = _TARGET_MODELS[scope]
+        for target_id in ids:
+            fetch_or_404(session, target_model, target_id, label)
+            requested.add((scope, target_id))
+
+    existing = {
+        (a.scope, a.device_id or a.group_id or a.tag_id): a
+        for a in session.scalars(
+            select(Assignment).where(Assignment.policy_id == policy.id)
+        )
+    }
+
+    affected: set[uuid.UUID] = set()
+    created = removed = unchanged = 0
+
+    if payload.mode == "replace":
+        for key, assignment in existing.items():
+            if key not in requested:
+                affected |= eff.devices_targeted_by(session, assignment)
+                session.delete(assignment)
+                removed += 1
+
+    for scope, target_id in sorted(requested, key=lambda item: (item[0].value, str(item[1]))):
+        if (scope, target_id) in existing:
+            unchanged += 1
+            continue
+        _, _, column = _TARGET_MODELS[scope]
+        assignment = Assignment(
+            policy_id=policy.id,
+            scope=scope,
+            rank=payload.rank,
+            pinned_version_id=pinned.id if pinned else None,
+            **{column: target_id},
+        )
+        session.add(assignment)
+        session.flush()
+        affected |= eff.devices_targeted_by(session, assignment)
+        created += 1
+
+    session.flush()
+    # Marks caches stale and queues the wake, so associated devices apply the change
+    # at once rather than at their next poll (F3).
+    eff.invalidate(session, affected)
+    session.commit()
+
+    return PolicyTargetsResult(
+        policy_id=policy.id,
+        created=created,
+        removed=removed,
+        unchanged=unchanged,
+        devices_affected=len(affected),
+    )
 
 
 @router.get("", response_model=list[AssignmentRead])

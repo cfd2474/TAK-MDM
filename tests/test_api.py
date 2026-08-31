@@ -20,7 +20,7 @@ def test_policy_types_publish_their_merge_contract(client: TestClient):
     body = client.get("/api/v1/policy-types").json()
     by_name = {t["name"]: t for t in body}
 
-    assert set(by_name) == {"PASSWORD", "RESTRICTIONS", "APP_CATALOG"}
+    assert set(by_name) == {"PASSWORD", "RESTRICTIONS", "APP_CATALOG", "FILES"}
     assert by_name["PASSWORD"]["merge_rules"]["min_length"]["strategy"] == "max"
     assert by_name["APP_CATALOG"]["merge_rules"]["required_apps"]["key"] == "package_name"
 

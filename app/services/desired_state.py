@@ -45,6 +45,9 @@ def build(session: Session, device: Device) -> dict[str, Any]:
         # Required apps resolved to concrete artifacts: hashes to verify against and
         # URLs to fetch. The policy says what; this says exactly which bytes.
         "apps": payload.get("apps", []),
+        # Split into what the agent must install and what it should offer the user
+        # in the marketplace (F4).
+        "files": payload.get("files", {"required": [], "available": []}),
     }
 
 

@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import CommandStatus, CommandType, Device, DeviceCommand
+from app.services import notifications
 
 # Per-type defaults. A LOCATE answers a question that goes stale in hours; a WIPE
 # on a lost device stays worth executing for as long as the device might reappear.
@@ -67,6 +68,8 @@ def enqueue(
     )
     session.add(command)
     session.flush()
+    # A lock or wipe on a lost device should not wait for the next poll.
+    notifications.schedule_wake(session, {device.id})
     return command
 
 

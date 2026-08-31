@@ -26,6 +26,7 @@ from app.security.bundle import BundleSigner
 from app.services import commands as command_service
 from app.services import desired_state as desired_state_service
 from app.services import effective_policy as eff
+from app.services import files as file_service
 
 router = APIRouter(prefix="/api/v1/device", tags=["device"])
 
@@ -80,6 +81,11 @@ def checkin(
     # Results first: a command finished this cycle should not be handed back below.
     _, unknown_command_ids = command_service.record_results(session, device, payload.results)
     _record_convergence(device, payload)
+
+    # The device's report of which optional items its user has applied is
+    # authoritative; omitting the field leaves the record untouched (F4).
+    if payload.applied_optional_files is not None:
+        file_service.record_selections(session, device, payload.applied_optional_files)
 
     # Settle any pending recompute so state_version is current before comparison.
     eff.get_effective(session, device)

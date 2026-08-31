@@ -284,6 +284,57 @@ class PackageUploadResult(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Managed files
+# --------------------------------------------------------------------------- #
+
+
+class ManagedFileRead(ORMModel):
+    id: uuid.UUID
+    name: str
+    description: str | None
+    original_filename: str
+    media_type: str
+    is_archive: bool
+    artifact_sha256: str
+    created_at: datetime
+
+
+class FileSelectionRead(BaseModel):
+    file_id: uuid.UUID
+    name: str
+    applied_at: datetime
+
+
+# --------------------------------------------------------------------------- #
+# Bulk assignment (F2)
+# --------------------------------------------------------------------------- #
+
+
+class PolicyTargets(BaseModel):
+    """Assign one policy to many targets in a single call.
+
+    Policy-first, mirroring how an operator actually thinks: open the policy, pick
+    the devices it covers.
+    """
+
+    device_ids: list[uuid.UUID] = Field(default_factory=list)
+    group_ids: list[uuid.UUID] = Field(default_factory=list)
+    tag_ids: list[uuid.UUID] = Field(default_factory=list)
+    rank: int = 0
+    pinned_version: int | None = None
+    # replace: targets not listed have their assignment removed. add: purely additive.
+    mode: Literal["replace", "add"] = "replace"
+
+
+class PolicyTargetsResult(BaseModel):
+    policy_id: uuid.UUID
+    created: int
+    removed: int
+    unchanged: int
+    devices_affected: int
+
+
+# --------------------------------------------------------------------------- #
 # Commands
 # --------------------------------------------------------------------------- #
 
@@ -344,6 +395,11 @@ class CheckinRequest(BaseModel):
     results: list[CommandResultReport] = Field(default_factory=list)
     # Escape hatch for an agent whose local cache is gone.
     force_full: bool = False
+
+    # Optional files the device currently has applied, chosen by its user in the
+    # marketplace (F4). The device's report is authoritative and replaces the
+    # server's record — omit the field entirely to leave it untouched.
+    applied_optional_files: list[uuid.UUID] | None = None
 
 
 class CheckinResponse(BaseModel):

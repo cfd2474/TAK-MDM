@@ -13,7 +13,13 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.policies.specs import AppCatalogSpec, PasswordSpec, PolicySpec, RestrictionsSpec
+from app.policies.specs import (
+    AppCatalogSpec,
+    FilesSpec,
+    PasswordSpec,
+    PolicySpec,
+    RestrictionsSpec,
+)
 from app.policies.strategies import Merge, MergeStrategy
 
 
@@ -105,4 +111,9 @@ registry.register(
 )
 registry.register(
     "APP_CATALOG", AppCatalogSpec, "Required apps, blocklist, allowlist, and kiosk app."
+)
+registry.register(
+    "FILES",
+    FilesSpec,
+    "Files placed on the device, required or offered in the marketplace.",
 )

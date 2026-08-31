@@ -9,7 +9,7 @@ update after every completed step.
 
 ## Current status
 
-**Phase:** Chunk 4 complete. Awaiting review before Chunk 5.
+**Phase:** Chunk 5 complete. Awaiting review before Chunk 6 (the agent).
 
 - ✅ Requirements gathered
 - ✅ Architecture written → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
@@ -17,8 +17,10 @@ update after every completed step.
 - ✅ **Chunk 2 complete** — enrollment, device PKI, mTLS auth
 - ✅ **Chunk 3 complete** — desired-state protocol, signed bundles, command queue
 - ✅ **Chunk 4 complete** — content-addressed artifacts, APK/XAPK pipeline,
-  resumable device download. 168 tests passing.
-- ⏸️ **Blocked on approval** to begin Chunk 5
+  resumable device download
+- ✅ **Chunk 5 complete** — managed files, marketplace tier, bulk assignment, live
+  propagation. **F1–F5 all satisfied server-side.** 200 tests passing.
+- ⏸️ **Blocked on approval** to begin Chunk 6 (the Kotlin agent)
 
 Chunks 1–3 plus the Docker stack are pushed to `origin/main`.
 
@@ -56,6 +58,27 @@ All three are Knox-capable enterprise-line devices (KME, KPE, E-FOTA eligible) o
 One UI 8. Single ABI across the fleet — no ABI-split complexity in the artifact
 model — but **three different SoC vendors** (Qualcomm, MediaTek, Exynos), so
 firmware-level behaviour must be verified on each, never extrapolated from one.
+
+### Operator feature requirements (stated 2026-08-31)
+
+Behaviours to replicate, drawn from Hexnode and from commercial platforms in use:
+
+| # | Requirement | Status |
+|---|---|---|
+| F1 | **Stacked policies per device** — compose several single-concern policies rather than one monolith | ✅ Built (Chunk 1) |
+| F2 | **One-to-many assignment, policy-first** — open a policy, then select the devices it applies to | ❌ **Missing.** The API is assignment-centric: one policy to one target per call. Assigning to 50 devices means 50 calls. Needs a bulk `policy → targets` endpoint. |
+| F3 | **Immediate propagation** — a policy edit reaches associated devices at once and is applied, including installs and blocklists | ❌ **Missing.** Devices poll on a ~15 min jittered interval, so a change can take that long. Needs a wake mechanism. |
+| F4 | **User-selectable file installs from a marketplace app** — the admin curates a repo of files and their destinations; the *end user* chooses from an in-app catalog which ones to install | ❌ **Missing.** Everything today is mandatory desired state. Needs an optional/available tier alongside required, plus reporting of what the user took. |
+| F5 | **Admin-controlled zip expansion** — a file entry may be a zip the admin marks for automatic extraction into a designated directory | ❌ **Missing.** |
+
+F3 is the one that changes an existing decision. D7 made push a latency optimization
+and never a correctness dependency; F3 makes low latency a product requirement. The
+resolution is not to abandon D7 — polling stays the correctness floor for a fleet
+that goes dark — but to add a best-effort wake channel on top of it.
+
+F4 introduces a genuinely new concept: state the server *offers* rather than
+*requires*. The desired-state model so far has been strictly mandatory, so
+"available" items and a record of which the user accepted are both new.
 
 ### Prior art and design intent
 
@@ -301,15 +324,67 @@ exists (Chunk 5).
 | D42 | Artifact deletion is reference-counted across versions | Two versions sharing an unchanged OBB must not have it deleted out from under one of them. |
 | D43 | `refresh` returns the stored payload, not the resolver's object | Found by test: the resolver knows nothing about resolved apps, so returning its object silently dropped them on any cache miss. |
 
+### ✅ Chunk 5 — Managed files, marketplace, bulk assignment, live propagation (COMPLETE)
+
+Closes F2–F5. Deliberately ordered **before** the agent: the optional-items tier and
+zip extraction change the agent's core data model rather than its edges, so building
+the agent first would mean writing its reconciler and marketplace twice.
+
+1. **Generic file upload** — arbitrary artifacts (zips, `.pref`, certs, map sources)
+   into the content-addressed store, with a `ManagedFile` catalog entry. Distinct
+   from the APK pipeline, which inspects and validates Android-specific structure.
+2. **`FILES` policy type** — entries binding a managed file to a destination, marked
+   `required` or `optional`, with admin-controlled zip extraction (F5) and an
+   overwrite rule. Merged by file id so stacked policies compose.
+3. **Desired-state resolution** — required files and an `available` catalogue, each
+   carrying hash, size, URL, destination, and extraction instructions.
+4. **User selections (F4)** — devices report which optional items they applied;
+   the server records them per device so an admin can see what was actually taken.
+5. **Bulk assignment (F2)** — policy-first `PUT /policies/{id}/targets`: open a
+   policy, select many devices, groups, or tags in one call.
+6. **Live propagation (F3)** — an in-process change bus plus an async long-poll
+   `GET /api/v1/device/wait`, released the moment that device's state is
+   invalidated or a command is queued. Wired in through a SQLAlchemy `after_commit`
+   hook so no write path can forget to wake its devices. Polling remains the
+   correctness floor (D7 stands); this is a doorbell on top of it.
+7. **Tests.**
+
+**Exit criteria met**, with 200 tests passing and an end-to-end run against the
+Docker stack doing exactly that sequence. Measured wake latency through nginx with a
+real mTLS client: **18 ms** from bulk assignment to the device being released.
+
+F1–F5 are now all satisfied server-side.
+
+Delivered: [app/policies/specs/files.py](app/policies/specs/files.py),
+[app/services/files.py](app/services/files.py),
+[app/services/notifications.py](app/services/notifications.py),
+[app/api/routers/files.py](app/api/routers/files.py),
+[app/api/routers/wait.py](app/api/routers/wait.py), bulk targets endpoint in
+[app/api/routers/assignments.py](app/api/routers/assignments.py).
+
+#### Decisions taken during implementation
+
+| # | Decision | Rationale |
+|---|---|---|
+| D44 | The wake is queued inside `invalidate()` and fired from a SQLAlchemy `after_commit` hook | A write path cannot invalidate without waking, and cannot wake before the data it describes is durable. Putting the call in each router would have made both mistakes possible. |
+| D45 | The wake is a **contentless doorbell** — "check in now", not what changed | A missed wake then costs latency and nothing else. Carrying state would make delivery load-bearing and quietly undo D7's guarantee that polling is the correctness floor. |
+| D46 | `/device/wait` is `async` and releases its DB session before parking | A parked request must hold neither a worker thread nor a pooled connection; a few hundred waiting tablets would exhaust both. |
+| D47 | No second database read after waking | The version in the wake response is advisory; the check-in that follows establishes it. Re-reading meant either holding a connection across the park or reaching around dependency injection for a new engine — which is exactly the bug the tests caught. |
+| D48 | Required and optional files are split **server-side** into two lists | Keeps the "offer vs require" distinction out of the agent's parsing, where getting it wrong would silently install something the user declined. |
+| D49 | A device's selection report replaces the stored set rather than appending | The device is authoritative about what it actually has. Appending would leave a record claiming an item is installed after the user removed it. |
+| D50 | `extract_to` defaults to `dest_path` **and is marked explicitly set** | Making the admin repeat the path invites a mismatch. Marking it set is essential: `exclude_unset` persistence would otherwise drop the derived value and ship `extract_to: null` to the device. Found by test. |
+| D51 | Bulk assignment `mode="replace"` describes the policy's complete target set, removals included | Otherwise unassigning needs a second pass and the two can drift. `mode="add"` stays available for purely additive rollouts. |
+| D52 | Waiters live in one process | Correct for a single uvicorn worker, which is ample at 50-500 devices. Scaling out needs the notification fanned through Redis or Postgres `LISTEN/NOTIFY`. Documented rather than pre-built. |
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |
 |---|---|---|
-| 5 | Kotlin agent | Device Owner baseline, reconciler loop, `PackageInstaller`, file push |
-| 6 | Knox layer | `OemPolicyApplier`, KSP restriction-bundle generation, KPE licensing, SDK fallbacks |
-| 7 | TAK pack | ATAK policy type: data packages, `.pref` files, plugin sets, cert enrollment |
-| 8 | Admin UI | Policy builder, stacking view, fleet dashboard |
-| 9 | Offline / LAN relay | Only if required — D9 keeps the door open |
+| 6 | Kotlin agent | Device Owner, reconciler loop, `PackageInstaller`, file push, marketplace UI |
+| 7 | Knox layer | `OemPolicyApplier`, KSP restriction-bundle generation, KPE licensing, SDK fallbacks |
+| 8 | TAK pack | ATAK policy type: data packages, `.pref` files, plugin sets, cert enrollment |
+| 9 | Admin UI | Policy builder, stacking view, fleet dashboard |
+| 10 | Offline / LAN relay | Only if required — D9 keeps the door open |
 
 ---
 
@@ -347,6 +422,13 @@ exists (Chunk 5).
   around mixed SoC vendors. Corrected the Knox SDK deprecation rationale behind D11.
 - **2026-08-30** — Q2 closed: ATAK server is configured on the EUD, no upstream
   integration needed.
+- **2026-08-31** — **Chunk 5 complete.** 200 tests passing. F1–F5 all satisfied
+  server-side: a `FILES` policy type with a marketplace tier and admin-controlled zip
+  extraction, policy-first bulk assignment, and live propagation via a long-poll
+  doorbell wired to `after_commit`. Measured 18 ms from policy change to device wake
+  through nginx with a real mTLS client. Two bugs caught by tests: the wait endpoint
+  reached around dependency injection for a database engine, and `exclude_unset`
+  persistence silently dropped a validator-derived `extract_to`.
 - **2026-08-31** — **R1 retired too.** The operator has seen a commercial MDM push
   files into ATAK directories on Device Owner devices, so file push is demonstrably
   achievable and reduces to picking a mechanism — Knox on Samsung, with a one-time

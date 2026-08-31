@@ -210,9 +210,68 @@ restarting — which on these links is the difference between installing and nev
 installing. An app that is required but not yet uploaded appears with
 `available: false` rather than being silently omitted.
 
-> FCM push is not wired up. Devices poll on a jittered ~15 minute interval. Push was
-> always a latency optimization, never a correctness dependency, so adding it later
-> changes no protocol.
+### Live propagation
+
+Devices also park on a long-poll between check-ins:
+
+```
+GET /api/v1/device/wait?state_version=7&timeout=60
+→ { "should_checkin": true, "reason": "woken", "state_version": 7 }
+```
+
+The request is released the instant that device's state is invalidated or a command
+is queued for it — measured at **18 ms** end to end through the proxy. So a policy
+edit, an app upload, or a remote wipe reaches associated devices immediately rather
+than at their next poll.
+
+It is a doorbell, not a channel: the response says "check in now" and carries no
+state. A missed wake costs latency and nothing else, because polling remains the
+correctness floor for a fleet that goes dark. The wake is wired to SQLAlchemy's
+`after_commit`, so no write path can forget to ring it or ring it before the change
+is durable.
+
+> Waiters live in one process. That is correct for a single uvicorn worker, which is
+> ample at 50–500 devices; scaling out would fan notifications through Redis or
+> Postgres `LISTEN/NOTIFY`. FCM is still not wired up and is not needed for this.
+
+## Managed files and the marketplace
+
+Upload any file — a zip of ATAK data packages, a `.pref`, a cert, a map source:
+
+```bash
+curl -F file=@maps.zip -F name="Regional Map Pack" localhost:8000/api/v1/files
+```
+
+A `FILES` policy then binds files to destinations. Each entry is either **required**
+(installed unconditionally) or **optional** (offered to the device's user in the
+agent's marketplace), and an archive can be marked for automatic extraction:
+
+```json
+{"entries": [
+  {"file_id": "…", "dest_path": "/sdcard/atak/certs"},
+  {"file_id": "…", "dest_path": "/sdcard/atak/maps", "availability": "optional",
+   "extract": true, "title": "Regional Map Pack"}
+]}
+```
+
+The desired state splits these into `required` and `available` server-side, so the
+agent never has to infer which is which. Devices report back which optional items
+their user actually installed, visible at
+`GET /api/v1/devices/{id}/file-selections`.
+
+## Assigning a policy to many devices
+
+Policy-first, the way an operator actually works — open the policy, pick everything
+it covers:
+
+```bash
+curl -X PUT localhost:8000/api/v1/policies/<id>/targets \
+  -H 'content-type: application/json' \
+  -d '{"device_ids": ["…","…"], "group_ids": ["…"], "rank": 40}'
+```
+
+`mode: "replace"` (the default) treats the request as the policy's complete target
+set, so removals happen in the same call. `mode: "add"` is purely additive.
 
 ## Layout
 

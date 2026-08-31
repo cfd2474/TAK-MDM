@@ -36,7 +36,7 @@ from app.db.models import (
     Policy,
     PolicyVersion,
 )
-from app.services import packages
+from app.services import files, notifications, packages
 from app.policies.registry import PolicyTypeError, registry
 from app.policies.resolver import (
     AssignmentInput,
@@ -176,18 +176,23 @@ def refresh(session: Session, device: Device) -> dict[str, Any]:
     effective = compute(session, device)
     payload = effective.as_dict()
     payload["apps"] = resolve_required_apps(session, payload["values"])
+    payload["files"] = files.resolve_files(session, payload["values"])
 
     cache = session.get(EffectivePolicyCache, device.id)
     # A device that has never been computed starts from an empty desired state, not
     # from "unknown" — otherwise its first read would register as a change.
     previous = cache.payload if cache else {}
-    previous_state = (previous.get("values", {}), previous.get("apps", []))
+    previous_state = (
+        previous.get("values", {}),
+        previous.get("apps", []),
+        previous.get("files", {"required": [], "available": []}),
+    )
 
-    # Resolved apps are compared too, not just policy values. Uploading a new build
-    # of a required app changes what the device must do without changing a single
-    # word of policy — comparing values alone would leave the fleet on the old
-    # version indefinitely.
-    if previous_state != (payload["values"], payload["apps"]):
+    # Resolved apps and files are compared too, not just policy values. Uploading a
+    # new build of a required app, or replacing a managed file, changes what the
+    # device must do without changing a single word of policy — comparing values
+    # alone would leave the fleet on the old version indefinitely.
+    if previous_state != (payload["values"], payload["apps"], payload["files"]):
         device.state_version += 1
 
     if cache is None:
@@ -252,12 +257,16 @@ def preview(
 
 
 def invalidate(session: Session, device_ids: Iterable[uuid.UUID]) -> None:
-    """Mark cache rows stale so the next read recomputes.
+    """Mark cache rows stale so the next read recomputes, and wake those devices.
 
     Deliberately not a delete: the stored payload is the baseline ``refresh`` needs
     to tell a real change from a cosmetic one.
+
+    The wake is queued here rather than in each caller so that no write path can
+    invalidate without also telling the affected devices (F3). It fires after the
+    transaction commits.
     """
-    ids = list(device_ids)
+    ids = set(device_ids)
     if not ids:
         return
     for cache in session.scalars(
@@ -265,6 +274,7 @@ def invalidate(session: Session, device_ids: Iterable[uuid.UUID]) -> None:
     ):
         cache.stale = True
     session.flush()
+    notifications.schedule_wake(session, ids)
 
 
 def invalidate_all(session: Session) -> None:
@@ -276,9 +286,13 @@ def invalidate_all(session: Session) -> None:
     recompute only bumps ``state_version`` for devices whose resolved state actually
     moved.
     """
-    for cache in session.scalars(select(EffectivePolicyCache)):
+    caches = list(session.scalars(select(EffectivePolicyCache)))
+    for cache in caches:
         cache.stale = True
     session.flush()
+    # Wakes the whole fleet. At this size that is a burst of small check-ins, and
+    # only devices whose resolved state actually moved receive a bundle.
+    notifications.schedule_wake(session, {cache.device_id for cache in caches})
 
 
 def devices_targeted_by(session: Session, assignment: Assignment) -> set[uuid.UUID]:

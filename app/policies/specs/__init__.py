@@ -6,7 +6,14 @@ means adding a module here and registering it — the resolver never changes (OC
 
 from app.policies.specs.app_catalog import AppCatalogSpec
 from app.policies.specs.base import PolicySpec
+from app.policies.specs.files import FilesSpec
 from app.policies.specs.password import PasswordSpec
 from app.policies.specs.restrictions import RestrictionsSpec
 
-__all__ = ["AppCatalogSpec", "PasswordSpec", "PolicySpec", "RestrictionsSpec"]
+__all__ = [
+    "AppCatalogSpec",
+    "FilesSpec",
+    "PasswordSpec",
+    "PolicySpec",
+    "RestrictionsSpec",
+]
