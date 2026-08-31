@@ -5,11 +5,13 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import fetch_or_404, get_bundle_signer, get_ca, get_db
+from app.api.deps import fetch_or_404, get_bundle_signer, get_ca, get_db, get_storage
+from app.artifacts.storage import ArtifactStorage
 from app.api.schemas import (
     EnrollmentTokenCreate,
     EnrollmentTokenCreated,
@@ -19,7 +21,7 @@ from app.api.schemas import (
     ProvisioningRequest,
 )
 from app.config import Settings, get_settings
-from app.db.models import EnrollmentToken
+from app.db.models import AppPackage, EnrollmentToken, PartRole
 from app.security.bundle import BundleSigner
 from app.security.ca import CertificateAuthority, CertificateError
 from app.services import provisioning
@@ -111,6 +113,44 @@ def render_provisioning_payloads(
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
     return _provisioning_bundle(settings, payload.secret, payload.wifi)
+
+
+@router.get("/provisioning/agent.apk")
+def download_agent_apk(
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """Serve the agent APK for Device Owner provisioning. **Unauthenticated.**
+
+    It has to be: Android's setup wizard downloads this before the device has any
+    identity, so mTLS is impossible here by definition. The exposure is limited to
+    the agent binary itself, which every managed device gets anyway, and Android
+    verifies it against `PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM` before
+    installing — so a substituted APK is rejected by the device, not trusted.
+    """
+    package = session.scalar(
+        select(AppPackage).where(AppPackage.package_name == settings.agent_package_name)
+    )
+    version = package.latest_version if package else None
+    if version is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"no build of {settings.agent_package_name} has been uploaded",
+        )
+
+    base = next((f for f in version.files if f.role is PartRole.BASE), None)
+    if base is None or not storage.exists(base.artifact_sha256):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "agent artifact is missing")
+
+    return StreamingResponse(
+        storage.open(base.artifact_sha256),
+        media_type="application/vnd.android.package-archive",
+        headers={
+            "Content-Disposition": 'attachment; filename="agent.apk"',
+            "Content-Length": str(storage.size(base.artifact_sha256)),
+        },
+    )
 
 
 @router.post("/enroll", response_model=EnrollResponse, status_code=status.HTTP_201_CREATED)

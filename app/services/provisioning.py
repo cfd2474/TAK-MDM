@@ -14,6 +14,7 @@ testable and carry no database dependency.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from app.config import Settings
@@ -37,10 +38,20 @@ class ProvisioningError(ValueError):
 
 def admin_extras(settings: Settings, secret: str) -> dict[str, str]:
     """What the agent receives on first run to find and authenticate to the server."""
-    return {
+    extras = {
         "server_url": settings.server_url,
         "enrollment_token": secret,
     }
+
+    # With a self-signed development server the agent has no way to trust the TLS
+    # certificate, and provisioning happens long before it could be told separately.
+    # A publicly-issued certificate needs none of this, so it is only included when
+    # a local one exists.
+    tls_cert = Path(settings.pki_dir) / "server.crt"
+    if tls_cert.exists():
+        extras["server_ca_pem"] = tls_cert.read_text()
+
+    return extras
 
 
 def qr_payload(

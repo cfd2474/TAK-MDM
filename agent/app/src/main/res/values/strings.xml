@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TAK MDM</string>
+    <string name="marketplace_title">Available downloads</string>
+    <string name="sync_channel_name">Device management</string>
+    <string name="sync_notification_title">Device management active</string>
+    <string name="sync_notification_text">Keeping this device up to date.</string>
+    <string name="status_not_enrolled">Not enrolled</string>
+    <string name="status_enrolled">Enrolled</string>
+    <string name="action_sync_now">Sync now</string>
+    <string name="action_open_marketplace">Available downloads</string>
+    <string name="action_grant_storage">Grant all-files access</string>
+    <string name="storage_rationale">Needed to place managed files into locations such as /sdcard/atak. Android does not allow this to be granted automatically.</string>
+    <string name="install">Install</string>
+    <string name="remove">Remove</string>
+    <string name="installed">Installed</string>
+</resources>

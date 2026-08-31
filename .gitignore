@@ -14,3 +14,13 @@ __pycache__/
 /pki/
 *.key
 *.pem
+
+# Android agent build output and machine-local SDK path.
+agent/.gradle/
+agent/build/
+agent/app/build/
+agent/local.properties
+*.apk
+
+# Generated provisioning payloads embed a live enrollment token.
+qr_payload*.json

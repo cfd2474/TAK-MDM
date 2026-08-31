@@ -45,6 +45,11 @@ services:
       # Baked into enrollment QR codes, so it must be an address the tablet can
       # reach — not localhost, which a device would resolve to itself.
       TAKMDM_SERVER_URL: ${TAKMDM_SERVER_URL:-https://localhost:8443}
+      # Set by uploading the agent APK: the response's provisioning_checksum is
+      # exactly what Android verifies the download against. Without it, QR payload
+      # generation is withheld rather than producing something that fails on device.
+      TAKMDM_AGENT_SIGNATURE_CHECKSUM: ${TAKMDM_AGENT_SIGNATURE_CHECKSUM:-}
+      TAKMDM_AGENT_APK_URL: ${TAKMDM_AGENT_APK_URL:-https://localhost:8443/api/v1/provisioning/agent.apk}
     volumes:
       - ./pki:/pki
       # Uploaded APKs live outside the image so a rebuild does not discard them.

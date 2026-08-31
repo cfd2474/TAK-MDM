@@ -1,0 +1,101 @@
+package org.takmdm.agent.ui
+
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
+import android.widget.Button
+import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.takmdm.agent.R
+import org.takmdm.agent.admin.MdmDeviceAdminReceiver
+import org.takmdm.agent.core.AgentConfig
+import org.takmdm.agent.sync.Reconciler
+import org.takmdm.agent.sync.SyncScheduler
+
+/**
+ * Status screen.
+ *
+ * Deliberately not a launcher and not a kiosk shell — the agent stays out of the
+ * way unless a policy asks for lockdown (F6). Its one interactive job is the
+ * all-files-access grant, which Android does not permit a Device Owner to give
+ * itself.
+ */
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var config: AgentConfig
+    private lateinit var status: TextView
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+        config = AgentConfig(this)
+        status = findViewById(R.id.status)
+
+        findViewById<Button>(R.id.sync_now).setOnClickListener { syncNow() }
+        findViewById<Button>(R.id.open_marketplace).setOnClickListener {
+            startActivity(Intent(this, MarketplaceActivity::class.java))
+        }
+        findViewById<Button>(R.id.grant_storage).setOnClickListener { requestAllFilesAccess() }
+
+        SyncScheduler.startAll(this)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        render()
+    }
+
+    private fun render() {
+        val enrolled = config.isEnrolled
+        val storageOk = Environment.isExternalStorageManager()
+
+        status.text = buildString {
+            appendLine(if (enrolled) getString(R.string.status_enrolled) else getString(R.string.status_not_enrolled))
+            appendLine("Device owner: ${MdmDeviceAdminReceiver.isDeviceOwner(this@MainActivity)}")
+            appendLine("Server: ${config.serverUrl ?: "not configured"}")
+            appendLine("Device id: ${config.deviceId ?: "-"}")
+            appendLine("State version: ${config.stateVersion} (applied ${config.appliedStateVersion})")
+            appendLine("All-files access: $storageOk")
+        }
+
+        findViewById<Button>(R.id.grant_storage).isEnabled = !storageOk
+    }
+
+    private fun syncNow() {
+        lifecycleScope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching { Reconciler(applicationContext).sync() }
+            }
+            outcome.onSuccess { result ->
+                val message = if (result.errors.isEmpty()) {
+                    "Synced. State ${result.stateVersion}."
+                } else {
+                    "Synced with ${result.errors.size} problem(s): ${result.errors.first()}"
+                }
+                Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+                render()
+            }.onFailure {
+                Toast.makeText(this@MainActivity, "Sync failed: ${it.message}", Toast.LENGTH_LONG)
+                    .show()
+            }
+        }
+    }
+
+    private fun requestAllFilesAccess() {
+        // A Device Owner cannot grant this to itself: it is an app-op, not a runtime
+        // permission. One tap here is the supported route on stock Android (R1).
+        startActivity(
+            Intent(
+                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+        )
+    }
+}

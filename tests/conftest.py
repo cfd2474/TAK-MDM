@@ -67,7 +67,17 @@ def artifact_storage(tmp_path) -> LocalArtifactStorage:
 
 @pytest.fixture
 def settings() -> Settings:
-    return get_settings()
+    """Settings built in isolation from any local `.env`.
+
+    Reading the developer's `.env` made the suite depend on ambient machine state —
+    setting a real agent checksum locally broke a test asserting the behaviour when
+    none is configured. Tests must describe the code, not the workstation.
+    """
+    return Settings(
+        _env_file=None,
+        agent_signature_checksum="",
+        server_url="https://mdm.test.invalid",
+    )
 
 
 @pytest.fixture
@@ -76,6 +86,7 @@ def client(
     ca: CertificateAuthority,
     signer: BundleSigner,
     artifact_storage: LocalArtifactStorage,
+    settings: Settings,
 ) -> Iterator[TestClient]:
     def override() -> Iterator[Session]:
         with session_factory() as session:
@@ -85,6 +96,7 @@ def client(
     app.dependency_overrides[get_ca] = lambda: ca
     app.dependency_overrides[get_bundle_signer] = lambda: signer
     app.dependency_overrides[get_storage] = lambda: artifact_storage
+    app.dependency_overrides[get_settings] = lambda: settings
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
