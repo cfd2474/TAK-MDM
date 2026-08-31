@@ -3,13 +3,13 @@
 Running state file per [CLAUDE.md](CLAUDE.md). Read before starting any step;
 update after every completed step.
 
-**Last updated:** 2026-08-30
+**Last updated:** 2026-08-31
 
 ---
 
 ## Current status
 
-**Phase:** Chunk 6 agent built and unit-tested. **Awaiting first run on hardware.**
+**Phase:** Chunk 7 admin console complete. **Awaiting first agent run on hardware.**
 
 - ✅ Requirements gathered
 - ✅ Architecture written → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
@@ -22,8 +22,10 @@ update after every completed step.
   propagation. **F1–F5 all satisfied server-side.** 200 tests passing.
 - 🔨 **Chunk 6 built** — Kotlin Device Owner agent compiles and passes 9 unit tests;
   QR provisioning payloads now generate. **Unproven on hardware.**
+- ✅ **Chunk 7 complete** — admin console at http://localhost:8000. 222 tests passing.
 - ⏸️ **Next: factory-reset the `SM-X520` and enrol it**, which is the only way to
-  validate enrollment, install, file placement, and kiosk.
+  validate enrollment, install, file placement, and kiosk. Generate the QR from the
+  Enrollment page and watch the device appear on the dashboard.
 
 Chunks 1–3 plus the Docker stack are pushed to `origin/main`.
 
@@ -182,6 +184,14 @@ without Knox; Knox is strictly additive.
 | D14 | Stack: FastAPI + Postgres/SQLAlchemy 2.0/Alembic + MinIO + Postgres job table | 50-500 devices does not justify Celery or a CDN |
 
 Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+### Branding (2026-08-31)
+
+| # | Decision | Rationale |
+|---|---|---|
+| D61 | Project is named **ATLAS — ATAK Tactical Lifecycle & Administration System**, developed by **TAK-Solutions LLC** (authorship / attribution / copyright). Product family reserved: ATLAS Console / Agent / Fleet / Provisioning. | Gives the system an identity and room to name components as they grow. See [docs/BRANDING.md](docs/BRANDING.md). |
+| D63 | Licensed **Apache 2.0**, `Copyright 2026 TAK-Solutions LLC`. `LICENSE` + `NOTICE` at repo root; `FastAPI` `license_info` set; full boilerplate header on every `.py` / `.kt` / `.gradle.kts` source file (87 files) and the Alembic `script.py.mako` so generated migrations inherit it. New source files must carry the header. | Permissive, patent-grant, and the licence the operator's reference projects (Headwind CE, hmdm-android) already use — clean for mining and being mined. |
+| D62 | The rename touches **user-facing surfaces only** — README, FastAPI/OpenAPI metadata, CLI help, architecture docs. Code identifiers (`org.takmdm.agent`, `TAKMDM_` env prefix, `takmdm` DB role, cert OU, internal constants) are left unchanged. | The agent package name is load-bearing for QR provisioning payloads and signature-checksum pinning (D53–D60); the env prefix and DB names are baked into deployments. A deeper identifier rename is its own chunk if ever wanted — not cosmetic, not free. |
 
 ---
 
@@ -500,6 +510,46 @@ factory-reset tablet.
 | D59 | `server_ca_pem` travels in the provisioning extras | A self-signed development server cannot otherwise be trusted by the agent, and provisioning happens long before it could be told separately. Omitted automatically when no local certificate exists. |
 | D60 | Test settings are built with `_env_file=None` | The suite was reading the developer's `.env`; setting a real agent checksum locally broke a test asserting behaviour when none is configured. Tests must describe the code, not the workstation. |
 
+### ✅ Chunk 7 — Admin portal (COMPLETE)
+
+Moved ahead of the hardware test, deliberately. Everything demonstrated so far was
+verified by scripts whose output the operator had to take on trust; a portal is how
+they check the work rather than believe it. Watching a device appear during
+enrollment is also far more useful than reading a terminal.
+
+Server-rendered Jinja templates inside the existing FastAPI app: no Node, no build
+step, no extra container. `docker compose up` and it is there.
+
+1. **Chassis** — Jinja setup, base layout, plain CSS, device list for navigation.
+2. **Enrollment and QR** — create a token scoped to groups/tags, render a scannable
+   QR on screen instead of JSON in a terminal.
+3. **Policy stacking view** — for one device: every policy reaching it in rank
+   order, the resolved effective policy, and per-field provenance. The
+   differentiating feature made visible.
+4. **Policy editor** — create, publish new versions, archive; spec edited as JSON
+   beside a live reference of each field's type and merge strategy from the registry.
+5. **Bulk assignment (F2)** — pick a policy, select many devices/groups/tags, apply.
+6. **Harden the edge** — nginx must stop proxying admin routes. Adding a UI to a
+   path already reachable at `:8443` would publish an unauthenticated console to the
+   LAN. Only device-facing endpoints stay exposed.
+7. **Tests.**
+
+**Exit criteria met**, with 222 tests passing. Console at
+**http://localhost:8000** — devices, policy editor with live merge-strategy
+reference, bulk assignment, scannable enrollment QR, and a stacking view naming the
+winning policy, the strategy that chose each value, and what it overrode.
+
+#### Decisions taken during implementation
+
+| # | Decision | Rationale |
+|---|---|---|
+| D61 | Server-rendered Jinja inside the existing app | No Node, no build step, no second container. The console ships with `docker compose up` and stays readable by anyone who can read the Python. |
+| D62 | **nginx now default-denies and opts back in** | The console lives at `/` on the same application already proxied at `:8443`, so adding it silently published an unauthenticated admin surface to the LAN. Verified: every admin path returns 403 on the device port while `/api/v1/device/`, `/api/v1/enroll`, the agent APK, and `/healthz` still work. |
+| D63 | Admin routes are excluded from the OpenAPI schema | They are a human surface, not an API. Listing them invites treating them as one. |
+| D64 | Policy specs are edited as JSON beside a generated merge-strategy reference | A form generated from each type's schema would be prettier and would hide the thing that matters — that `min_length` merges by `MAX` and `allowed_packages` by `INTERSECT`. Operators need to predict stacking, so the reference is the feature. |
+| D65 | QR codes render as inline SVG | No image library, no external requests. The console may well run on an isolated network. |
+| D66 | The console shows a standing "no authentication" banner | It is the only thing between this and an open admin surface until SSO exists (R10). |
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |
@@ -522,6 +572,7 @@ factory-reset tablet.
 | R5 | Mixed SoC vendors (Qualcomm XCover6 Pro / MediaTek Tab S10+) on One UI 8 | Test every firmware-level behavior on **both** models |
 | R6 | ~~Advanced Protection Mode blocks Device Owner install~~ | ✅ **Downgraded to low, 2026-08-31.** The operator runs commercial MDMs and Headwind in production on this exact hardware and One UI 8, installing apps successfully. Device Owner `PackageInstaller` holds system install privilege and does not go through the user-facing "install unknown apps" gate — as predicted, now corroborated by production use rather than documentation. Residual risk is only a user *opting into* Advanced Protection, which a Device Owner can largely prevent by restricting Settings anyway. No lab work needed. |
 | R7 | mTLS header trust: nothing in code stops the app being exposed directly, where a copied certificate in `x-ssl-client-cert` would authenticate without the private key | **Partly mitigated.** A reference nginx config now ships in [docker/nginx/nginx.conf](docker/nginx/nginx.conf) — it always overwrites the header, so a forged one is stripped, and rejects uncertified requests to `/api/v1/device/` at the edge. `scripts/dev_enroll.py` verifies both behaviours on every run, and demonstrates the direct port accepting the forged header. **Still open in code:** the app does not refuse to start when no trusted proxy is configured. |
+| R10 | **The admin console has no authentication.** Anyone who reaches it can wipe the fleet. Currently mitigated only by placement: bound to `127.0.0.1:8000` in compose and 403'd at the reverse proxy, with a standing banner in the UI. | **Open. Must be closed before this leaves a single trusted machine.** Needs SSO or at minimum session auth, plus CSRF protection on the form posts. |
 | R9 | **Pre-granting `WRITE_EXTERNAL_STORAGE` locks an app out of `MANAGE_EXTERNAL_STORAGE`** on Android 11+. Auto-granting runtime permissions is otherwise the obvious thing to do as Device Owner, so this fails silently and looks like an unrelated storage bug. Confirmed in Headwind's source, where they work around it explicitly. | **Open, must be handled in Chunk 6.** When pre-granting permissions, detect apps declaring `MANAGE_EXTERNAL_STORAGE` and skip the legacy storage permissions for them. Affects ATAK directly. |
 | R8 | CA private key is stored unencrypted at `pki/ca.key` (mode 0600, gitignored). Anyone holding it can mint a device identity. | **Open.** Acceptable on a single trusted host where the DB is equally exposed; move behind a KMS/HSM before that stops being true. |
 | Q1 | ~~Which Samsung models / One UI versions?~~ | ✅ **Answered** — see device matrix |
@@ -538,6 +589,17 @@ factory-reset tablet.
 
 ## Changelog
 
+- **2026-08-31** — **Branding added.** Project named ATLAS (ATAK Tactical Lifecycle
+  & Administration System); product family reserved (Console / Agent / Fleet /
+  Provisioning) in new [docs/BRANDING.md](docs/BRANDING.md). Rebranded user-facing
+  surfaces only: README H1 + tagline, `FastAPI` title/summary, CLI description,
+  ARCHITECTURE.md header, the firewall-rule name printed by `setup_for_tablet.py`.
+  Code identifiers deliberately untouched (D61, D62). Developer/publisher recorded
+  as **TAK-Solutions LLC** — README footer, `FastAPI` `contact`, BRANDING.md.
+  Licensed **Apache 2.0** (D63): `LICENSE` + `NOTICE` at repo root, `FastAPI`
+  `license_info`, README License section, and the full boilerplate header
+  prepended to all 87 `.py` / `.kt` / `.gradle.kts` sources plus the Alembic
+  migration template. 200 tests still pass.
 - **2026-08-30** — Requirements gathered; operating envelope decided (offline-tolerant,
   50-500 devices, generic core + TAK pack); architecture written; Chunk 1 planned.
 - **2026-08-30** — Device matrix confirmed (XCover6 Pro `SM-G736U1`, Tab S10+

@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% set nav = 'enrollment' %}
+{% block title %}Enrollment — TAK MDM{% endblock %}
+
+{% block content %}
+<h1>Enrollment</h1>
+<p class="sub">
+  A token scoped to groups and tags places a device in its policy stack the moment
+  it enrols — no second assignment step.
+</p>
+
+{% if secret %}
+<div class="panel">
+  <div class="banner">
+    This is the only time the secret is shown. Only a hash is stored, so it cannot
+    be recovered later.
+  </div>
+  <p><strong>Secret</strong> <code>{{ secret }}</code></p>
+
+  {% if qr_svg %}
+    <h2 style="margin-top:20px">Scan from the setup wizard</h2>
+    <p class="sub">
+      On a <strong>factory-reset</strong> tablet, tap the welcome screen six times
+      in the same spot to open the QR scanner, then scan this. Device Owner can only
+      be established during initial setup — after setup completes, the only way back
+      is another factory reset.
+    </p>
+    <div style="background:#fff; padding:16px; display:inline-block; border-radius:8px">
+      {{ qr_svg | safe }}
+    </div>
+    <details style="margin-top:16px">
+      <summary class="muted">Payload</summary>
+      <pre style="margin-top:8px">{{ payload | pretty_json }}</pre>
+    </details>
+  {% else %}
+    <div class="banner bad">
+      QR withheld: {{ qr_unavailable }}
+      <br><br>
+      Upload the agent APK, then set its <code>provisioning_checksum</code> as
+      <code>TAKMDM_AGENT_SIGNATURE_CHECKSUM</code>. Android rejects provisioning
+      without it and the on-device failure says nothing useful, so a payload is not
+      generated rather than handing you one that fails on the tablet.
+    </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<h2>New token</h2>
+<div class="panel">
+  <form method="post" action="/enrollment">
+    <div class="row">
+      <div>
+        <label for="name">Name</label>
+        <input id="name" name="name" required style="width:100%" placeholder="Field rollout">
+
+        <label for="max_uses">Max uses (blank = unlimited until expiry)</label>
+        <input id="max_uses" name="max_uses" type="number" min="1" style="width:160px">
+        <p class="muted" style="font-size:12px">
+          Unlimited is the Knox Mobile Enrollment case: one profile enrols a whole
+          shipment.
+        </p>
+      </div>
+      <div>
+        <label>Place enrolling devices in these groups</label>
+        <div class="checks">
+          {% for g in groups %}
+            <label><input type="checkbox" name="group_ids" value="{{ g.id }}"> {{ g.name }}</label>
+          {% else %}<p class="muted">No groups.</p>{% endfor %}
+        </div>
+      </div>
+      <div>
+        <label>…and these tags</label>
+        <div class="checks">
+          {% for t in tags %}
+            <label><input type="checkbox" name="tag_ids" value="{{ t.id }}"> {{ t.name }}</label>
+          {% else %}<p class="muted">No tags.</p>{% endfor %}
+        </div>
+      </div>
+    </div>
+    <button type="submit" style="margin-top:14px">Create token</button>
+  </form>
+</div>
+
+<h2>Existing tokens</h2>
+<div class="panel">
+  {% if not tokens %}
+    <p class="muted">None yet.</p>
+  {% else %}
+  <table>
+    <thead><tr><th>Name</th><th>Prefix</th><th>Uses</th><th>Expires</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for t in tokens %}
+      <tr>
+        <td>{{ t.name }}</td>
+        <td class="mono">{{ t.prefix }}…</td>
+        <td class="mono">{{ t.use_count }}{% if t.max_uses %} / {{ t.max_uses }}{% endif %}</td>
+        <td class="muted">{{ t.expires_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td>
+          {% if t.revoked_at %}<span class="pill bad">revoked</span>
+          {% elif t.max_uses and t.use_count >= t.max_uses %}<span class="pill warn">used up</span>
+          {% else %}<span class="pill good">active</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% set nav = 'policies' %}
+{% block title %}{{ policy.name }} — TAK MDM{% endblock %}
+
+{% block content %}
+<h1>{{ policy.name }}</h1>
+<p class="sub">
+  <span class="pill">{{ policy.policy_type }}</span>
+  {{ policy.description or '' }}
+</p>
+
+{% if request.query_params.get('published') %}
+  <div class="banner">
+    New version published. Devices assigned to this policy were woken immediately.
+  </div>
+{% endif %}
+{% if request.query_params.get('assigned') %}
+  <div class="banner">Targets updated: {{ request.query_params.get('assigned') }} assignment(s).</div>
+{% endif %}
+
+<h2>Assign to devices</h2>
+<div class="panel">
+  <p class="sub">
+    Pick the policy, then everything it applies to. Unticking removes the
+    assignment — this form describes the complete target set.
+  </p>
+  <form method="post" action="/policies/{{ policy.id }}/targets">
+    <label for="rank">Rank (higher wins; scope only breaks ties)</label>
+    <input id="rank" name="rank" type="number" value="{{ current_rank }}" style="width:120px">
+
+    <div class="row" style="margin-top:14px">
+      <div>
+        <label>Devices</label>
+        <div class="checks">
+          {% for d in devices %}
+            <label>
+              <input type="checkbox" name="device_ids" value="{{ d.id }}"
+                     {% if d.id in assigned.device %}checked{% endif %}>
+              <span class="mono">{{ d.serial_number }}</span>
+              <span class="muted">{{ d.model or '' }}</span>
+            </label>
+          {% else %}<p class="muted">No devices enrolled.</p>{% endfor %}
+        </div>
+      </div>
+      <div>
+        <label>Groups</label>
+        <div class="checks">
+          {% for g in groups %}
+            <label>
+              <input type="checkbox" name="group_ids" value="{{ g.id }}"
+                     {% if g.id in assigned.group %}checked{% endif %}>
+              {{ g.name }}
+            </label>
+          {% else %}<p class="muted">No groups.</p>{% endfor %}
+        </div>
+      </div>
+      <div>
+        <label>Tags</label>
+        <div class="checks">
+          {% for t in tags %}
+            <label>
+              <input type="checkbox" name="tag_ids" value="{{ t.id }}"
+                     {% if t.id in assigned.tag %}checked{% endif %}>
+              {{ t.name }}
+            </label>
+          {% else %}<p class="muted">No tags.</p>{% endfor %}
+        </div>
+      </div>
+    </div>
+    <button type="submit" style="margin-top:14px">Apply</button>
+  </form>
+</div>
+
+<h2>Versions</h2>
+<div class="panel">
+  <p class="sub">
+    Published versions are immutable. Editing publishes a new one, so what a device
+    had in March stays answerable.
+  </p>
+  <table>
+    <thead><tr><th>Version</th><th>Published</th><th>Spec</th></tr></thead>
+    <tbody>
+    {% for v in policy.versions|reverse %}
+      <tr>
+        <td class="mono">v{{ v.version }}</td>
+        <td class="muted">{{ v.published_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td><pre>{{ v.spec | pretty_json }}</pre></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Publish a new version</h2>
+<div class="panel">
+  <div class="row">
+    <div>
+      <form method="post" action="/policies/{{ policy.id }}/versions">
+        <label for="spec">Spec (JSON)</label>
+        <textarea id="spec" name="spec" rows="14">{{ (policy.latest_version.spec if policy.latest_version else {}) | pretty_json }}</textarea>
+        <button type="submit" style="margin-top:10px">Publish</button>
+      </form>
+    </div>
+    <div>
+      <label>Fields and how they merge when stacked</label>
+      <div class="checks" style="max-height:420px">
+        <table>
+          <thead><tr><th>Field</th><th>Strategy</th></tr></thead>
+          <tbody>
+          {% for field, rule in definition.merge_rules.items() %}
+            <tr>
+              <td class="mono">{{ field }}</td>
+              <td>
+                <span class="pill">{{ rule.strategy }}</span>
+                {% if rule.note %}<br><small class="muted">{{ rule.note }}</small>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

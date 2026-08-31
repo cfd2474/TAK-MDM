@@ -1,3 +1,17 @@
+# Copyright 2026 TAK-Solutions LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Make the local server reachable from a tablet on the same Wi-Fi.
 
 Three things have to line up before a device can talk to a server running on a
@@ -102,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
     print("1. Allow the port through Windows Firewall.")
     print("   Open PowerShell AS ADMINISTRATOR and paste:")
     print()
-    print(f'     New-NetFirewallRule -DisplayName "TAK-MDM {args.port}" '
+    print(f'     New-NetFirewallRule -DisplayName "ATLAS {args.port}" '
           f"-Direction Inbound -LocalPort {args.port} -Protocol TCP -Action Allow")
     print()
     print("2. Restart the server so it picks up the new certificate and address.")

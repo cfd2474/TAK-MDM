@@ -1,10 +1,14 @@
-# TAK MDM
+# ATLAS
+
+**ATAK Tactical Lifecycle & Administration System**
 
 Self-hosted Android MDM for Samsung devices in Device Owner mode, built around
 **stackable policies**: small single-concern policies you compose per device,
-rather than one monolithic profile per use case.
+rather than one monolithic profile per use case. ATAK/TAK support is a
+first-class policy pack, not a bolt-on.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design,
+[docs/BRANDING.md](docs/BRANDING.md) for the name and product family, and
 [PROJECT_STATE.md](PROJECT_STATE.md) for current status.
 
 ## Getting started (Docker)
@@ -12,6 +16,14 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and
 ```bash
 docker compose up -d --build
 ```
+
+Then open **http://localhost:8000** for the admin console — fleet view, policy
+editor, bulk assignment, the per-device stacking view, and scannable enrollment QR
+codes. Interactive API docs are at `/docs`.
+
+> The console has **no authentication**. It is bound to loopback and blocked at the
+> reverse proxy, so it is not reachable from the device-facing port — but put SSO in
+> front of it before it leaves a single trusted machine.
 
 That brings up four services and applies migrations automatically:
 
@@ -282,3 +294,13 @@ set, so removals happen in the same call. `mode: "add"` is purely additive.
 | [app/api/](app/api/) | FastAPI routers and request/response models |
 | [app/db/](app/db/) | ORM models |
 | [alembic/](alembic/) | Migrations |
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+Copyright 2026 TAK-Solutions LLC.
+
+---
+
+Developed by **TAK-Solutions LLC**.

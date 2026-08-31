@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% set nav = 'policies' %}
+{% block title %}Policies — TAK MDM{% endblock %}
+
+{% block content %}
+<h1>Policies</h1>
+<p class="sub">
+  Single-concern and stackable. Build a password policy once and apply it wherever
+  it belongs, rather than rebuilding it inside every profile.
+</p>
+
+<div class="panel">
+  {% if not policies %}
+    <p class="muted">None yet.</p>
+  {% else %}
+  <table>
+    <thead><tr><th>Name</th><th>Type</th><th>Versions</th><th>Description</th></tr></thead>
+    <tbody>
+    {% for p in policies %}
+      <tr>
+        <td><a href="/policies/{{ p.id }}">{{ p.name }}</a></td>
+        <td><span class="pill">{{ p.policy_type }}</span></td>
+        <td class="mono">v{{ p.latest_version.version if p.latest_version else 0 }}</td>
+        <td class="muted">{{ p.description or '—' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
+<h2>New policy</h2>
+<div class="panel">
+  <form method="post" action="/policies">
+    <div class="row">
+      <div>
+        <label for="name">Name</label>
+        <input id="name" name="name" required style="width:100%" placeholder="Baseline Password">
+
+        <label for="policy_type">Type</label>
+        <select id="policy_type" name="policy_type" style="width:100%" onchange="showRef(this.value)">
+          {% for t in policy_types %}
+            <option value="{{ t.name }}">{{ t.name }} — {{ t.description }}</option>
+          {% endfor %}
+        </select>
+
+        <label for="description">Description</label>
+        <input id="description" name="description" style="width:100%">
+
+        <label for="spec">Spec (JSON)</label>
+        <textarea id="spec" name="spec" rows="10">{}</textarea>
+        <p class="muted" style="font-size:12px">
+          Only the fields you set are stored, so a narrow policy stacks on a broad
+          one without blanking it.
+        </p>
+        <button type="submit">Create</button>
+      </div>
+
+      <div>
+        <label>Fields and how they merge when stacked</label>
+        {% for t in policy_types %}
+        <div class="checks" id="ref-{{ t.name }}" style="display:none; max-height:420px">
+          <table>
+            <thead><tr><th>Field</th><th>Strategy</th></tr></thead>
+            <tbody>
+            {% for field, rule in t.merge_rules.items() %}
+              <tr>
+                <td class="mono">{{ field }}</td>
+                <td>
+                  <span class="pill">{{ rule.strategy }}</span>
+                  {% if rule.note %}<br><small class="muted">{{ rule.note }}</small>{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </form>
+</div>
+
+<script>
+  function showRef(name) {
+    document.querySelectorAll('[id^="ref-"]').forEach(el => el.style.display = 'none');
+    const target = document.getElementById('ref-' + name);
+    if (target) target.style.display = 'block';
+  }
+  showRef(document.getElementById('policy_type').value);
+</script>
+{% endblock %}

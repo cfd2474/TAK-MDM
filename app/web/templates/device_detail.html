@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% set nav = 'devices' %}
+{% block title %}{{ device.serial_number }} — TAK MDM{% endblock %}
+
+{% block content %}
+<h1 class="mono">{{ device.serial_number }}</h1>
+<p class="sub">
+  {{ device.model or 'unknown model' }} · Android {{ device.os_version or '?' }} ·
+  agent {{ device.agent_version or '—' }} ·
+  server has v{{ device.state_version }}, device applied v{{ device.acked_state_version }}
+</p>
+
+{% if device.compliance_detail %}
+  <div class="banner">Last reported problem: {{ device.compliance_detail }}</div>
+{% endif %}
+
+{% if conflicts %}
+  <div class="banner bad">
+    <strong>{{ conflicts|length }} conflict(s).</strong>
+    Two policies set the same field to different values and one had to be discarded.
+    <ul style="margin:6px 0 0">
+      {% for c in conflicts %}
+        <li>
+          <code>{{ c.policy_type }}.{{ c.field }}</code> resolved to
+          <code>{{ c.winning_value }}</code>
+          {% if c.winning_source %}from <em>{{ c.winning_source.policy_name }}</em>{% endif %},
+          discarding
+          {% for d in c.discarded %}<code>{{ d.value }}</code>
+            {%- if d.source %} from <em>{{ d.source.policy_name }}</em>{% endif %}{% if not loop.last %}, {% endif %}
+          {% endfor %}
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
+<h2>Policies reaching this device</h2>
+<div class="panel">
+  {% if not considered %}
+    <p class="muted">Nothing assigned. This device has an empty desired state.</p>
+  {% else %}
+  <p class="sub">
+    In resolution order — highest precedence first. Rank decides; scope only breaks ties.
+  </p>
+  <table>
+    <thead><tr><th>#</th><th>Policy</th><th>Version</th><th>Scope</th><th>Rank</th></tr></thead>
+    <tbody>
+    {% for source in considered %}
+      <tr>
+        <td class="muted">{{ loop.index }}</td>
+        <td>{{ source.policy_name }}</td>
+        <td class="mono">v{{ source.policy_version }}</td>
+        <td><span class="pill">{{ source.scope }}</span></td>
+        <td class="mono">{{ source.rank }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
+<h2>Effective policy</h2>
+<p class="sub">
+  Every field traced to the policy it came from, the strategy that chose it, and
+  what it beat. This is the question stacking makes hard: why does this value hold?
+</p>
+
+{% for policy_type, fields in values.items() %}
+<div class="panel">
+  <strong>{{ policy_type }}</strong>
+  <table style="margin-top:10px">
+    <thead><tr><th>Field</th><th>Value</th><th>Strategy</th><th>From</th><th>Overrode</th></tr></thead>
+    <tbody>
+    {% for field, value in fields.items() %}
+      {% set p = provenance.get(policy_type, {}).get(field, {}) %}
+      <tr>
+        <td class="mono">{{ field }}</td>
+        <td class="mono">{{ value }}</td>
+        <td><span class="pill">{{ p.strategy or '—' }}</span></td>
+        <td>
+          {% if p.source %}{{ p.source.policy_name }}
+          {% elif p.contributors %}<span class="muted">{{ p.contributors|length }} policies combined</span>
+          {% else %}—{% endif %}
+        </td>
+        <td class="muted">
+          {% for o in p.overridden or [] %}
+            {{ o.value }}{% if o.source %} ({{ o.source.policy_name }}){% endif %}{% if not loop.last %}; {% endif %}
+          {% else %}—{% endfor %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  <div class="panel"><p class="muted">No resolved values.</p></div>
+{% endfor %}
+
+{% if apps %}
+<h2>Apps</h2>
+<div class="panel">
+  <table>
+    <thead><tr><th>Package</th><th>Version</th><th>Parts</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for app in apps %}
+      <tr>
+        <td class="mono">{{ app.package_name }}</td>
+        <td class="mono">{{ app.version_code or '—' }}</td>
+        <td class="muted">{{ (app.files or [])|length }}</td>
+        <td>
+          {% if app.available %}<span class="pill good">resolved</span>
+          {% else %}<span class="pill bad">nothing uploaded</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if files.required or files.available %}
+<h2>Files</h2>
+<div class="panel">
+  <table>
+    <thead><tr><th>Name</th><th>Destination</th><th>Tier</th><th>Extract</th></tr></thead>
+    <tbody>
+    {% for f in files.required %}
+      <tr>
+        <td>{{ f.name or f.file_id }}</td>
+        <td class="mono">{{ f.dest_path or '—' }}</td>
+        <td><span class="pill">required</span></td>
+        <td class="muted">{{ f.extract_to if f.extract else '—' }}</td>
+      </tr>
+    {% endfor %}
+    {% for f in files.available %}
+      <tr>
+        <td>{{ f.title or f.name }}</td>
+        <td class="mono">{{ f.dest_path or '—' }}</td>
+        <td><span class="pill warn">optional</span></td>
+        <td class="muted">{{ f.extract_to if f.extract else '—' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

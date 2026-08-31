@@ -1,7 +1,10 @@
-# TAK-MDM Architecture
+# ATLAS Architecture
+
+**ATLAS — ATAK Tactical Lifecycle & Administration System.**
 
 Self-hosted Android MDM. Device Owner mode, sideloaded APK/XAPK deployment,
-Samsung Knox integration, stackable composable policies.
+Samsung Knox integration, stackable composable policies. See
+[BRANDING.md](BRANDING.md) for the name and product family.
 
 ## Operating envelope
 
