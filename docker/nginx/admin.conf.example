@@ -1,0 +1,79 @@
+# Admin entry point, behind an Authentik proxy provider.
+#
+# Copy into docker/nginx/ and include it from nginx.conf, or serve it from
+# whatever reverse proxy already fronts your Authentik deployment.
+#
+# Two separate front doors, on purpose:
+#
+#   :8443  device port  — mTLS, no Authentik. A tablet cannot perform an
+#                         interactive login, so putting an IdP in that path would
+#                         simply stop the fleet working.
+#   :9443  admin port   — Authentik forward auth. Humans only.
+#
+# The application enforces the same split internally (app/main.py), so a
+# misconfigured proxy cannot silently expose the console — but do not rely on one
+# layer alone.
+
+server {
+    listen 9443 ssl;
+    http2 on;
+    server_name _;
+
+    ssl_certificate     /pki/server.crt;
+    ssl_certificate_key /pki/server.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    # ---------------------------------------------------------------------- #
+    # Authentik outpost. Point this at your embedded or standalone outpost.
+    # ---------------------------------------------------------------------- #
+    location /outpost.goauthentik.io {
+        proxy_pass          http://authentik-outpost:9000/outpost.goauthentik.io;
+        proxy_set_header    Host $host;
+        proxy_set_header    X-Original-URL $scheme://$http_host$request_uri;
+        add_header          Set-Cookie $auth_cookie;
+        auth_request_set    $auth_cookie $upstream_http_set_cookie;
+        proxy_pass_request_body off;
+        proxy_set_header    Content-Length "";
+    }
+
+    location / {
+        auth_request /outpost.goauthentik.io/auth/nginx;
+        error_page 401 = @goauthentik_proxy_signin;
+        auth_request_set $auth_cookie $upstream_http_set_cookie;
+        add_header Set-Cookie $auth_cookie;
+
+        # Identity resolved by Authentik, handed to the application.
+        auth_request_set $authentik_username $upstream_http_x_authentik_username;
+        auth_request_set $authentik_groups   $upstream_http_x_authentik_groups;
+        auth_request_set $authentik_email    $upstream_http_x_authentik_email;
+        auth_request_set $authentik_name     $upstream_http_x_authentik_name;
+
+        # ------------------------------------------------------------------ #
+        # SECURITY-CRITICAL, exactly as with the mTLS certificate header.
+        #
+        # proxy_set_header always overwrites, so a client that supplies its own
+        # X-authentik-username cannot smuggle it through — the value below
+        # replaces it. Without these four lines anyone could assert any identity
+        # and any group membership.
+        # ------------------------------------------------------------------ #
+        proxy_set_header X-authentik-username $authentik_username;
+        proxy_set_header X-authentik-groups   $authentik_groups;
+        proxy_set_header X-authentik-email    $authentik_email;
+        proxy_set_header X-authentik-name     $authentik_name;
+
+        proxy_pass       http://takmdm_api;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+
+        # The console streams APK uploads through this path.
+        client_max_body_size 2048m;
+        proxy_request_buffering off;
+    }
+
+    location @goauthentik_proxy_signin {
+        internal;
+        add_header Set-Cookie $auth_cookie;
+        return 302 /outpost.goauthentik.io/start?rd=$request_uri;
+    }
+}

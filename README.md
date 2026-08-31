@@ -21,9 +21,30 @@ Then open **http://localhost:8000** for the admin console — fleet view, policy
 editor, bulk assignment, the per-device stacking view, and scannable enrollment QR
 codes. Interactive API docs are at `/docs`.
 
-> The console has **no authentication**. It is bound to loopback and blocked at the
-> reverse proxy, so it is not reachable from the device-facing port — but put SSO in
-> front of it before it leaves a single trusted machine.
+> Out of the box the console runs with `TAKMDM_ADMIN_AUTH_MODE=disabled` — open, and
+> loud about it. Fine on a loopback-bound development instance, not otherwise.
+
+### Admin authentication
+
+The console sits behind **Authentik**, which terminates the OIDC flow and forwards
+the identity; the application reads the headers and checks group membership. No OIDC
+code lives here, because duplicating discovery, PKCE, token exchange and refresh
+would add security-critical surface without adding capability.
+
+```bash
+TAKMDM_ADMIN_AUTH_MODE=forward_auth
+TAKMDM_ADMIN_GROUP=takmdm-admins
+```
+
+Put an Authentik proxy provider in front using
+[docker/nginx/admin.conf.example](docker/nginx/admin.conf.example), which serves the
+console on a **separate admin port** from the device port. That separation is
+required, not cosmetic: a tablet in its setup wizard cannot perform an interactive
+login, so `:8443` keeps mTLS with no Authentik in the path.
+
+With `forward_auth` on, every admin route fails closed — a missing header is a
+refusal, not anonymous access — and a signed-in user outside the admin group gets a
+403. Policy versions and enrollment tokens record who created them.
 
 That brings up four services and applies migrations automatically:
 

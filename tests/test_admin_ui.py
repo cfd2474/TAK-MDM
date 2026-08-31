@@ -48,9 +48,12 @@ def test_dashboard_renders_with_no_devices(client: TestClient):
     assert "No devices yet" in text_of(response.text)
 
 
-def test_console_warns_that_it_is_unauthenticated(client: TestClient):
-    """The warning is the only thing standing between this and an open console."""
-    assert "No authentication on this console" in text_of(client.get("/").text)
+def test_console_warns_when_auth_is_disabled(client: TestClient):
+    """With auth off, the banner is the only thing flagging an open console."""
+    body = text_of(client.get("/").text)
+
+    assert "Admin authentication is disabled" in body
+    assert "not signed in" in body
 
 
 def test_admin_routes_are_absent_from_the_api_schema(client: TestClient):

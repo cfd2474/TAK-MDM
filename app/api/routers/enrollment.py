@@ -36,12 +36,22 @@ from app.api.schemas import (
 )
 from app.config import Settings, get_settings
 from app.db.models import AppPackage, EnrollmentToken, PartRole
+from app.security.admin_auth import AdminIdentity, admin_required
 from app.security.bundle import BundleSigner
 from app.security.ca import CertificateAuthority, CertificateError
 from app.services import provisioning
 from app.services.enrollment import EnrollmentError, create_token, enroll_device, revoke_token
 
+# Administrative: token lifecycle and provisioning payload rendering. Guarded by
+# Authentik in main.py.
 router = APIRouter(prefix="/api/v1", tags=["enrollment"])
+
+# Device-facing and deliberately NOT behind admin auth. A tablet in its setup
+# wizard cannot perform an interactive login: enrollment is authenticated by the
+# token it carries, and the agent APK is verified by Android against the signature
+# checksum. Keeping these on a separate router makes that boundary explicit rather
+# than a per-endpoint detail someone can miss.
+device_router = APIRouter(prefix="/api/v1", tags=["enrollment"])
 
 
 def _provisioning_bundle(
@@ -72,6 +82,7 @@ def create_enrollment_token(
     payload: EnrollmentTokenCreate,
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
+    identity: AdminIdentity = Depends(admin_required),
 ) -> EnrollmentTokenCreated:
     """Create a token. The secret and provisioning payloads are returned once only."""
     issued = create_token(
@@ -81,6 +92,7 @@ def create_enrollment_token(
         max_uses=payload.max_uses,
         group_ids=payload.group_ids,
         tag_ids=payload.tag_ids,
+        created_by=None if identity.is_anonymous else identity.username,
     )
     session.commit()
 
@@ -129,7 +141,7 @@ def render_provisioning_payloads(
     return _provisioning_bundle(settings, payload.secret, payload.wifi)
 
 
-@router.get("/provisioning/agent.apk")
+@device_router.get("/provisioning/agent.apk")
 def download_agent_apk(
     session: Session = Depends(get_db),
     storage: ArtifactStorage = Depends(get_storage),
@@ -167,7 +179,9 @@ def download_agent_apk(
     )
 
 
-@router.post("/enroll", response_model=EnrollResponse, status_code=status.HTTP_201_CREATED)
+@device_router.post(
+    "/enroll", response_model=EnrollResponse, status_code=status.HTTP_201_CREATED
+)
 def enroll(
     payload: EnrollRequest,
     session: Session = Depends(get_db),

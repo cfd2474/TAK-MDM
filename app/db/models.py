@@ -229,6 +229,10 @@ class PolicyVersion(Base):
     spec: Mapped[dict] = mapped_column(JsonDict)
     notes: Mapped[str | None] = mapped_column(Text, default=None)
     published_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+    # Who published it. Nullable because versions created before authentication
+    # existed genuinely have no author, and inventing one would be a lie in an
+    # audit trail.
+    published_by: Mapped[str | None] = mapped_column(String(128), default=None)
 
     policy: Mapped[Policy] = relationship(back_populates="versions")
 
@@ -327,6 +331,8 @@ class EnrollmentToken(Base):
     use_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+    # A token authorizes devices onto the fleet, so who minted it is worth keeping.
+    created_by: Mapped[str | None] = mapped_column(String(128), default=None)
 
     groups: Mapped[list[DeviceGroup]] = relationship(
         secondary=enrollment_token_group, lazy="selectin"

@@ -163,6 +163,7 @@ def enrolled(client: TestClient):
                 "group_ids": group_ids or [],
                 "tag_ids": tag_ids or [],
             },
+            headers=ADMIN_HEADERS,
         )
         assert created.status_code == 201, created.text
         secret = created.json()["secret"]
@@ -188,12 +189,22 @@ def enrolled(client: TestClient):
 # --------------------------------------------------------------------------- #
 
 
+# Helper fixtures reach the admin API, which is guarded once forward auth is on.
+# Sending these always keeps them working in both modes; they are ignored when
+# authentication is disabled.
+ADMIN_HEADERS = {
+    "x-authentik-username": "test-admin",
+    "x-authentik-groups": "takmdm-admins",
+}
+
+
 @pytest.fixture
 def make_policy(client: TestClient):
     def _make(name: str, policy_type: str, spec: dict) -> dict:
         response = client.post(
             "/api/v1/policies",
             json={"name": name, "policy_type": policy_type, "spec": spec},
+            headers=ADMIN_HEADERS,
         )
         assert response.status_code == 201, response.text
         return response.json()
@@ -205,7 +216,9 @@ def make_policy(client: TestClient):
 def make_device(client: TestClient):
     def _make(serial: str = "R5CN00TAK01", model: str = "SM-G736U1") -> dict:
         response = client.post(
-            "/api/v1/devices", json={"serial_number": serial, "model": model}
+            "/api/v1/devices",
+            json={"serial_number": serial, "model": model},
+            headers=ADMIN_HEADERS,
         )
         assert response.status_code == 201, response.text
         return response.json()
@@ -231,7 +244,7 @@ def assign(client: TestClient):
         }
         if pinned_version is not None:
             body["pinned_version"] = pinned_version
-        response = client.post("/api/v1/assignments", json=body)
+        response = client.post("/api/v1/assignments", json=body, headers=ADMIN_HEADERS)
         assert response.status_code == 201, response.text
         return response.json()
 

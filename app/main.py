@@ -15,8 +15,10 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
+from app.config import get_settings
+from app.security import admin_auth
 from app.services import notifications
 from app.web import routes as web_routes
 
@@ -43,6 +45,7 @@ async def lifespan(_: FastAPI):
     on this loop, so notifications have to hop back onto it.
     """
     notifications.bus.bind_loop(asyncio.get_running_loop())
+    admin_auth.warn_if_unprotected(get_settings())
     yield
 
 
@@ -56,21 +59,37 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.include_router(policy_types.router)
-app.include_router(policies.router)
-app.include_router(inventory.router)
-app.include_router(assignments.router)
-app.include_router(effective.router)
-app.include_router(enrollment.router)
+# --------------------------------------------------------------------------- #
+# Device-facing. Never behind admin authentication: a tablet cannot perform an
+# interactive login. These authenticate by mTLS client certificate, or by the
+# enrollment token during provisioning.
+# --------------------------------------------------------------------------- #
 app.include_router(checkin.router)
-app.include_router(commands.router)
-app.include_router(packages.router)
 app.include_router(artifacts.router)
-app.include_router(files.router)
-app.include_router(files.selections_router)
-app.include_router(assignments.targets_router)
 app.include_router(wait.router)
-app.include_router(web_routes.router)
+app.include_router(enrollment.device_router)
+
+# --------------------------------------------------------------------------- #
+# Administrative. Guarded here rather than per endpoint, so a new route is
+# protected by default and forgetting the dependency cannot quietly expose one.
+# --------------------------------------------------------------------------- #
+_admin = [Depends(admin_auth.admin_required)]
+
+for admin_router in (
+    policy_types.router,
+    policies.router,
+    inventory.router,
+    assignments.router,
+    assignments.targets_router,
+    effective.router,
+    enrollment.router,
+    commands.router,
+    packages.router,
+    files.router,
+    files.selections_router,
+    web_routes.router,
+):
+    app.include_router(admin_router, dependencies=_admin)
 
 
 @app.get("/healthz", tags=["ops"])

@@ -22,7 +22,9 @@ update after every completed step.
   propagation. **F1–F5 all satisfied server-side.** 200 tests passing.
 - 🔨 **Chunk 6 built** — Kotlin Device Owner agent compiles and passes 9 unit tests;
   QR provisioning payloads now generate. **Unproven on hardware.**
-- ✅ **Chunk 7 complete** — admin console at http://localhost:8000. 222 tests passing.
+- ✅ **Chunk 7 complete** — admin console at http://localhost:8000
+- ✅ **Chunk 8 complete** — Authentik forward auth on the admin surface, closing
+  R10. 246 tests passing.
 - ⏸️ **Next: factory-reset the `SM-X520` and enrol it**, which is the only way to
   validate enrollment, install, file placement, and kiosk. Generate the QR from the
   Enrollment page and watch the device appear on the dashboard.
@@ -550,6 +552,70 @@ winning policy, the strategy that chose each value, and what it overrode.
 | D65 | QR codes render as inline SVG | No image library, no external requests. The console may well run on an isolated network. |
 | D66 | The console shows a standing "no authentication" banner | It is the only thing between this and an open admin surface until SSO exists (R10). |
 
+### ✅ Chunk 8 — Authentik OIDC for the admin surface (COMPLETE)
+
+Closes R10. The operator runs Authentik, and the console is to sit behind it,
+restricted to admin users.
+
+**Integration shape: forward auth, not a native OIDC client.** "Behind Authentik"
+means an Authentik proxy provider terminates the login flow and forwards identity
+headers; the application reads them. That keeps the entire OIDC dance — discovery,
+PKCE, token exchange, refresh, session cookies — out of this codebase, where it
+would be a large amount of security-critical code duplicating a solved problem.
+
+The trust model is identical to the mTLS one already in place: the proxy is
+authoritative, the proxy must strip inbound copies of the headers, and the app must
+never be directly reachable. That discipline already exists and is already tested,
+so this reuses it rather than inventing a second one. A native OIDC client stays
+possible later behind the same interface if the app ever needs to stand alone.
+
+**The device surface stays untouched.** Devices cannot perform an interactive login,
+so `:8443` keeps mTLS with no Authentik in the path. The nginx split built in
+Chunk 7 is what makes this separation clean.
+
+1. **Identity model** — `AdminIdentity` (username, email, display name, groups) and
+   an `admin_required` dependency.
+2. **Forward-auth mode** — read Authentik's headers, require membership of a
+   configured admin group, **fail closed** when enabled and headers are absent.
+3. **Explicit modes** — `disabled` for local development (loud startup warning) and
+   `forward_auth` for deployment. No silent middle ground.
+4. **Apply to every admin route** — split the enrollment router so device-facing
+   `/enroll` and the agent APK stay open while token administration is protected.
+5. **Attribution** — record who published a policy version and who minted an
+   enrollment token, now that there is an identity to record.
+6. **Deployment config** — an nginx admin server block using `auth_request` against
+   an Authentik outpost, plus documentation for wiring it to an existing instance.
+   Authentik itself is not bundled: it is a multi-service stack of its own.
+7. **Tests.**
+
+**Exit criteria met**, with 246 tests passing and verified live against the
+container in both modes:
+
+```
+forward_auth        /  /policies  /api/v1/*      no headers  → 401
+                    /api/v1/devices              wrong group → 403
+                    /                            admin       → 200, names the user
+device surface      agent.apk, mTLS check-in                 → 200 (unaffected)
+```
+
+#### Decisions taken during implementation
+
+| # | Decision | Rationale |
+|---|---|---|
+| D67 | **Forward auth, not a native OIDC client** | Discovery, PKCE, token exchange, refresh and session handling are a large amount of security-critical code solving a problem Authentik already solves. The trust model is identical to the mTLS one already in place, so both surfaces share one discipline instead of inventing a second. |
+| D68 | Exactly two modes: `disabled` and `forward_auth` | "Is the console protected right now?" must have a yes/no answer. A partial mode is one nobody can reason about. |
+| D69 | **Fail closed** when enabled and the header is absent | Treating a missing header as anonymous would make a misconfigured proxy silently equivalent to no protection. |
+| D70 | The guard is applied at **router registration**, not per endpoint | A new admin route is protected by default; forgetting a decorator cannot quietly expose one. |
+| D71 | The enrollment router is **split** into admin and device halves | `/enroll` and the agent APK must stay open — a tablet in its setup wizard cannot perform an interactive login. Separate routers make that boundary structural rather than a per-endpoint detail. |
+| D72 | Attribution columns are **nullable** | Versions published before authentication existed genuinely have no author. An honest gap in the audit trail beats a fabricated name. |
+| D73 | A loud startup warning when auth is disabled | Silence is how a console ends up open. The UI banner disappears once auth is on, so it does not train operators to ignore it. |
+
+**Deployment:** [docker/nginx/admin.conf.example](docker/nginx/admin.conf.example)
+carries the `auth_request` server block for an Authentik outpost on a **separate
+admin port**, keeping humans and devices on different front doors. Authentik itself
+is not bundled — it is a multi-service stack of its own, and the operator already
+runs one.
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |
@@ -572,7 +638,8 @@ winning policy, the strategy that chose each value, and what it overrode.
 | R5 | Mixed SoC vendors (Qualcomm XCover6 Pro / MediaTek Tab S10+) on One UI 8 | Test every firmware-level behavior on **both** models |
 | R6 | ~~Advanced Protection Mode blocks Device Owner install~~ | ✅ **Downgraded to low, 2026-08-31.** The operator runs commercial MDMs and Headwind in production on this exact hardware and One UI 8, installing apps successfully. Device Owner `PackageInstaller` holds system install privilege and does not go through the user-facing "install unknown apps" gate — as predicted, now corroborated by production use rather than documentation. Residual risk is only a user *opting into* Advanced Protection, which a Device Owner can largely prevent by restricting Settings anyway. No lab work needed. |
 | R7 | mTLS header trust: nothing in code stops the app being exposed directly, where a copied certificate in `x-ssl-client-cert` would authenticate without the private key | **Partly mitigated.** A reference nginx config now ships in [docker/nginx/nginx.conf](docker/nginx/nginx.conf) — it always overwrites the header, so a forged one is stripped, and rejects uncertified requests to `/api/v1/device/` at the edge. `scripts/dev_enroll.py` verifies both behaviours on every run, and demonstrates the direct port accepting the forged header. **Still open in code:** the app does not refuse to start when no trusted proxy is configured. |
-| R10 | **The admin console has no authentication.** Anyone who reaches it can wipe the fleet. Currently mitigated only by placement: bound to `127.0.0.1:8000` in compose and 403'd at the reverse proxy, with a standing banner in the UI. | **Open. Must be closed before this leaves a single trusted machine.** Needs SSO or at minimum session auth, plus CSRF protection on the form posts. |
+| R10 | ~~The admin console has no authentication~~ | ✅ **Closed (Chunk 8).** Authentik forward auth with group-based authorization, failing closed, applied at router registration. `disabled` remains the local-development default and says so loudly at startup and in the UI. |
+| R11 | **No CSRF protection on the console's form posts.** With forward auth, a signed-in administrator visiting a hostile page could have their browser submit a policy change or enrollment token. Authentik's session cookie would be sent with it. | **Open.** Needs a per-session token on the form posts. Lower severity than R10 was — it requires an authenticated victim and a targeted attack — but it is the natural next gap now that sessions exist. |
 | R9 | **Pre-granting `WRITE_EXTERNAL_STORAGE` locks an app out of `MANAGE_EXTERNAL_STORAGE`** on Android 11+. Auto-granting runtime permissions is otherwise the obvious thing to do as Device Owner, so this fails silently and looks like an unrelated storage bug. Confirmed in Headwind's source, where they work around it explicitly. | **Open, must be handled in Chunk 6.** When pre-granting permissions, detect apps declaring `MANAGE_EXTERNAL_STORAGE` and skip the legacy storage permissions for them. Affects ATAK directly. |
 | R8 | CA private key is stored unencrypted at `pki/ca.key` (mode 0600, gitignored). Anyone holding it can mint a device identity. | **Open.** Acceptable on a single trusted host where the DB is equally exposed; move behind a KMS/HSM before that stops being true. |
 | Q1 | ~~Which Samsung models / One UI versions?~~ | ✅ **Answered** — see device matrix |

@@ -51,6 +51,21 @@ class Settings(BaseSettings):
     # proxy, and the app must never be exposed directly to the internet.
     client_cert_header: str = "x-ssl-client-cert"
 
+    # --- Admin authentication (Authentik forward auth) -----------------------
+    # "disabled" for local development, "forward_auth" behind an Authentik proxy
+    # provider. There is deliberately no middle setting.
+    admin_auth_mode: str = "disabled"
+    # Membership required to administer. Blank means any authenticated user, which
+    # is only sensible if Authentik already restricts the application.
+    admin_group: str = "takmdm-admins"
+
+    # Headers an Authentik proxy provider sets. The proxy MUST strip inbound copies
+    # of these, exactly as it must for the mTLS client-certificate header.
+    admin_user_header: str = "x-authentik-username"
+    admin_groups_header: str = "x-authentik-groups"
+    admin_email_header: str = "x-authentik-email"
+    admin_name_header: str = "x-authentik-name"
+
     # --- Enrollment ----------------------------------------------------------
     enrollment_token_ttl_hours: int = 168  # 7 days
 

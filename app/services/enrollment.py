@@ -68,6 +68,7 @@ def create_token(
     max_uses: int | None = None,
     group_ids: Sequence[uuid.UUID] = (),
     tag_ids: Sequence[uuid.UUID] = (),
+    created_by: str | None = None,
 ) -> IssuedToken:
     secret = secrets.token_urlsafe(32)
 
@@ -77,6 +78,7 @@ def create_token(
         prefix=secret[:_PREFIX_LENGTH],
         expires_at=_utcnow() + timedelta(hours=ttl_hours),
         max_uses=max_uses,
+        created_by=created_by,
     )
     if group_ids:
         token.groups = list(session.scalars(select(DeviceGroup).where(DeviceGroup.id.in_(group_ids))))

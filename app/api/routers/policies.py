@@ -32,6 +32,7 @@ from app.api.deps import fetch_or_404, get_db
 from app.api.schemas import PolicyCreate, PolicyRead, PolicyVersionCreate, PolicyVersionRead
 from app.db.models import Policy, PolicyVersion
 from app.policies.registry import PolicyTypeError, registry
+from app.security.admin_auth import AdminIdentity, admin_required
 from app.services import effective_policy as eff
 
 router = APIRouter(prefix="/api/v1/policies", tags=["policies"])
@@ -93,6 +94,7 @@ def publish_version(
     policy_id: uuid.UUID,
     payload: PolicyVersionCreate,
     session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
 ) -> PolicyVersion:
     policy: Policy = fetch_or_404(session, Policy, policy_id, "policy")
     spec = _validated_spec(policy.policy_type, payload.spec)
@@ -103,6 +105,7 @@ def publish_version(
         version=(latest.version + 1) if latest else 1,
         spec=spec,
         notes=payload.notes,
+        published_by=None if identity.is_anonymous else identity.username,
     )
     session.add(version)
     session.flush()

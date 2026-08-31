@@ -95,12 +95,24 @@
     <a href="/enrollment" class="{{ 'on' if nav == 'enrollment' }}">Enrollment</a>
     <a href="/docs">API</a>
   </nav>
+  <span style="margin-left:auto" class="muted">
+    {% if identity and not identity.is_anonymous %}
+      {{ identity.label }}
+      {% if identity.groups %}<span class="pill">{{ identity.groups | join(', ') }}</span>{% endif %}
+    {% else %}
+      <span class="pill warn">not signed in</span>
+    {% endif %}
+  </span>
 </header>
 <main>
+  {% if not identity or identity.is_anonymous %}
   <div class="banner">
-    No authentication on this console. It is bound to loopback and blocked at the
-    reverse proxy — put SSO in front of it before it leaves this machine.
+    Admin authentication is disabled. This console is bound to loopback and blocked
+    at the device-facing port, but anyone who reaches it has full control — set
+    <code>TAKMDM_ADMIN_AUTH_MODE=forward_auth</code> behind Authentik before it is
+    reachable by anyone else.
   </div>
+  {% endif %}
   {% if request.query_params.get('error') %}
     <div class="banner bad">{{ request.query_params.get('error') }}</div>
   {% endif %}

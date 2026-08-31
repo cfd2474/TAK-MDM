@@ -18,9 +18,14 @@ Deliberately plain: Jinja templates and a little vanilla JavaScript inside the
 existing application, so there is no Node toolchain, no build step, and no second
 container to keep running. The whole console ships with `docker compose up`.
 
-**This surface has no authentication.** It is bound to loopback in the compose file
-and blocked at the reverse proxy, because publishing an unauthenticated console to
-the same port devices reach would be worse than having no console at all. See R10.
+Every route here is guarded by `admin_required`, applied at router registration in
+`app.main` so a new page is protected by default. In deployment that means an
+Authentik proxy provider in front; `admin_auth_mode=disabled` leaves it open and is
+for local development only.
+
+The console is also blocked at the device-facing port: it lives at `/` on the same
+application devices reach at :8443, so nginx default-denies there and opts back in
+only the device endpoints.
 """
 
 from __future__ import annotations
@@ -40,6 +45,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, get_storage
+from app.security.admin_auth import AdminIdentity, admin_required
 from app.artifacts.storage import ArtifactStorage
 from app.config import Settings, get_settings
 from app.db.models import (
@@ -65,7 +71,10 @@ _TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 _TEMPLATES.env.filters["pretty_json"] = lambda value: json.dumps(value, indent=2, sort_keys=True)
 
 
-def _render(request: Request, template: str, **context: Any) -> HTMLResponse:
+def _render(
+    request: Request, template: str, identity: AdminIdentity | None = None, **context: Any
+) -> HTMLResponse:
+    context["identity"] = identity
     return _TEMPLATES.TemplateResponse(request, template, context)
 
 
@@ -75,11 +84,16 @@ def _render(request: Request, template: str, **context: Any) -> HTMLResponse:
 
 
 @router.get("/", response_class=HTMLResponse)
-def dashboard(request: Request, session: Session = Depends(get_db)) -> HTMLResponse:
+def dashboard(
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
     devices = list(session.scalars(select(Device).order_by(Device.serial_number)))
     return _render(
         request,
         "devices.html",
+        identity=identity,
         devices=devices,
         policy_count=session.scalar(
             select(Policy).where(Policy.archived_at.is_(None)).limit(1)
@@ -96,7 +110,10 @@ def dashboard(request: Request, session: Session = Depends(get_db)) -> HTMLRespo
 
 @router.get("/devices/{device_id}", response_class=HTMLResponse)
 def device_detail(
-    device_id: uuid.UUID, request: Request, session: Session = Depends(get_db)
+    device_id: uuid.UUID,
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
 ) -> HTMLResponse:
     """The stacking view: what reaches this device, and why each value won."""
     device = session.get(Device, device_id)
@@ -113,6 +130,7 @@ def device_detail(
     return _render(
         request,
         "device_detail.html",
+        identity=identity,
         device=device,
         considered=considered,
         values=payload.get("values", {}),
@@ -129,13 +147,18 @@ def device_detail(
 
 
 @router.get("/policies", response_class=HTMLResponse)
-def list_policies(request: Request, session: Session = Depends(get_db)) -> HTMLResponse:
+def list_policies(
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
     policies = list(
         session.scalars(select(Policy).where(Policy.archived_at.is_(None)).order_by(Policy.name))
     )
     return _render(
         request,
         "policies.html",
+        identity=identity,
         policies=policies,
         policy_types=[registry.get(name).describe() for name in registry.names()],
     )
@@ -148,6 +171,7 @@ def create_policy(
     description: str = Form(default=""),
     spec: str = Form(default="{}"),
     session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
 ) -> RedirectResponse:
     try:
         parsed = json.loads(spec or "{}")
@@ -156,7 +180,13 @@ def create_policy(
         return _redirect(f"/policies?error={_quote(str(exc))}")
 
     policy = Policy(name=name, policy_type=policy_type, description=description or None)
-    policy.versions.append(PolicyVersion(version=1, spec=validated))
+    policy.versions.append(
+        PolicyVersion(
+            version=1,
+            spec=validated,
+            published_by=None if identity.is_anonymous else identity.username,
+        )
+    )
     session.add(policy)
     try:
         session.commit()
@@ -169,7 +199,10 @@ def create_policy(
 
 @router.get("/policies/{policy_id}", response_class=HTMLResponse)
 def policy_detail(
-    policy_id: uuid.UUID, request: Request, session: Session = Depends(get_db)
+    policy_id: uuid.UUID,
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
 ) -> HTMLResponse:
     policy = session.get(Policy, policy_id)
     if policy is None:
@@ -187,6 +220,7 @@ def policy_detail(
     return _render(
         request,
         "policy_detail.html",
+        identity=identity,
         policy=policy,
         definition=registry.get(policy.policy_type).describe(),
         devices=list(session.scalars(select(Device).order_by(Device.serial_number))),
@@ -199,7 +233,10 @@ def policy_detail(
 
 @router.post("/policies/{policy_id}/versions")
 def publish_version(
-    policy_id: uuid.UUID, spec: str = Form(...), session: Session = Depends(get_db)
+    policy_id: uuid.UUID,
+    spec: str = Form(...),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
 ) -> RedirectResponse:
     policy = session.get(Policy, policy_id)
     if policy is None:
@@ -216,6 +253,7 @@ def publish_version(
             policy_id=policy.id,
             version=(latest.version + 1) if latest else 1,
             spec=validated,
+            published_by=None if identity.is_anonymous else identity.username,
         )
     )
     session.flush()
@@ -230,6 +268,7 @@ def set_targets(
     request: Request,
     rank: int = Form(default=0),
     session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
 ) -> RedirectResponse:
     """Bulk assignment (F2): one policy, many targets, one action."""
     policy = session.get(Policy, policy_id)
@@ -287,10 +326,15 @@ def set_targets(
 
 
 @router.get("/enrollment", response_class=HTMLResponse)
-def enrollment_page(request: Request, session: Session = Depends(get_db)) -> HTMLResponse:
+def enrollment_page(
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
     return _render(
         request,
         "enrollment.html",
+        identity=identity,
         tokens=list(
             session.scalars(select(EnrollmentToken).order_by(EnrollmentToken.created_at.desc()))
         ),
@@ -309,6 +353,7 @@ def create_enrollment(
     max_uses: int | None = Form(default=None),
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
+    identity: AdminIdentity = Depends(admin_required),
 ) -> HTMLResponse:
     """Mint a token and render its QR immediately — the secret is shown once."""
     form = _sync_form(request)
@@ -319,6 +364,7 @@ def create_enrollment(
         max_uses=max_uses,
         group_ids=_uuids(form.getlist("group_ids")),
         tag_ids=_uuids(form.getlist("tag_ids")),
+        created_by=None if identity.is_anonymous else identity.username,
     )
     session.commit()
 
@@ -332,6 +378,7 @@ def create_enrollment(
     return _render(
         request,
         "enrollment.html",
+        identity=identity,
         tokens=list(
             session.scalars(select(EnrollmentToken).order_by(EnrollmentToken.created_at.desc()))
         ),

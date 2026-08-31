@@ -48,6 +48,11 @@ services:
       # Set by uploading the agent APK: the response's provisioning_checksum is
       # exactly what Android verifies the download against. Without it, QR payload
       # generation is withheld rather than producing something that fails on device.
+      # "disabled" leaves the console open and is for local development only.
+      # Set to forward_auth once an Authentik proxy provider is in front; see
+      # docker/nginx/admin.conf.example.
+      TAKMDM_ADMIN_AUTH_MODE: ${TAKMDM_ADMIN_AUTH_MODE:-disabled}
+      TAKMDM_ADMIN_GROUP: ${TAKMDM_ADMIN_GROUP:-takmdm-admins}
       TAKMDM_AGENT_SIGNATURE_CHECKSUM: ${TAKMDM_AGENT_SIGNATURE_CHECKSUM:-}
       TAKMDM_AGENT_APK_URL: ${TAKMDM_AGENT_APK_URL:-https://localhost:8443/api/v1/provisioning/agent.apk}
     volumes:

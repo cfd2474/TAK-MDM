@@ -98,6 +98,7 @@ class PolicyVersionRead(ORMModel):
     spec: dict[str, Any]
     notes: str | None
     published_at: datetime
+    published_by: str | None = None
 
 
 class PolicyCreate(BaseModel):
