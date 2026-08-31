@@ -25,3 +25,11 @@
 
 ## 5. SOLID Programming Principles
 - Always make sure code falls under the SOLID programming design principles.
+
+## 6. Environment Traps
+- Read "Operational notes" in `PROJECT_STATE.md` before debugging anything that
+  looks impossible — a correct change appearing to have no effect is almost always
+  a stale container or an unrestarted proxy, not a bug in the code.
+- Python source changes require `docker compose up -d --build`. Plain `up -d`
+  silently keeps the old image.
+- Changes under `docker/nginx/` or `pki/` require `docker compose restart proxy`.

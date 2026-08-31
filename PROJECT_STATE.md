@@ -166,6 +166,58 @@ without Knox; Knox is strictly additive.
 
 ---
 
+## Operational notes — read before debugging anything "impossible"
+
+Traps that have each cost real time in this project. When a change appears to have
+no effect, check this list before investigating the code.
+
+### Docker: `up -d` alone is usually not enough
+
+| Changed | Required command | Why |
+|---|---|---|
+| **Any Python source** | `docker compose up -d --build` | The source is `COPY`'d into the image at build time. Plain `up -d` restarts the container with the **old image**, so the change silently does not exist. |
+| **`docker/nginx/*.conf`** | `docker compose restart proxy` | The file is bind-mounted, so the container's config is unchanged and Compose sees no reason to recreate it. nginx reads its configuration once, at startup. |
+| **`pki/server.crt`** (e.g. after `scripts/setup_for_tablet.py`) | `docker compose restart proxy` | Same reason: nginx loads certificates at startup and keeps serving the old one. |
+| **`.env`** | `docker compose up -d` | Environment variables are container config, so Compose does recreate. No rebuild needed. |
+
+The failure mode is identical in all three cases and deeply misleading: the code is
+correct, the test is correct, and the result is wrong. **Default to
+`docker compose up -d --build`**, and restart `proxy` explicitly whenever anything
+under `docker/nginx/` or `pki/` changes.
+
+### Android build
+
+* **`JAVA_HOME` must be JDK 17**: `C:\Program Files\Microsoft\jdk-17.0.20.8-hotspot`.
+  Android Studio's bundled JBR is JDK 25, which Gradle 8.13 refuses — and it reports
+  the failure as the bare string `25.0.2`, which explains nothing.
+* Build: `cd agent && .\gradlew.bat assembleDebug` (`testDebugUnitTest` for tests).
+* `adb` is not on `PATH`; it lives at
+  `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe`.
+
+### Shell
+
+* The working directory **persists between tool calls and drifts across
+  Bash/PowerShell**. A `cd` in one call silently relocates the next. Use absolute
+  paths, or `Set-Location` explicitly at the top of each command.
+* Raw control characters in source files defeat exact-match editing. Use escapes
+  (`'\u000C'`) rather than literal bytes.
+
+### Alembic
+
+* Autogenerate emits bare `Text()` and `app.db.base.UtcDateTime` **without importing
+  either**. `alembic/script.py.mako` now pre-imports both (D35), but check the
+  generated file.
+* Autogenerate never infers `server_default`, so a new `NOT NULL` column **fails on
+  Postgres against a table that already has rows**. Add it by hand and verify by
+  migrating a seeded database, not an empty one.
+* The test suite runs on SQLite; Postgres-only failures surface solely in the
+  container. Always run `alembic upgrade head` against the real stack too.
+
+### Tests
+
+* Test settings are built with `_env_file=None` (D60). The suite once read the
+  developer's `.env` and broke when a real value was set locally. Keep it hermetic.
+
 ## Decisions made
 
 | # | Decision | Rationale |
