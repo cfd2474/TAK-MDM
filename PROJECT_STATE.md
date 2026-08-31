@@ -22,9 +22,9 @@ update after every completed step.
 
 Chunks 1–3 plus the Docker stack are pushed to `origin/main`.
 
-> **Before Chunk 5:** R1 and R6 remain unanswered and Chunk 5 is built directly on
-> them. The agent's file-push and install paths are the things they govern. One
-> session with an XCover6 Pro pointed at the running Docker stack settles both.
+> **Chunk 5 is no longer gated on hardware.** R6 is retired by production evidence;
+> R1 affects only the file-push path, not install, and the agent can be built with
+> that one path behind an interface until it is settled.
 
 ---
 
@@ -48,11 +48,25 @@ Chunks 1–3 plus the Docker stack are pushed to `origin/main`.
 |---|---|---|---|---|
 | `SM-G736U1` | Galaxy XCover6 Pro (US unlocked) | Snapdragon 778G (Qualcomm) | arm64-v8a | Rugged enterprise line. **Programmable XCover/Top key** — KSP-configurable, natural ATAK PTT binding. POGO dock, removable battery. Shipped Android 12, now on One UI 8. |
 | `SM-X828U` | Galaxy Tab S10+ (US carrier) | Dimensity 9300+ (MediaTek) | arm64-v8a | 12.4" WQXGA+, 5G, S Pen, IP68. Shipped Android 14, now on One UI 8. |
+| `SM-X520` | Galaxy Tab S10 FE | Exynos 1580 | arm64-v8a | 10.9", S Pen, IP68. Shipped Android 15, **confirmed on One UI 8**. Primary test device. |
 
-Both are Knox-capable enterprise-line devices (KME, KPE, E-FOTA eligible). Single
-ABI across the fleet — no ABI-split complexity in the artifact model, though the
-mixed Qualcomm/MediaTek SoC vendors mean firmware-level behavior must be verified
-on **both** models, never just one.
+All three are Knox-capable enterprise-line devices (KME, KPE, E-FOTA eligible) on
+One UI 8. Single ABI across the fleet — no ABI-split complexity in the artifact
+model — but **three different SoC vendors** (Qualcomm, MediaTek, Exynos), so
+firmware-level behaviour must be verified on each, never extrapolated from one.
+
+### Prior art and design intent
+
+The operator already runs **commercial MDM platforms and Headwind MDM in production
+on this hardware**, installing apps successfully. The goal for this project is to
+blend the behaviours worth keeping from each into one system: Hexnode's stackable
+policy model, Headwind's provisioning and silent-install approach, and file/app
+deployment without managed Google Play.
+
+Following Headwind's provisioning method is therefore a deliberate choice, not just
+a convergent one — it is a known-good path on these exact devices. Headwind is also
+a Samsung Knox partner, which independently supports the Knox-forward direction in
+D11.
 
 **External dependency:** Samsung Knox partner/developer application is *pending*.
 KME and KPE licensing are gated on it. The AOSP path must be fully functional
@@ -301,12 +315,12 @@ exists (Chunk 5).
 
 | # | Item | Status |
 |---|---|---|
-| R1 | `MANAGE_EXTERNAL_STORAGE` is an app-op, not a runtime permission — `setPermissionGrantState` does not grant it. Blocks arbitrary `/sdcard` writes and OBB placement. Confirmed workaround is `adb shell appops set`, which does not scale. Knox `ApplicationPolicy` may cover it on these devices — **unverified**. | **Open. Validate on real hardware before Chunk 5** — highest-value early experiment. |
+| R1 | `MANAGE_EXTERNAL_STORAGE` is an app-op, not a runtime permission — `setPermissionGrantState` does not grant it. Blocks arbitrary `/sdcard` writes and OBB placement. **Distinct from app install** (R6): installing APKs and writing files to arbitrary paths are different capabilities, and production success at the former says nothing about the latter. Independently corroborated as an industry-wide MDM pain point, not a local worry. Matters directly for the TAK pack, since ATAK config lives in `/sdcard/atak/` — not a MediaStore collection, so shared-storage APIs do not reach it. | **Open, but narrowed.** Likely resolutions in order of preference: Knox `ApplicationPolicy` permission control (Headwind is a Knox partner, suggesting this is how they solve it); a one-time user grant at provisioning, acceptable on a kiosk device; or agent preinstall. **Cheapest next step: ask whether Headwind's file-push to `/sdcard` paths already works on these One UI 8 devices** — that answers it with zero lab work. |
 | R2 | OBB placement for XAPKs inherits R1 | Open |
 | R3 | Knox partner application pending — gates KME and KPE | Tracking; AOSP path must not depend on it |
 | R4 | `INTERSECT` on app allowlists is correct but counter-intuitive | Make configurable per policy; show resulting set before publish |
 | R5 | Mixed SoC vendors (Qualcomm XCover6 Pro / MediaTek Tab S10+) on One UI 8 | Test every firmware-level behavior on **both** models |
-| R6 | **Android 16 Advanced Protection Mode** disables "install unknown apps", blocking sideloading. User-toggleable, and Android Enterprise policy control over it does not arrive until **Android 17**, so it cannot be suppressed by policy on this fleet. Device Owner installs via `PackageInstaller` hold system install privilege and *should* be unaffected — **unverified**. | **Open. Test alongside R1** — if DO install is affected, it invalidates the whole delivery model. |
+| R6 | ~~Advanced Protection Mode blocks Device Owner install~~ | ✅ **Downgraded to low, 2026-08-31.** The operator runs commercial MDMs and Headwind in production on this exact hardware and One UI 8, installing apps successfully. Device Owner `PackageInstaller` holds system install privilege and does not go through the user-facing "install unknown apps" gate — as predicted, now corroborated by production use rather than documentation. Residual risk is only a user *opting into* Advanced Protection, which a Device Owner can largely prevent by restricting Settings anyway. No lab work needed. |
 | R7 | mTLS header trust: nothing in code stops the app being exposed directly, where a copied certificate in `x-ssl-client-cert` would authenticate without the private key | **Partly mitigated.** A reference nginx config now ships in [docker/nginx/nginx.conf](docker/nginx/nginx.conf) — it always overwrites the header, so a forged one is stripped, and rejects uncertified requests to `/api/v1/device/` at the edge. `scripts/dev_enroll.py` verifies both behaviours on every run, and demonstrates the direct port accepting the forged header. **Still open in code:** the app does not refuse to start when no trusted proxy is configured. |
 | R8 | CA private key is stored unencrypted at `pki/ca.key` (mode 0600, gitignored). Anyone holding it can mint a device identity. | **Open.** Acceptable on a single trusted host where the DB is equally exposed; move behind a KMS/HSM before that stops being true. |
 | Q1 | ~~Which Samsung models / One UI versions?~~ | ✅ **Answered** — see device matrix |
@@ -331,6 +345,13 @@ exists (Chunk 5).
   around mixed SoC vendors. Corrected the Knox SDK deprecation rationale behind D11.
 - **2026-08-30** — Q2 closed: ATAK server is configured on the EUD, no upstream
   integration needed.
+- **2026-08-31** — **R6 retired, R1 narrowed.** The operator runs commercial MDMs and
+  Headwind in production on this hardware, installing apps successfully, which
+  settles the Advanced Protection question I had flagged as load-bearing and
+  unverified. R1 stands, because app install and arbitrary file writes are different
+  capabilities. Recorded prior art and the intent to blend Hexnode's policy model
+  with Headwind's provisioning. Added `SM-X520` (Tab S10 FE, Exynos) to the matrix —
+  a third SoC vendor.
 - **2026-08-31** — **Chunk 4 complete.** 168 tests passing, plus an end-to-end run
   against the Docker stack. Hand-written AXML and APK-signing-block parsers, so the
   server reads identity, version, and signing certificate out of an upload rather
