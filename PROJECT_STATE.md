@@ -106,10 +106,39 @@ requirements:
 Worth stating plainly: had the policy model matched, the right call would have been
 to discard this server and adopt theirs. It doesn't, and sunk cost played no part.
 
-What Headwind still buys us: it is proven on this exact hardware, and the Apache
-licence means its Device Owner lifecycle, Knox activation, silent-install and
-lockdown code can be read and lifted with attribution. That is where the remaining
-risk lives, and it is worth mining before writing Chunk 6 from a blank file.
+#### Source review of `h-mdm/hmdm-android` (2026-08-31)
+
+Cloned and read before committing to Chunk 6. It **corrected an earlier claim of
+mine**: I had said the repo was worth mining for Knox and lockdown code. It is not —
+those are not in the public repository.
+
+| Finding | Detail |
+|---|---|
+| Licence | Apache 2.0 confirmed, in-tree |
+| Language | 112 Java files, zero Kotlin |
+| **Knox** | **Absent.** Two matches for "samsung" across the whole tree, both unrelated UI comments. No Knox SDK dependency, no `libs/`. |
+| **Kiosk** | **Pro-gated.** `com.hmdm.launcher.pro.ProUtils` is a stub class: `isPro()` returns `false`, `kioskModeRequired()` returns `false`, header comment reads "In a free version, the class contains stubs". |
+| SDK target | `targetSdkVersion 34`, `compileSdk 34` — not yet targeting Android 15/16 |
+| Push | Eclipse Paho MQTT, i.e. a persistent broker connection rather than long-poll |
+| Provisioning | `SystemUtils` writes `/data/system/device_owner_2.xml` and `device_policies.xml` directly — a **rooted or platform-signed** path, not a normal Device Owner one |
+
+**R1, refined by real code.** Their automatic grant of `MANAGE_EXTERNAL_STORAGE`
+(`SystemUtils.autoSetPermission`, app-op 92) reflects into
+`AppOpsManager.setMode`, which needs `MANAGE_APP_OPS_MODES` — a
+`signature|privileged` permission. Combined with the direct `/data/system` writes in
+the same class, that whole path is for system-app or platform-signed builds. It is
+**not available to a normally-installed Device Owner**, so it confirms the R1
+analysis rather than dissolving it. Their ordinary path is
+`Environment.isExternalStorageManager()` plus a one-time user grant — exactly the
+fallback already planned.
+
+**A real gotcha worth the whole exercise** (`Utils.getRuntimePermissions`): on
+Android 11+, if a Device Owner pre-grants `WRITE_EXTERNAL_STORAGE` to an app, that
+app is then **locked out of requesting `MANAGE_EXTERNAL_STORAGE`**. Their workaround
+is to detect that an app declares `MANAGE_EXTERNAL_STORAGE` and deliberately *skip*
+granting the legacy storage permissions to it. Our agent must do the same when
+auto-granting permissions, or every all-files-access app we deploy — ATAK included —
+silently loses the ability to ask for it. See R9.
 
 ### Prior art and design intent
 
@@ -430,6 +459,7 @@ Delivered: [app/policies/specs/files.py](app/policies/specs/files.py),
 | R5 | Mixed SoC vendors (Qualcomm XCover6 Pro / MediaTek Tab S10+) on One UI 8 | Test every firmware-level behavior on **both** models |
 | R6 | ~~Advanced Protection Mode blocks Device Owner install~~ | ✅ **Downgraded to low, 2026-08-31.** The operator runs commercial MDMs and Headwind in production on this exact hardware and One UI 8, installing apps successfully. Device Owner `PackageInstaller` holds system install privilege and does not go through the user-facing "install unknown apps" gate — as predicted, now corroborated by production use rather than documentation. Residual risk is only a user *opting into* Advanced Protection, which a Device Owner can largely prevent by restricting Settings anyway. No lab work needed. |
 | R7 | mTLS header trust: nothing in code stops the app being exposed directly, where a copied certificate in `x-ssl-client-cert` would authenticate without the private key | **Partly mitigated.** A reference nginx config now ships in [docker/nginx/nginx.conf](docker/nginx/nginx.conf) — it always overwrites the header, so a forged one is stripped, and rejects uncertified requests to `/api/v1/device/` at the edge. `scripts/dev_enroll.py` verifies both behaviours on every run, and demonstrates the direct port accepting the forged header. **Still open in code:** the app does not refuse to start when no trusted proxy is configured. |
+| R9 | **Pre-granting `WRITE_EXTERNAL_STORAGE` locks an app out of `MANAGE_EXTERNAL_STORAGE`** on Android 11+. Auto-granting runtime permissions is otherwise the obvious thing to do as Device Owner, so this fails silently and looks like an unrelated storage bug. Confirmed in Headwind's source, where they work around it explicitly. | **Open, must be handled in Chunk 6.** When pre-granting permissions, detect apps declaring `MANAGE_EXTERNAL_STORAGE` and skip the legacy storage permissions for them. Affects ATAK directly. |
 | R8 | CA private key is stored unencrypted at `pki/ca.key` (mode 0600, gitignored). Anyone holding it can mint a device identity. | **Open.** Acceptable on a single trusted host where the DB is equally exposed; move behind a KMS/HSM before that stops being true. |
 | Q1 | ~~Which Samsung models / One UI versions?~~ | ✅ **Answered** — see device matrix |
 | Q2 | ~~Existing ATAK deployment to integrate with?~~ | ✅ **Answered** — no upstream integration; ATAK server is configured **on the EUD**, so the TAK pack is pure config push (Chunk 7) |
