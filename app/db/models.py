@@ -19,7 +19,6 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
-    DateTime,
     Enum,
     ForeignKey,
     Integer,
@@ -31,7 +30,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base, JsonDict
+from app.db.base import Base, JsonDict, UtcDateTime
 
 
 def _utcnow() -> datetime:
@@ -90,8 +89,8 @@ class Device(Base):
     # Monotonic counter bumped whenever the device's desired state changes. The
     # check-in protocol (Chunk 3) keys off this to decide whether to send a bundle.
     state_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    last_checkin_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    last_checkin_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
 
     groups: Mapped[list[DeviceGroup]] = relationship(
         secondary=device_group_member, back_populates="devices", lazy="selectin"
@@ -107,7 +106,7 @@ class DeviceGroup(Base):
     id: Mapped[uuid.UUID] = _uuid_pk()
     name: Mapped[str] = mapped_column(String(128), unique=True)
     description: Mapped[str | None] = mapped_column(Text, default=None)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
 
     devices: Mapped[list[Device]] = relationship(
         secondary=device_group_member, back_populates="groups"
@@ -119,7 +118,7 @@ class Tag(Base):
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     name: Mapped[str] = mapped_column(String(64), unique=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
 
     devices: Mapped[list[Device]] = relationship(
         secondary=device_tag_member, back_populates="tags"
@@ -142,8 +141,8 @@ class Policy(Base):
     # never requires a migration (Open/Closed).
     policy_type: Mapped[str] = mapped_column(String(64), index=True)
     description: Mapped[str | None] = mapped_column(Text, default=None)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+    archived_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
 
     versions: Mapped[list[PolicyVersion]] = relationship(
         back_populates="policy",
@@ -173,7 +172,7 @@ class PolicyVersion(Base):
     # on this — an unset field must not contribute to a merge.
     spec: Mapped[dict] = mapped_column(JsonDict)
     notes: Mapped[str | None] = mapped_column(Text, default=None)
-    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    published_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
 
     policy: Mapped[Policy] = relationship(back_populates="versions")
 
@@ -216,10 +215,95 @@ class Assignment(Base):
     # Higher rank wins. Authoritative over scope specificity, which only breaks ties.
     rank: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
 
     policy: Mapped[Policy] = relationship(lazy="selectin")
     pinned_version: Mapped[PolicyVersion | None] = relationship(lazy="selectin")
+
+
+# --------------------------------------------------------------------------- #
+# Enrollment and device identity
+# --------------------------------------------------------------------------- #
+
+enrollment_token_group = Table(
+    "enrollment_token_group",
+    Base.metadata,
+    Column(
+        "token_id", Uuid, ForeignKey("enrollment_token.id", ondelete="CASCADE"), primary_key=True
+    ),
+    Column("group_id", Uuid, ForeignKey("device_group.id", ondelete="CASCADE"), primary_key=True),
+)
+
+enrollment_token_tag = Table(
+    "enrollment_token_tag",
+    Base.metadata,
+    Column(
+        "token_id", Uuid, ForeignKey("enrollment_token.id", ondelete="CASCADE"), primary_key=True
+    ),
+    Column("tag_id", Uuid, ForeignKey("tag.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class EnrollmentToken(Base):
+    """A short-lived credential that authorizes one or more devices to enroll.
+
+    Only a hash of the secret is stored, so a database dump does not yield usable
+    enrollment credentials. The plaintext is returned exactly once, at creation.
+
+    Group and tag scoping is what makes enrollment a single step: a device that
+    enrolls with the "Field Tablets" token lands in that group and immediately
+    inherits its policy stack, with no second manual assignment.
+    """
+
+    __tablename__ = "enrollment_token"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(128))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # Leading characters of the secret, for identifying a token in the UI without
+    # being able to reconstruct it.
+    prefix: Mapped[str] = mapped_column(String(12))
+
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime)
+    # A KME profile can enroll a whole shipment, so one token legitimately serves
+    # many devices. NULL means unlimited until expiry.
+    max_uses: Mapped[int | None] = mapped_column(Integer, default=None)
+    use_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+    groups: Mapped[list[DeviceGroup]] = relationship(
+        secondary=enrollment_token_group, lazy="selectin"
+    )
+    tags: Mapped[list[Tag]] = relationship(secondary=enrollment_token_tag, lazy="selectin")
+
+    def is_usable(self, *, now: datetime) -> bool:
+        if self.revoked_at is not None or now >= self.expires_at:
+            return False
+        return self.max_uses is None or self.use_count < self.max_uses
+
+
+class DeviceCertificate(Base):
+    """A client certificate issued to a device.
+
+    Revocation is a row update rather than a CRL or OCSP responder (D25): at this
+    fleet size a database check during authentication is simpler to operate and
+    strictly more current than a periodically published list.
+    """
+
+    __tablename__ = "device_certificate"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("device.id", ondelete="CASCADE"), index=True
+    )
+    serial_hex: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    not_valid_after: Mapped[datetime] = mapped_column(UtcDateTime)
+    issued_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+    revoked_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+    revoked_reason: Mapped[str | None] = mapped_column(String(128), default=None)
+
+    device: Mapped[Device] = relationship(lazy="selectin")
 
 
 class EffectivePolicyCache(Base):
@@ -239,4 +323,4 @@ class EffectivePolicyCache(Base):
     state_version: Mapped[int] = mapped_column(Integer, nullable=False)
     payload: Mapped[dict] = mapped_column(JsonDict)
     stale: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    computed_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)

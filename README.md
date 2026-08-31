@@ -60,6 +60,35 @@ narrow policy stack on a broad one without clobbering it.
 Every resolved field carries where it came from, which strategy chose it, and what
 it overrode — so "why is this tablet's password length 12?" is always answerable.
 
+## Enrollment
+
+Create a token scoped to the groups and tags the device should join, and it arrives
+with its policy stack already resolved:
+
+```bash
+curl -X POST localhost:8000/api/v1/enrollment-tokens \
+  -H 'content-type: application/json' \
+  -d '{"name":"Field Rollout","group_ids":["<group-uuid>"],"max_uses":50}'
+```
+
+The response carries the secret **once**, plus ready-made provisioning payloads —
+the QR JSON for Device Owner setup-wizard enrollment, and the fields to paste into a
+Knox Mobile Enrollment profile. Only a hash of the secret is stored.
+
+The agent then generates an EC P-256 keypair in the Android Keystore (StrongBox on
+Samsung), posts a CSR to `POST /api/v1/enroll`, and receives a client certificate.
+Every later `POST /api/v1/device/checkin` authenticates by mTLS, so there is no
+bearer token to expire while a device is dark for a month.
+
+> **Deployment prerequisite.** mTLS terminates at your reverse proxy, which must
+> forward the verified certificate in `x-ssl-client-cert` **and strip that header
+> from inbound requests**. The app re-verifies issuer, signature, expiry, and
+> revocation, but possession of the private key is proven by the TLS handshake at
+> the proxy. Never expose the app directly.
+
+The device CA is generated on first use under `pki/` (gitignored). That private key
+can mint any device identity — treat it as the crown jewel.
+
 ## Layout
 
 | Path | Contents |

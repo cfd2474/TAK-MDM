@@ -19,8 +19,9 @@ from app.api.schemas import (
     TagCreate,
     TagRead,
 )
-from app.db.models import Device, DeviceGroup, Tag
+from app.db.models import Device, DeviceGroup, EnrollmentState, Tag
 from app.services import effective_policy as eff
+from app.services.enrollment import revoke_device_certificates
 
 router = APIRouter(prefix="/api/v1", tags=["inventory"])
 
@@ -53,6 +54,17 @@ def list_devices(session: Session = Depends(get_db)) -> list[Device]:
 
 @router.get("/devices/{device_id}", response_model=DeviceRead)
 def get_device(device: Device = Depends(require_device)) -> Device:
+    return device
+
+
+@router.post("/devices/{device_id}/retire", response_model=DeviceRead)
+def retire_device(
+    device: Device = Depends(require_device), session: Session = Depends(get_db)
+) -> Device:
+    """Retire a device and revoke its certificates, ending its access immediately."""
+    device.enrollment_state = EnrollmentState.RETIRED
+    revoke_device_certificates(session, device, reason="device retired")
+    session.commit()
     return device
 
 

@@ -1,6 +1,14 @@
 from fastapi import FastAPI
 
-from app.api.routers import assignments, effective, inventory, policies, policy_types
+from app.api.routers import (
+    assignments,
+    checkin,
+    effective,
+    enrollment,
+    inventory,
+    policies,
+    policy_types,
+)
 
 app = FastAPI(
     title="TAK MDM",
@@ -13,6 +21,8 @@ app.include_router(policies.router)
 app.include_router(inventory.router)
 app.include_router(assignments.router)
 app.include_router(effective.router)
+app.include_router(enrollment.router)
+app.include_router(checkin.router)
 
 
 @app.get("/healthz", tags=["ops"])

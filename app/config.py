@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -14,6 +15,33 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://takmdm:takmdm@localhost:5432/takmdm"
     sql_echo: bool = False
+
+    # Base URL devices use to reach this server. Goes into provisioning payloads.
+    server_url: str = "https://mdm.example.org"
+
+    # --- Device identity PKI -------------------------------------------------
+    pki_dir: Path = Path("pki")
+    ca_common_name: str = "TAK-MDM Device CA"
+    ca_validity_days: int = 3650
+    device_cert_validity_days: int = 825
+
+    # mTLS is terminated at the reverse proxy, which forwards the verified client
+    # certificate in this header. The app re-verifies chain, validity, and
+    # revocation, but possession of the private key is proven by the TLS handshake
+    # at the proxy — so this header MUST be stripped from inbound requests by that
+    # proxy, and the app must never be exposed directly to the internet.
+    client_cert_header: str = "x-ssl-client-cert"
+
+    # --- Enrollment ----------------------------------------------------------
+    enrollment_token_ttl_hours: int = 168  # 7 days
+
+    # --- Agent APK, for provisioning payloads --------------------------------
+    agent_package_name: str = "org.takmdm.agent"
+    agent_admin_receiver: str = "org.takmdm.agent/.MdmDeviceAdminReceiver"
+    agent_apk_url: str = "https://mdm.example.org/static/agent.apk"
+    # base64url SHA-256 of the agent's signing certificate. Android refuses to
+    # provision if this does not match the downloaded APK.
+    agent_signature_checksum: str = ""
 
 
 @lru_cache

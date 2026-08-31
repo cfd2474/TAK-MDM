@@ -9,15 +9,15 @@ update after every completed step.
 
 ## Current status
 
-**Phase:** Chunk 1 complete. Awaiting review before Chunk 2.
+**Phase:** Chunk 2 complete. Awaiting review before Chunk 3.
 
 - ✅ Requirements gathered
 - ✅ Architecture written → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- ✅ **Chunk 1 complete** — policy stacking engine, 58 tests passing
-- ⏸️ **Blocked on approval** to begin Chunk 2
+- ✅ **Chunk 1 complete** — policy stacking engine
+- ✅ **Chunk 2 complete** — enrollment, device PKI, mTLS auth. 86 tests passing.
+- ⏸️ **Blocked on approval** to begin Chunk 3
 
-Nothing is committed yet — `main` still has no commits. Review the working tree
-before the first commit.
+Chunk 1 is pushed to `origin/main`.
 
 ---
 
@@ -109,11 +109,63 @@ source, conflicts are reported, and preview diffs a change before publish.
 | D19 | Registry raises at import time if a field lacks exactly one `Merge` annotation | Adding a field and forgetting its merge rule would otherwise silently produce a field that never composes. |
 | D20 | Archived policies and disabled assignments stop applying but are never deleted | Preserves the history of what a device once had. |
 
+### ✅ Chunk 2 — Enrollment and device identity (COMPLETE)
+
+Turns an anonymous factory-reset tablet into a device the server can recognise
+cryptographically, and lands it in the right policy stack from Chunk 1 on arrival.
+
+1. **Enrollment tokens** — model + service. Secret stored hashed, with TTL, max
+   uses, and revocation. Scoped to groups/tags so an enrolling device inherits its
+   policy stack immediately rather than needing a second manual step.
+2. **Internal CA** — generate or load an EC P-256 root; sign device CSRs. EC because
+   Android Keystore and Samsung StrongBox handle it natively.
+3. **Enrollment endpoint** — token + CSR + device attributes → device record, signed
+   client certificate, CA chain, and server config.
+4. **mTLS device authentication** — a dependency that verifies the proxy-forwarded
+   client certificate against our CA (chain, validity window, revocation) and
+   resolves it to a `Device`.
+5. **Provisioning payloads** — QR JSON for Device Owner setup-wizard enrollment, and
+   a Knox Mobile Enrollment profile payload.
+6. **Authenticated check-in stub** — returns `state_version`, proving the Chunk 1
+   policy engine and Chunk 2 identity connect. The full desired-state protocol is
+   Chunk 3.
+7. **Tests** — token lifecycle, CSR signing, re-enrollment, revocation, auth rejection.
+
+**Exit criteria met.** A device presenting a valid enrollment token and a CSR
+receives a client certificate, lands in its assigned groups/tags with its policy
+stack already resolved, and authenticates a check-in by mTLS.
+
+Delivered: [app/security/ca.py](app/security/ca.py),
+[app/services/enrollment.py](app/services/enrollment.py),
+[app/services/provisioning.py](app/services/provisioning.py),
+[app/api/routers/enrollment.py](app/api/routers/enrollment.py),
+[app/api/routers/checkin.py](app/api/routers/checkin.py), mTLS dependency in
+[app/api/deps.py](app/api/deps.py). 86 tests passing.
+
+#### Decisions taken during implementation
+
+| # | Decision | Rationale |
+|---|---|---|
+| D21 | Enrollment token stored as SHA-256 hash; plaintext returned once at creation | A database dump yields no usable enrollment credential. Provisioning payloads are returned alongside it, since they embed the secret. |
+| D22 | EC P-256 throughout, RSA CSRs rejected | Native to Android Keystore and StrongBox, and far cheaper on the handshake every check-in performs. |
+| D23 | The CSR's subject is discarded; the server builds the certificate subject itself | A CSR's subject is attacker-controlled. Only the public key is taken, after verifying the CSR signature for proof of possession. |
+| D24 | Re-enrollment matches on **serial number** and re-adopts the existing device row | A wipe plus KME re-enroll is routine. A second row would orphan the device's history and silently drop the group membership driving its policy stack. Prior certificates are revoked on re-enroll. |
+| D25 | Revocation is a `revoked_at` column checked during auth, not a CRL or OCSP responder | At 50-500 devices a database check is simpler to operate and strictly more current than a periodically published list. |
+| D26 | Token group/tag scoping is **additive**, never replacing membership | Enrolling with a second token should add to a device's stack, not silently reset it. |
+| D27 | `UtcDateTime` type decorator normalizes all timestamps to aware UTC | Postgres returns aware datetimes, SQLite naive ones; comparing them raises. Fixing it in the type removes a dialect-dependent landmine from every expiry check. |
+
+#### Deployment prerequisite
+
+mTLS terminates at the **reverse proxy**, which forwards the verified certificate in
+`x-ssl-client-cert`. The app independently re-verifies issuer, signature, validity
+window, and revocation — but possession of the private key is proven only by the TLS
+handshake at the proxy. **That proxy must strip the header from inbound requests, and
+the app must never be exposed directly.** Not yet enforced in code; see R7.
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |
 |---|---|---|
-| 2 | Enrollment + identity | Tokens, CSR → mTLS client cert, QR payload + KME profile generation |
 | 3 | Check-in protocol | Desired-state endpoint, signed bundles, TTL'd transient command queue |
 | 4 | Artifact store | Content-addressed storage, APK/XAPK upload, server-side split extraction, signature validation |
 | 5 | Kotlin agent | Device Owner baseline, reconciler loop, `PackageInstaller`, file push |
@@ -134,6 +186,8 @@ source, conflicts are reported, and preview diffs a change before publish.
 | R4 | `INTERSECT` on app allowlists is correct but counter-intuitive | Make configurable per policy; show resulting set before publish |
 | R5 | Mixed SoC vendors (Qualcomm XCover6 Pro / MediaTek Tab S10+) on One UI 8 | Test every firmware-level behavior on **both** models |
 | R6 | **Android 16 Advanced Protection Mode** disables "install unknown apps", blocking sideloading. User-toggleable, and Android Enterprise policy control over it does not arrive until **Android 17**, so it cannot be suppressed by policy on this fleet. Device Owner installs via `PackageInstaller` hold system install privilege and *should* be unaffected — **unverified**. | **Open. Test alongside R1** — if DO install is affected, it invalidates the whole delivery model. |
+| R7 | mTLS header trust: nothing in code stops the app being exposed directly, where a copied certificate in `x-ssl-client-cert` would authenticate without the private key | **Open.** Ship a reference nginx/Caddy config that strips the header, and consider refusing to start unless a `trusted_proxy` setting is explicitly set. |
+| R8 | CA private key is stored unencrypted at `pki/ca.key` (mode 0600, gitignored). Anyone holding it can mint a device identity. | **Open.** Acceptable on a single trusted host where the DB is equally exposed; move behind a KMS/HSM before that stops being true. |
 | Q1 | ~~Which Samsung models / One UI versions?~~ | ✅ **Answered** — see device matrix |
 | Q2 | ~~Existing ATAK deployment to integrate with?~~ | ✅ **Answered** — no upstream integration; ATAK server is configured **on the EUD**, so the TAK pack is pure config push (Chunk 7) |
 
@@ -156,6 +210,12 @@ source, conflicts are reported, and preview diffs a change before publish.
   around mixed SoC vendors. Corrected the Knox SDK deprecation rationale behind D11.
 - **2026-08-30** — Q2 closed: ATAK server is configured on the EUD, no upstream
   integration needed.
+- **2026-08-30** — **Chunk 2 complete.** 86 tests passing. Device identity is a
+  hardware-backed EC P-256 keypair with an mTLS client certificate from an internal
+  CA; enrollment tokens are hashed at rest and scope a device into its groups/tags so
+  it arrives with its policy stack already resolved. Added R7 (mTLS header trust) and
+  R8 (CA key at rest). Fixed a dialect-dependent timestamp comparison bug with a
+  `UtcDateTime` type decorator (D27).
 - **2026-08-30** — **Chunk 1 complete.** 58 tests passing. Two caching bugs found and
   fixed by the tests before review: (a) invalidation deleted the cache row, destroying
   the baseline that distinguishes a real change from a cosmetic one, so every

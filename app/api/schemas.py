@@ -157,3 +157,85 @@ class PreviewRequest(BaseModel):
         if not self.add and not self.remove_assignment_ids:
             raise ValueError("preview requires at least one addition or removal")
         return self
+
+
+# --------------------------------------------------------------------------- #
+# Enrollment
+# --------------------------------------------------------------------------- #
+
+
+class WifiConfig(BaseModel):
+    ssid: str
+    password: str | None = None
+    security: Literal["WPA", "WEP", "NONE"] = "WPA"
+
+
+class EnrollmentTokenCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    ttl_hours: int | None = Field(default=None, ge=1, le=8760)
+    # None means unlimited until expiry — the KME case, where one profile enrolls a
+    # whole shipment.
+    max_uses: int | None = Field(default=None, ge=1, le=10_000)
+    group_ids: list[uuid.UUID] = Field(default_factory=list)
+    tag_ids: list[uuid.UUID] = Field(default_factory=list)
+    wifi: WifiConfig | None = None
+
+
+class EnrollmentTokenRead(ORMModel):
+    id: uuid.UUID
+    name: str
+    prefix: str
+    expires_at: datetime
+    max_uses: int | None
+    use_count: int
+    revoked_at: datetime | None
+    created_at: datetime
+    groups: list[GroupRead]
+    tags: list[TagRead]
+
+
+class EnrollmentTokenCreated(BaseModel):
+    """The one and only time the secret is returned."""
+
+    token: EnrollmentTokenRead
+    secret: str
+    provisioning: dict[str, Any]
+
+
+class ProvisioningRequest(BaseModel):
+    """Re-render provisioning payloads for a secret the operator already holds."""
+
+    secret: str
+    wifi: WifiConfig | None = None
+
+
+class EnrollRequest(BaseModel):
+    """Sent by the agent on first run. Public endpoint — the token is the credential."""
+
+    token: str = Field(min_length=1)
+    csr_pem: str = Field(min_length=1)
+    serial_number: str = Field(min_length=1, max_length=64)
+    model: str | None = None
+    imei: str | None = None
+    os_version: str | None = None
+    agent_version: str | None = None
+
+
+class EnrollResponse(BaseModel):
+    device_id: uuid.UUID
+    certificate_pem: str
+    ca_certificate_pem: str
+    not_valid_after: datetime
+    state_version: int
+
+
+class CheckinRequest(BaseModel):
+    state_version: int | None = None
+    agent_version: str | None = None
+    os_version: str | None = None
+
+
+class CheckinResponse(BaseModel):
+    device_id: uuid.UUID
+    state_version: int
+    policy_changed: bool

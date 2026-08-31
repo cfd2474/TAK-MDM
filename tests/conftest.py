@@ -10,13 +10,20 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.x509.oid import NameOID
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.deps import get_ca
+from app.config import Settings, get_settings
 from app.db.base import Base, get_session
 from app.main import app
+from app.security.ca import CertificateAuthority
 
 
 @pytest.fixture
@@ -32,15 +39,105 @@ def session_factory() -> Iterator[sessionmaker]:
 
 
 @pytest.fixture
-def client(session_factory: sessionmaker) -> Iterator[TestClient]:
+def db(session_factory: sessionmaker) -> Iterator[Session]:
+    """Direct session, for arranging state the API deliberately will not let you set."""
+    with session_factory() as session:
+        yield session
+
+
+@pytest.fixture
+def ca(tmp_path) -> CertificateAuthority:
+    """A throwaway CA per test, so the suite never touches a real PKI directory."""
+    return CertificateAuthority.load_or_create(
+        tmp_path / "pki", common_name="Test CA", validity_days=30
+    )
+
+
+@pytest.fixture
+def settings() -> Settings:
+    return get_settings()
+
+
+@pytest.fixture
+def client(
+    session_factory: sessionmaker, ca: CertificateAuthority
+) -> Iterator[TestClient]:
     def override() -> Iterator[Session]:
         with session_factory() as session:
             yield session
 
     app.dependency_overrides[get_session] = override
+    app.dependency_overrides[get_ca] = lambda: ca
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+# --------------------------------------------------------------------------- #
+# Certificate helpers
+# --------------------------------------------------------------------------- #
+
+
+def generate_csr(*, use_rsa: bool = False, common_name: str = "unverified") -> str:
+    """A CSR as the agent would produce it (EC P-256, matching Android Keystore)."""
+    key = (
+        rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        if use_rsa
+        else ec.generate_private_key(ec.SECP256R1())
+    )
+    csr = (
+        x509.CertificateSigningRequestBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)]))
+        .sign(key, hashes.SHA256())
+    )
+    return csr.public_bytes(serialization.Encoding.PEM).decode()
+
+
+@pytest.fixture
+def mtls_headers(settings: Settings):
+    """Simulate the reverse proxy forwarding a verified client certificate."""
+
+    def _headers(certificate_pem: str) -> dict[str, str]:
+        return {settings.client_cert_header: certificate_pem}
+
+    return _headers
+
+
+@pytest.fixture
+def enrolled(client: TestClient):
+    """Create a token, enroll a device, and return the enrollment response."""
+
+    def _enroll(
+        serial: str = "R5CN00TAK01",
+        *,
+        group_ids: list[str] | None = None,
+        tag_ids: list[str] | None = None,
+    ) -> dict:
+        created = client.post(
+            "/api/v1/enrollment-tokens",
+            json={
+                "name": "Test Token",
+                "group_ids": group_ids or [],
+                "tag_ids": tag_ids or [],
+            },
+        )
+        assert created.status_code == 201, created.text
+        secret = created.json()["secret"]
+
+        response = client.post(
+            "/api/v1/enroll",
+            json={
+                "token": secret,
+                "csr_pem": generate_csr(),
+                "serial_number": serial,
+                "model": "SM-G736U1",
+                "os_version": "16",
+            },
+        )
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    return _enroll
 
 
 # --------------------------------------------------------------------------- #

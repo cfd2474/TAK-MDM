@@ -5,3 +5,8 @@ __pycache__/
 .env
 .vscode/
 *.db
+
+# Device CA. The private key here can mint any device identity — never commit it.
+pki/
+*.key
+*.pem
