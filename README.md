@@ -7,7 +7,54 @@ rather than one monolithic profile per use case.
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and
 [PROJECT_STATE.md](PROJECT_STATE.md) for current status.
 
-## Getting started
+## Getting started (Docker)
+
+```bash
+docker compose up -d --build
+```
+
+That brings up four services and applies migrations automatically:
+
+| Service | Purpose |
+|---|---|
+| `db` | Postgres 16 |
+| `init` | One-shot: creates the device CA, bundle signing key, and a dev TLS cert into `./pki` |
+| `api` | The application, on `127.0.0.1:8000` — **loopback only, bypasses mTLS** |
+| `proxy` | nginx on `:8443`, terminating TLS and verifying client certificates |
+
+`init` runs first because nginx must read the device CA **at startup** to verify
+client certificates — it cannot be created lazily on first request.
+
+### Try it without an Android device
+
+```bash
+python scripts/dev_enroll.py --serial R5CN00TAK01
+```
+
+This runs the exact sequence the agent will: mint a token, generate an EC P-256
+keypair, submit a CSR, receive a client certificate, and check in over real mTLS —
+then verify the bundle signature using a **deliberately independent** canonical-JSON
+implementation. That last part is the contract the Kotlin agent must reimplement; if
+the two ever disagree, this script fails the same way a tablet in the field would.
+
+It finishes by demonstrating two things about the proxy: that a forged
+`X-SSL-Client-Cert` header is stripped at the edge (403), and that the direct API
+port accepts that same forged header — which is precisely why port 8000 is bound to
+loopback and why devices must always go through `:8443`.
+
+Certificates land in `pki/devices/<serial>/`, so you can keep poking at it:
+
+```bash
+curl --cacert pki/server.crt \
+     --cert pki/devices/R5CN00TAK01/device.crt \
+     --key  pki/devices/R5CN00TAK01/device.key \
+     -X POST https://localhost:8443/api/v1/device/checkin \
+     -H 'content-type: application/json' -d '{}'
+```
+
+Reset everything with `docker compose down -v && rm -rf pki`.
+
+## Getting started (without Docker)
 
 ```bash
 python -m venv .venv
@@ -16,6 +63,7 @@ pip install -r requirements.txt
 
 export TAKMDM_DATABASE_URL="postgresql+psycopg://takmdm:takmdm@localhost:5432/takmdm"
 alembic upgrade head
+python -m app.cli init-pki
 
 uvicorn app.main:app --reload
 ```
@@ -23,7 +71,7 @@ uvicorn app.main:app --reload
 Health check: `curl http://localhost:8000/healthz`
 Interactive API docs: <http://localhost:8000/docs>
 
-Tests run against in-memory SQLite and need no database:
+Tests run against in-memory SQLite and need no database or containers:
 
 ```bash
 pytest

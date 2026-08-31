@@ -245,7 +245,7 @@ changes no protocol, only how quickly a device notices.
 | R4 | `INTERSECT` on app allowlists is correct but counter-intuitive | Make configurable per policy; show resulting set before publish |
 | R5 | Mixed SoC vendors (Qualcomm XCover6 Pro / MediaTek Tab S10+) on One UI 8 | Test every firmware-level behavior on **both** models |
 | R6 | **Android 16 Advanced Protection Mode** disables "install unknown apps", blocking sideloading. User-toggleable, and Android Enterprise policy control over it does not arrive until **Android 17**, so it cannot be suppressed by policy on this fleet. Device Owner installs via `PackageInstaller` hold system install privilege and *should* be unaffected — **unverified**. | **Open. Test alongside R1** — if DO install is affected, it invalidates the whole delivery model. |
-| R7 | mTLS header trust: nothing in code stops the app being exposed directly, where a copied certificate in `x-ssl-client-cert` would authenticate without the private key | **Open.** Ship a reference nginx/Caddy config that strips the header, and consider refusing to start unless a `trusted_proxy` setting is explicitly set. |
+| R7 | mTLS header trust: nothing in code stops the app being exposed directly, where a copied certificate in `x-ssl-client-cert` would authenticate without the private key | **Partly mitigated.** A reference nginx config now ships in [docker/nginx/nginx.conf](docker/nginx/nginx.conf) — it always overwrites the header, so a forged one is stripped, and rejects uncertified requests to `/api/v1/device/` at the edge. `scripts/dev_enroll.py` verifies both behaviours on every run, and demonstrates the direct port accepting the forged header. **Still open in code:** the app does not refuse to start when no trusted proxy is configured. |
 | R8 | CA private key is stored unencrypted at `pki/ca.key` (mode 0600, gitignored). Anyone holding it can mint a device identity. | **Open.** Acceptable on a single trusted host where the DB is equally exposed; move behind a KMS/HSM before that stops being true. |
 | Q1 | ~~Which Samsung models / One UI versions?~~ | ✅ **Answered** — see device matrix |
 | Q2 | ~~Existing ATAK deployment to integrate with?~~ | ✅ **Answered** — no upstream integration; ATAK server is configured **on the EUD**, so the TAK pack is pure config push (Chunk 7) |
@@ -269,6 +269,12 @@ changes no protocol, only how quickly a device notices.
   around mixed SoC vendors. Corrected the Knox SDK deprecation rationale behind D11.
 - **2026-08-30** — Q2 closed: ATAK server is configured on the EUD, no upstream
   integration needed.
+- **2026-08-31** — **Local Docker stack** added (out of band, at user request):
+  Postgres + API + nginx mTLS terminator, with a one-shot PKI init because nginx
+  must read the device CA at startup. All three migrations verified against real
+  Postgres, not just the SQLite suite. `scripts/dev_enroll.py` simulates a device
+  end to end and verifies the bundle signature with an independent canonical-JSON
+  implementation — the contract the Kotlin agent must match. R7 partly mitigated.
 - **2026-08-31** — **Chunk 3 complete.** 121 tests passing. Desired-state check-in
   over mTLS: signed Ed25519 bundles sent only when the state changed, a TTL'd
   at-least-once command queue, and convergence tracking that separates server intent

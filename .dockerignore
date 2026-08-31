@@ -1,0 +1,14 @@
+.git/
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.vscode/
+.env
+*.db
+
+# Never bake keys into an image.
+pki/
+*.key
+*.pem
