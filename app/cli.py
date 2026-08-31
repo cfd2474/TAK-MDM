@@ -23,7 +23,9 @@ from app.security.bundle import BundleSigner
 from app.security.ca import CertificateAuthority
 
 
-def _write_dev_server_cert(pki_dir: Path, hostname: str) -> tuple[Path, Path]:
+def _write_dev_server_cert(
+    pki_dir: Path, hostname: str, extra_sans: list[str] | None = None
+) -> tuple[Path, Path]:
     """A self-signed TLS certificate for the local reverse proxy.
 
     **Development only.** A real deployment terminates TLS with a certificate from a
@@ -36,10 +38,19 @@ def _write_dev_server_cert(pki_dir: Path, hostname: str) -> tuple[Path, Path]:
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)])
     now = dt.datetime.now(dt.timezone.utc)
 
-    alt_names: list[x509.GeneralName] = [x509.DNSName(hostname)]
-    if hostname != "localhost":
-        alt_names.append(x509.DNSName("localhost"))
+    # A certificate is only valid for the names it lists. A tablet reaches this
+    # server by the PC's LAN address, not "localhost", so that address has to be in
+    # here or every connection from the device fails verification.
+    alt_names: list[x509.GeneralName] = [x509.DNSName("localhost")]
     alt_names.append(x509.IPAddress(ipaddress.ip_address("127.0.0.1")))
+
+    for name in [hostname, *(extra_sans or [])]:
+        if not name or name == "localhost":
+            continue
+        try:
+            alt_names.append(x509.IPAddress(ipaddress.ip_address(name)))
+        except ValueError:
+            alt_names.append(x509.DNSName(name))
 
     certificate = (
         x509.CertificateBuilder()
@@ -88,11 +99,15 @@ def init_pki(args: argparse.Namespace) -> int:
 
     if args.dev_server_cert:
         server_cert = pki_dir / "server.crt"
-        if server_cert.exists():
+        if server_cert.exists() and not args.force_server_cert:
             print(f"dev TLS cert:       {server_cert} (kept)")
         else:
-            cert_path, _ = _write_dev_server_cert(pki_dir, args.hostname)
+            # Only the TLS cert is reissued. The device CA is untouched, so
+            # already-enrolled devices keep working.
+            cert_path, _ = _write_dev_server_cert(pki_dir, args.hostname, args.san)
+            names = ", ".join(["localhost", "127.0.0.1", args.hostname, *args.san])
             print(f"dev TLS cert:       {cert_path} (self-signed, DEVELOPMENT ONLY)")
+            print(f"  valid for:        {names}")
 
     return 0
 
@@ -109,6 +124,18 @@ def main(argv: list[str] | None = None) -> int:
         help="also emit a self-signed TLS cert for the local proxy (development only)",
     )
     init.add_argument("--hostname", default="localhost", help="hostname for the dev TLS cert")
+    init.add_argument(
+        "--san",
+        action="append",
+        default=[],
+        metavar="NAME_OR_IP",
+        help="extra name or IP the dev TLS cert should be valid for (repeatable)",
+    )
+    init.add_argument(
+        "--force-server-cert",
+        action="store_true",
+        help="reissue the dev TLS cert even if one exists (leaves the device CA alone)",
+    )
     init.set_defaults(func=init_pki)
 
     args = parser.parse_args(argv)

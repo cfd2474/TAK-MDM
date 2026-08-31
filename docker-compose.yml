@@ -19,7 +19,16 @@ services:
   # certificates, so the PKI cannot be created lazily on first request.
   init:
     build: .
-    command: ["python", "-m", "app.cli", "init-pki", "--dev-server-cert", "--hostname", "localhost"]
+    # TAKMDM_LAN_ADDRESS comes from .env, written by scripts/setup_for_tablet.py, so
+    # a fresh PKI is valid for the address a tablet actually uses.
+    command:
+      - python
+      - -m
+      - app.cli
+      - init-pki
+      - --dev-server-cert
+      - --hostname
+      - ${TAKMDM_LAN_ADDRESS:-localhost}
     environment:
       TAKMDM_PKI_DIR: /pki
       TAKMDM_SKIP_DB_WAIT: "1"
@@ -33,7 +42,9 @@ services:
       TAKMDM_DATABASE_URL: postgresql+psycopg://takmdm:takmdm@db:5432/takmdm
       TAKMDM_PKI_DIR: /pki
       TAKMDM_ARTIFACT_DIR: /artifacts
-      TAKMDM_SERVER_URL: https://localhost:8443
+      # Baked into enrollment QR codes, so it must be an address the tablet can
+      # reach — not localhost, which a device would resolve to itself.
+      TAKMDM_SERVER_URL: ${TAKMDM_SERVER_URL:-https://localhost:8443}
     volumes:
       - ./pki:/pki
       # Uploaded APKs live outside the image so a rebuild does not discard them.
