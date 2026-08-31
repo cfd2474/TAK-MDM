@@ -69,7 +69,8 @@ Behaviours to replicate, drawn from Hexnode and from commercial platforms in use
 | F2 | **One-to-many assignment, policy-first** — open a policy, then select the devices it applies to | ❌ **Missing.** The API is assignment-centric: one policy to one target per call. Assigning to 50 devices means 50 calls. Needs a bulk `policy → targets` endpoint. |
 | F3 | **Immediate propagation** — a policy edit reaches associated devices at once and is applied, including installs and blocklists | ❌ **Missing.** Devices poll on a ~15 min jittered interval, so a change can take that long. Needs a wake mechanism. |
 | F4 | **User-selectable file installs from a marketplace app** — the admin curates a repo of files and their destinations; the *end user* chooses from an in-app catalog which ones to install | ❌ **Missing.** Everything today is mandatory desired state. Needs an optional/available tier alongside required, plus reporting of what the user took. |
-| F5 | **Admin-controlled zip expansion** — a file entry may be a zip the admin marks for automatic extraction into a designated directory | ❌ **Missing.** |
+| F5 | **Admin-controlled zip expansion** — a file entry may be a zip the admin marks for automatic extraction into a designated directory | ✅ Built (Chunk 5) |
+| F6 | **Kiosk/launcher is optional, never the default** — the agent stays out of the way unless a policy asks for lockdown | ✅ Already modelled: `APP_CATALOG.kiosk_package` set means kiosk, unset means a background agent. Agent side lands in Chunk 6. |
 
 F3 is the one that changes an existing decision. D7 made push a latency optimization
 and never a correctness dependency; F3 makes low latency a product requirement. The
@@ -79,6 +80,36 @@ that goes dark — but to add a best-effort wake channel on top of it.
 F4 introduces a genuinely new concept: state the server *offers* rather than
 *requires*. The desired-state model so far has been strictly mandatory, so
 "available" items and a record of which the user accepted are both new.
+
+### Evaluated: forking Headwind MDM as the project base (2026-08-31)
+
+**Decision: no. Keep this server, write our own agent, mine Headwind as reference.**
+
+Licensing was not the obstacle — the Community Edition is **Apache licensed**, so
+borrowing code is legally clean (note the open-core caveat: Enterprise customers get
+additional agent source in a private repository, so the public agent may not be
+everything the commercial product ships).
+
+Two architectural mismatches decided it, both on points the operator named as
+requirements:
+
+1. **Headwind applies one configuration per device group** — every device in a group
+   retrieves the same configuration. That is precisely the "one policy fits all"
+   model this project exists to replace (F1). Adopting it would mean gutting its core
+   data model to fit stacked, ranked, per-field-merged policies, inside an unfamiliar
+   Java/Tomcat/AngularJS codebase, against a moving upstream. Harder than building it.
+2. **Their agent is a launcher** — owning the home screen is its central assumption.
+   The operator wants kiosk available but *not* default (F6). Subtracting launcher
+   behaviour from a launcher is a fight; adding kiosk to a background agent is a
+   policy flag and two Android API calls.
+
+Worth stating plainly: had the policy model matched, the right call would have been
+to discard this server and adopt theirs. It doesn't, and sunk cost played no part.
+
+What Headwind still buys us: it is proven on this exact hardware, and the Apache
+licence means its Device Owner lifecycle, Knox activation, silent-install and
+lockdown code can be read and lifted with attribution. That is where the remaining
+risk lives, and it is worth mining before writing Chunk 6 from a blank file.
 
 ### Prior art and design intent
 
