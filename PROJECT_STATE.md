@@ -22,9 +22,11 @@ update after every completed step.
 
 Chunks 1–3 plus the Docker stack are pushed to `origin/main`.
 
-> **Chunk 5 is no longer gated on hardware.** R6 is retired by production evidence;
-> R1 affects only the file-push path, not install, and the agent can be built with
-> that one path behind an interface until it is settled.
+> **Chunk 5 is unblocked.** R6 and R1 are both retired by production evidence from
+> the operator's existing deployments. Build toolchain confirmed present: JDK 17,
+> Android SDK with the API 36 (Android 16) platform, build-tools 36.0.0, and `adb` at
+> `%LOCALAPPDATA%\Android\Sdk\platform-tools`. The agent can be compiled and
+> installed on the test tablet from this machine.
 
 ---
 
@@ -315,7 +317,7 @@ exists (Chunk 5).
 
 | # | Item | Status |
 |---|---|---|
-| R1 | `MANAGE_EXTERNAL_STORAGE` is an app-op, not a runtime permission — `setPermissionGrantState` does not grant it. Blocks arbitrary `/sdcard` writes and OBB placement. **Distinct from app install** (R6): installing APKs and writing files to arbitrary paths are different capabilities, and production success at the former says nothing about the latter. Independently corroborated as an industry-wide MDM pain point, not a local worry. Matters directly for the TAK pack, since ATAK config lives in `/sdcard/atak/` — not a MediaStore collection, so shared-storage APIs do not reach it. | **Open, but narrowed.** Likely resolutions in order of preference: Knox `ApplicationPolicy` permission control (Headwind is a Knox partner, suggesting this is how they solve it); a one-time user grant at provisioning, acceptable on a kiosk device; or agent preinstall. **Cheapest next step: ask whether Headwind's file-push to `/sdcard` paths already works on these One UI 8 devices** — that answers it with zero lab work. |
+| R1 | Writing to `/sdcard/atak/` needs `MANAGE_EXTERNAL_STORAGE`, an app-op that `setPermissionGrantState` does not grant. Matters for the TAK pack: ATAK config is not in a MediaStore collection, so shared-storage APIs do not reach it. | ✅ **Downgraded to an implementation choice, 2026-08-31.** The operator has seen a commercial MDM push files into ATAK directories on Device Owner devices with an MDM app as manager. So it is demonstrably achievable and no longer a design risk — only a question of which mechanism. On Samsung the overwhelmingly likely answer is Knox permission/app-op control, which is already the chosen path (D11). **Design response:** file push sits behind its own interface with a Knox implementation first and a one-time-grant fallback (Settings special-access, or a persisted SAF directory grant — one tap at provisioning, acceptable on a kiosk device). Costs nothing to build defensively, so no further investigation is warranted before Chunk 5. |
 | R2 | OBB placement for XAPKs inherits R1 | Open |
 | R3 | Knox partner application pending — gates KME and KPE | Tracking; AOSP path must not depend on it |
 | R4 | `INTERSECT` on app allowlists is correct but counter-intuitive | Make configurable per policy; show resulting set before publish |
@@ -345,6 +347,11 @@ exists (Chunk 5).
   around mixed SoC vendors. Corrected the Knox SDK deprecation rationale behind D11.
 - **2026-08-30** — Q2 closed: ATAK server is configured on the EUD, no upstream
   integration needed.
+- **2026-08-31** — **R1 retired too.** The operator has seen a commercial MDM push
+  files into ATAK directories on Device Owner devices, so file push is demonstrably
+  achievable and reduces to picking a mechanism — Knox on Samsung, with a one-time
+  grant as fallback. Both hardware risks that were gating Chunk 5 are now closed by
+  field evidence rather than lab work. Android build toolchain confirmed present.
 - **2026-08-31** — **R6 retired, R1 narrowed.** The operator runs commercial MDMs and
   Headwind in production on this hardware, installing apps successfully, which
   settles the Advanced Protection question I had flagged as load-bearing and
