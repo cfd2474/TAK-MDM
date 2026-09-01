@@ -219,8 +219,19 @@ Both name the agent, so this was `PackageInstaller` under Device Owner privilege
 rather than an `adb install`. No "install unknown apps" prompt appeared, as
 documented.
 
-**Split installs remain unverified** — writing base plus splits into one session
-has not run on hardware.
+✅ **Split installs verified too.** A real 7-part app (Butterfly IQ 2.49.0, an XAPK
+unpacked server-side into base + 6 splits, 323 MB) installed into a single session.
+Android lists every part:
+
+```
+splits=[base, config.arm64_v8a, config.en, config.xhdpi, dltools, firmware, quicktips]
+```
+
+Base is written first and the splits after, as documented above. Real ATAK 5.8.0.4
+(`com.atakmap.app.civ`, 107 MB, single APK) likewise installed unattended.
+
+✅ **v3 signing blocks parse correctly.** Both production apps are v3-signed; the
+hand-written parser had only ever been exercised against v2 before.
 
 ### ⚠️ Replacing the agent kills it, and nothing restarts it
 

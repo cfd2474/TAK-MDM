@@ -24,3 +24,7 @@ agent/local.properties
 
 # Generated provisioning payloads embed a live enrollment token.
 qr_payload*.json
+
+# Real vendor APKs used for hardware testing. Hundreds of megabytes, and not ours
+# to redistribute.
+Test Files/

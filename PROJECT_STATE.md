@@ -9,10 +9,10 @@ update after every completed step.
 
 ## Current status
 
-**Phase:** ✅ **Chunks 10–13 complete.** R11 and R13 closed. **App install and
-upgrade proven on hardware** — agent v15 (`0.4.2`) on `SM-X520`. Split-APK install
-is still unproven; the uploaded `com.atakmap.app` is a synthetic fixture, not the
-real application. Agent
+**Phase:** ✅ **Chunks 10–13 complete.** R11 and R13 closed. **App install, upgrade
+and split install all proven on hardware** — agent v15 (`0.4.2`) on `SM-X520`,
+running real ATAK 5.8.0.4 and a 7-part Butterfly IQ. The Chunk 4 pipeline is
+validated end to end against production artifacts. Agent
 **v13 (`0.4.0`)** running on `SM-X520`, compliant, `state 2 = acked 2` and now
 correctly identified by its hardware serial `R5GL40MMHRN`.
 310 server tests + 30 agent tests.
@@ -51,7 +51,7 @@ written but have never actually run on a device:
 
 | Unproven | Why it matters |
 |---|---|
-| ~~**App install**~~ ✅ **Proven 2026-09-01** — installed *and* upgraded by the agent on `SM-X520`, with Android recording `installerPackageName=org.takmdm.agent`. **Split APKs are still unproven**: writing base plus splits into one session has never run, and the uploaded ATAK is a 1.3 KB synthetic fixture, not the real app. |
+| ~~**App install** (`PackageInstaller`, split APKs)~~ | ✅ **Proven 2026-09-01**, including splits. Real ATAK (107 MB, single APK) and real Butterfly IQ (**XAPK → base + 6 splits**, 323 MB) both installed by the agent; Android lists all seven parts and records `installerPackageName=org.takmdm.agent`. Upgrade proven too (`versionCode 1 → 2`). |
 | **File placement and zip extraction** | Needs all-files access; the R1 path |
 | **Marketplace** (optional file selection) | F4 end to end |
 | **Kiosk / lock task** | F6 |
@@ -1160,7 +1160,7 @@ its next re-enrolment — the precise failure the chunk exists to prevent.
 | D101 | The migration **backfills every existing serial as a `LEGACY` identifier** | Preserves current matching exactly, whatever that string happens to be. Skipping it would orphan every enrolled device on its next re-enrolment. |
 | D102 | `identifiers` is **optional** on the enrolment request, and unknown kinds are kept rather than rejected | A fleet whose devices go dark for weeks cannot be upgraded before it is allowed to enrol, and a newer agent reporting a source this server has not heard of is still supplying usable identity. |
 
-### ✅ Chunk 12 — App install proven on hardware (single APK; splits still open)
+### ✅ Chunk 12 — App install proven on hardware, including splits
 
 **Installed and upgraded on `SM-X520`, by the agent, with no user interaction.**
 
@@ -1212,17 +1212,44 @@ with a matching hash, and a `Range` request at the agent's exact resume offset
 returned bytes that reassembled to the correct digest. The design decision to make
 downloads resumable was validated by a fault, not by a test.
 
-#### ⚠️ Correction: the uploaded "ATAK" is a synthetic fixture
+#### ✅ Real applications, including a 7-part split install
 
-`com.atakmap.app` in the catalogue has parts of **1,351 / 1,377 / 300 bytes** — the
-synthetic APKs from Chunk 4's `tests/apk_fixtures.py`, not the real application.
-Earlier notes implying ATAK is uploaded and ready to install are misleading. It is
-adequate for exercising the *parser*, and would fail as a real install.
+The operator supplied genuine artifacts (`Test Files/`, gitignored — hundreds of
+megabytes and not ours to redistribute). Both installed on `SM-X520`:
 
-**Consequence: split-APK install is still unproven.** `AppInstaller` writing base
-plus splits into one session has not run on hardware, and it is what ATAK will
-need. It needs either a real multi-part APK or a purpose-built one with density
-splits.
+| App | Shape | Result |
+|---|---|---|
+| **ATAK 5.8.0.4** `com.atakmap.app.civ` | single APK, 107 MB, **v3**-signed, `targetSdk 35` | installed in **~75 s** |
+| **Butterfly IQ 2.49.0** `com.butterflynetinc.helios` | **XAPK → base + 6 splits**, 323 MB | installed in **~420 s** |
+
+Android's own record confirms every part landed:
+
+```
+splits=[base, config.arm64_v8a, config.en, config.xhdpi, dltools, firmware, quicktips]
+installerPackageName=org.takmdm.agent
+```
+
+The agent's log narrates the whole thing, base verified first as the platform
+contract requires:
+
+```
+installing com.butterflynetinc.helios versionCode 4595720
+  base part verified (60651144 bytes)
+  split part verified (29860146 bytes)   ... six splits ...
+session 1992771275 opened for com.butterflynetinc.helios (7 part(s))
+com.butterflynetinc.helios installed: versionCode 4595720 from 7 part(s)
+```
+
+**Three Chunk 4 decisions validated against real artifacts rather than fixtures:**
+the hand-written AXML and signing-block parsers read production **v3**-signed APKs
+(we had only ever seen v2); **D13**'s server-side XAPK unpacking split a real
+308 MB archive into seven content-addressed parts; and content addressing meant the
+already-installed apps were skipped rather than re-downloaded on every later pass.
+
+⚠️ **The old `com.atakmap.app` entry is a synthetic fixture** — parts of
+1,351 / 1,377 / 300 bytes from `tests/apk_fixtures.py`. The real package name is
+**`com.atakmap.app.civ`**, so the two coexist without a signature-pinning clash.
+Earlier notes implying ATAK was uploaded and installable referred to the fixture.
 
 #### Decisions taken during implementation
 
