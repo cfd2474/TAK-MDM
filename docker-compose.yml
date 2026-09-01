@@ -74,6 +74,10 @@ services:
     image: nginx:1.27-alpine
     ports:
       - "8443:8443"
+      # Plaintext, serving only the provisioning APK — see docker/nginx/nginx.conf.
+      # Android's setup wizard cannot trust a self-signed certificate, and the
+      # signature checksum is what guarantees integrity here.
+      - "8080:8080"
     volumes:
       # ./pki is a bind mount rather than a named volume so the host can read the
       # CA and the dev TLS certificate directly — scripts/dev_enroll.py needs both.

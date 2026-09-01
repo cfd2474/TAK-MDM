@@ -19,7 +19,9 @@ laptop, and each fails differently and confusingly:
 
 1. The TLS certificate must list the PC's LAN address. The default dev certificate
    covers only ``localhost``, so a tablet gets a verification failure.
-2. Windows Firewall must allow inbound 8443.
+2. Windows Firewall must allow inbound 8443 (devices) and 8080 (the agent APK,
+   which the setup wizard downloads over plain HTTP because it cannot trust a
+   self-signed certificate).
 3. ``TAKMDM_SERVER_URL`` must be the LAN address, because that value is baked into
    enrollment QR codes — a tablet that reads "localhost" will try to phone itself.
 
@@ -92,6 +94,12 @@ def main(argv: list[str] | None = None) -> int:
         "TAKMDM_SERVER_URL": base_url,
         # Used by docker-compose so a rebuilt PKI is valid for this address too.
         "TAKMDM_LAN_ADDRESS": address,
+        # Plain HTTP, deliberately. Android's setup wizard downloads the agent
+        # before the device has any identity, validating TLS against the system
+        # trust store — which will never contain a self-signed development CA.
+        # PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM is what guarantees
+        # integrity here, so the transport does not need to be trusted.
+        "TAKMDM_AGENT_APK_URL": f"http://{address}:8080/api/v1/provisioning/agent.apk",
     }
     env_path = REPO_ROOT / ".env"
     lines = []
@@ -113,11 +121,17 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print("Next, in order:")
     print()
-    print("1. Allow the port through Windows Firewall.")
+    print("1. Allow BOTH ports through Windows Firewall.")
+    print(f"   {args.port} carries device traffic under mTLS. 8080 serves only the")
+    print("   agent APK during provisioning, which cannot use TLS: Android's setup")
+    print("   wizard validates against the system trust store and will never trust")
+    print("   a self-signed certificate. The signature checksum guarantees integrity.")
     print("   Open PowerShell AS ADMINISTRATOR and paste:")
     print()
     print(f'     New-NetFirewallRule -DisplayName "ATLAS {args.port}" '
           f"-Direction Inbound -LocalPort {args.port} -Protocol TCP -Action Allow")
+    print('     New-NetFirewallRule -DisplayName "ATLAS 8080" '
+          "-Direction Inbound -LocalPort 8080 -Protocol TCP -Action Allow")
     print()
     print("2. Restart the server so it picks up the new certificate and address.")
     print("   The proxy needs an explicit restart: it reads the certificate once")
