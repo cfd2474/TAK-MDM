@@ -360,8 +360,17 @@ class Reconciler(private val context: Context) {
                 "using the ANDROID_ID fallback. Re-enrolment after a factory reset " +
                 "will create a duplicate record instead of re-adopting this one (D24)."
         }
-        errors += policyApplier.apply(desired.optJSONObject("policy") ?: JSONObject())
+        val policy = desired.optJSONObject("policy") ?: JSONObject()
+        errors += policyApplier.apply(policy)
         errors += reconcileApps(desired.optJSONArray("apps") ?: JSONArray())
+        // After installs, so a package that is both required and removed resolves
+        // as removed rather than depending on which ran first. A policy saying both
+        // is a mistake, and the guard below reports it instead of flip-flopping the
+        // device on every check-in.
+        errors += removeUnwantedApps(
+            policy.optJSONObject("APP_CATALOG") ?: JSONObject(),
+            desired.optJSONArray("apps") ?: JSONArray()
+        )
         errors += reconcileFiles(desired.optJSONObject("files") ?: JSONObject())
         return errors
     }
@@ -498,6 +507,54 @@ class Reconciler(private val context: Context) {
             } else {
                 AgentLog.e(TAG, "$packageName install failed: ${result.message}")
                 errors += "$packageName: ${result.message}"
+            }
+        }
+        return errors
+    }
+
+    /**
+     * Uninstall anything the policy says must not be present.
+     *
+     * Distinct from `blocked_packages`, which only hides: hiding leaves the code and
+     * the data in place and is instantly reversible, which is right for a temporary
+     * restriction and useless for reclaiming storage or handing a device on.
+     *
+     * Convergent, not a one-shot command (D5): a tablet that was dark for three
+     * weeks removes the app when it returns.
+     */
+    private fun removeUnwantedApps(catalog: JSONObject, apps: JSONArray): List<String> {
+        val removals = catalog.optJSONArray("removed_packages") ?: return emptyList()
+        val errors = mutableListOf<String>()
+
+        val required = (0 until apps.length())
+            .mapNotNull { apps.optJSONObject(it)?.optString("package_name") }
+            .toSet()
+
+        for (index in 0 until removals.length()) {
+            val packageName = removals.optString(index).takeIf { it.isNotBlank() } ?: continue
+
+            if (packageName == context.packageName) {
+                // Android would refuse anyway, because an active device admin cannot
+                // be removed — but refusing here names the reason instead of leaving
+                // an opaque platform failure to be decoded later.
+                errors += "$packageName: refusing to uninstall the agent itself"
+                continue
+            }
+            if (packageName in required) {
+                // Contradictory policy. Executing either half would have the device
+                // install and remove the same app on alternate check-ins.
+                errors += "$packageName: listed in both required_apps and removed_packages"
+                continue
+            }
+            if (installer.installedVersionCode(packageName) == null) continue
+
+            AgentLog.i(TAG, "removing $packageName")
+            val result = installer.uninstall(packageName)
+            if (result.success) {
+                AgentLog.i(TAG, "$packageName removed")
+            } else {
+                AgentLog.e(TAG, "$packageName removal failed: ${result.message}")
+                errors += "$packageName: uninstall failed - ${result.message}"
             }
         }
         return errors

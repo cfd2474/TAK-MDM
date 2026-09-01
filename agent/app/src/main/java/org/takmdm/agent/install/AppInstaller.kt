@@ -124,6 +124,65 @@ class AppInstaller(private val context: Context) {
         return result
     }
 
+    /**
+     * Remove an installed package.
+     *
+     * Silent as Device Owner — no confirmation dialog — which is the whole point:
+     * an operator reclaiming storage or handing a device on cannot be there to tap.
+     *
+     * Two things it will not do. Android refuses to remove a package holding an
+     * active device admin, so the agent cannot delete itself; and the guard in the
+     * reconciler refuses before it ever gets here, so the reason is legible rather
+     * than an opaque platform failure.
+     */
+    fun uninstall(packageName: String): InstallResult {
+        if (installedVersionCode(packageName) == null) {
+            // Already absent. Reported as success because the desired state is
+            // "not installed", and that is satisfied — treating it as a failure
+            // would leave a device permanently degraded over an app it never had.
+            return InstallResult(true, "not installed")
+        }
+
+        val latch = CountDownLatch(1)
+        var result = InstallResult(false, "uninstall timed out")
+
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val status = intent.getIntExtra(
+                    PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE
+                )
+                val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE).orEmpty()
+                result = when (status) {
+                    PackageInstaller.STATUS_SUCCESS -> InstallResult(true, "uninstalled")
+                    PackageInstaller.STATUS_PENDING_USER_ACTION ->
+                        InstallResult(false, "uninstall requires user action; not device owner?")
+                    else -> InstallResult(false, "status $status: $message")
+                }
+                latch.countDown()
+            }
+        }
+
+        context.registerReceiver(
+            receiver, IntentFilter(ACTION_UNINSTALL_RESULT), Context.RECEIVER_NOT_EXPORTED
+        )
+        try {
+            val intent = Intent(ACTION_UNINSTALL_RESULT).setPackage(context.packageName)
+            val pending = PendingIntent.getBroadcast(
+                context, packageName.hashCode(), intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            )
+            AgentLog.d(TAG, "uninstalling $packageName")
+            context.packageManager.packageInstaller.uninstall(packageName, pending.intentSender)
+            latch.await(UNINSTALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        } catch (e: Exception) {
+            AgentLog.e(TAG, "uninstall of $packageName failed", e)
+            result = InstallResult(false, e.message ?: e.javaClass.simpleName)
+        } finally {
+            runCatching { context.unregisterReceiver(receiver) }
+        }
+        return result
+    }
+
     fun installedVersionCode(packageName: String): Long? = runCatching {
         context.packageManager.getPackageInfo(packageName, 0).longVersionCode
     }.getOrNull()
@@ -131,7 +190,10 @@ class AppInstaller(private val context: Context) {
     companion object {
         private const val TAG = "AppInstaller"
         private const val ACTION_INSTALL_RESULT = "org.takmdm.agent.INSTALL_RESULT"
+        private const val ACTION_UNINSTALL_RESULT = "org.takmdm.agent.UNINSTALL_RESULT"
         private const val INSTALL_TIMEOUT_SECONDS = 180L
+        // Removal is far quicker than an install: no download, no session.
+        private const val UNINSTALL_TIMEOUT_SECONDS = 60L
     }
 }
 

@@ -30,6 +30,13 @@
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
     <!--
+      Removing apps a policy lists in removed_packages. As Device Owner the
+      uninstall is silent, which is the point: an operator reclaiming storage or
+      repurposing a tablet cannot be there to tap a confirmation dialog.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+
+    <!--
       All-files access, needed to place files into paths like /sdcard/atak that are
       not MediaStore collections. A Device Owner cannot grant this itself - it is an
       app-op, not a runtime permission - so the agent requests it once at setup.

@@ -1160,6 +1160,31 @@ its next re-enrolment — the precise failure the chunk exists to prevent.
 | D101 | The migration **backfills every existing serial as a `LEGACY` identifier** | Preserves current matching exactly, whatever that string happens to be. Skipping it would orphan every enrolled device on its next re-enrolment. |
 | D102 | `identifiers` is **optional** on the enrolment request, and unknown kinds are kept rather than rejected | A fleet whose devices go dark for weeks cannot be upgraded before it is allowed to enrol, and a newer agent reporting a source this server has not heard of is still supplying usable identity. |
 
+### ✅ App removal by policy (COMPLETE, hardware-validated)
+
+Operator question: what happens when the MDM is told to remove an installed app?
+Tested before building, and the answer was **not what an operator would expect**.
+
+| Action | Result on `SM-X520` |
+|---|---|
+| Drop the app from `required_apps` | **Nothing.** Still installed — and correctly so: "no longer required" is not "must be gone". |
+| Add it to `blocked_packages` | **Hidden, not removed.** Absent from `pm list packages`, still present in `pm list packages -u`. All 323 MB and its data stayed. |
+
+So the only removal-shaped tool in the system silently kept the app. For reclaiming
+storage or handing a device on, that is the wrong answer given quietly.
+
+**Added `removed_packages`** to `APP_CATALOG` — uninstall outright, via
+`PackageInstaller.uninstall` under Device Owner privilege, silently. Removed from
+the tablet **~70 seconds** after the policy was published, gone from `pm list
+packages -u`, device converged `state 11 acked 11 | compliant`.
+
+| # | Decision | Rationale |
+|---|---|---|
+| D113 | Removal is **policy state, not a transient command** | "This device must not have X" is a property to converge on, so a tablet dark for three weeks removes it on return (D5). A command would fire once and be forgotten. |
+| D114 | `removed_packages` is **separate from `blocked_packages`**, not a change to it | Hiding is reversible and preserves data; removing destroys it and reclaims storage. Collapsing them would mean an operator wanting a temporary restriction silently wiped the app. The spec now says outright that blocking does not remove. |
+| D115 | Removals merge by **UNION** | Any one stacked policy saying "not this" is the restrictive answer. A strategy that let another policy drop the instruction would be a removal that silently never happens. |
+| D116 | The agent **refuses to uninstall itself**, and refuses a package listed as both required and removed | Android would block the first anyway — an active device admin cannot be removed — but refusing in the agent names the reason instead of leaving an opaque platform failure. The second would otherwise install and remove the same app on alternate check-ins. |
+
 ### ✅ Chunk 12 — App install proven on hardware, including splits
 
 **Installed and upgraded on `SM-X520`, by the agent, with no user interaction.**

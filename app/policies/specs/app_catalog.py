@@ -46,7 +46,26 @@ class AppCatalogSpec(PolicySpec):
         Merge(MergeStrategy.MERGE_BY_KEY, key="package_name"),
     ] = None
 
+    # ⚠️ Blocked means **hidden, not removed**. `setApplicationHidden` leaves the
+    # app, its code and its data on the device; it simply cannot be seen or
+    # launched, and unblocking restores it instantly. That is the right tool for a
+    # temporary restriction and the wrong one for reclaiming storage or handing a
+    # device on — use `removed_packages` for that.
     blocked_packages: Annotated[list[str] | None, Merge(MergeStrategy.UNION)] = None
+
+    # Packages that must **not be installed**. Uninstalled outright, destroying
+    # their data and reclaiming their storage.
+    #
+    # State rather than a command (D5/D6): "this device must not have X" is a
+    # property to converge on, so a tablet that was dark for three weeks removes it
+    # on return. Dropping an app from `required_apps` deliberately does *not* remove
+    # it — "no longer required" and "must be gone" are different claims, and
+    # conflating them would delete apps every time a policy was tidied.
+    #
+    # UNION for the same reason as the blocklist: with several policies stacked, any
+    # one of them saying "not this" is the restrictive answer, and a merge that
+    # could drop that instruction would be a policy that silently fails to remove.
+    removed_packages: Annotated[list[str] | None, Merge(MergeStrategy.UNION)] = None
 
     # INTERSECT is the correct "most restrictive" reading of an allowlist but it
     # surprises people: stacking two allowlists yields only their overlap, which can
