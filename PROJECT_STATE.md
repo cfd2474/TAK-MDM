@@ -9,13 +9,14 @@ update after every completed step.
 
 ## Current status
 
-**Phase:** Chunk 10 complete and hardware-validated; **Chunk 11 steps 1–6 done,
-hardware step outstanding.** 282 server tests + 30 agent tests.
+**Phase:** ✅ **Chunks 10 and 11 complete, both hardware-validated.** Agent
+**v13 (`0.4.0`)** running on `SM-X520`, compliant, `state 2 = acked 2` and now
+correctly identified by its hardware serial `R5GL40MMHRN`.
+282 server tests + 30 agent tests.
 
-Agent **v12 (`0.3.3`)** is what is actually running on `SM-X520`. **v13 (`0.4.0`)
-is built but not installed** — `adb` dropped mid-session and the tablet has not
-been reachable since. Wireless-debugging ports rotate, so reconnecting needs the
-current `IP:port` from the device (pairing itself survives).
+`adb` reaches the tablet over wireless debugging. **Ports rotate on every
+restart**, so reconnecting means reading the current `IP:port` off the device —
+`adb mdns services` finds it once paired, and the pairing itself survives.
 
 > **`SM-X520` is enrolled, checking in, and applying policy over mTLS.** Live
 > propagation measured against the tablet: publishing a policy version woke the
@@ -968,7 +969,7 @@ stalls at the first. Routes, best first:
    to prove, and it cannot be the way its own fixes are delivered.
 4. Factory reset and re-provision by QR. Works, and costs the most.
 
-### 🔄 Chunk 11 — Multi-identifier device identity (IN PROGRESS, closes R13)
+### ✅ Chunk 11 — Multi-identifier device identity (COMPLETE, hardware-validated, closes R13)
 
 D24 matches a re-enrolling device on `serial_number` alone. That is one key, and a
 device's reported identity is not guaranteed to stay constant — as this fleet has
@@ -996,7 +997,30 @@ one, and any future identity source slots in without another protocol change.
    tablet re-enrol without a factory reset, so this is directly testable: it must
    re-adopt `dd814571…` rather than create a fourth `SM-X520` row.
 
-**Steps 1–6 complete. 282 tests passing. Step 7 NOT done.**
+**✅ Complete and hardware-validated. 282 tests passing.**
+
+#### Step 7 — proven on `SM-X520`
+
+Agent v13 (`0.4.0`) installed, then `reset_identity` (D86) cleared the device's
+key, certificate and device id, so it re-enrolled from nothing:
+
+```
+DebugConfigReceiver: device identity cleared
+DebugConfigReceiver: configured: … enrolled=false deviceOwner=true
+Reconciler:          enrolled as dd814571-4a09-4d57-bec3-f8d6fd329f19   ← the SAME record
+```
+
+| | before | after |
+|---|---|---|
+| device rows | 5 | **5** — no fourth `SM-X520` |
+| `dd814571` serial | `SM-X520-6e5d7b239e5d39c3` | **`R5GL40MMHRN`** |
+| identifiers | — | `legacy SM-X520-6e5d7b239e5d39c3`, `serial R5GL40MMHRN` |
+
+It matched on the old fallback, recorded the real serial beside it, and promoted
+the display name. **The policy stack came through intact** — `PASSWORD.min_length
+13` from `Tablet Live Test`, `compliant`, `state 2 = acked 2`. That is the part
+that matters: before this change the same re-enrolment produced an empty new record
+with no policies, which is how a wiped tablet silently came back unmanaged.
 
 Migration applied to real Postgres and the backfill verified — every existing
 device now carries its own `serial_number` as a `LEGACY` identifier, so today's
@@ -1009,16 +1033,6 @@ SM-X520-6e5d7b239e5d39c3 | LEGACY | SM-X520-6e5d7b239e5d39c3
 
 Without that backfill this migration would have orphaned every enrolled device on
 its next re-enrolment — the precise failure the chunk exists to prevent.
-
-⚠️ **Nothing here has run on a device.** Agent v13 (`0.4.0`) is built but not
-installed: `adb` dropped mid-session (wireless debugging ports rotate and the
-tablet slept after the `lock` command), and the device has not been reachable
-since. The server half is verified by tests and against the running stack; the
-agent half — `reportedIdentifiers()` and the enrolment call carrying them — is
-**written and compiled only**.
-
-Step 7 needs the tablet awake: either a fresh wireless-debugging port for `adb`,
-or a sideload of the APK.
 
 #### Decisions taken during implementation
 
@@ -1113,7 +1127,7 @@ re-investigated):
 | R11 | **No CSRF protection on the console's form posts.** With forward auth, a signed-in administrator visiting a hostile page could have their browser submit a policy change or enrollment token. Authentik's session cookie would be sent with it. | **Open.** Needs a per-session token on the form posts. Lower severity than R10 was — it requires an authenticated victim and a targeted attack — but it is the natural next gap now that sessions exist. |
 | R9 | **Pre-granting `WRITE_EXTERNAL_STORAGE` locks an app out of `MANAGE_EXTERNAL_STORAGE`** on Android 11+. Auto-granting runtime permissions is otherwise the obvious thing to do as Device Owner, so this fails silently and looks like an unrelated storage bug. Confirmed in Headwind's source, where they work around it explicitly. | **Open, must be handled in Chunk 6.** When pre-granting permissions, detect apps declaring `MANAGE_EXTERNAL_STORAGE` and skip the legacy storage permissions for them. Affects ATAK directly. |
 | R8 | CA private key is stored unencrypted at `pki/ca.key` (mode 0600, gitignored). Anyone holding it can mint a device identity. | **Open.** Acceptable on a single trusted host where the DB is equally exposed; move behind a KMS/HSM before that stops being true. |
-| R13 | **D24's re-enrolment matching is single-keyed and brittle.** The server matches a re-enrolling device on `serial_number` alone. A device whose reported identity ever changes — as happens when it moves off the `ANDROID_ID` fallback onto its real serial, or after any identity-source change — creates a **new record** rather than re-adopting its own, orphaning history and group membership. Root cause of the fallback is fixed (D95), but `dd814571…` is still registered under its old fallback identity, so its next wipe produces one final duplicate. | **Open, decision needed.** Three options: (a) accept one more duplicate and let it stabilise; (b) an admin-editable serial, so a record can be corrected in place; (c) **enrol with a set of identifiers** — real serial plus fallback plus anything future — and have the server match on *any* known one and record them all. (c) makes D24 robust instead of brittle and handles transitions automatically, but is a protocol plus server change. Cheapest to settle now at one device; the argument for doing it is that it is precisely the thing that gets expensive at 50. |
+| R13 | ~~**D24's re-enrolment matching is single-keyed and brittle.**~~ ✅ **Closed (Chunk 11), hardware-verified.** Identity is now a set; the tablet re-enrolled from a cleared identity into its own record and kept its policy stack. Original text: **D24's matching was single-keyed.** The server matches a re-enrolling device on `serial_number` alone. A device whose reported identity ever changes — as happens when it moves off the `ANDROID_ID` fallback onto its real serial, or after any identity-source change — creates a **new record** rather than re-adopting its own, orphaning history and group membership. Root cause of the fallback is fixed (D95), but `dd814571…` is still registered under its old fallback identity, so its next wipe produces one final duplicate. | ✅ **Closed.** Option (c) was taken: a device enrols with a set of identifiers and the server matches on any known one. `dd814571` matched on its old `ANDROID_ID` fallback, re-adopted its record, had its display serial promoted to `R5GL40MMHRN`, and kept `PASSWORD.min_length 13` from `Tablet Live Test`. The feared final duplicate never happened. |
 | Q1 | ~~Which Samsung models / One UI versions?~~ | ✅ **Answered** — see device matrix |
 | Q2 | ~~Existing ATAK deployment to integrate with?~~ | ✅ **Answered** — no upstream integration; ATAK server is configured **on the EUD**, so the TAK pack is pure config push (Chunk 7) |
 
@@ -1128,7 +1142,7 @@ re-investigated):
 
 ## Changelog
 
-- **2026-09-01** — **Chunk 11 steps 1–6: multi-identifier device identity (R13).**
+- **2026-09-01** — **Chunk 11 complete, hardware-validated. R13 closed.**
   282 tests. A device now enrols with a *set* of identifiers and the server matches
   on any it already knows, so a device that changes identity source re-adopts its
   own record instead of forking a new one and losing its policy stack. Matching is
@@ -1136,9 +1150,12 @@ re-investigated):
   merged automatically; an identifier held by another device is never reassigned.
   The migration backfills every existing serial as a `LEGACY` identifier —
   verified against real Postgres — which is what preserves current matching and
-  avoids orphaning the whole fleet on its next re-enrolment. **The hardware step is
-  not done:** agent v13 is built but `adb` dropped mid-session and the tablet has
-  not been reachable since, so the agent half is compiled but unrun.
+  avoids orphaning the whole fleet on its next re-enrolment. **Proven on the
+  tablet:** with its identity fully cleared it re-enrolled into the *same* record
+  `dd814571…`, promoted its display serial from the `ANDROID_ID` fallback to
+  `R5GL40MMHRN`, and kept `PASSWORD.min_length 13` — where the same sequence would
+  previously have produced an empty new record with no policies, which is how a
+  wiped tablet came back silently unmanaged.
 - **2026-09-01** — **Chunk 10 complete, hardware-validated.** `adb` recovered by
   pairing over wireless debugging; agent v10 (`0.3.1`) installed on `SM-X520`.
   `lock`, `locate` and `collect_logs` all succeeded at `attempts=1/5`, against the
