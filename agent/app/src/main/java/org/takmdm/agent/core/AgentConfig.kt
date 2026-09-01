@@ -74,6 +74,21 @@ class AgentConfig(context: Context) {
         get() = prefs.getString(KEY_DESIRED_STATE, null)
         set(value) = prefs.edit { putString(KEY_DESIRED_STATE, value) }
 
+    /**
+     * The last sync failure, kept so it can be read off the device's own screen.
+     *
+     * Diagnosing an agent that will not enrol otherwise requires USB debugging,
+     * which needs Developer Options enabled on a device that may already be locked
+     * down — exactly when the information is hardest to get and most needed.
+     */
+    var lastError: String?
+        get() = prefs.getString(KEY_LAST_ERROR, null)
+        set(value) = prefs.edit { putString(KEY_LAST_ERROR, value) }
+
+    var lastSyncAt: Long
+        get() = prefs.getLong(KEY_LAST_SYNC, 0L)
+        set(value) = prefs.edit { putLong(KEY_LAST_SYNC, value) }
+
     /** Optional file ids the user chose in the marketplace (F4). */
     var selectedOptionalFiles: Set<String>
         get() = prefs.getStringSet(KEY_SELECTED_FILES, emptySet()) ?: emptySet()
@@ -112,6 +127,8 @@ class AgentConfig(context: Context) {
         private const val KEY_DESIRED_STATE = "desired_state"
         private const val KEY_SELECTED_FILES = "selected_optional_files"
         private const val KEY_FILE_PREFIX = "applied_file:"
+        private const val KEY_LAST_ERROR = "last_error"
+        private const val KEY_LAST_SYNC = "last_sync_at"
 
         // Keys inside PROVISIONING_ADMIN_EXTRAS_BUNDLE, matching the server's
         // provisioning payload generator.

@@ -87,6 +87,14 @@ class MainActivity : AppCompatActivity() {
             appendLine("All-files access: $storageOk")
             val missing = PermissionRequirement.outstanding(this@MainActivity)
             appendLine("Missing permissions: ${if (missing.isEmpty()) "none" else missing.joinToString()}")
+            appendLine("Last sync: " + if (config.lastSyncAt == 0L) "never" else
+                java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+                    .format(java.util.Date(config.lastSyncAt)))
+            appendLine()
+            // The whole point of this screen when a device will not enrol: the
+            // reason, readable without USB debugging.
+            appendLine("Last error:")
+            appendLine(config.lastError ?: "none")
         }
 
         findViewById<Button>(R.id.grant_storage).isEnabled =

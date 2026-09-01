@@ -68,14 +68,33 @@ class Reconciler(private val context: Context) {
         val token = config.enrollmentToken
         val serverUrl = config.serverUrl
         if (token.isNullOrBlank() || serverUrl.isNullOrBlank()) {
-            Log.w(TAG, "no enrollment token or server URL; awaiting provisioning")
+            // The silent path: without provisioning extras the agent simply does
+            // nothing and makes no network request, which looks identical to a
+            // server that is ignoring it. Say so loudly instead.
+            val detail = buildString {
+                append("not configured - ")
+                append(if (serverUrl.isNullOrBlank()) "server URL missing" else "server URL ok")
+                append(", ")
+                append(if (token.isNullOrBlank()) "enrollment token missing" else "token ok")
+                append(". The provisioning extras did not arrive.")
+            }
+            config.lastError = detail
+            Log.w(TAG, detail)
             return false
         }
+
+        // Each step below is a candidate for silent failure, so name the one in
+        // progress: a stack trace alone does not say how far enrollment got.
+        config.lastError = "enrolling: generating hardware-backed key…"
 
         return runCatching {
             val serial = serialNumber()
             val keyPair = DeviceIdentity.generateKeyPair()
+
+            config.lastError = "enrolling: building CSR…"
             val csr = DeviceIdentity.createCsrPem(keyPair, serial)
+
+            config.lastError = "enrolling: contacting $serverUrl…"
 
             val response = api.enroll(
                 token = token,
@@ -96,9 +115,14 @@ class Reconciler(private val context: Context) {
             // usable enrollment credential on the device.
             config.enrollmentToken = null
 
+            config.lastError = null
             Log.i(TAG, "enrolled as ${config.deviceId}")
             true
         }.getOrElse {
+            // Record the class name too: "null" or an empty message is common and
+            // tells the reader nothing on its own.
+            val detail = "${it.javaClass.simpleName}: ${it.message ?: "no message"}"
+            config.lastError = "enrollment failed - $detail"
             Log.e(TAG, "enrollment failed", it)
             false
         }
@@ -115,9 +139,24 @@ class Reconciler(private val context: Context) {
     // Check-in and convergence
     // ----------------------------------------------------------------------- //
 
-    fun sync(): SyncOutcome {
+    fun sync(): SyncOutcome = runCatching { syncInner() }
+        .onSuccess {
+            config.lastSyncAt = System.currentTimeMillis()
+            config.lastError = it.errors.firstOrNull()
+        }
+        .getOrElse {
+            val detail = "${it.javaClass.simpleName}: ${it.message ?: "no message"}"
+            config.lastError = "sync failed - $detail"
+            Log.e(TAG, "sync failed", it)
+            throw it
+        }
+
+    private fun syncInner(): SyncOutcome {
         if (!enrollIfNeeded()) {
-            return SyncOutcome(config.stateVersion, null, listOf("not enrolled"))
+            return SyncOutcome(
+                config.stateVersion, null,
+                listOf(config.lastError ?: "not enrolled")
+            )
         }
 
         val request = JSONObject()
