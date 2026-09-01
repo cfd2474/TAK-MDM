@@ -167,6 +167,14 @@ without Knox; Knox is strictly additive.
 
 ---
 
+## Reference documents
+
+| File | Read it when |
+|---|---|
+| **[docs/ANDROID_PLATFORM_REFERENCE.md](docs/ANDROID_PLATFORM_REFERENCE.md)** | **Before any change touching provisioning, the DPC, app installation, permissions, or file placement.** Android contracts traced to official sources, plus what is verified on our hardware. Consult it *every* iteration — three factory resets were spent on a failure the documentation states plainly. |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Design rationale for the server and agent |
+| "Operational notes" below | Before debugging anything that looks impossible |
+
 ## Operational notes — read before debugging anything "impossible"
 
 Traps that have each cost real time in this project. When a change appears to have

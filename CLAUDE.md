@@ -26,7 +26,22 @@
 ## 5. SOLID Programming Principles
 - Always make sure code falls under the SOLID programming design principles.
 
-## 6. Environment Traps
+## 6. Android Platform Reference
+- `docs/ANDROID_PLATFORM_REFERENCE.md` records the Android contracts this project
+  depends on, each traceable to an official source, plus what has been verified on
+  our own hardware.
+- **Read it before writing or changing any code that touches provisioning, the
+  Device Policy Controller, app installation, permissions, or file placement.**
+  Check the change against it, and do not rely on recollection of how Android
+  behaves.
+- Platform contracts fail vaguely on purpose — "something went wrong" is a security
+  decision, not an oversight. There is usually nothing to infer from the symptom, so
+  consult the spec before reasoning from behaviour.
+- Update the file whenever hardware teaches something new, marking it ✅ verified.
+  Where an official source contradicts an observation, keep both and note the
+  disagreement rather than deleting the observation.
+
+## 7. Environment Traps
 - Read "Operational notes" in `PROJECT_STATE.md` before debugging anything that
   looks impossible — a correct change appearing to have no effect is almost always
   a stale container or an unrestarted proxy, not a bug in the code.
