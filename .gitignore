@@ -28,3 +28,6 @@ qr_payload*.json
 # Real vendor APKs used for hardware testing. Hundreds of megabytes, and not ours
 # to redistribute.
 Test Files/
+
+# Local scratch space for hardware testing.
+scratch/
