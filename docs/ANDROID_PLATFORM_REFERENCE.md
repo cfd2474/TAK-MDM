@@ -292,6 +292,46 @@ This cost several enrollments and was invisible without on-device diagnostics: t
 agent failed before any network call, so the server saw nothing at all. If an agent
 never contacts the server, suspect the identity and CSR path before the transport.
 
+## 6a-ii. Device serial: `Build.getSerial()`
+
+✅ **A Device Owner holding `READ_PHONE_STATE` gets the real serial on Android 16.**
+Verified on `SM-X520` by testing both states on the device:
+
+```
+READ_PHONE_STATE granted=false → SecurityException:
+    "getSerial: The uid 10311 does not meet the requirements
+     to access device identifiers."
+READ_PHONE_STATE granted=true  → 'R5GL40MMHRN'   (matches ro.serialno)
+```
+
+⚠️ **This contradicts the widely repeated claim** — including from a summary fetched
+during this work — that Android 10+ requires the `signature|privileged`
+`READ_PRIVILEGED_PHONE_STATE` and that ordinary `READ_PHONE_STATE` is insufficient.
+That is true for a *normal* app. A **device owner** is separately privileged, and
+the ordinary runtime permission is enough. The observation stands; do not "correct"
+this back on the strength of a general article about Android 10.
+
+**It throws rather than returning `UNKNOWN`,** so any caller must catch. Code that
+only checks for `Build.UNKNOWN` will take its fallback path via an exception it
+never expected.
+
+### The fallback is not equivalent, and the difference is silent
+
+📖 `Settings.Secure.ANDROID_ID` **"may change if a factory reset is performed on the
+device or if an APK signing key changes."** It is scoped per app-signing-key, per
+user, per device.
+
+That makes it unusable as a device identity for re-enrolment matching (D24), because
+**a factory reset is exactly when re-enrolment happens**. A device that enrols on the
+fallback gets a new identity after every wipe, so the server sees a new device and
+the old record is orphaned along with its group membership and policy stack.
+
+✅ Observed: one `SM-X520` holds two records, `SM-X520-421929662296025e` and
+`SM-X520-6e5d7b239e5d39c3` — two ANDROID_IDs from two provisioning rounds.
+
+**Grant `READ_PHONE_STATE` before enrolling, and treat the fallback as a degraded
+state worth reporting**, not as an equivalent alternative.
+
 ## 6b. Reading logs, and why we do not use `logcat`
 
 📖 **`READ_LOGS` has been restricted since Android 4.1 (API 16).** Only privileged
@@ -415,6 +455,7 @@ AndroidDownloadManager/16 (Linux; U; Android 16; SM-X520 Build/BP4A.251205.006)
 * [Knox SDK deprecation policy](https://docs.samsungknox.com/dev/knox-sdk/faq/general/)
 * [Log info disclosure](https://developer.android.com/privacy-and-security/risks/log-info-disclosure) — `READ_LOGS` restriction, and the "manage your own logs" recommendation
 * [Security — Android Enterprise](https://developer.android.com/work/dpc/security) — security logging for device owners
+* [Changes to device identifiers in Android O](https://android-developers.googleblog.com/2017/04/changes-to-device-identifiers-in.html) and [Android 8.0 behaviour changes](https://developer.android.com/about/versions/oreo/android-8.0-changes) — `ANDROID_ID` scoping, and that it changes on factory reset
 
 ## Maintaining this file
 

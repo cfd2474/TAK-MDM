@@ -834,6 +834,8 @@ gathered before the fix, not inferred after it (CLAUDE.md §4).
 | D92 | `AGENT_VERSION` is read from `BuildConfig.VERSION_NAME` | The literal in its place said `0.1.0` while the build was at `0.2.4`, so every device reported a version it was not running — and "which build is this?" is the first question asked of a misbehaving device. A constant that must be remembered separately will not be. |
 | D93 | The test suite now sets `PRAGMA foreign_keys=ON` for SQLite | Without it SQLite ignores foreign keys entirely, so every `ON DELETE CASCADE` and `SET NULL` in the schema was a no-op under test while Postgres enforced it — the same dialect divergence as D27. Enabling it broke no existing test, so the rules were already consistent; they were simply never verified. |
 | D94 | `device_log_bundle.command_id` is `ON DELETE SET NULL`, not `CASCADE` | A log bundle outlives the request that produced it. Tidying the command queue must not destroy the evidence. |
+| D95 | **Self-granting runs on every sync**, not once at provisioning | A permission added in a later agent build was otherwise declared and never granted on any device already in the field — silently, and indefinitely. That is exactly what happened to `READ_PHONE_STATE`: the fix was committed, was correct, and did nothing. `setPermissionGrantState` is idempotent, so the repeat costs nothing. |
+| D96 | The `ANDROID_ID` fallback identity is **reported as a compliance error**, not merely logged | A device on the fallback looks perfectly healthy until it is wiped, at which point it silently becomes a second record and loses its policy stack. The console has to be able to see that coming. |
 
 #### Corrections to earlier claims in this file
 
@@ -884,6 +886,49 @@ building it: it invites trust it has not earned.
 Migrated all 49 (v10), and the next capture carried the sync loop. **`AppInstaller`
 was among them**, which matters directly: Chunk 11 exists to debug app installs, and
 its diagnostics would have been invisible to the very channel built to collect them.
+
+#### D24 investigated and partly repaired (2026-09-01)
+
+Chased on request. **Root cause found, and it is not what the symptom suggested.**
+
+`Build.getSerial()` was throwing `SecurityException: the uid does not meet the
+requirements to access device identifiers`, so `serialNumber()` fell back to
+`ANDROID_ID` — which Android documents as changing on factory reset, precisely the
+event D24 exists to survive. Hence two records for one tablet.
+
+**The permission was already declared, with a comment already describing this exact
+bug.** `READ_PHONE_STATE` was added in `d13b630` along with a manifest comment that
+diagnoses the problem correctly. It never took effect, because self-granting ran
+**only inside `PolicyComplianceActivity`, which never runs again after
+provisioning**. The tablet had been provisioned before that commit, so the
+permission sat declared and ungranted, and the bug it fixed kept happening — with a
+note in the tree saying it was solved.
+
+**The general defect is larger than this permission:** any runtime permission added
+to the agent in a later build was silently never granted on devices already in the
+field. `ensureSelfPermissions()` now runs on every sync, before enrolment, and is
+idempotent.
+
+Verified by restoring the broken state and watching it heal:
+
+```
+revoke READ_PHONE_STATE          → granted=false
+install v12, wait one sync       → "self-granting 1 permission(s): READ_PHONE_STATE"
+                                 → granted=true, flags=[POLICY_FIXED|…]
+Build.getSerial()                → 'R5GL40MMHRN'   (was: SecurityException)
+```
+
+`POLICY_FIXED` confirms the DPC granted it rather than the earlier `adb` probe.
+
+**The fallback is now loud**, both in the log and as a reported `apply_error`, so a
+device living on an unstable identity is visible in the console *before* a wipe
+turns it into a duplicate rather than after.
+
+⚠️ **Not yet resolved: the existing record.** `dd814571…` is still registered under
+`SM-X520-6e5d7b239e5d39c3`. The agent will now report `R5GL40MMHRN`, so **the next
+wipe-and-re-enrol still creates one final duplicate** — the fix prevents new
+occurrences, it does not repair the row already written. Options are in the open
+questions below.
 
 #### Two more corrections from hardware
 
@@ -1002,6 +1047,7 @@ re-investigated):
 | R11 | **No CSRF protection on the console's form posts.** With forward auth, a signed-in administrator visiting a hostile page could have their browser submit a policy change or enrollment token. Authentik's session cookie would be sent with it. | **Open.** Needs a per-session token on the form posts. Lower severity than R10 was — it requires an authenticated victim and a targeted attack — but it is the natural next gap now that sessions exist. |
 | R9 | **Pre-granting `WRITE_EXTERNAL_STORAGE` locks an app out of `MANAGE_EXTERNAL_STORAGE`** on Android 11+. Auto-granting runtime permissions is otherwise the obvious thing to do as Device Owner, so this fails silently and looks like an unrelated storage bug. Confirmed in Headwind's source, where they work around it explicitly. | **Open, must be handled in Chunk 6.** When pre-granting permissions, detect apps declaring `MANAGE_EXTERNAL_STORAGE` and skip the legacy storage permissions for them. Affects ATAK directly. |
 | R8 | CA private key is stored unencrypted at `pki/ca.key` (mode 0600, gitignored). Anyone holding it can mint a device identity. | **Open.** Acceptable on a single trusted host where the DB is equally exposed; move behind a KMS/HSM before that stops being true. |
+| R13 | **D24's re-enrolment matching is single-keyed and brittle.** The server matches a re-enrolling device on `serial_number` alone. A device whose reported identity ever changes — as happens when it moves off the `ANDROID_ID` fallback onto its real serial, or after any identity-source change — creates a **new record** rather than re-adopting its own, orphaning history and group membership. Root cause of the fallback is fixed (D95), but `dd814571…` is still registered under its old fallback identity, so its next wipe produces one final duplicate. | **Open, decision needed.** Three options: (a) accept one more duplicate and let it stabilise; (b) an admin-editable serial, so a record can be corrected in place; (c) **enrol with a set of identifiers** — real serial plus fallback plus anything future — and have the server match on *any* known one and record them all. (c) makes D24 robust instead of brittle and handles transitions automatically, but is a protocol plus server change. Cheapest to settle now at one device; the argument for doing it is that it is precisely the thing that gets expensive at 50. |
 | Q1 | ~~Which Samsung models / One UI versions?~~ | ✅ **Answered** — see device matrix |
 | Q2 | ~~Existing ATAK deployment to integrate with?~~ | ✅ **Answered** — no upstream integration; ATAK server is configured **on the EUD**, so the TAK pack is pure config push (Chunk 7) |
 

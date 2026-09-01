@@ -178,12 +178,50 @@ class Reconciler(private val context: Context) {
         }
     }
 
-    private fun serialNumber(): String = runCatching {
-        // Requires READ_PHONE_STATE or Device Owner privilege; as Device Owner this
-        // returns the real hardware serial, which is what re-enrollment matches on.
-        Build.getSerial()
-    }.getOrNull()?.takeIf { it.isNotBlank() && it != Build.UNKNOWN }
-        ?: "${Build.MODEL}-${android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID)}"
+    /**
+     * The identity the server matches a re-enrolling device against (D24).
+     *
+     * `Build.getSerial()` needs **both** Device Owner privilege and a granted
+     * `READ_PHONE_STATE`; without the permission it throws
+     * `SecurityException: the uid does not meet the requirements to access device
+     * identifiers`, verified on `SM-X520`. With it, the real serial comes back.
+     *
+     * The `ANDROID_ID` fallback exists so enrolment can still complete, but it is a
+     * **degraded** identity: Android documents that it changes on factory reset, and
+     * a wipe-and-re-enrol is precisely the case D24 was written for. A device that
+     * enrols on the fallback will therefore create a second record rather than
+     * re-adopting its own, orphaning its history and its group membership.
+     *
+     * So the fallback is taken loudly. It used to be silent, which is how one tablet
+     * ended up with two records and a manifest comment claiming the problem was
+     * fixed.
+     */
+    private fun serialNumber(): String {
+        val real = runCatching { Build.getSerial() }
+            .onFailure { AgentLog.w(TAG, "Build.getSerial() refused: ${it.message}") }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() && it != Build.UNKNOWN }
+
+        if (real != null) return real
+
+        @Suppress("HardwareIds")
+        val androidId = android.provider.Settings.Secure.getString(
+            context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
+        )
+        val fallback = "${Build.MODEL}-$androidId"
+        AgentLog.w(
+            TAG,
+            "using the ANDROID_ID fallback identity '$fallback'. This changes on " +
+                "factory reset, so re-enrolment will create a NEW device record " +
+                "instead of re-adopting this one (D24). Grant READ_PHONE_STATE."
+        )
+        return fallback
+    }
+
+    /** True when this device is living on the unstable fallback identity. */
+    private fun hasStableIdentity(): Boolean =
+        runCatching { Build.getSerial() }.getOrNull()
+            ?.let { it.isNotBlank() && it != Build.UNKNOWN } == true
 
     // ----------------------------------------------------------------------- //
     // Check-in and convergence
@@ -202,6 +240,13 @@ class Reconciler(private val context: Context) {
         }
 
     private fun syncInner(): SyncOutcome {
+        // Before enrolment, because enrolment reads the device serial and
+        // READ_PHONE_STATE is one of the permissions this grants. Every sync, not
+        // just the first, because a permission added in a later agent build is
+        // otherwise never granted on a device already in the field.
+        policyApplier.ensureSelfPermissions()
+            .forEach { AgentLog.w(TAG, "self-grant: $it") }
+
         if (!enrollIfNeeded()) {
             return SyncOutcome(
                 config.stateVersion, null,
@@ -270,6 +315,15 @@ class Reconciler(private val context: Context) {
         // placed, or the service is deferred, and it looks like a server fault.
         errors += PermissionRequirement.outstanding(context).map {
             "missing permission: $it (grant it in the agent)"
+        }
+        // Reported, not merely logged. A device on the fallback identity looks
+        // perfectly healthy right up until it is wiped, at which point it silently
+        // becomes a second record and loses its policy stack. The console should be
+        // able to show which devices are in that state before it matters.
+        if (!hasStableIdentity()) {
+            errors += "unstable device identity: Build.getSerial() unavailable, " +
+                "using the ANDROID_ID fallback. Re-enrolment after a factory reset " +
+                "will create a duplicate record instead of re-adopting this one (D24)."
         }
         errors += policyApplier.apply(desired.optJSONObject("policy") ?: JSONObject())
         errors += reconcileApps(desired.optJSONArray("apps") ?: JSONArray())

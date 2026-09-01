@@ -22,6 +22,7 @@ import android.content.Intent
 import org.takmdm.agent.diag.AgentLog
 import org.takmdm.agent.BuildConfig
 import org.takmdm.agent.core.AgentConfig
+import org.takmdm.agent.diag.Redactor
 import org.takmdm.agent.sync.SyncScheduler
 
 /**
@@ -58,13 +59,20 @@ class DebugConfigReceiver : BroadcastReceiver() {
         }
         intent.getStringExtra("enrollment_token")?.let {
             config.enrollmentToken = it
-            AgentLog.i(TAG, "enrollment token set (${it.take(8)}…)")
+            Redactor.protect(it)
+            // Length, not a prefix. The old form logged the first eight characters,
+            // which was harmless while logs stayed on the device and is not now that
+            // an operator can collect them off it.
+            AgentLog.i(TAG, "enrollment token set (${it.length} chars)")
         }
         intent.getStringExtra("server_ca_pem")?.let {
             // Newlines do not survive `am broadcast` cleanly, so accept a
             // single-line PEM with \n written literally.
             config.serverCaPem = it.replace("\\n", "\n")
             AgentLog.i(TAG, "server CA set (${config.serverCaPem?.length} chars)")
+        }
+        if (intent.getBooleanExtra("diagnose_identity", false)) {
+            reportIdentitySources(context)
         }
         if (intent.getBooleanExtra("reset_identity", false)) {
             // Lets a bench device re-enrol without a factory reset.
@@ -79,6 +87,41 @@ class DebugConfigReceiver : BroadcastReceiver() {
                 "deviceOwner=${MdmDeviceAdminReceiver.isDeviceOwner(context)}"
         )
         SyncScheduler.startAll(context)
+    }
+
+    /**
+     * Report what each candidate device identity actually yields, on this hardware.
+     *
+     * `Reconciler.serialNumber()` prefers `Build.getSerial()` and silently falls back
+     * to `ANDROID_ID` — and the fallback is what this fleet's one enrolled tablet is
+     * living on, which breaks D24's re-enrolment matching. Whether that is a missing
+     * permission or a platform refusal cannot be told apart from the outside: both
+     * end at the same fallback. This says which.
+     */
+    private fun reportIdentitySources(context: Context) {
+        val serial = runCatching { android.os.Build.getSerial() }
+        AgentLog.i(
+            TAG,
+            "identity: Build.getSerial() -> " + when {
+                serial.isFailure ->
+                    "threw ${serial.exceptionOrNull()?.javaClass?.simpleName}: " +
+                        "${serial.exceptionOrNull()?.message}"
+                serial.getOrNull() == android.os.Build.UNKNOWN -> "UNKNOWN (refused, no throw)"
+                else -> "'${serial.getOrNull()}'"
+            }
+        )
+        AgentLog.i(
+            TAG,
+            "identity: READ_PHONE_STATE granted=" +
+                (androidx.core.content.ContextCompat.checkSelfPermission(
+                    context, android.Manifest.permission.READ_PHONE_STATE
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED)
+        )
+        @Suppress("HardwareIds")
+        val androidId = android.provider.Settings.Secure.getString(
+            context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
+        )
+        AgentLog.i(TAG, "identity: ANDROID_ID fallback -> '${android.os.Build.MODEL}-$androidId'")
     }
 
     companion object {

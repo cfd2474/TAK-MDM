@@ -20,6 +20,7 @@ import android.app.admin.DevicePolicyManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.UserManager
+import androidx.core.content.ContextCompat
 import org.takmdm.agent.diag.AgentLog
 import org.json.JSONObject
 import org.takmdm.agent.admin.MdmDeviceAdminReceiver
@@ -238,6 +239,40 @@ class PolicyApplier(private val context: Context) {
         }
 
         return failures
+    }
+
+    /**
+     * Grant the agent the runtime permissions its own manifest declares.
+     *
+     * Called on every sync, not only at provisioning, and that is the whole point.
+     * Self-granting used to happen once inside `PolicyComplianceActivity`, which
+     * never runs again after provisioning — so a permission added in a later agent
+     * build stayed **declared and ungranted forever** on every device already in the
+     * field, silently.
+     *
+     * That is not hypothetical. `READ_PHONE_STATE` was added to fix `Build.getSerial()`
+     * falling back to `ANDROID_ID` and breaking D24's re-enrolment matching. The
+     * manifest comment describing the fix was correct, the permission was correct,
+     * and on the one enrolled tablet it was never granted, so the bug it fixed was
+     * still happening — with a comment in the tree saying it was solved.
+     *
+     * Idempotent and cheap: `setPermissionGrantState` on an already-granted
+     * permission is a no-op.
+     */
+    fun ensureSelfPermissions(): List<String> {
+        if (!isDeviceOwner) return emptyList()
+        val missing = context.packageManager
+            .getPackageInfo(context.packageName, PackageManager.GET_PERMISSIONS)
+            .requestedPermissions?.toList().orEmpty()
+            .filter { isDangerous(it) }
+            .filterNot {
+                ContextCompat.checkSelfPermission(context, it) ==
+                    PackageManager.PERMISSION_GRANTED
+            }
+        if (missing.isEmpty()) return emptyList()
+
+        AgentLog.i(TAG, "self-granting ${missing.size} permission(s): ${missing.joinToString()}")
+        return grantRuntimePermissions(context.packageName)
     }
 
     private fun isDangerous(permission: String): Boolean = runCatching {
