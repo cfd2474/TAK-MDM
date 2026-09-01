@@ -52,7 +52,7 @@ written but have never actually run on a device:
 | Unproven | Why it matters |
 |---|---|
 | ~~**App install** (`PackageInstaller`, split APKs)~~ | ✅ **Proven 2026-09-01**, including splits. Real ATAK (107 MB, single APK) and real Butterfly IQ (**XAPK → base + 6 splits**, 323 MB) both installed by the agent; Android lists all seven parts and records `installerPackageName=org.takmdm.agent`. Upgrade proven too (`versionCode 1 → 2`). |
-| **File placement and zip extraction** | Needs all-files access; the R1 path |
+| ~~**File placement**~~ | ✅ **Proven 2026-09-01** — a map source pushed to `/sdcard/atak/imagery`, byte-identical, into ATAK's own tree. Closes R1. **Zip extraction is still unproven.** |
 | **Marketplace** (optional file selection) | F4 end to end |
 | **Kiosk / lock task** | F6 |
 | ~~**Transient commands**~~ | ✅ **Proven on `SM-X520`, 2026-09-01.** `lock`, `locate` and `collect_logs` all dispatched and succeeded at `attempts=1/5`. Was not implemented agent-side at all before Chunk 10. **`reboot` and `wipe` remain untried by choice** — they are the two whose deferred-result path (D90) cannot be rehearsed without actually rebooting or wiping the tablet. |
@@ -1160,6 +1160,46 @@ its next re-enrolment — the precise failure the chunk exists to prevent.
 | D101 | The migration **backfills every existing serial as a `LEGACY` identifier** | Preserves current matching exactly, whatever that string happens to be. Skipping it would orphan every enrolled device on its next re-enrolment. |
 | D102 | `identifiers` is **optional** on the enrolment request, and unknown kinds are kept rather than rejected | A fleet whose devices go dark for weeks cannot be upgraded before it is allowed to enrol, and a newer agent reporting a source this server has not heard of is still supplying usable identity. |
 
+### ✅ File placement into ATAK directories (COMPLETE, hardware-validated) — closes R1
+
+An ATAK custom map source pushed by policy to `/sdcard/atak/imagery`, landing
+**byte-identical** on `SM-X520`:
+
+```
+-rw-rw---- 1 u0_a283 media_rw 388 Google_Terrain_NOPOI.xml
+sha256 on device == sha256 on server
+```
+
+Into ATAK's own directory tree, created by ATAK. **R1 is settled by demonstration**:
+with all-files access granted once at provisioning, the agent writes into another
+app's external-storage directories. No Knox, no root, no `MANAGE_APP_OPS_MODES`.
+
+#### Two bugs found by pushing on it
+
+**A deleted file was never restored.** `applyFile` skipped whenever its own record
+said the content had been placed, and never looked at the disk. Deleting the file
+from the tablet left the MDM entirely unaware — device still `compliant`, required
+file simply gone. That is the blocklist ratchet again in a different place: a record
+of what once happened, presented as desired state. Now both halves are checked, and
+verified on hardware:
+
+```
+39c93edb… was placed at /sdcard/atak/imagery but is gone; replacing
+'/sdcard/atak/imagery' resolves to /storage/emulated/0/atak/imagery (all-files access: true)
+placed /storage/emulated/0/atak/imagery/Google_Terrain_NOPOI.xml (388 bytes)
+```
+
+**`FileDeployer` had no logging at all** — the same gap as `AppInstaller`, and found
+the same way: a remote log collection that should have explained a file push and
+said nothing about it. Now logs the resolved path, whether all-files access is held,
+and what is on disk *after* writing.
+
+| # | Decision | Rationale |
+|---|---|---|
+| D121 | A file is redeployed when the **disk** disagrees, not only when the recorded hash does | Remembering that we placed a file is not the same as the file being there. A user deletes it, an app clears its directory — and a reconciler trusting its own memory reports compliant with the file missing. |
+| D122 | Presence is checked by **existence and size**, not a full hash | Digesting every managed file on every check-in is real work on a tablet, and this already catches deletion and truncation. A content change still moves the recorded hash. |
+| D123 | An absolute `dest_path` outside device storage is **rejected at publish**, naming the path that would work | `/atak/imagery` is how ATAK paths are written and resolves to the unwritable filesystem root. Caught on the server the operator is told immediately; caught on the device it is a permission error that explains nothing — the same reasoning as enforcing signature pinning at upload. |
+
 ### ✅ Blacklist: suppress apps that cannot be uninstalled (COMPLETE, hardware-validated)
 
 Operator requirement: a blacklist that **uninstalls what it can and disables what it
@@ -1407,7 +1447,7 @@ re-investigated):
 
 | # | Item | Status |
 |---|---|---|
-| R1 | Writing to `/sdcard/atak/` needs `MANAGE_EXTERNAL_STORAGE`, an app-op that `setPermissionGrantState` does not grant. Matters for the TAK pack: ATAK config is not in a MediaStore collection, so shared-storage APIs do not reach it. | ✅ **Downgraded to an implementation choice, 2026-08-31.** The operator has seen a commercial MDM push files into ATAK directories on Device Owner devices with an MDM app as manager. So it is demonstrably achievable and no longer a design risk — only a question of which mechanism. On Samsung the overwhelmingly likely answer is Knox permission/app-op control, which is already the chosen path (D11). **Design response:** file push sits behind its own interface with a Knox implementation first and a one-time-grant fallback (Settings special-access, or a persisted SAF directory grant — one tap at provisioning, acceptable on a kiosk device). Costs nothing to build defensively, so no further investigation is warranted before Chunk 5. |
+| R1 | ~~Writing to `/sdcard/atak/` needs `MANAGE_EXTERNAL_STORAGE`~~ ✅ **CLOSED 2026-09-01, hardware-verified.** A map source was pushed by policy to `/sdcard/atak/imagery` and landed byte-identical in ATAK's own directory tree, with all-files access granted once at provisioning. No Knox, no root. Original concern: it needs `MANAGE_EXTERNAL_STORAGE`, an app-op that `setPermissionGrantState` does not grant. Matters for the TAK pack: ATAK config is not in a MediaStore collection, so shared-storage APIs do not reach it. | ✅ **Downgraded to an implementation choice, 2026-08-31.** The operator has seen a commercial MDM push files into ATAK directories on Device Owner devices with an MDM app as manager. So it is demonstrably achievable and no longer a design risk — only a question of which mechanism. On Samsung the overwhelmingly likely answer is Knox permission/app-op control, which is already the chosen path (D11). **Design response:** file push sits behind its own interface with a Knox implementation first and a one-time-grant fallback (Settings special-access, or a persisted SAF directory grant — one tap at provisioning, acceptable on a kiosk device). Costs nothing to build defensively, so no further investigation is warranted before Chunk 5. |
 | R2 | OBB placement for XAPKs inherits R1 | Open |
 | R3 | Knox partner application pending — gates KME and KPE | Tracking; AOSP path must not depend on it |
 | R4 | `INTERSECT` on app allowlists is correct but counter-intuitive | Make configurable per policy; show resulting set before publish |

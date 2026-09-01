@@ -80,6 +80,36 @@ class FileEntry(BaseModel):
             self.__pydantic_fields_set__.add("extract_to")
         return self
 
+    #: Absolute destinations Android will actually let the agent write to. A path
+    #: outside these resolves against the filesystem root, where nothing is
+    #: writable.
+    _DEVICE_ROOTS = ("/sdcard/", "/storage/emulated/0/")
+
+    @model_validator(mode="after")
+    def _reject_unwritable_root(self) -> FileEntry:
+        """Catch a destination the device could never write, at publish time.
+
+        `/atak/imagery` is how ATAK paths are conventionally written and it is a
+        trap: an absolute path resolves from the **filesystem root**, not external
+        storage, so it fails on every device with a permission error that says
+        nothing about the real mistake. Rejecting here means the operator is told
+        while they are still looking at the policy — the same reasoning as catching
+        signature pinning at upload rather than on the tablet.
+        """
+        for value in (self.dest_path, self.extract_to):
+            if not value:
+                continue
+            path = value.replace("\\", "/")
+            if not path.startswith("/"):
+                continue  # relative: resolved against external storage
+            if path.startswith(self._DEVICE_ROOTS) or path.rstrip("/") == "/sdcard":
+                continue
+            raise ValueError(
+                f"{value!r} is an absolute path outside device storage, so nothing "
+                f"can write there. Did you mean '/sdcard{value}'?"
+            )
+        return self
+
     @model_validator(mode="after")
     def _reject_traversal(self) -> FileEntry:
         for value in (self.dest_path, self.extract_to):

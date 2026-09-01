@@ -45,6 +45,14 @@ class FileDeployer(private val context: Context, private val config: AgentConfig
         if (destinationPath.isBlank()) return listOf("$fileId: no destination")
 
         val destinationDir = resolve(destinationPath)
+        // The resolved path, not the one the policy asked for. A destination like
+        // "/atak/imagery" resolves to the filesystem root, not external storage,
+        // and the difference is invisible until someone goes looking for the file.
+        AgentLog.d(
+            TAG,
+            "$fileId: '$destinationPath' resolves to ${destinationDir.absolutePath} " +
+                "(all-files access: ${hasAllFilesAccess()})"
+        )
         if (!hasAllFilesAccess() && requiresAllFiles(destinationDir)) {
             return listOf(
                 "$fileId: cannot write $destinationPath without all-files access; " +
@@ -58,12 +66,55 @@ class FileDeployer(private val context: Context, private val config: AgentConfig
                     entry.optString("extract_to").ifBlank { destinationPath }
                 )
                 extract(payload, target)
+                AgentLog.i(TAG, "$fileId: extracted into ${target.absolutePath}")
             } else {
                 val name = entry.optString("file_name").ifBlank { payload.name }
-                place(payload, File(destinationDir, name), entry.optString("overwrite", "if_newer"))
+                val destination = File(destinationDir, name)
+                place(payload, destination, entry.optString("overwrite", "if_newer"))
+                // Report what is actually on disk afterwards rather than that the
+                // copy returned without throwing. A silent no-op and a successful
+                // write are otherwise indistinguishable.
+                AgentLog.i(
+                    TAG,
+                    if (destination.exists())
+                        "$fileId: placed ${destination.absolutePath} (${destination.length()} bytes)"
+                    else
+                        "$fileId: ${destination.absolutePath} is MISSING after place()"
+                )
             }
             emptyList<String>()
-        }.getOrElse { listOf("$fileId: ${it.message ?: it.javaClass.simpleName}") }
+        }.getOrElse {
+            AgentLog.e(TAG, "$fileId: deployment failed", it)
+            listOf("$fileId: ${it.message ?: it.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * Whether the entry's content is actually on disk where it belongs.
+     *
+     * Asked because remembering that we once placed a file is not the same as the
+     * file being there. A user can delete it, an app can clear its own directory, a
+     * card can be swapped — and a reconciler that trusts its own record will report
+     * the device compliant with the file missing. Verified on `SM-X520`: deleting a
+     * required file left the MDM entirely unaware of it.
+     *
+     * Size rather than a hash: a full digest of every managed file on every
+     * check-in is real work on a tablet, and existence plus length already catches
+     * deletion and truncation. Content changes are caught by the recorded hash on
+     * the next policy change.
+     */
+    fun isDeployed(entry: JSONObject, expectedSize: Long): Boolean {
+        if (entry.optBoolean("extract")) {
+            // An archive lands as many files; "is it still there" would mean
+            // tracking every one. Existence of a non-empty target is the honest
+            // approximation, and it still catches the directory being wiped.
+            val target = resolve(entry.optString("extract_to").ifBlank { entry.optString("dest_path") })
+            return target.isDirectory && (target.list()?.isNotEmpty() == true)
+        }
+
+        val name = entry.optString("file_name").ifBlank { return false }
+        val destination = File(resolve(entry.optString("dest_path")), name)
+        return destination.isFile && (expectedSize <= 0 || destination.length() == expectedSize)
     }
 
     private fun resolve(path: String): File {

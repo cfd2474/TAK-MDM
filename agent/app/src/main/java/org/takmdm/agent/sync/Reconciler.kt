@@ -680,7 +680,22 @@ class Reconciler(private val context: Context) {
         val key = deployer.stateKey(entry)
         // Already placed this exact content at this destination. Content addressing
         // makes "unchanged" cheap to determine and skips the download entirely.
-        if (config.appliedFileHash(key) == sha) return emptyList()
+        // Both halves matter. The recorded hash says we placed *this* content; the
+        // disk check says it is still there. Trusting the record alone let a
+        // deleted file stay deleted forever while the device reported compliant.
+        if (config.appliedFileHash(key) == sha &&
+            deployer.isDeployed(entry, entry.optLong("size_bytes", -1))
+        ) {
+            AgentLog.d(TAG, "$fileId already placed at ${entry.optString("dest_path")}; skipping")
+            return emptyList()
+        }
+        if (config.appliedFileHash(key) == sha) {
+            AgentLog.w(
+                TAG,
+                "$fileId was placed at ${entry.optString("dest_path")} but is gone; replacing"
+            )
+        }
+        AgentLog.i(TAG, "deploying $fileId to ${entry.optString("dest_path")}")
 
         val payload = File(cacheDir, sha)
         if (!downloadArtifact(sha, payload)) {

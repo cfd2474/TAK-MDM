@@ -359,6 +359,30 @@ Device Owner, and it silently breaks exactly the apps that need all-files access
 
 ATAK config lives in `/sdcard/atak`, which is **not** a MediaStore collection.
 
+### ✅ Verified: the agent can write into ATAK's own directories
+
+A custom map source was pushed by policy to `/sdcard/atak/imagery` on `SM-X520` and
+landed byte-identical:
+
+```
+-rw-rw---- 1 u0_a283 media_rw 388 Google_Terrain_NOPOI.xml
+sha256 on device == sha256 on server
+```
+
+The directory tree was ATAK's own, created by ATAK. **This settles R1**: with
+all-files access granted once at provisioning, a Device Owner agent can place files
+into another app's external-storage directories. No Knox, no root.
+
+### ⚠️ An absolute path is resolved from the filesystem root
+
+`/atak/imagery` — the way ATAK paths are conventionally written — is **not**
+`/sdcard/atak/imagery`. It resolves from `/`, where nothing is writable, and the
+failure surfaces as a permission error that says nothing about the real mistake.
+
+Only `/sdcard/...` and `/storage/emulated/0/...` reach external storage; a relative
+path is resolved against it. The server now rejects anything else when the policy is
+published, and names the path that would have worked.
+
 ---
 
 ## 6a. AndroidKeyStore and signing
