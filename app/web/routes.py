@@ -64,6 +64,7 @@ from app.db.models import (
 )
 from app.policies.registry import PolicyTypeError, registry
 from app.services import effective_policy as eff
+from app.services import packages as package_service
 from app.services import provisioning
 from app.services.enrollment import create_token, reveal_secret
 
@@ -385,9 +386,10 @@ def token_qr(
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     vault: TokenVault = Depends(get_token_vault),
+    storage: ArtifactStorage = Depends(get_storage),
     identity: AdminIdentity = Depends(admin_required),
 ) -> HTMLResponse:
-    return _render_token_qr(request, token_id, session, settings, vault, identity)
+    return _render_token_qr(request, token_id, session, settings, vault, identity, storage)
 
 
 @router.post("/enrollment/{token_id}/qr", response_class=HTMLResponse)
@@ -400,6 +402,7 @@ def token_qr_with_wifi(
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     vault: TokenVault = Depends(get_token_vault),
+    storage: ArtifactStorage = Depends(get_storage),
     identity: AdminIdentity = Depends(admin_required),
 ) -> HTMLResponse:
     """Re-render the QR with Wi-Fi credentials embedded.
@@ -409,7 +412,7 @@ def token_qr_with_wifi(
     only needs it once, to reach the server during provisioning.
     """
     return _render_token_qr(
-        request, token_id, session, settings, vault, identity,
+        request, token_id, session, settings, vault, identity, storage,
         wifi_ssid=wifi_ssid.strip() or None,
         wifi_password=wifi_password or None,
         wifi_security=wifi_security,
@@ -423,6 +426,7 @@ def _render_token_qr(
     settings: Settings,
     vault: TokenVault,
     identity: AdminIdentity,
+    storage: ArtifactStorage,
     *,
     wifi_ssid: str | None = None,
     wifi_password: str | None = None,
@@ -465,6 +469,9 @@ def _render_token_qr(
             wifi_ssid=wifi_ssid,
             wifi_password=wifi_password,
             wifi_security=wifi_security,
+            declared_receivers=package_service.declared_receivers(
+                session, storage, settings.agent_package_name
+            ),
         )
     except provisioning.ProvisioningError as exc:
         context["problem"] = str(exc)

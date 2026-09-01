@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.artifacts.apk import ApkError
+from app.artifacts.apk import ApkError, inspect_apk
 from app.artifacts.bundles import InspectedBundle, PartRole, inspect
 from app.artifacts.storage import ArtifactStorage
 from app.db.models import (
@@ -233,3 +233,31 @@ def resolve_for_policy(
 
 def get_by_id(session: Session, package_id: uuid.UUID) -> AppPackage | None:
     return session.get(AppPackage, package_id)
+
+
+def declared_receivers(
+    session: Session, storage: ArtifactStorage, package_name: str
+) -> tuple[str, ...] | None:
+    """Receivers declared by the latest build of a package, or None if unavailable.
+
+    Used to check that a provisioning payload names an admin component the agent
+    APK actually contains. Only the manifest entry is read, not the whole archive.
+    Returns None rather than raising when nothing is uploaded — the caller then has
+    nothing to verify against, which is not an error.
+    """
+    package = session.scalar(
+        select(AppPackage).where(AppPackage.package_name == package_name)
+    )
+    version = package.latest_version if package else None
+    if version is None:
+        return None
+
+    base = next((f for f in version.files if f.role is DbPartRole.BASE), None)
+    if base is None or not storage.exists(base.artifact_sha256):
+        return None
+
+    try:
+        with storage.open(base.artifact_sha256) as handle:
+            return inspect_apk(handle.read()).receivers
+    except (ApkError, OSError):
+        return None

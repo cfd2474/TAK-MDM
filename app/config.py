@@ -78,7 +78,12 @@ class Settings(BaseSettings):
 
     # --- Agent APK, for provisioning payloads --------------------------------
     agent_package_name: str = "org.takmdm.agent"
-    agent_admin_receiver: str = "org.takmdm.agent/.MdmDeviceAdminReceiver"
+    # Must match the receiver the APK actually declares. The leading dot expands
+    # against the package root, so the `.admin` segment is required — omitting it
+    # points at a class that does not exist, and Android reports only "something
+    # went wrong" after installing. Validated against the uploaded APK at QR
+    # generation so it cannot drift again.
+    agent_admin_receiver: str = "org.takmdm.agent/.admin.MdmDeviceAdminReceiver"
     agent_apk_url: str = "https://mdm.example.org/static/agent.apk"
     # base64url SHA-256 of the agent's signing certificate. Android refuses to
     # provision if this does not match the downloaded APK.

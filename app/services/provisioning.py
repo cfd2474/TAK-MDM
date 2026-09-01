@@ -31,6 +31,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from app.artifacts.apk import component_class
 from app.config import Settings
 
 # Android's documented provisioning extras. Names are load-bearing — the setup
@@ -76,8 +77,25 @@ def qr_payload(
     wifi_password: str | None = None,
     wifi_security: str = "WPA",
     leave_system_apps_enabled: bool = True,
+    declared_receivers: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
-    """The JSON encoded into a Device Owner provisioning QR code."""
+    """The JSON encoded into a Device Owner provisioning QR code.
+
+    ``declared_receivers`` are the receivers the uploaded agent APK actually
+    contains. When supplied, the configured admin component is checked against
+    them: naming a class the APK does not have produces only "something went
+    wrong" on the tablet, after a download, an install, and a factory reset.
+    """
+    if declared_receivers:
+        wanted = component_class(settings.agent_admin_receiver)
+        if wanted not in declared_receivers:
+            raise ProvisioningError(
+                f"the agent APK declares no receiver named {wanted!r} "
+                f"(configured as {settings.agent_admin_receiver!r}). Remember that a "
+                f"leading dot expands against the package root. Declared receivers: "
+                f"{', '.join(r for r in declared_receivers if r.startswith(settings.agent_package_name))}"
+            )
+
     if not settings.agent_signature_checksum:
         # Android refuses to provision without this, and the failure on-device is
         # opaque. Better to fail here, where the cause is obvious.

@@ -61,6 +61,9 @@ class ApkInfo:
     split_name: str | None
     signature_sha256: str | None
     signature_scheme: str | None
+    # Fully-qualified names of every declared <receiver>. Used to verify that a
+    # provisioning payload names a component the APK actually contains.
+    receivers: tuple[str, ...] = ()
 
     @property
     def provisioning_checksum(self) -> str | None:
@@ -79,7 +82,9 @@ class ApkInfo:
 # --------------------------------------------------------------------------- #
 
 
-def _read_manifest(archive: zipfile.ZipFile) -> tuple[str, int, str | None, int | None, int | None, str | None]:
+def _read_manifest(
+    archive: zipfile.ZipFile,
+) -> tuple[str, int, str | None, int | None, int | None, str | None, tuple[str, ...]]:
     try:
         raw = archive.read(_MANIFEST)
     except KeyError:
@@ -109,7 +114,40 @@ def _read_manifest(archive: zipfile.ZipFile) -> tuple[str, int, str | None, int 
     version_name = manifest.get_str("versionName")
     split_name = manifest.get_str("split")
 
-    return package_name, version_code, version_name, min_sdk, target_sdk, split_name
+    # A manifest may name a receiver relatively (".admin.Foo") or absolutely.
+    # Normalising here means callers compare like with like.
+    receivers = tuple(
+        _qualify(package_name, name)
+        for element in elements
+        if element.name == "receiver"
+        for name in [element.get_str("name")]
+        if name
+    )
+
+    return (
+        package_name, version_code, version_name, min_sdk, target_sdk,
+        split_name, receivers,
+    )
+
+
+def _qualify(package_name: str, class_name: str) -> str:
+    """Expand a manifest class reference to its fully-qualified form."""
+    if class_name.startswith("."):
+        return f"{package_name}{class_name}"
+    if "." not in class_name:
+        return f"{package_name}.{class_name}"
+    return class_name
+
+
+def component_class(component: str) -> str:
+    """Fully-qualify a ``package/class`` component name.
+
+    Android's shorthand expands a leading dot against the *package*, so
+    ``org.x/.admin.Foo`` means ``org.x.admin.Foo`` — the trap that made a
+    provisioning payload point at a class that did not exist.
+    """
+    package_name, _, class_name = component.partition("/")
+    return _qualify(package_name, class_name) if class_name else component
 
 
 # --------------------------------------------------------------------------- #
@@ -252,9 +290,10 @@ def inspect_apk(data: bytes) -> ApkInfo:
         raise ApkError("not a valid ZIP archive") from exc
 
     with archive:
-        package_name, version_code, version_name, min_sdk, target_sdk, split_name = (
-            _read_manifest(archive)
-        )
+        (
+            package_name, version_code, version_name, min_sdk, target_sdk,
+            split_name, receivers,
+        ) = _read_manifest(archive)
         signature_sha256, scheme = extract_signature(data, archive)
 
     return ApkInfo(
@@ -266,6 +305,7 @@ def inspect_apk(data: bytes) -> ApkInfo:
         split_name=split_name,
         signature_sha256=signature_sha256,
         signature_scheme=scheme,
+        receivers=receivers,
     )
 
 

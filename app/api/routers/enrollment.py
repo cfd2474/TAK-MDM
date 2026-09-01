@@ -47,6 +47,7 @@ from app.security.admin_auth import AdminIdentity, admin_required
 from app.security.bundle import BundleSigner
 from app.security.token_vault import TokenVault
 from app.security.ca import CertificateAuthority, CertificateError
+from app.services import packages as package_service
 from app.services import provisioning
 from app.services.enrollment import EnrollmentError, create_token, enroll_device, revoke_token
 
@@ -63,7 +64,10 @@ device_router = APIRouter(prefix="/api/v1", tags=["enrollment"])
 
 
 def _provisioning_bundle(
-    settings: Settings, secret: str, wifi
+    settings: Settings,
+    secret: str,
+    wifi,
+    declared_receivers: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """QR and KME payloads. QR is best-effort: KME stays useful without a checksum."""
     bundle: dict[str, Any] = {"kme": provisioning.kme_payload(settings, secret)}
@@ -74,6 +78,7 @@ def _provisioning_bundle(
             wifi_ssid=wifi.ssid if wifi else None,
             wifi_password=wifi.password if wifi else None,
             wifi_security=wifi.security if wifi else "WPA",
+            declared_receivers=declared_receivers,
         )
     except provisioning.ProvisioningError as exc:
         bundle["qr"] = None
@@ -90,6 +95,7 @@ def create_enrollment_token(
     payload: EnrollmentTokenCreate,
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
+    storage: ArtifactStorage = Depends(get_storage),
     vault: TokenVault = Depends(get_token_vault),
     identity: AdminIdentity = Depends(admin_required),
 ) -> EnrollmentTokenCreated:
@@ -114,7 +120,14 @@ def create_enrollment_token(
     return EnrollmentTokenCreated(
         token=EnrollmentTokenRead.model_validate(issued.token),
         secret=issued.secret,
-        provisioning=_provisioning_bundle(settings, issued.secret, payload.wifi),
+        provisioning=_provisioning_bundle(
+            settings,
+            issued.secret,
+            payload.wifi,
+            package_service.declared_receivers(
+                session, storage, settings.agent_package_name
+            ),
+        ),
     )
 
 
