@@ -9,10 +9,10 @@ update after every completed step.
 
 ## Current status
 
-**Phase:** ✅ **Chunks 10 and 11 complete, both hardware-validated.** Agent
+**Phase:** ✅ **Chunks 10, 11 and 13 complete.** R11 and R13 both closed. Agent
 **v13 (`0.4.0`)** running on `SM-X520`, compliant, `state 2 = acked 2` and now
 correctly identified by its hardware serial `R5GL40MMHRN`.
-282 server tests + 30 agent tests.
+310 server tests + 30 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -217,7 +217,7 @@ no effect, check this list before investigating the code.
 | **Any Python source** | `docker compose up -d --build` | The source is `COPY`'d into the image at build time. Plain `up -d` restarts the container with the **old image**, so the change silently does not exist. |
 | **`docker/nginx/*.conf`** | `docker compose restart proxy` | The file is bind-mounted, so the container's config is unchanged and Compose sees no reason to recreate it. nginx reads its configuration once, at startup. |
 | **`pki/server.crt`** (e.g. after `scripts/setup_for_tablet.py`) | `docker compose restart proxy` | Same reason: nginx loads certificates at startup and keeps serving the old one. |
-| **`.env`** | `docker compose up -d` | Environment variables are container config, so Compose does recreate. No rebuild needed. |
+| **`.env`** | `docker compose up -d` | Environment variables are container config, so Compose does recreate. No rebuild needed. ⚠️ **But only for variables `docker-compose.yml` actually passes through.** It enumerates them explicitly, so a new `TAKMDM_*` in `.env` reaches nothing until it is also added to the `environment:` block. This cost real time in Chunk 13: `TAKMDM_CONSOLE_ORIGIN` was set, the setting stayed empty in the container, and a security check silently did nothing while every test passed. |
 
 The failure mode is identical in all three cases and deeply misleading: the code is
 correct, the test is correct, and the result is wrong. **Default to
@@ -970,6 +970,87 @@ stalls at the first. Routes, best first:
    to prove, and it cannot be the way its own fixes are delivered.
 4. Factory reset and re-provision by QR. Works, and costs the most.
 
+### ✅ Chunk 13 — CSRF protection (COMPLETE, closes R11)
+
+With forward auth (D67) the browser holds an Authentik session cookie, and that
+cookie is sent on *any* request the browser makes — including one a hostile page
+causes. Nothing today distinguishes a form the administrator submitted from one
+submitted on their behalf. Today's retire and delete buttons made that sharper: the
+console can now destroy records, not just create them.
+
+**Scope is wider than "the console's forms".** An HTML form can only send
+`GET`/`POST` with a form content type, so JSON API endpoints are already awkward to
+reach cross-site and `DELETE` is unreachable. But **`POST /api/v1/devices/{id}/retire`
+takes no body at all**, so a cross-site form can call it exactly as written. The
+admin API is not automatically safe just because it is an API.
+
+Two layers, each with one job:
+
+* **A signed token on console forms** — the real defence, depending on nothing but
+  our own key.
+* **Origin validation on every unsafe admin request** — catches the API endpoints a
+  form can reach, and costs scripts nothing, since a non-browser client sends no
+  `Origin` at all.
+
+1. **`CsrfGuard`** — HMAC-signed token bound to the admin's identity with an
+   expiry, keyed from `pki/csrf.key` via the same `load_or_create` pattern as the
+   token vault.
+2. **Origin/Referer validation** against an **explicitly configured** console
+   origin rather than one inferred from a proxy-set `Host` header — the same
+   discipline as R7, where trusting a header the client can influence is the bug.
+3. **Enforced at router registration** for unsafe methods, not per endpoint, so a
+   new admin route is protected by default (the D70 principle). Fail closed.
+4. **Token issued as a cookie** on console GETs and exposed to templates through a
+   `csrf_field()` macro.
+5. **Add the field to all eight existing forms.**
+6. **Tests** — missing, forged, expired, and another user's token; cross-origin
+   rejected; safe methods untouched; a script sending no `Origin` still works.
+7. **Docs** — close R11, and record the deployment setting.
+
+**Complete. 310 tests, and verified live against the running stack in
+`forward_auth` mode:**
+
+```
+no proxy headers                        401
+form POST, no token  (the R11 attack)   403
+hostile origin, VALID token             403
+legitimate form POST                    303
+JSON API from a script                  201
+hostile origin -> bodyless API POST     403
+hostile origin -> JSON fetch            403
+```
+
+#### The live test earned its keep immediately
+
+Every unit test passed and a hostile origin was still accepted against the real
+stack. **`docker-compose.yml` enumerates environment variables explicitly**, so
+adding `TAKMDM_CONSOLE_ORIGIN` to `.env` never reached the container;
+`console_origin` was empty, `check_origin` returned early, and the check silently
+did nothing. The tests passed because they set the value directly.
+
+That is the *nginx trap in a new costume* — correct code, no effect, because of
+config plumbing — and it is now the fourth instance this session of the pattern in
+HANDOFF §10. A test now asserts the variable is present in `docker-compose.yml`.
+
+**The startup warning named the bug.** Added an hour earlier on the D73 principle,
+it fired on the very deploy that had the fault and said exactly what was wrong.
+
+#### Decisions taken during implementation
+
+| # | Decision | Rationale |
+|---|---|---|
+| D105 | The token is **signed over the administrator's username**, not a bare double-submit value | A plain double-submit token only proves the submitter could read a cookie. Binding it means a token minted for one account cannot be replayed against another — there is a test that a stolen token fails for a different user, which a bare double-submit would pass. |
+| D106 | The token is demanded of **form-shaped requests only**; everything else is covered by the origin check | An HTML form can only send urlencoded or multipart, and always sets one — including the bodyless POST that reaches `/api/v1/devices/{id}/retire`. A form cannot send `application/json`, and a cross-origin `fetch` that does is stopped by a CORS preflight this app answers nothing for. Demanding tokens on JSON would break every script and close nothing. |
+| D107 | `console_origin` is **configured explicitly**, never inferred from the `Host` header | Behind a proxy that header is whatever the proxy was told. Building a security check on a value the client can influence is precisely the R7 mistake. |
+| D108 | A **missing** `Origin` is allowed | Browsers always send it on the cross-origin requests this defends against; `curl` and deployment scripts send none. Refusing those would break every automation while closing no hole. |
+| D109 | Enforcement **follows authentication** — inert when `admin_auth_mode=disabled` | With no session to ride, the request could simply be made directly, so a token protects nothing and costs every local script a round trip. One claim: the admin surface is protected or it is not (D68). |
+
+**Decided up front: CSRF enforcement follows authentication.** When
+`admin_auth_mode=disabled` there is no session to ride and an attacker can simply
+make the request directly, so a token would protect nothing and cost every local
+`curl` a round trip. One coherent claim — the admin surface is protected or it is
+not — rather than a third state nobody can reason about (D68).
+
 ### ✅ Housekeeping — device deletion (COMPLETE)
 
 There was **no way to remove a device record at all** — not in the console, not in
@@ -1155,7 +1236,7 @@ re-investigated):
 | R7 | mTLS header trust: nothing in code stops the app being exposed directly, where a copied certificate in `x-ssl-client-cert` would authenticate without the private key | **Partly mitigated.** A reference nginx config now ships in [docker/nginx/nginx.conf](docker/nginx/nginx.conf) — it always overwrites the header, so a forged one is stripped, and rejects uncertified requests to `/api/v1/device/` at the edge. `scripts/dev_enroll.py` verifies both behaviours on every run, and demonstrates the direct port accepting the forged header. **Still open in code:** the app does not refuse to start when no trusted proxy is configured. |
 | R10 | ~~The admin console has no authentication~~ | ✅ **Closed (Chunk 8).** Authentik forward auth with group-based authorization, failing closed, applied at router registration. `disabled` remains the local-development default and says so loudly at startup and in the UI. |
 | R12 | **`pki/token_vault.key` now decrypts every enrollment token secret** (D74). Combined with a database dump it yields working enrollment credentials. | **Accepted, bounded.** It sits beside `ca.key`, which is strictly more dangerous, so it does not change what must be protected — only how much is lost if `pki/` leaks. Rotating it invalidates QR re-display for existing tokens but not the tokens themselves. Folded into R8's KMS/HSM answer. |
-| R11 | **No CSRF protection on the console's form posts.** With forward auth, a signed-in administrator visiting a hostile page could have their browser submit a policy change or enrollment token. Authentik's session cookie would be sent with it. | **Open.** Needs a per-session token on the form posts. Lower severity than R10 was — it requires an authenticated victim and a targeted attack — but it is the natural next gap now that sessions exist. |
+| R11 | ~~**No CSRF protection on the console's form posts.**~~ ✅ **Closed (Chunk 13).** Identity-bound signed tokens on the console's forms, plus origin validation on every unsafe admin request. Verified live in `forward_auth` mode. Original text: **No CSRF protection.** With forward auth, a signed-in administrator visiting a hostile page could have their browser submit a policy change or enrollment token. Authentik's session cookie would be sent with it. | ✅ **Closed.** Two layers: a token signed over the administrator's identity on form submissions, and origin validation covering the API endpoints a cross-site form can reach. Both applied at router registration, so a new admin route is protected by default (D70). Set `TAKMDM_CONSOLE_ORIGIN` in deployment — the app warns loudly at startup if authentication is on and it is not. |
 | R9 | **Pre-granting `WRITE_EXTERNAL_STORAGE` locks an app out of `MANAGE_EXTERNAL_STORAGE`** on Android 11+. Auto-granting runtime permissions is otherwise the obvious thing to do as Device Owner, so this fails silently and looks like an unrelated storage bug. Confirmed in Headwind's source, where they work around it explicitly. | **Open, must be handled in Chunk 6.** When pre-granting permissions, detect apps declaring `MANAGE_EXTERNAL_STORAGE` and skip the legacy storage permissions for them. Affects ATAK directly. |
 | R8 | CA private key is stored unencrypted at `pki/ca.key` (mode 0600, gitignored). Anyone holding it can mint a device identity. | **Open.** Acceptable on a single trusted host where the DB is equally exposed; move behind a KMS/HSM before that stops being true. |
 | R13 | ~~**D24's re-enrolment matching is single-keyed and brittle.**~~ ✅ **Closed (Chunk 11), hardware-verified.** Identity is now a set; the tablet re-enrolled from a cleared identity into its own record and kept its policy stack. Original text: **D24's matching was single-keyed.** The server matches a re-enrolling device on `serial_number` alone. A device whose reported identity ever changes — as happens when it moves off the `ANDROID_ID` fallback onto its real serial, or after any identity-source change — creates a **new record** rather than re-adopting its own, orphaning history and group membership. Root cause of the fallback is fixed (D95), but `dd814571…` is still registered under its old fallback identity, so its next wipe produces one final duplicate. | ✅ **Closed.** Option (c) was taken: a device enrols with a set of identifiers and the server matches on any known one. `dd814571` matched on its old `ANDROID_ID` fallback, re-adopted its record, had its display serial promoted to `R5GL40MMHRN`, and kept `PASSWORD.min_length 13` from `Tablet Live Test`. The feared final duplicate never happened. |
@@ -1173,6 +1254,17 @@ re-investigated):
 
 ## Changelog
 
+- **2026-09-01** — **Chunk 13: CSRF protection. R11 closed.** 310 tests. Tokens
+  signed over the administrator's identity on the console's forms, plus origin
+  validation on every unsafe admin request — which is what covers the admin API's
+  bodyless endpoints, since a cross-site form *can* reach
+  `POST /devices/{id}/retire`. JSON requests are deliberately exempt from the token
+  so scripts keep working; a form cannot send JSON and a cross-origin `fetch` that
+  does is stopped by a CORS preflight. Verified live in `forward_auth` mode, which
+  immediately caught what the unit tests could not: `docker-compose.yml` enumerates
+  env vars, so `TAKMDM_CONSOLE_ORIGIN` never reached the container and the origin
+  check silently did nothing. The nginx trap in a new costume. The startup warning
+  added an hour earlier named the fault on the deploy that had it.
 - **2026-09-01** — **Housekeeping: device deletion.** 291 tests. There was no way
   to remove a device record anywhere, and retirement — which did exist — was never
   exposed in the console. Added retire-then-delete: deletion is refused with 409

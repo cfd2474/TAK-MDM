@@ -46,6 +46,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, get_storage, get_token_vault
+from app.security import admin_auth, csrf
 from app.security.admin_auth import AdminIdentity, admin_required
 from app.security.token_vault import TokenVault
 from app.artifacts.storage import ArtifactStorage
@@ -87,8 +88,36 @@ _TEMPLATES.env.filters["pretty_json"] = lambda value: json.dumps(value, indent=2
 def _render(
     request: Request, template: str, identity: AdminIdentity | None = None, **context: Any
 ) -> HTMLResponse:
+    """Render a page, and make sure it carries a usable CSRF token.
+
+    Issued here, on every page, rather than by each route that happens to contain a
+    form. A page that renders a form without a token would fail on submit with a
+    403 — loudly, which is the right failure — but issuing centrally means it does
+    not happen at all.
+    """
     context["identity"] = identity
-    return _TEMPLATES.TemplateResponse(request, template, context)
+    settings = get_settings()
+
+    token = admin_auth.issue_csrf_token(identity, settings) if identity else ""
+    context["csrf_token"] = token
+
+    response = _TEMPLATES.TemplateResponse(request, template, context)
+    if token:
+        response.set_cookie(
+            csrf.COOKIE_NAME,
+            token,
+            max_age=csrf.DEFAULT_TTL_SECONDS,
+            # Lax, not Strict: the console is reached by following links, and Strict
+            # would drop the cookie on arrival from Authentik's redirect, leaving
+            # the first form submit mysteriously broken.
+            samesite="lax",
+            # Only over HTTPS in deployment. Left off when no origin is configured,
+            # because local development runs on plain http and a Secure cookie would
+            # silently never be set.
+            secure=bool(settings.console_origin.startswith("https://")),
+            httponly=False,
+        )
+    return response
 
 
 # --------------------------------------------------------------------------- #

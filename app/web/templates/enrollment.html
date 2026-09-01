@@ -12,6 +12,7 @@
 <h2>New token</h2>
 <div class="panel">
   <form method="post" action="/enrollment">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="row">
       <div>
         <label for="name">Name</label>

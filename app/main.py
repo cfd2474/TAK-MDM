@@ -75,7 +75,11 @@ app.include_router(device_logs.router)
 # Administrative. Guarded here rather than per endpoint, so a new route is
 # protected by default and forgetting the dependency cannot quietly expose one.
 # --------------------------------------------------------------------------- #
-_admin = [Depends(admin_auth.admin_required)]
+# csrf_protected depends on admin_required, so this both authenticates and
+# CSRF-checks. Applied at registration for the same reason authentication is: a new
+# admin route is covered by default, and forgetting a decorator cannot quietly
+# expose one (D70).
+_admin = [Depends(admin_auth.csrf_protected)]
 
 for admin_router in (
     policy_types.router,

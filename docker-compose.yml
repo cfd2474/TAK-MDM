@@ -53,6 +53,10 @@ services:
       # docker/nginx/admin.conf.example.
       TAKMDM_ADMIN_AUTH_MODE: ${TAKMDM_ADMIN_AUTH_MODE:-disabled}
       TAKMDM_ADMIN_GROUP: ${TAKMDM_ADMIN_GROUP:-takmdm-admins}
+      # The console's public origin, used to reject cross-origin unsafe
+      # requests. Blank disables that check; the app warns loudly at startup
+      # when auth is on and this is unset.
+      TAKMDM_CONSOLE_ORIGIN: ${TAKMDM_CONSOLE_ORIGIN:-}
       TAKMDM_AGENT_SIGNATURE_CHECKSUM: ${TAKMDM_AGENT_SIGNATURE_CHECKSUM:-}
       TAKMDM_AGENT_APK_URL: ${TAKMDM_AGENT_APK_URL:-https://localhost:8443/api/v1/provisioning/agent.apk}
     volumes:

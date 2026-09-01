@@ -26,6 +26,7 @@
         Wi-Fi and download the agent without anyone touching the setup wizard.
       </p>
       <form method="post" action="/enrollment/{{ token.id }}/qr">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label for="wifi_ssid">Network name (SSID)</label>
         <input id="wifi_ssid" name="wifi_ssid" style="width:100%"
                value="{{ wifi_ssid or '' }}" placeholder="TAK-Field">

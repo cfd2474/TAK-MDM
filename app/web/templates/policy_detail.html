@@ -25,6 +25,7 @@
     assignment — this form describes the complete target set.
   </p>
   <form method="post" action="/policies/{{ policy.id }}/targets">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label for="rank">Rank (higher wins; scope only breaks ties)</label>
     <input id="rank" name="rank" type="number" value="{{ current_rank }}" style="width:120px">
 
@@ -96,6 +97,7 @@
   <div class="row">
     <div>
       <form method="post" action="/policies/{{ policy.id }}/versions">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label for="spec">Spec (JSON)</label>
         <textarea id="spec" name="spec" rows="14">{{ (policy.latest_version.spec if policy.latest_version else {}) | pretty_json }}</textarea>
         <button type="submit" style="margin-top:10px">Publish</button>

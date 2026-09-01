@@ -37,10 +37,13 @@ from __future__ import annotations
 import enum
 import logging
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 
 from fastapi import Depends, HTTPException, Request, status
 
 from app.config import Settings, get_settings
+from app.security import csrf
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +140,129 @@ def admin_required(
     return identify(request, settings)
 
 
+async def csrf_protected(
+    request: Request,
+    identity: AdminIdentity = Depends(admin_required),
+    settings: Settings = Depends(get_settings),
+) -> AdminIdentity:
+    """Reject an unsafe request that this administrator did not deliberately make.
+
+    Applied at router registration alongside `admin_required`, not per endpoint, so
+    a new admin route is protected by default and forgetting a decorator cannot
+    quietly open one (the D70 principle).
+
+    **Enforcement follows authentication.** With `admin_auth_mode=disabled` there is
+    no session for a hostile page to ride and the request could simply be made
+    directly, so a token would protect nothing while costing every local script a
+    round trip. The admin surface is protected or it is not; there is no third state
+    (D68).
+
+    Safe methods pass untouched — a GET must never require a token, or the console
+    could not issue one in the first place.
+    """
+    if AuthMode(settings.admin_auth_mode) is AuthMode.DISABLED:
+        return identity
+    if not csrf.is_unsafe(request.method):
+        return identity
+
+    try:
+        # First, because it is the layer that covers the endpoints an HTML form can
+        # reach but a token was never attached to — a bodyless POST such as
+        # /api/v1/devices/{id}/retire.
+        csrf.check_origin(
+            request.headers.get("origin"),
+            request.headers.get("referer"),
+            settings.console_origin,
+        )
+
+        # The token is demanded of **form-shaped** requests, which is precisely what
+        # a cross-site HTML form can produce — including the bodyless POST that
+        # /api/v1/devices/{id}/retire accepts.
+        #
+        # A JSON request is deliberately exempt. A form cannot send
+        # `application/json`, and a cross-origin `fetch` that does triggers a CORS
+        # preflight this application answers no headers for, so the browser refuses
+        # it before we see it. Demanding a token there would break every script and
+        # close nothing. What covers a JSON or text/plain `fetch` is the origin
+        # check above — which is why an unset `console_origin` is warned about at
+        # startup.
+        if _is_form_shaped(request):
+            submitted = request.headers.get(csrf.HEADER_NAME) or await _form_token(request)
+            cookie = request.cookies.get(csrf.COOKIE_NAME)
+            if not cookie:
+                raise csrf.CsrfError("no CSRF cookie; reload the page and retry")
+            if submitted != cookie:
+                # Double submit: a cross-site page can cause the cookie to be sent
+                # but cannot read it, so it cannot put a matching value in the body.
+                raise csrf.CsrfError("CSRF token does not match its cookie")
+
+            _guard(settings).verify(submitted, identity.username)
+    except csrf.CsrfError as exc:
+        logger.warning(
+            "CSRF check failed for %s %s (%s): %s",
+            request.method, request.url.path, identity.username, exc,
+        )
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+
+    return identity
+
+
+_FORM_CONTENT_TYPES = ("application/x-www-form-urlencoded", "multipart/form-data")
+
+
+def _is_form_shaped(request: Request) -> bool:
+    """True when this request is something a cross-site HTML form could have sent.
+
+    A form can only submit `application/x-www-form-urlencoded` or
+    `multipart/form-data`, and it always sets one of them — including when the
+    form has no fields at all, which is the shape that reaches a bodyless endpoint
+    such as `/api/v1/devices/{id}/retire`.
+
+    Anything else came from a script or a `fetch`, and is covered by the origin
+    check instead.
+    """
+    return request.headers.get("content-type", "").startswith(_FORM_CONTENT_TYPES)
+
+
+async def _form_token(request: Request) -> str | None:
+    """Read the token out of a submitted form.
+
+    Safe to do here even though the endpoint will parse the body again: Starlette
+    caches the parsed form on the request, so the second read is the same object
+    rather than an attempt to consume an already-drained stream.
+
+    Only for form content types. Calling `form()` on a JSON body would parse
+    nothing useful, and on a malformed multipart body it raises — neither of which
+    should surface as a CSRF failure.
+    """
+    content_type = request.headers.get("content-type", "")
+    if not content_type.startswith(
+        ("application/x-www-form-urlencoded", "multipart/form-data")
+    ):
+        return None
+
+    try:
+        form = await request.form()
+    except Exception:  # noqa: BLE001 — a malformed body is not a CSRF verdict
+        return None
+    value = form.get(csrf.FORM_FIELD)
+    return value if isinstance(value, str) else None
+
+
+@lru_cache(maxsize=4)
+def _guard_for(pki_dir: str) -> csrf.CsrfGuard:
+    return csrf.CsrfGuard.load_or_create(Path(pki_dir))
+
+
+def _guard(settings: Settings) -> csrf.CsrfGuard:
+    return _guard_for(str(settings.pki_dir))
+
+
+def issue_csrf_token(identity: AdminIdentity, settings: Settings) -> str:
+    """Mint a token for embedding in a form."""
+    return _guard(settings).issue(identity.username)
+
+
 def warn_if_unprotected(settings: Settings) -> None:
     """Say so loudly at startup. Silence here is how a console ends up open."""
     if AuthMode(settings.admin_auth_mode) is AuthMode.DISABLED:
@@ -145,4 +271,18 @@ def warn_if_unprotected(settings: Settings) -> None:
             "unauthenticated. Acceptable only on a loopback-bound development "
             "instance; set TAKMDM_ADMIN_AUTH_MODE=forward_auth behind Authentik "
             "before this is reachable by anyone else."
+        )
+        return
+
+    if not settings.console_origin:
+        # The token covers form submissions, which is the classic attack. What it
+        # does not cover is a cross-origin `fetch` sending JSON or text/plain to a
+        # bodyless endpoint, and the origin check is the only thing that does —
+        # so an unset origin is a real gap, not a cosmetic one. Said out loud for
+        # the same reason the disabled-auth warning is (D73).
+        logger.warning(
+            "TAKMDM_CONSOLE_ORIGIN is not set. CSRF tokens still protect the "
+            "console's forms, but cross-origin requests cannot be rejected by "
+            "origin, which is what covers the admin API's bodyless endpoints. "
+            "Set it to the console's public origin, e.g. https://atlas.example.org"
         )

@@ -66,6 +66,15 @@ class Settings(BaseSettings):
     admin_email_header: str = "x-authentik-email"
     admin_name_header: str = "x-authentik-name"
 
+    # The console's own public origin, e.g. "https://atlas.example.org". Used to
+    # reject unsafe requests a browser made from somewhere else.
+    #
+    # Configured explicitly rather than inferred from the request's Host header:
+    # behind a proxy that header is whatever the proxy was told, and building a
+    # security check on a value the client can influence is the R7 mistake. Blank
+    # disables the origin check; the CSRF token still applies.
+    console_origin: str = ""
+
     # --- Enrollment ----------------------------------------------------------
     enrollment_token_ttl_hours: int = 168  # 7 days
 
