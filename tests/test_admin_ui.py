@@ -546,3 +546,37 @@ def test_a_log_cannot_be_read_through_another_device(
     # (the same rule as D34).
     response = client.get(f"/devices/{other['device_id']}/logs/{bundle_id}")
     assert response.status_code == 404
+
+
+def test_device_page_lists_identifiers(client: TestClient, enrolled):
+    device = enrolled(serial="UI-IDENT")
+
+    body = text_of(client.get(f"/devices/{device['device_id']}").text)
+
+    assert "Identity" in body
+    assert "UI-IDENT" in body
+
+
+def test_device_page_warns_when_there_is_no_hardware_serial(client: TestClient):
+    from tests.conftest import ADMIN_HEADERS, generate_csr
+
+    secret = client.post(
+        "/api/v1/enrollment-tokens", json={"name": "weak"}, headers=ADMIN_HEADERS
+    ).json()["secret"]
+    device = client.post(
+        "/api/v1/enroll",
+        json={
+            "token": secret,
+            "csr_pem": generate_csr(),
+            "serial_number": "SM-X520-deadbeefdeadbeef",
+            "identifiers": [
+                {"kind": "android_id", "value": "SM-X520-deadbeefdeadbeef"}
+            ],
+        },
+    ).json()
+
+    body = text_of(client.get(f"/devices/{device['device_id']}").text)
+
+    # A device one wipe away from becoming a duplicate is invisible from anything
+    # else on the page, so it has to be said outright.
+    assert "No hardware serial" in body

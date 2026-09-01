@@ -145,6 +145,45 @@
 </div>
 {% endif %}
 
+<h2 id="identity">Identity</h2>
+<div class="panel">
+  {% set kinds = identifiers | map(attribute='kind') | map(attribute='value') | list %}
+  {% if identifiers and 'serial' not in kinds %}
+    <div class="banner warn">
+      <strong>No hardware serial.</strong>
+      This device is identified only by values that change on a factory reset, so a
+      wipe will enrol it as a <em>new</em> record and it will lose its policy stack.
+      The agent needs <code>READ_PHONE_STATE</code> to report its real serial.
+    </div>
+  {% endif %}
+
+  {% if identifiers %}
+  <table>
+    <thead><tr><th>Kind</th><th>Value</th><th>First seen</th><th>Last seen</th></tr></thead>
+    <tbody>
+    {% for i in identifiers %}
+      <tr>
+        <td>
+          {% if i.kind.value == 'serial' %}<span class="pill good">serial</span>
+          {% elif i.kind.value == 'android_id' %}<span class="pill warn">android_id</span>
+          {% else %}<span class="pill">{{ i.kind.value }}</span>{% endif %}
+        </td>
+        <td class="mono">{{ i.value }}</td>
+        <td class="muted">{{ i.first_seen_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td class="muted">{{ i.last_seen_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">
+    Re-enrolment matches on any of these, so a device that changes identity source
+    re-adopts this record instead of creating a second one.
+  </p>
+  {% else %}
+    <p class="muted">No identifiers recorded — this device enrolled before they were tracked.</p>
+  {% endif %}
+</div>
+
 <h2 id="logs">Diagnostics</h2>
 <div class="panel">
   <p class="muted">

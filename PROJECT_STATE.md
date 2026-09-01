@@ -9,10 +9,13 @@ update after every completed step.
 
 ## Current status
 
-**Phase:** ✅ **Chunk 10 complete and hardware-validated.** Agent command layer and
-remote diagnostics. Agent **v10 (`0.3.1`)** running on `SM-X520`; `lock`, `locate`
-and `collect_logs` all dispatched and succeeded. 271 server tests + 30 agent tests.
-`adb` is connected again over wireless debugging at `192.168.68.92:43231`.
+**Phase:** Chunk 10 complete and hardware-validated; **Chunk 11 steps 1–6 done,
+hardware step outstanding.** 282 server tests + 30 agent tests.
+
+Agent **v12 (`0.3.3`)** is what is actually running on `SM-X520`. **v13 (`0.4.0`)
+is built but not installed** — `adb` dropped mid-session and the tablet has not
+been reachable since. Wireless-debugging ports rotate, so reconnecting needs the
+current `IP:port` from the device (pairing itself survives).
 
 > **`SM-X520` is enrolled, checking in, and applying policy over mTLS.** Live
 > propagation measured against the tablet: publishing a policy version woke the
@@ -965,7 +968,70 @@ stalls at the first. Routes, best first:
    to prove, and it cannot be the way its own fixes are delivered.
 4. Factory reset and re-provision by QR. Works, and costs the most.
 
-### 🔜 Chunk 11 — Prove app install on hardware (PLANNED)
+### 🔄 Chunk 11 — Multi-identifier device identity (IN PROGRESS, closes R13)
+
+D24 matches a re-enrolling device on `serial_number` alone. That is one key, and a
+device's reported identity is not guaranteed to stay constant — as this fleet has
+already demonstrated twice. The fix is to stop treating identity as a single string.
+
+**A device enrols with a *set* of identifiers**; the server matches on any one it
+already knows, and records the rest. A device that moves from the `ANDROID_ID`
+fallback onto its real serial then re-adopts its own record instead of forking a new
+one, and any future identity source slots in without another protocol change.
+
+1. **`DeviceIdentifier` model + migration**, backfilling every existing device's
+   `serial_number` as a `legacy` identifier so today's matching behaviour is
+   preserved exactly.
+2. **Matching by any known identifier**, with a kind priority so an ambiguous match
+   resolves deterministically. Ambiguity is **surfaced, never silently merged** —
+   merging two device histories on a guess is not something to do automatically.
+3. **Promote the display serial** when a stronger identifier arrives, so a record
+   stuck on a fallback repairs itself rather than staying permanently mislabelled.
+4. **Agent sends its identifiers** — real serial when available, `ANDROID_ID`
+   always. Back-compatible: an agent sending only `serial_number` still works.
+5. **Console** shows a device's known identifiers and flags a possible duplicate.
+6. **Tests** — re-adopt via fallback, via serial, promotion, ambiguity, and an old
+   agent that sends no identifier list at all.
+7. **Prove on hardware.** `DebugConfigReceiver`'s `reset_identity` (D86) lets the
+   tablet re-enrol without a factory reset, so this is directly testable: it must
+   re-adopt `dd814571…` rather than create a fourth `SM-X520` row.
+
+**Steps 1–6 complete. 282 tests passing. Step 7 NOT done.**
+
+Migration applied to real Postgres and the backfill verified — every existing
+device now carries its own `serial_number` as a `LEGACY` identifier, so today's
+matching is preserved exactly:
+
+```
+R5CN00TAK01              | LEGACY | R5CN00TAK01
+SM-X520-6e5d7b239e5d39c3 | LEGACY | SM-X520-6e5d7b239e5d39c3
+```
+
+Without that backfill this migration would have orphaned every enrolled device on
+its next re-enrolment — the precise failure the chunk exists to prevent.
+
+⚠️ **Nothing here has run on a device.** Agent v13 (`0.4.0`) is built but not
+installed: `adb` dropped mid-session (wireless debugging ports rotate and the
+tablet slept after the `lock` command), and the device has not been reachable
+since. The server half is verified by tests and against the running stack; the
+agent half — `reportedIdentifiers()` and the enrolment call carrying them — is
+**written and compiled only**.
+
+Step 7 needs the tablet awake: either a fresh wireless-debugging port for `adb`,
+or a sideload of the APK.
+
+#### Decisions taken during implementation
+
+| # | Decision | Rationale |
+|---|---|---|
+| D97 | Identity is a **set of identifiers**, matched on any known one, rather than a single `serial_number` | A device's reported identity is not a constant — this fleet proved it twice. Single-key matching forks a new record every time the key moves, and the fork silently drops the group membership driving the policy stack. A set also absorbs a future identity source without another protocol change. |
+| D98 | Matching resolves by **identifier kind priority**, not the order the agent listed them | A device reporting both a real serial and an old fallback must land on the same record every time, whichever way round it sends them. Order-dependence here would be a bug that only appears on some devices. |
+| D99 | An ambiguous match is **reported, never merged automatically** | Two records matching one device means the fleet already holds duplicates, which wants a human decision. Merging two histories on a guess is not something to do as a side effect of a check-in, and it cannot be undone. |
+| D100 | An identifier already held by another device is **never reassigned** | Silently moving it would change which record a third device resolves to. The fix for a genuine duplicate is a deliberate merge. |
+| D101 | The migration **backfills every existing serial as a `LEGACY` identifier** | Preserves current matching exactly, whatever that string happens to be. Skipping it would orphan every enrolled device on its next re-enrolment. |
+| D102 | `identifiers` is **optional** on the enrolment request, and unknown kinds are kept rather than rejected | A fleet whose devices go dark for weeks cannot be upgraded before it is allowed to enrol, and a newer agent reporting a source this server has not heard of is still supplying usable identity. |
+
+### 🔜 Chunk 12 — Prove app install on hardware (PLANNED)
 
 The largest untested surface in the system, and the terminus of the entire Chunk 4
 pipeline: upload → inspect → content-address → resolve into desired state →
@@ -1062,6 +1128,17 @@ re-investigated):
 
 ## Changelog
 
+- **2026-09-01** — **Chunk 11 steps 1–6: multi-identifier device identity (R13).**
+  282 tests. A device now enrols with a *set* of identifiers and the server matches
+  on any it already knows, so a device that changes identity source re-adopts its
+  own record instead of forking a new one and losing its policy stack. Matching is
+  by kind priority rather than list order; an ambiguous match is reported and never
+  merged automatically; an identifier held by another device is never reassigned.
+  The migration backfills every existing serial as a `LEGACY` identifier —
+  verified against real Postgres — which is what preserves current matching and
+  avoids orphaning the whole fleet on its next re-enrolment. **The hardware step is
+  not done:** agent v13 is built but `adb` dropped mid-session and the tablet has
+  not been reachable since, so the agent half is compiled but unrun.
 - **2026-09-01** — **Chunk 10 complete, hardware-validated.** `adb` recovered by
   pairing over wireless debugging; agent v10 (`0.3.1`) installed on `SM-X520`.
   `lock`, `locate` and `collect_logs` all succeeded at `attempts=1/5`, against the

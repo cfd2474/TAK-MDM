@@ -27,6 +27,7 @@ from app.db.models import (
     CommandType,
     ComplianceStatus,
     EnrollmentState,
+    IdentifierKind,
     PartRole,
 )
 
@@ -233,6 +234,27 @@ class ProvisioningRequest(BaseModel):
     wifi: WifiConfig | None = None
 
 
+class DeviceIdentifierReport(BaseModel):
+    """One identity a device claims for itself.
+
+    ``kind`` is a plain string, not the enum: an older server must not reject an
+    agent that learns a new identifier source, and an unrecognised kind is still a
+    perfectly usable match key. It is normalised server-side.
+    """
+
+    kind: str
+    value: str = Field(min_length=1, max_length=128)
+
+
+class DeviceIdentifierRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    kind: IdentifierKind
+    value: str
+    first_seen_at: datetime
+    last_seen_at: datetime
+
+
 class EnrollRequest(BaseModel):
     """Sent by the agent on first run. Public endpoint — the token is the credential."""
 
@@ -243,6 +265,11 @@ class EnrollRequest(BaseModel):
     imei: str | None = None
     os_version: str | None = None
     agent_version: str | None = None
+
+    # Every identity this device can report, so re-enrolment can match on any it has
+    # used before (R13). Optional: an older agent sends only serial_number and
+    # enrols exactly as it always did.
+    identifiers: list[DeviceIdentifierReport] = Field(default_factory=list)
 
 
 class EnrollResponse(BaseModel):

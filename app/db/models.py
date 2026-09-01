@@ -440,6 +440,65 @@ class DeviceCommand(Base):
         return now < self.expires_at and self.attempts < self.max_attempts
 
 
+class IdentifierKind(str, enum.Enum):
+    """Where a device identifier came from, strongest first.
+
+    Priority matters: a device reports several at once, and when two of them point
+    at different records the match has to resolve the same way every time.
+    """
+
+    #: ``Build.getSerial()`` — the hardware serial. Survives a factory reset.
+    SERIAL = "serial"
+    #: A record's original ``serial_number``, backfilled at migration. Preserves the
+    #: pre-existing matching behaviour exactly, whatever that string actually was.
+    LEGACY = "legacy"
+    #: ``Settings.Secure.ANDROID_ID``. **Changes on factory reset**, so it is a weak
+    #: identifier kept only to re-adopt a device that once enrolled under it.
+    ANDROID_ID = "android_id"
+
+
+#: Match order. A device supplying several identifiers is resolved by the
+#: strongest that is already known, so the outcome does not depend on dict order.
+IDENTIFIER_PRIORITY: tuple[IdentifierKind, ...] = (
+    IdentifierKind.SERIAL,
+    IdentifierKind.LEGACY,
+    IdentifierKind.ANDROID_ID,
+)
+
+
+class DeviceIdentifier(Base):
+    """One way a device has identified itself.
+
+    A device's reported identity is not a constant — this fleet proved that twice,
+    when `Build.getSerial()` was refused and the agent fell back to `ANDROID_ID`,
+    which then changed on each factory reset. Matching re-enrolment on a single
+    string (D24) forks a new record every time that string moves, orphaning the
+    device's history and its group membership.
+
+    Keeping the set means a device that arrives on *any* identity it has used
+    before re-adopts its own record, and a new identity source costs a row rather
+    than a protocol change.
+    """
+
+    __tablename__ = "device_identifier"
+    __table_args__ = (
+        # Globally unique across kinds: one value must never name two devices, or
+        # matching stops being deterministic.
+        UniqueConstraint("value", name="uq_device_identifier_value"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("device.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[IdentifierKind] = mapped_column(
+        Enum(IdentifierKind, native_enum=False, length=16)
+    )
+    value: Mapped[str] = mapped_column(String(128), index=True)
+    first_seen_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+
 class DeviceLogBundle(Base):
     """One upload of a device's own diagnostic log.
 

@@ -151,7 +151,8 @@ class Reconciler(private val context: Context) {
                 serialNumber = serial,
                 model = Build.MODEL,
                 osVersion = Build.VERSION.RELEASE,
-                agentVersion = AGENT_VERSION
+                agentVersion = AGENT_VERSION,
+                identifiers = reportedIdentifiers()
             )
 
             DeviceIdentity.installCertificate(
@@ -222,6 +223,40 @@ class Reconciler(private val context: Context) {
     private fun hasStableIdentity(): Boolean =
         runCatching { Build.getSerial() }.getOrNull()
             ?.let { it.isNotBlank() && it != Build.UNKNOWN } == true
+
+    /**
+     * Every identity this device can report, strongest first.
+     *
+     * Sent as a set so the server can match a re-enrolling device on **any** of them
+     * (R13). A device whose `Build.getSerial()` was refused at first enrolment is
+     * registered under its `ANDROID_ID`; once the permission is granted it reports
+     * both, and the server re-adopts the existing record rather than forking a new
+     * one. The fallback is included even when the real serial is available — that is
+     * exactly what makes the transition work.
+     */
+    private fun reportedIdentifiers(): JSONArray {
+        val identifiers = JSONArray()
+
+        runCatching { Build.getSerial() }.getOrNull()
+            ?.takeIf { it.isNotBlank() && it != Build.UNKNOWN }
+            ?.let {
+                identifiers.put(JSONObject().put("kind", "serial").put("value", it))
+            }
+
+        @Suppress("HardwareIds")
+        val androidId = android.provider.Settings.Secure.getString(
+            context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
+        )
+        if (!androidId.isNullOrBlank()) {
+            identifiers.put(
+                JSONObject()
+                    .put("kind", "android_id")
+                    .put("value", "${Build.MODEL}-$androidId")
+            )
+        }
+
+        return identifiers
+    }
 
     // ----------------------------------------------------------------------- //
     // Check-in and convergence

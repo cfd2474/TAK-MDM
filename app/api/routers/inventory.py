@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import fetch_or_404, get_db, require_device
 from app.api.schemas import (
     DeviceCreate,
+    DeviceIdentifierRead,
     DeviceRead,
     GroupRead,
     MembershipUpdate,
@@ -34,6 +35,7 @@ from app.api.schemas import (
     TagRead,
 )
 from app.db.models import Device, DeviceGroup, EnrollmentState, Tag
+from app.services import device_identity
 from app.services import effective_policy as eff
 from app.services.enrollment import revoke_device_certificates
 
@@ -69,6 +71,24 @@ def list_devices(session: Session = Depends(get_db)) -> list[Device]:
 @router.get("/devices/{device_id}", response_model=DeviceRead)
 def get_device(device: Device = Depends(require_device)) -> Device:
     return device
+
+
+@router.get(
+    "/devices/{device_id}/identifiers", response_model=list[DeviceIdentifierRead]
+)
+def list_device_identifiers(
+    device: Device = Depends(require_device), session: Session = Depends(get_db)
+) -> list[DeviceIdentifierRead]:
+    """Every identity this device has reported.
+
+    Worth showing: a device holding only an `android_id` is one factory reset away
+    from becoming a duplicate record, and that is invisible from anything else on
+    the device page.
+    """
+    return [
+        DeviceIdentifierRead.model_validate(row)
+        for row in device_identity.for_device(session, device.id)
+    ]
 
 
 @router.post("/devices/{device_id}/retire", response_model=DeviceRead)

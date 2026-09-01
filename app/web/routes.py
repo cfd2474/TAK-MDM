@@ -66,6 +66,7 @@ from app.db.models import (
 )
 from app.policies.registry import PolicyTypeError, registry
 from app.services import commands as command_service
+from app.services import device_identity
 from app.services import device_logs as log_service
 from app.services import effective_policy as eff
 from app.services import packages as package_service
@@ -147,6 +148,7 @@ def device_detail(
         files=payload.get("files", {"required": [], "available": []}),
         log_bundles=log_service.list_for_device(session, device_id),
         pending_log_request=_has_open_log_request(session, device_id),
+        identifiers=device_identity.for_device(session, device_id),
     )
 
 

@@ -140,7 +140,15 @@ class ApiClient(private val config: AgentConfig) {
     // Endpoints
     // ----------------------------------------------------------------------- //
 
-    fun enroll(token: String, csrPem: String, serialNumber: String, model: String, osVersion: String, agentVersion: String): JSONObject {
+    fun enroll(
+        token: String,
+        csrPem: String,
+        serialNumber: String,
+        model: String,
+        osVersion: String,
+        agentVersion: String,
+        identifiers: org.json.JSONArray = org.json.JSONArray()
+    ): JSONObject {
         val body = JSONObject()
             .put("token", token)
             .put("csr_pem", csrPem)
@@ -148,6 +156,9 @@ class ApiClient(private val config: AgentConfig) {
             .put("model", model)
             .put("os_version", osVersion)
             .put("agent_version", agentVersion)
+            // Every identity this device can report, so re-enrolment matches on any
+            // it has used before (R13).
+            .put("identifiers", identifiers)
 
         val request = Request.Builder()
             .url("$baseUrl/api/v1/enroll")

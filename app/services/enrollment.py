@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 import uuid
 from collections.abc import Sequence
@@ -37,7 +38,10 @@ from app.db.models import (
 )
 from app.security.ca import CertificateAuthority
 from app.security.token_vault import TokenVault
+from app.services import device_identity
 from app.services import effective_policy as eff
+
+logger = logging.getLogger(__name__)
 
 _PREFIX_LENGTH = 8
 
@@ -141,20 +145,35 @@ def enroll_device(
     imei: str | None = None,
     os_version: str | None = None,
     agent_version: str | None = None,
+    identifiers: list[dict] | None = None,
 ) -> EnrollmentResult:
-    """Enroll (or re-enroll) a device and issue it a client certificate."""
+    """Enroll (or re-enroll) a device and issue it a client certificate.
+
+    ``identifiers`` is every identity the device can report. Optional: an agent that
+    sends only ``serial_number`` still enrolls exactly as before, which matters for a
+    fleet whose devices may be dark for weeks and cannot all be upgraded first.
+    """
     token = resolve_token(session, secret)
 
-    # Match on serial so a factory reset and re-enrollment re-adopts the existing
-    # record (D24). Creating a second row would orphan the device's history and
-    # silently drop the group membership that drives its policy stack — and a wipe
-    # plus KME re-enroll is a routine event, not an exception.
-    device = session.scalar(select(Device).where(Device.serial_number == serial_number))
+    # Match on any identifier this device has ever used, so a factory reset and
+    # re-enrollment re-adopts the existing record (D24). Creating a second row would
+    # orphan the device's history and silently drop the group membership that drives
+    # its policy stack — and a wipe plus KME re-enroll is a routine event.
+    #
+    # A *set* rather than one string, because a device's reported identity does move:
+    # when Build.getSerial() is refused the agent falls back to ANDROID_ID, which
+    # Android changes on every factory reset. Single-key matching forked a new record
+    # each time (R13).
+    reported = device_identity.parse_reported(identifiers, serial_number=serial_number)
+    resolution = device_identity.resolve(session, reported)
+
+    device = resolution.device
     is_reenrollment = device is not None
 
     if device is None:
         device = Device(serial_number=serial_number)
         session.add(device)
+        session.flush()
 
     device.model = model or device.model
     device.imei = imei or device.imei
@@ -162,6 +181,11 @@ def enroll_device(
     device.agent_version = agent_version or device.agent_version
     device.enrollment_state = EnrollmentState.ENROLLED
     session.flush()
+
+    device_identity.record(session, device, reported)
+    # A record named after an ANDROID_ID fallback is wrong on the asset register and
+    # meaningless to an operator. Once the hardware serial is known, show it.
+    device_identity.promote_display_serial(session, device, reported)
 
     if is_reenrollment:
         # The old key is gone with the wipe; leaving its certificate valid would
@@ -173,6 +197,23 @@ def enroll_device(
         device.acked_state_version = 0
         device.compliance_status = ComplianceStatus.UNKNOWN
         device.compliance_detail = None
+
+    # After the re-enrollment reset, which clears compliance_detail — and ambiguity
+    # is *most* likely on a re-enrollment, so setting it earlier would wipe the
+    # warning in exactly the case that raises it.
+    if resolution.is_ambiguous:
+        # Two records matched, so the fleet already holds duplicates for what is
+        # probably one device. Reported, never merged automatically: combining two
+        # histories on a guess is not a decision to take as a side effect of a
+        # check-in, and it cannot be undone.
+        others = ", ".join(str(d.id) for d in resolution.ambiguous_with)
+        logger.warning(
+            "device %s enrolled with identifiers also held by: %s", device.id, others
+        )
+        device.compliance_detail = (
+            f"identifiers also match other device record(s): {others}. "
+            "Likely duplicates from an earlier identity change; merge them by hand."
+        )
 
     issued = ca.sign_csr(
         csr_pem,

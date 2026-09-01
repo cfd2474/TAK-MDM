@@ -230,6 +230,7 @@ def enroll(
             imei=payload.imei,
             os_version=payload.os_version,
             agent_version=payload.agent_version,
+            identifiers=[i.model_dump() for i in payload.identifiers],
         )
     except EnrollmentError as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc)) from exc
