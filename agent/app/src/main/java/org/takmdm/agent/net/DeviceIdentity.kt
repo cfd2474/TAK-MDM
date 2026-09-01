@@ -98,11 +98,18 @@ object DeviceIdentity {
             .addRDN(BCStyle.CN, serialNumber)
             .build()
 
-        val signer = JcaContentSignerBuilder("SHA256withECDSA")
-            // The private key lives in the keystore and cannot be exported, so the
-            // signing operation has to run inside that provider.
-            .setProvider(ANDROID_KEYSTORE)
-            .build(keyPair.private)
+        // Deliberately no setProvider().
+        //
+        // The AndroidKeyStore provider supplies KeyStore and KeyPairGenerator but
+        // *not* Signature — those live in a separate provider named
+        // "AndroidKeyStoreBCWorkaround". Naming AndroidKeyStore explicitly
+        // therefore fails with "no such algorithm: SHA256WITHECDSA", which is what
+        // silently stopped every enrollment.
+        //
+        // Leaving the provider unset uses JCA's delayed provider selection: the
+        // provider is chosen at initSign() time from the key itself, which resolves
+        // to the right one for a non-exportable keystore key.
+        val signer = JcaContentSignerBuilder("SHA256withECDSA").build(keyPair.private)
 
         val csr = JcaPKCS10CertificationRequestBuilder(subject, keyPair.public).build(signer)
 

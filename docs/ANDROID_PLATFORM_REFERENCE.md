@@ -257,6 +257,41 @@ ATAK config lives in `/sdcard/atak`, which is **not** a MediaStore collection.
 
 ---
 
+## 6a. AndroidKeyStore and signing
+
+✅ **`AndroidKeyStore` does not provide `Signature` implementations.** It supplies
+`KeyStore`, `KeyPairGenerator` and `KeyFactory`; the signing algorithms for
+keystore-held keys live in a *separate* provider named
+**`AndroidKeyStoreBCWorkaround`**.
+
+Naming the provider explicitly therefore fails:
+
+```
+OperatorCreationException: cannot create signer:
+no such algorithm: SHA256WITHECDSA for provider AndroidKeyStore
+```
+
+**Do not set a provider** when signing with a keystore key. Leave it unset and let
+JCA's *delayed provider selection* choose at `initSign()` time from the key itself:
+
+```kotlin
+// Right: provider resolved from the key
+JcaContentSignerBuilder("SHA256withECDSA").build(keyPair.private)
+
+// Wrong: AndroidKeyStore has no Signature implementations
+JcaContentSignerBuilder("SHA256withECDSA")
+    .setProvider("AndroidKeyStore")
+    .build(keyPair.private)
+```
+
+The instinct to pin the provider is reasonable — the key is non-exportable, so the
+operation *must* happen inside the keystore — but it is the pinning itself that
+breaks it.
+
+This cost several enrollments and was invisible without on-device diagnostics: the
+agent failed before any network call, so the server saw nothing at all. If an agent
+never contacts the server, suspect the identity and CSR path before the transport.
+
 ## 7. Kiosk and lock task
 
 📖 `setLockTaskPackages(admin, packages)` then `startLockTask()`. Available to a
