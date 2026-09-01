@@ -22,6 +22,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
 import android.widget.Button
+import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -33,6 +34,7 @@ import org.takmdm.agent.R
 import org.takmdm.agent.admin.MdmDeviceAdminReceiver
 import org.takmdm.agent.admin.PolicyComplianceActivity
 import org.takmdm.agent.core.AgentConfig
+import org.takmdm.agent.net.DeviceIdentity
 import org.takmdm.agent.permissions.PermissionRequirement
 import org.takmdm.agent.sync.Reconciler
 import org.takmdm.agent.sync.SyncScheduler
@@ -60,6 +62,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.open_marketplace).setOnClickListener {
             startActivity(Intent(this, MarketplaceActivity::class.java))
         }
+        findViewById<Button>(R.id.reenroll).setOnClickListener { reEnroll() }
         findViewById<Button>(R.id.grant_storage).setOnClickListener {
             // Reuses the provisioning wizard: permissions can be revoked long after
             // setup, and there should be one place that knows how to restore them.
@@ -119,6 +122,30 @@ class MainActivity : AppCompatActivity() {
                     .show()
             }
         }
+    }
+
+    /**
+     * Discard the stored identity and enrol again with a fresh token.
+     *
+     * A device whose key or certificate is unusable would otherwise need a factory
+     * reset to recover, because the enrollment token is deliberately cleared once
+     * used. That is a heavy price for a recoverable fault, and it is the operator
+     * standing in front of the device who is best placed to fix it.
+     */
+    private fun reEnroll() {
+        val token = findViewById<EditText>(R.id.reenroll_token).text.toString().trim()
+        if (token.isEmpty()) {
+            Toast.makeText(this, "Paste an enrollment token first", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        DeviceIdentity.deleteIdentity()
+        config.deviceId = null
+        config.enrollmentToken = token
+        config.lastError = "re-enrolling…"
+        render()
+
+        syncNow()
     }
 
     private fun requestAllFilesAccess() {

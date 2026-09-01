@@ -25,4 +25,7 @@
     <string name="compliance_finish">Finish setup</string>
     <string name="compliance_skip_rest">Continue without the rest</string>
     <string name="action_review_permissions">Review permissions</string>
+    <string name="action_reenroll">Discard identity and re-enrol</string>
+    <string name="reenroll_rationale">If this device cannot reach the server because its certificate or key is unusable, paste a new enrollment token to start over. This does not require a factory reset.</string>
+    <string name="reenroll_hint">Enrollment token</string>
 </resources>

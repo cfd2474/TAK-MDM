@@ -78,7 +78,17 @@ object DeviceIdentity {
             KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
         )
             .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-            .setDigests(KeyProperties.DIGEST_SHA256)
+            // Broad on purpose. A TLS handshake picks its own signature algorithm,
+            // and a key restricted to SHA-256 alone fails the moment the server
+            // negotiates anything else — as an opaque SSLHandshakeException with no
+            // indication that the key is the problem. DIGEST_NONE matters too:
+            // some TLS stacks hash first and ask the key to sign raw bytes.
+            .setDigests(
+                KeyProperties.DIGEST_NONE,
+                KeyProperties.DIGEST_SHA256,
+                KeyProperties.DIGEST_SHA384,
+                KeyProperties.DIGEST_SHA512,
+            )
             // No user authentication requirement: the agent must work on a locked,
             // unattended device.
             .setUserAuthenticationRequired(false)

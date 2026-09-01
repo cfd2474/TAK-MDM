@@ -41,5 +41,27 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/action_review_permissions" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingTop="24dp"
+            android:text="@string/reenroll_rationale"
+            android:textSize="12sp" />
+
+        <EditText
+            android:id="@+id/reenroll_token"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:autofillHints=""
+            android:hint="@string/reenroll_hint"
+            android:inputType="textNoSuggestions"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/reenroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/action_reenroll" />
     </LinearLayout>
 </ScrollView>
