@@ -367,7 +367,7 @@ class Reconciler(private val context: Context) {
         // as removed rather than depending on which ran first. A policy saying both
         // is a mistake, and the guard below reports it instead of flip-flopping the
         // device on every check-in.
-        errors += removeUnwantedApps(
+        errors += suppressUnwantedApps(
             policy.optJSONObject("APP_CATALOG") ?: JSONObject(),
             desired.optJSONArray("apps") ?: JSONArray()
         )
@@ -513,51 +513,134 @@ class Reconciler(private val context: Context) {
     }
 
     /**
-     * Uninstall anything the policy says must not be present.
+     * Make unwanted packages go away, by the strongest means each one allows.
      *
-     * Distinct from `blocked_packages`, which only hides: hiding leaves the code and
-     * the data in place and is instantly reversible, which is right for a temporary
-     * restriction and useless for reclaiming storage or handing a device on.
+     * Two lists, two intents:
      *
-     * Convergent, not a one-shot command (D5): a tablet that was dark for three
-     * weeks removes the app when it returns.
+     * * **`removed_packages` — strict.** Uninstall, and say so plainly if the app
+     *   survives. For reclaiming storage or destroying data, where "it did not
+     *   actually work" is something the operator must be told.
+     * * **`blocked_packages` — the blacklist.** Make it unusable by whatever works:
+     *   uninstall an ordinary app, hide one that ships with the device.
+     *
+     * **A system app cannot be uninstalled, and the platform does not say so.**
+     * `PackageInstaller` returns `STATUS_SUCCESS` for what is really "the update was
+     * removed", leaving the factory build installed and working. Verified on
+     * `SM-X520`: uninstalling Gmail moved it from `/data/app/...` back to
+     * `/product/app/Gmail2` and rolled its version backwards, and the agent reported
+     * "removed" for an app the user could still open. So system apps are hidden
+     * directly — skipping both the pointless downgrade and the false success — and
+     * every uninstall is verified afterwards regardless.
+     *
+     * Convergent, not a one-shot (D5): a tablet dark for three weeks suppresses the
+     * app when it returns.
      */
-    private fun removeUnwantedApps(catalog: JSONObject, apps: JSONArray): List<String> {
-        val removals = catalog.optJSONArray("removed_packages") ?: return emptyList()
+    private fun suppressUnwantedApps(catalog: JSONObject, apps: JSONArray): List<String> {
         val errors = mutableListOf<String>()
-
         val required = (0 until apps.length())
             .mapNotNull { apps.optJSONObject(it)?.optString("package_name") }
             .toSet()
 
-        for (index in 0 until removals.length()) {
-            val packageName = removals.optString(index).takeIf { it.isNotBlank() } ?: continue
+        fun guard(packageName: String): String? = when {
+            packageName == context.packageName ->
+                // Android refuses anyway - a package with an active device admin
+                // cannot be removed - but refusing here names the reason instead of
+                // leaving an opaque platform failure to decode.
+                "$packageName: refusing to suppress the agent itself"
+            packageName in required ->
+                // Contradictory policy. Acting on either half would install and
+                // remove the same app on alternate check-ins.
+                "$packageName: listed as both required and unwanted"
+            else -> null
+        }
 
-            if (packageName == context.packageName) {
-                // Android would refuse anyway, because an active device admin cannot
-                // be removed — but refusing here names the reason instead of leaving
-                // an opaque platform failure to be decoded later.
-                errors += "$packageName: refusing to uninstall the agent itself"
+        for (packageName in catalog.stringList("removed_packages")) {
+            val problem = guard(packageName)
+            if (problem != null) {
+                errors += problem
                 continue
             }
-            if (packageName in required) {
-                // Contradictory policy. Executing either half would have the device
-                // install and remove the same app on alternate check-ins.
-                errors += "$packageName: listed in both required_apps and removed_packages"
-                continue
-            }
-            if (installer.installedVersionCode(packageName) == null) continue
+            if (!installer.isPresent(packageName)) continue
 
             AgentLog.i(TAG, "removing $packageName")
             val result = installer.uninstall(packageName)
             if (result.success) {
                 AgentLog.i(TAG, "$packageName removed")
             } else {
+                // Strict list: no fallback. Asking for removal and silently getting
+                // "hidden" would be the same lie in a different place.
                 AgentLog.e(TAG, "$packageName removal failed: ${result.message}")
-                errors += "$packageName: uninstall failed - ${result.message}"
+                errors += "$packageName: could not be removed - ${result.message}"
             }
         }
+
+        val blocked = catalog.stringList("blocked_packages").toSet()
+
+        // Undo first, and only what we did. A desired state that can hide but never
+        // unhide is not a desired state, it is a ratchet: removing a package from
+        // the blocklist would leave every device that ever saw it still suppressing
+        // it, with nothing in the policy to explain why.
+        val stillHidden = mutableSetOf<String>()
+        for (packageName in config.hiddenByPolicy) {
+            if (packageName in blocked) {
+                stillHidden += packageName
+                continue
+            }
+            AgentLog.i(TAG, "no longer blocked, unhiding $packageName")
+            val failure = policyApplier.setHidden(packageName, false)
+            if (failure != null) {
+                errors += "$packageName: could not be unhidden - $failure"
+                stillHidden += packageName
+            }
+        }
+
+        for (packageName in blocked) {
+            val problem = guard(packageName)
+            if (problem != null) {
+                errors += problem
+                continue
+            }
+            if (!installer.isPresent(packageName)) continue
+
+            if (installer.isSystemApp(packageName)) {
+                if (policyApplier.isHidden(packageName)) {
+                    // Already done. Still recorded, or the next pass forgets we hid
+                    // it and it could never be unhidden.
+                    stillHidden += packageName
+                    continue
+                }
+                AgentLog.i(TAG, "blocking $packageName: ships with the device, hiding it")
+                val failure = policyApplier.setHidden(packageName, true)
+                if (failure != null) errors += "$packageName: could not be hidden - $failure"
+                else stillHidden += packageName
+                continue
+            }
+
+            AgentLog.i(TAG, "blocking $packageName: uninstalling")
+            val result = installer.uninstall(packageName)
+            if (result.success) {
+                AgentLog.i(TAG, "$packageName removed")
+                continue
+            }
+
+            // Survived the uninstall. Hiding is the remaining lever, and it is what
+            // "blacklisted" has to mean for anything that cannot be deleted.
+            AgentLog.w(TAG, "$packageName could not be uninstalled (${result.message}); hiding instead")
+            val failure = policyApplier.setHidden(packageName, true)
+            if (failure != null) errors += "$packageName: neither uninstalled nor hidden - $failure"
+            else stillHidden += packageName
+        }
+
+        config.hiddenByPolicy = stillHidden
         return errors
+    }
+
+    /** Read a JSON string array as a Kotlin list, tolerating absence. */
+    private fun JSONObject.stringList(field: String): List<String> {
+        val array = optJSONArray(field) ?: return emptyList()
+        return (0 until array.length())
+            .map { array.optString(it) }
+            .filter { it.isNotBlank() }
     }
 
     // ----------------------------------------------------------------------- //

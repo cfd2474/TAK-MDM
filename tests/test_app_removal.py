@@ -163,3 +163,73 @@ def test_removal_bumps_the_state_version(client: TestClient, enrolled, mtls_head
 
     # Without a bump a dark device would never learn it must remove the app.
     assert after > before
+
+
+# --------------------------------------------------------------------------- #
+# The blacklist
+# --------------------------------------------------------------------------- #
+
+
+def test_blocklist_and_strict_removal_coexist(client: TestClient, enrolled):
+    """Two intents, deliberately not merged into one field.
+
+    The blacklist makes an app unusable by whatever means works, and unblocking
+    reverses it. Strict removal reclaims the storage and reports failure rather
+    than quietly hiding instead — asking for removal and silently getting
+    suppression would be the same lie in a different place.
+    """
+    device = enrolled(serial="BL-BOTH")
+    assign(
+        client,
+        policy_with(
+            client,
+            "Blacklist",
+            {
+                "blocked_packages": ["com.google.android.gm"],
+                "removed_packages": [VICTIM],
+            },
+        ),
+        device["device_id"],
+    )
+
+    catalog = catalog_for(client, device["device_id"])
+    assert catalog["blocked_packages"] == ["com.google.android.gm"]
+    assert catalog["removed_packages"] == [VICTIM]
+
+
+def test_blocklist_unions_across_policies(client: TestClient, enrolled):
+    device = enrolled(serial="BL-UNION")
+    assign(
+        client,
+        policy_with(client, "Corp", {"blocked_packages": ["com.google.android.gm"]}),
+        device["device_id"],
+        rank=10,
+    )
+    assign(
+        client,
+        policy_with(client, "Site", {"blocked_packages": ["com.example.other"]}),
+        device["device_id"],
+        rank=20,
+    )
+
+    blocked = set(catalog_for(client, device["device_id"])["blocked_packages"])
+    assert blocked == {"com.google.android.gm", "com.example.other"}
+
+
+def test_unblocking_removes_it_from_the_desired_state(client: TestClient, enrolled):
+    """The agent can only unhide what the desired state stops asking for."""
+    device = enrolled(serial="BL-REVERSIBLE")
+    policy = policy_with(
+        client, "Temp block", {"blocked_packages": ["com.google.android.gm"]}
+    )
+    assign(client, policy, device["device_id"])
+    assert catalog_for(client, device["device_id"])["blocked_packages"]
+
+    client.post(
+        f"/api/v1/policies/{policy}/versions",
+        json={"spec": {}, "publish": True},
+        headers=ADMIN_HEADERS,
+    )
+
+    # Blocking is reversible; the policy going quiet is what triggers the unhide.
+    assert not catalog_for(client, device["device_id"]).get("blocked_packages")

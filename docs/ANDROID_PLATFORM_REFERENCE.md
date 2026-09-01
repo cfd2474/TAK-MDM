@@ -262,6 +262,55 @@ indistinguishable from a device that lost coverage.
 
 ---
 
+## 5a. Removing and suppressing apps
+
+### ⚠️ A system app cannot be uninstalled, and the platform says SUCCESS anyway
+
+✅ Verified on `SM-X520` with Gmail (`com.google.android.gm`). Calling
+`PackageInstaller.uninstall` on a preinstalled app removes **the update** and
+reverts to the factory build. It does not remove the app, and the callback reports
+`STATUS_SUCCESS`:
+
+```
+codePath     /data/app/~~i7dRm4g60Rnw…   →  /product/app/Gmail2
+versionName  2026.08.10.963697514        →  2025.09.22.811856720
+flags        [SYSTEM … UPDATED_SYSTEM_APP] → [SYSTEM …]
+```
+
+An agent trusting that status reports the app as removed while the user can still
+open it. **Detect `FLAG_SYSTEM` / `FLAG_UPDATED_SYSTEM_APP` first and hide instead**,
+and verify every uninstall by re-querying afterwards rather than believing the
+status code.
+
+### ✅ `setApplicationHidden` does work on system apps
+
+⚠️ A fetched summary claimed system apps "generally cannot be hidden". **Wrong on
+this hardware.** Hiding Gmail as Device Owner gave:
+
+```
+pm list packages       → absent
+pm list packages -u    → present
+resolve-activity       → No activity found
+dumpsys                → installed=true hidden=true
+```
+
+Invisible, unlaunchable, still installed, and fully reversible. That makes hiding
+the correct suppression for anything that ships with the device.
+
+⚠️ **`setApplicationHidden` reports failure by returning `false`, not by throwing.**
+Wrapping it in a `runCatching` and ignoring the result treats "refused" as "done".
+
+### ⚠️ A hidden package is invisible to the code managing it
+
+✅ `getPackageInfo` throws `NameNotFoundException` for a hidden package: hiding
+deliberately makes an app look uninstalled. Anything reasoning about suppression
+must pass **`MATCH_UNINSTALLED_PACKAGES`**, or the agent cannot see the app it hid.
+
+Observed: Gmail stayed hidden after being taken off the blocklist, with nothing
+logged, because the loop that would have unhidden it could not find it.
+
+---
+
 ## 6. Permissions
 
 ### Runtime permissions

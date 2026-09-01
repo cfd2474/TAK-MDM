@@ -1160,6 +1160,59 @@ its next re-enrolment — the precise failure the chunk exists to prevent.
 | D101 | The migration **backfills every existing serial as a `LEGACY` identifier** | Preserves current matching exactly, whatever that string happens to be. Skipping it would orphan every enrolled device on its next re-enrolment. |
 | D102 | `identifiers` is **optional** on the enrolment request, and unknown kinds are kept rather than rejected | A fleet whose devices go dark for weeks cannot be upgraded before it is allowed to enrol, and a newer agent reporting a source this server has not heard of is still supplying usable identity. |
 
+### ✅ Blacklist: suppress apps that cannot be uninstalled (COMPLETE, hardware-validated)
+
+Operator requirement: a blacklist that **uninstalls what it can and disables what it
+cannot**, tested against Gmail, which this tablet only offers to "Disable".
+
+Testing the existing `removed_packages` against it produced the sharpest failure of
+the session. The agent logged **`com.google.android.gm removed`** — and Gmail was
+still installed and still worked. `PackageInstaller` returned `STATUS_SUCCESS` for
+what was really "the update was removed":
+
+```
+codePath     /data/app/~~i7dRm4g60Rnw…   →  /product/app/Gmail2
+versionName  2026.08.10.963697514        →  2025.09.22.811856720
+```
+
+**The platform lied and the agent repeated it.** An operator would have believed
+Gmail was gone from the fleet.
+
+`blocked_packages` is now the blacklist proper:
+
+| Package | Action |
+|---|---|
+| Ordinary app | uninstall, **verified afterwards**; if it survives, hide as fallback |
+| Ships with the device | hide directly — skipping a downgrade that achieves nothing and reports success |
+
+Verified on `SM-X520`, both directions:
+
+```
+blocking com.google.android.gm: ships with the device, hiding it
+  → visible: 0   No activity found   installed=true hidden=true
+no longer blocked, unhiding com.google.android.gm
+  → visible: 1   com.google.android.gm/.ConversationListActivityGmail
+```
+
+#### Two further bugs found while proving it
+
+**Blocking was a one-way ratchet.** Taking a package off the blocklist left it
+hidden forever — there was no unhide anywhere. That is not desired state (D5), it is
+a latch: every device that ever saw the policy stayed suppressed with nothing left
+in the policy to explain why.
+
+**A hidden package is invisible to the code managing it.** `getPackageInfo` throws
+`NameNotFoundException` for a hidden app, so the loop that should have unhidden
+Gmail could not find it and did nothing, silently. Suppression now queries with
+`MATCH_UNINSTALLED_PACKAGES`.
+
+| # | Decision | Rationale |
+|---|---|---|
+| D117 | System apps are **hidden, never uninstalled** | Uninstalling one strips its update, downgrades it, and reports success — a destructive no-op that also lies. Detecting `FLAG_SYSTEM` first avoids both. |
+| D118 | **Every uninstall is verified** by re-querying afterwards | The status code is not the outcome. This is the specific mechanism by which the agent claimed Gmail was removed. |
+| D119 | The agent unhides **only what it recorded hiding** | Something else may have hidden a package for its own reasons; unhiding it because our blocklist no longer mentions it would be undoing a decision that was never ours. |
+| D120 | `removed_packages` **does not fall back to hiding** | Asking for removal and silently getting suppression is the same lie in a different place. The strict list reports failure so an operator who needs the storage back learns they have not got it. |
+
 ### ✅ App removal by policy (COMPLETE, hardware-validated)
 
 Operator question: what happens when the MDM is told to remove an installed app?

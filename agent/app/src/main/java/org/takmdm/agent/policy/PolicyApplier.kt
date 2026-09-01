@@ -160,14 +160,9 @@ class PolicyApplier(private val context: Context) {
     private fun applyAppCatalog(spec: JSONObject): List<String> {
         val failures = mutableListOf<String>()
 
-        spec.optJSONArray("blocked_packages")?.let { blocked ->
-            for (index in 0 until blocked.length()) {
-                val packageName = blocked.optString(index)
-                runCatching {
-                    dpm.setApplicationHidden(admin, packageName, true)
-                }.onFailure { failures += "block $packageName: ${it.message}" }
-            }
-        }
+        // blocked_packages is handled by the reconciler's suppression step, not
+        // here: blacklisting now tries uninstall before falling back to hiding, and
+        // that needs PackageInstaller as well as DevicePolicyManager.
 
         // Kiosk is opt-in (F6). No kiosk_package means the agent stays a background
         // service and leaves the home screen alone.
@@ -274,6 +269,26 @@ class PolicyApplier(private val context: Context) {
         AgentLog.i(TAG, "self-granting ${missing.size} permission(s): ${missing.joinToString()}")
         return grantRuntimePermissions(context.packageName)
     }
+
+    /**
+     * Hide or unhide a package.
+     *
+     * **The return value matters and used to be discarded.**
+     * `setApplicationHidden` reports failure by returning `false`, not by throwing,
+     * so a `runCatching` around it treats "refused" as "done" — which is how a
+     * blacklist ends up silently leaving an app usable.
+     */
+    fun setHidden(packageName: String, hidden: Boolean): String? {
+        if (!isDeviceOwner) return "not device owner"
+        return runCatching {
+            if (dpm.setApplicationHidden(admin, packageName, hidden)) null
+            else "the platform refused to ${if (hidden) "hide" else "unhide"} it"
+        }.getOrElse { it.message ?: it.javaClass.simpleName }
+    }
+
+    fun isHidden(packageName: String): Boolean = runCatching {
+        dpm.isApplicationHidden(admin, packageName)
+    }.getOrDefault(false)
 
     private fun isDangerous(permission: String): Boolean = runCatching {
         val info = context.packageManager.getPermissionInfo(permission, 0)

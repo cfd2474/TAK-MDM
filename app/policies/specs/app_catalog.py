@@ -46,15 +46,27 @@ class AppCatalogSpec(PolicySpec):
         Merge(MergeStrategy.MERGE_BY_KEY, key="package_name"),
     ] = None
 
-    # ⚠️ Blocked means **hidden, not removed**. `setApplicationHidden` leaves the
-    # app, its code and its data on the device; it simply cannot be seen or
-    # launched, and unblocking restores it instantly. That is the right tool for a
-    # temporary restriction and the wrong one for reclaiming storage or handing a
-    # device on — use `removed_packages` for that.
+    # The blacklist: make these packages unusable by whatever means each one allows.
+    #
+    # An ordinary app is uninstalled. One that ships with the device is **hidden**
+    # instead — invisible in the launcher and unlaunchable — because a preinstalled
+    # app cannot be removed. Verified on `SM-X520`: "uninstalling" Gmail only strips
+    # the update and reverts to the factory build, and `PackageInstaller` reports
+    # SUCCESS for it, so an agent trusting that status would report an app gone
+    # while the user could still open it.
+    #
+    # **Reversible.** Taking a package off this list unhides it, and the agent only
+    # unhides what it hid. Removal is not reversible; that is the trade for it
+    # actually reclaiming the storage.
     blocked_packages: Annotated[list[str] | None, Merge(MergeStrategy.UNION)] = None
 
-    # Packages that must **not be installed**. Uninstalled outright, destroying
-    # their data and reclaiming their storage.
+    # Packages that must **not be installed** — the strict form of the blacklist.
+    #
+    # Uninstalled outright, destroying their data and reclaiming their storage, and
+    # the result is **verified afterwards**: a package that survives is reported as
+    # a failure rather than quietly hidden. Use this when the storage or the data is
+    # the point and "it did not actually work" is something you need to be told.
+    # For preinstalled apps, which can never satisfy it, use `blocked_packages`.
     #
     # State rather than a command (D5/D6): "this device must not have X" is a
     # property to converge on, so a tablet that was dark for three weeks removes it

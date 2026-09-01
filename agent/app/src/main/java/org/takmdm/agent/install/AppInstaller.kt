@@ -21,6 +21,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import org.takmdm.agent.diag.AgentLog
@@ -174,6 +175,18 @@ class AppInstaller(private val context: Context) {
             AgentLog.d(TAG, "uninstalling $packageName")
             context.packageManager.packageInstaller.uninstall(packageName, pending.intentSender)
             latch.await(UNINSTALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+
+            // Trust the outcome, not the status code. PackageInstaller reports
+            // success for a system-app "uninstall" that only removed the update, so
+            // a caller acting on the status alone believes an app is gone while it
+            // is still installed and usable.
+            if (result.success && installedVersionCode(packageName) != null) {
+                result = InstallResult(
+                    false,
+                    "still installed after uninstall reported success; " +
+                        "system apps can only be hidden"
+                )
+            }
         } catch (e: Exception) {
             AgentLog.e(TAG, "uninstall of $packageName failed", e)
             result = InstallResult(false, e.message ?: e.javaClass.simpleName)
@@ -182,6 +195,47 @@ class AppInstaller(private val context: Context) {
         }
         return result
     }
+
+    /**
+     * True when the package ships with the device.
+     *
+     * Load-bearing, because uninstalling a system app **does not remove it**. It
+     * strips the update and reverts to the factory build — and `PackageInstaller`
+     * reports `STATUS_SUCCESS` for that. Observed on `SM-X520` with Gmail:
+     * `codePath` moved from `/data/app/...` to `/product/app/Gmail2`, the version
+     * went backwards, and the agent cheerfully logged "removed" for an app that was
+     * still installed and still working.
+     *
+     * So a system app is hidden rather than uninstalled, and the pointless
+     * downgrade is skipped along with the misleading success.
+     */
+    fun isSystemApp(packageName: String): Boolean = runCatching {
+        // MATCH_UNINSTALLED_PACKAGES for the same reason as isPresent: a hidden app
+        // is invisible to a plain lookup, and this is asked about hidden apps.
+        val flags = context.packageManager.getApplicationInfo(
+            packageName, PackageManager.MATCH_UNINSTALLED_PACKAGES
+        ).flags
+        (flags and ApplicationInfo.FLAG_SYSTEM) != 0 ||
+            (flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+    }.getOrDefault(false)
+
+    /**
+     * True when the package is on the device at all, **including while hidden**.
+     *
+     * A hidden package answers a normal `getPackageInfo` with
+     * `NameNotFoundException` — it is deliberately made to look uninstalled. That is
+     * fine for deciding whether to install something and wrong for deciding whether
+     * to suppress it: without `MATCH_UNINSTALLED_PACKAGES` the agent cannot see the
+     * app it hid, so it could never record it and could never unhide it again.
+     * Observed exactly that: Gmail stayed hidden after being taken off the
+     * blocklist, with nothing logged, because the loop could not find it.
+     */
+    fun isPresent(packageName: String): Boolean = runCatching {
+        context.packageManager.getPackageInfo(
+            packageName, PackageManager.MATCH_UNINSTALLED_PACKAGES
+        )
+        true
+    }.getOrDefault(false)
 
     fun installedVersionCode(packageName: String): Long? = runCatching {
         context.packageManager.getPackageInfo(packageName, 0).longVersionCode

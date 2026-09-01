@@ -106,6 +106,18 @@ class AgentConfig(context: Context) {
         get() = prefs.getStringSet(KEY_COMMAND_RESULTS, emptySet())?.toList() ?: emptyList()
         set(value) = prefs.edit { putStringSet(KEY_COMMAND_RESULTS, value.takeLast(50).toSet()) }
 
+    /**
+     * Packages this agent hid, so it can unhide them when policy stops asking.
+     *
+     * Recorded rather than inferred from "everything currently hidden": something
+     * else may have hidden a package for its own reasons, and unhiding it because
+     * our blocklist no longer mentions it would be us undoing a decision that was
+     * never ours.
+     */
+    var hiddenByPolicy: Set<String>
+        get() = prefs.getStringSet(KEY_HIDDEN_BY_POLICY, emptySet()) ?: emptySet()
+        set(value) = prefs.edit { putStringSet(KEY_HIDDEN_BY_POLICY, value) }
+
     /** Optional file ids the user chose in the marketplace (F4). */
     var selectedOptionalFiles: Set<String>
         get() = prefs.getStringSet(KEY_SELECTED_FILES, emptySet()) ?: emptySet()
@@ -148,6 +160,7 @@ class AgentConfig(context: Context) {
         private const val KEY_LAST_SYNC = "last_sync_at"
         private const val KEY_APPLY_ERRORS = "last_apply_errors"
         private const val KEY_COMMAND_RESULTS = "pending_command_results"
+        private const val KEY_HIDDEN_BY_POLICY = "hidden_by_policy"
 
         // Keys inside PROVISIONING_ADMIN_EXTRAS_BUNDLE, matching the server's
         // provisioning payload generator.
