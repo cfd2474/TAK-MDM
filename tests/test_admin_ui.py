@@ -262,13 +262,14 @@ def test_enrollment_page_renders(client: TestClient):
     assert client.get("/enrollment").status_code == 200
 
 
-def test_creating_a_token_shows_the_secret_once(client: TestClient):
+def test_creating_a_token_lands_on_its_qr_page(client: TestClient):
+    """One place renders QR codes, so there is no 'you should have saved it' path."""
     response = client.post(
         "/enrollment", data={"name": "Console token"}, follow_redirects=True
     )
 
-    body = text_of(response.text)
-    assert "only time the secret is shown" in body
+    assert response.url.path.endswith("/qr")
+    assert "Console token" in response.text
 
 
 def test_qr_is_withheld_without_a_signature_checksum(client: TestClient):
@@ -276,7 +277,7 @@ def test_qr_is_withheld_without_a_signature_checksum(client: TestClient):
     response = client.post("/enrollment", data={"name": "No checksum"}, follow_redirects=True)
 
     assert "<svg" not in response.text
-    assert "QR withheld" in text_of(response.text)
+    assert "agent_signature_checksum is not configured" in text_of(response.text)
 
 
 def test_qr_renders_when_a_checksum_is_configured(client: TestClient, settings):
@@ -293,6 +294,164 @@ def test_qr_renders_when_a_checksum_is_configured(client: TestClient, settings):
         assert "factory-reset" in text_of(response.text)
     finally:
         app.dependency_overrides[get_settings] = lambda: settings
+
+
+def configured_checksum(client: TestClient, settings):
+    """Enable QR rendering for a test by supplying a signature checksum."""
+    from app.api.deps import get_settings
+    from app.main import app
+
+    configured = settings.model_copy(update={"agent_signature_checksum": "abc123"})
+    app.dependency_overrides[get_settings] = lambda: configured
+    return lambda: app.dependency_overrides.__setitem__(get_settings, lambda: settings)
+
+
+def test_a_past_tokens_qr_can_be_shown_again(client: TestClient, settings):
+    """The point of sealing secrets: an old token is still scannable tomorrow."""
+    restore = configured_checksum(client, settings)
+    try:
+        created = client.post(
+            "/enrollment", data={"name": "Reusable"}, follow_redirects=True
+        )
+        token_id = created.url.path.split("/")[-2]
+
+        # Come back later, as a fresh page load rather than the creation response.
+        again = client.get(f"/enrollment/{token_id}/qr")
+
+        assert again.status_code == 200
+        assert "<svg" in again.text
+    finally:
+        restore()
+
+
+def test_token_list_links_to_the_qr(client: TestClient):
+    client.post("/enrollment", data={"name": "Listed"}, follow_redirects=True)
+
+    assert "Show QR" in client.get("/enrollment").text
+
+
+def test_wifi_credentials_are_embedded_when_supplied(client: TestClient, settings):
+    restore = configured_checksum(client, settings)
+    try:
+        created = client.post(
+            "/enrollment", data={"name": "Wifi"}, follow_redirects=True
+        )
+        token_id = created.url.path.split("/")[-2]
+
+        response = client.post(
+            f"/enrollment/{token_id}/qr",
+            data={
+                "wifi_ssid": "TAK-Field",
+                "wifi_password": "hunter2",
+                "wifi_security": "WPA",
+            },
+        )
+
+        body = response.text
+        assert "PROVISIONING_WIFI_SSID" in body
+        assert "TAK-Field" in body
+        assert "Wi-Fi embedded" in text_of(body)
+    finally:
+        restore()
+
+
+def test_wifi_password_is_not_persisted(client: TestClient, settings, db):
+    """It is used for one render; storing it would be a second recoverable secret."""
+    from sqlalchemy import select
+
+    from app.db.models import EnrollmentToken
+
+    restore = configured_checksum(client, settings)
+    try:
+        created = client.post("/enrollment", data={"name": "Wifi"}, follow_redirects=True)
+        token_id = created.url.path.split("/")[-2]
+        client.post(
+            f"/enrollment/{token_id}/qr",
+            data={"wifi_ssid": "TAK-Field", "wifi_password": "hunter2"},
+        )
+
+        token = db.scalars(select(EnrollmentToken)).one()
+        assert "hunter2" not in str(token.__dict__)
+
+        # And a later render does not silently carry it forward.
+        assert "hunter2" not in client.get(f"/enrollment/{token_id}/qr").text
+    finally:
+        restore()
+
+
+def test_qr_refuses_a_revoked_token(client: TestClient, settings):
+    """A scannable code that cannot enrol costs someone a factory reset."""
+    restore = configured_checksum(client, settings)
+    try:
+        created = client.post("/enrollment", data={"name": "Doomed"}, follow_redirects=True)
+        token_id = created.url.path.split("/")[-2]
+        client.post(f"/api/v1/enrollment-tokens/{token_id}/revoke")
+
+        response = client.get(f"/enrollment/{token_id}/qr")
+
+        assert "<svg" not in response.text
+        assert "revoked" in text_of(response.text)
+    finally:
+        restore()
+
+
+def test_qr_refuses_a_used_up_token(client: TestClient, settings, db):
+    from sqlalchemy import select
+
+    from app.db.models import EnrollmentToken
+
+    restore = configured_checksum(client, settings)
+    try:
+        created = client.post(
+            "/enrollment", data={"name": "One shot", "max_uses": "1"}, follow_redirects=True
+        )
+        token_id = created.url.path.split("/")[-2]
+        assert "<svg" in client.get(f"/enrollment/{token_id}/qr").text
+
+        token = db.scalars(
+            select(EnrollmentToken).where(EnrollmentToken.name == "One shot")
+        ).one()
+        token.use_count = 1
+        db.commit()
+
+        response = client.get(f"/enrollment/{token_id}/qr")
+
+        assert "<svg" not in response.text
+        assert "used all 1 time" in text_of(response.text)
+    finally:
+        restore()
+
+
+def test_qr_refuses_an_expired_token(client: TestClient, settings, db):
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import select
+
+    from app.db.models import EnrollmentToken
+
+    restore = configured_checksum(client, settings)
+    try:
+        created = client.post("/enrollment", data={"name": "Stale"}, follow_redirects=True)
+        token_id = created.url.path.split("/")[-2]
+
+        token = db.scalars(
+            select(EnrollmentToken).where(EnrollmentToken.name == "Stale")
+        ).one()
+        token.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+        db.commit()
+
+        response = client.get(f"/enrollment/{token_id}/qr")
+
+        assert "<svg" not in response.text
+        assert "expired" in text_of(response.text)
+    finally:
+        restore()
+
+
+def test_unknown_token_qr_is_404(client: TestClient):
+    assert client.get(
+        "/enrollment/00000000-0000-0000-0000-000000000000/qr"
+    ).status_code == 404
 
 
 def test_token_scoping_from_the_form(client: TestClient):

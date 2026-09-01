@@ -31,6 +31,7 @@ from app.db.models import Device, DeviceCertificate, EnrollmentState
 from app.artifacts.storage import ArtifactStorage, LocalArtifactStorage
 from app.security.bundle import BundleSigner
 from app.security.ca import CertificateAuthority, CertificateError
+from app.security.token_vault import TokenVault
 
 
 def get_db(session: Session = Depends(get_session)) -> Session:
@@ -63,6 +64,18 @@ def _bundle_signer(pki_dir: str) -> BundleSigner:
 def get_bundle_signer(settings: Settings = Depends(get_settings)) -> BundleSigner:
     """Signs desired-state bundles. Overridable in tests."""
     return _bundle_signer(str(settings.pki_dir))
+
+
+@lru_cache
+def _token_vault(pki_dir: str) -> TokenVault:
+    from pathlib import Path
+
+    return TokenVault.load_or_create(Path(pki_dir))
+
+
+def get_token_vault(settings: Settings = Depends(get_settings)) -> TokenVault:
+    """Seals and recovers enrollment token secrets."""
+    return _token_vault(str(settings.pki_dir))
 
 
 @lru_cache

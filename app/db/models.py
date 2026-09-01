@@ -319,9 +319,15 @@ class EnrollmentToken(Base):
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     name: Mapped[str] = mapped_column(String(128))
+    # Authentication looks only at this. Enrollment matches an indexed hash and
+    # never decrypts anything.
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    # Leading characters of the secret, for identifying a token in the UI without
-    # being able to reconstruct it.
+    # The same secret, encrypted under a key held in pki/ rather than the database.
+    # Exists solely so an operator can re-display a token's QR; see
+    # app/security/token_vault.py for why this is a deliberate, bounded weakening.
+    # Nullable: tokens created before this existed cannot be recovered.
+    token_ciphertext: Mapped[str | None] = mapped_column(Text, default=None)
+    # Leading characters of the secret, for identifying a token in the UI.
     prefix: Mapped[str] = mapped_column(String(12))
 
     expires_at: Mapped[datetime] = mapped_column(UtcDateTime)
@@ -343,6 +349,20 @@ class EnrollmentToken(Base):
         if self.revoked_at is not None or now >= self.expires_at:
             return False
         return self.max_uses is None or self.use_count < self.max_uses
+
+    def unusable_reason(self, *, now: datetime) -> str | None:
+        """Why this token cannot enrol a device, for showing an operator.
+
+        Worth being specific about: handing someone a QR that cannot work costs
+        them a factory reset before they find out.
+        """
+        if self.revoked_at is not None:
+            return "this token has been revoked"
+        if now >= self.expires_at:
+            return "this token expired"
+        if self.max_uses is not None and self.use_count >= self.max_uses:
+            return f"this token has been used all {self.max_uses} time(s)"
+        return None
 
 
 class DeviceCertificate(Base):

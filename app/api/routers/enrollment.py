@@ -24,7 +24,14 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import fetch_or_404, get_bundle_signer, get_ca, get_db, get_storage
+from app.api.deps import (
+    fetch_or_404,
+    get_bundle_signer,
+    get_ca,
+    get_db,
+    get_storage,
+    get_token_vault,
+)
 from app.artifacts.storage import ArtifactStorage
 from app.api.schemas import (
     EnrollmentTokenCreate,
@@ -38,6 +45,7 @@ from app.config import Settings, get_settings
 from app.db.models import AppPackage, EnrollmentToken, PartRole
 from app.security.admin_auth import AdminIdentity, admin_required
 from app.security.bundle import BundleSigner
+from app.security.token_vault import TokenVault
 from app.security.ca import CertificateAuthority, CertificateError
 from app.services import provisioning
 from app.services.enrollment import EnrollmentError, create_token, enroll_device, revoke_token
@@ -82,9 +90,15 @@ def create_enrollment_token(
     payload: EnrollmentTokenCreate,
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
+    vault: TokenVault = Depends(get_token_vault),
     identity: AdminIdentity = Depends(admin_required),
 ) -> EnrollmentTokenCreated:
-    """Create a token. The secret and provisioning payloads are returned once only."""
+    """Create a token, returning its secret and provisioning payloads.
+
+    The secret is also sealed into the token so its QR can be re-displayed later;
+    see `app/security/token_vault.py` for why that is a deliberate, bounded
+    weakening of the original hash-only storage.
+    """
     issued = create_token(
         session,
         name=payload.name,
@@ -93,6 +107,7 @@ def create_enrollment_token(
         group_ids=payload.group_ids,
         tag_ids=payload.tag_ids,
         created_by=None if identity.is_anonymous else identity.username,
+        vault=vault,
     )
     session.commit()
 

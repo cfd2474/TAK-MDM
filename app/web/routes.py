@@ -33,6 +33,7 @@ from __future__ import annotations
 import io
 import json
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -44,8 +45,9 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, get_storage
+from app.api.deps import get_db, get_storage, get_token_vault
 from app.security.admin_auth import AdminIdentity, admin_required
+from app.security.token_vault import TokenVault
 from app.artifacts.storage import ArtifactStorage
 from app.config import Settings, get_settings
 from app.db.models import (
@@ -63,7 +65,7 @@ from app.db.models import (
 from app.policies.registry import PolicyTypeError, registry
 from app.services import effective_policy as eff
 from app.services import provisioning
-from app.services.enrollment import create_token
+from app.services.enrollment import create_token, reveal_secret
 
 router = APIRouter(tags=["admin-ui"], include_in_schema=False)
 
@@ -346,16 +348,21 @@ def enrollment_page(
     )
 
 
-@router.post("/enrollment", response_class=HTMLResponse)
+@router.post("/enrollment")
 def create_enrollment(
     request: Request,
     name: str = Form(...),
     max_uses: int | None = Form(default=None),
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
+    vault: TokenVault = Depends(get_token_vault),
     identity: AdminIdentity = Depends(admin_required),
-) -> HTMLResponse:
-    """Mint a token and render its QR immediately — the secret is shown once."""
+) -> RedirectResponse:
+    """Mint a token, then hand off to its QR page.
+
+    One place renders QR codes, whether the token was made a second ago or last
+    week — so there is no "you should have saved it" path through the UI.
+    """
     form = _sync_form(request)
     issued = create_token(
         session,
@@ -365,30 +372,108 @@ def create_enrollment(
         group_ids=_uuids(form.getlist("group_ids")),
         tag_ids=_uuids(form.getlist("tag_ids")),
         created_by=None if identity.is_anonymous else identity.username,
+        vault=vault,
     )
     session.commit()
+    return _redirect(f"/enrollment/{issued.token.id}/qr")
+
+
+@router.get("/enrollment/{token_id}/qr", response_class=HTMLResponse)
+def token_qr(
+    token_id: uuid.UUID,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    vault: TokenVault = Depends(get_token_vault),
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
+    return _render_token_qr(request, token_id, session, settings, vault, identity)
+
+
+@router.post("/enrollment/{token_id}/qr", response_class=HTMLResponse)
+def token_qr_with_wifi(
+    token_id: uuid.UUID,
+    request: Request,
+    wifi_ssid: str = Form(default=""),
+    wifi_password: str = Form(default=""),
+    wifi_security: str = Form(default="WPA"),
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    vault: TokenVault = Depends(get_token_vault),
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
+    """Re-render the QR with Wi-Fi credentials embedded.
+
+    The credentials are used for this render only and never persisted: a Wi-Fi
+    password in the database would be a second recoverable secret, and the tablet
+    only needs it once, to reach the server during provisioning.
+    """
+    return _render_token_qr(
+        request, token_id, session, settings, vault, identity,
+        wifi_ssid=wifi_ssid.strip() or None,
+        wifi_password=wifi_password or None,
+        wifi_security=wifi_security,
+    )
+
+
+def _render_token_qr(
+    request: Request,
+    token_id: uuid.UUID,
+    session: Session,
+    settings: Settings,
+    vault: TokenVault,
+    identity: AdminIdentity,
+    *,
+    wifi_ssid: str | None = None,
+    wifi_password: str | None = None,
+    wifi_security: str = "WPA",
+) -> HTMLResponse:
+    token = session.get(EnrollmentToken, token_id)
+    if token is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "enrollment token not found")
+
+    context: dict[str, Any] = {
+        "token": token,
+        "wifi_ssid": wifi_ssid,
+        "wifi_security": wifi_security,
+        "qr_svg": None,
+        "payload": None,
+        "secret": None,
+        "problem": None,
+    }
+
+    # Refuse to render a QR that cannot enrol. Handing someone a scannable code
+    # that will fail costs them a factory reset before they discover it.
+    unusable = token.unusable_reason(now=datetime.now(timezone.utc))
+    if unusable:
+        context["problem"] = f"No QR: {unusable}. Create a new token instead."
+        return _render(request, "token_qr.html", identity=identity, **context)
+
+    secret = reveal_secret(token, vault)
+    if secret is None:
+        context["problem"] = (
+            "This token's secret cannot be recovered — it was created before "
+            "secrets were stored recoverably, or under a different vault key. "
+            "Create a new token."
+        )
+        return _render(request, "token_qr.html", identity=identity, **context)
 
     try:
-        payload = provisioning.qr_payload(settings, issued.secret)
-        qr_svg = _qr_svg(json.dumps(payload))
-        unavailable = None
+        payload = provisioning.qr_payload(
+            settings,
+            secret,
+            wifi_ssid=wifi_ssid,
+            wifi_password=wifi_password,
+            wifi_security=wifi_security,
+        )
     except provisioning.ProvisioningError as exc:
-        payload, qr_svg, unavailable = None, None, str(exc)
+        context["problem"] = str(exc)
+        return _render(request, "token_qr.html", identity=identity, **context)
 
-    return _render(
-        request,
-        "enrollment.html",
-        identity=identity,
-        tokens=list(
-            session.scalars(select(EnrollmentToken).order_by(EnrollmentToken.created_at.desc()))
-        ),
-        groups=list(session.scalars(select(DeviceGroup).order_by(DeviceGroup.name))),
-        tags=list(session.scalars(select(Tag).order_by(Tag.name))),
-        qr_svg=qr_svg,
-        payload=payload,
-        secret=issued.secret,
-        qr_unavailable=unavailable,
-    )
+    context["payload"] = payload
+    context["secret"] = secret
+    context["qr_svg"] = _qr_svg(json.dumps(payload))
+    return _render(request, "token_qr.html", identity=identity, **context)
 
 
 def _qr_svg(text: str) -> str:

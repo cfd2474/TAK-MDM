@@ -23,8 +23,9 @@ update after every completed step.
 - 🔨 **Chunk 6 built** — Kotlin Device Owner agent compiles and passes 9 unit tests;
   QR provisioning payloads now generate. **Unproven on hardware.**
 - ✅ **Chunk 7 complete** — admin console at http://localhost:8000
-- ✅ **Chunk 8 complete** — Authentik forward auth on the admin surface, closing
-  R10. 246 tests passing.
+- ✅ **Chunk 8 complete** — Authentik forward auth on the admin surface, closing R10
+- ✅ **Chunk 9 complete** — any live token's QR can be re-displayed, with optional
+  Wi-Fi credentials embedded. 254 tests passing.
 - ⏸️ **Next: factory-reset the `SM-X520` and enrol it**, which is the only way to
   validate enrollment, install, file placement, and kiosk. Generate the QR from the
   Enrollment page and watch the device appear on the dashboard.
@@ -319,7 +320,7 @@ Delivered: [app/security/ca.py](app/security/ca.py),
 
 | # | Decision | Rationale |
 |---|---|---|
-| D21 | Enrollment token stored as SHA-256 hash; plaintext returned once at creation | A database dump yields no usable enrollment credential. Provisioning payloads are returned alongside it, since they embed the secret. |
+| D21 | ~~Enrollment token stored as SHA-256 hash only~~ | ⚠️ **Partially reversed by D74.** The hash remains and is still the only thing authentication reads; a recoverable copy was added alongside it so a token's QR can be re-displayed. |
 | D22 | EC P-256 throughout, RSA CSRs rejected | Native to Android Keystore and StrongBox, and far cheaper on the handshake every check-in performs. |
 | D23 | The CSR's subject is discarded; the server builds the certificate subject itself | A CSR's subject is attacker-controlled. Only the public key is taken, after verifying the CSR signature for proof of possession. |
 | D24 | Re-enrollment matches on **serial number** and re-adopts the existing device row | A wipe plus KME re-enroll is routine. A second row would orphan the device's history and silently drop the group membership driving its policy stack. Prior certificates are revoked on re-enroll. |
@@ -668,6 +669,21 @@ admin port**, keeping humans and devices on different front doors. Authentik its
 is not bundled — it is a multi-service stack of its own, and the operator already
 runs one.
 
+### ✅ Chunk 9 — Re-displayable QR codes with Wi-Fi (COMPLETE)
+
+Operator request: pull up the QR for any previous token, and embed Wi-Fi
+credentials into it. 254 tests passing, verified live.
+
+#### Decisions taken during implementation
+
+| # | Decision | Rationale |
+|---|---|---|
+| D74 | **Token secrets are now recoverable**, encrypted with a key in `pki/` — a deliberate, bounded reversal of D21 | Re-displaying a QR requires recovering the secret, so one-way storage was no longer possible. Bounded three ways: the key never touches the database, so a dump alone still yields nothing and **two** things must leak; the SHA-256 hash is kept and remains the only thing authentication reads, so enrollment matches an indexed hash and never decrypts; and only enrollment tokens are stored this way — already scoped, expiring and use-limited, a far smaller blast radius than the CA key beside them. The alternative was operators saving secrets elsewhere, which in practice means photographing the QR — worse than ciphertext behind a key file. |
+| D75 | **Wi-Fi credentials are never persisted** | Used for one render only. Storing them would put a live Wi-Fi password in the database as a second recoverable secret, and the tablet needs it exactly once, to reach the server during provisioning. |
+| D76 | The QR is **refused** for a revoked, expired, or used-up token | Handing someone a scannable code that cannot enrol costs them a factory reset before they discover it. The page says which of the three it is. |
+| D77 | Creating a token redirects to its QR page | One place renders QR codes whether the token was made a second ago or last week, so there is no "you should have saved it" path through the UI. |
+| D78 | `TokenVault.open()` returns `None` rather than raising | Two cases are expected in normal operation — a token predating the vault, and one sealed under a replaced key. Neither is an error; the page simply says a QR cannot be offered. |
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |
@@ -691,6 +707,7 @@ runs one.
 | R6 | ~~Advanced Protection Mode blocks Device Owner install~~ | ✅ **Downgraded to low, 2026-08-31.** The operator runs commercial MDMs and Headwind in production on this exact hardware and One UI 8, installing apps successfully. Device Owner `PackageInstaller` holds system install privilege and does not go through the user-facing "install unknown apps" gate — as predicted, now corroborated by production use rather than documentation. Residual risk is only a user *opting into* Advanced Protection, which a Device Owner can largely prevent by restricting Settings anyway. No lab work needed. |
 | R7 | mTLS header trust: nothing in code stops the app being exposed directly, where a copied certificate in `x-ssl-client-cert` would authenticate without the private key | **Partly mitigated.** A reference nginx config now ships in [docker/nginx/nginx.conf](docker/nginx/nginx.conf) — it always overwrites the header, so a forged one is stripped, and rejects uncertified requests to `/api/v1/device/` at the edge. `scripts/dev_enroll.py` verifies both behaviours on every run, and demonstrates the direct port accepting the forged header. **Still open in code:** the app does not refuse to start when no trusted proxy is configured. |
 | R10 | ~~The admin console has no authentication~~ | ✅ **Closed (Chunk 8).** Authentik forward auth with group-based authorization, failing closed, applied at router registration. `disabled` remains the local-development default and says so loudly at startup and in the UI. |
+| R12 | **`pki/token_vault.key` now decrypts every enrollment token secret** (D74). Combined with a database dump it yields working enrollment credentials. | **Accepted, bounded.** It sits beside `ca.key`, which is strictly more dangerous, so it does not change what must be protected — only how much is lost if `pki/` leaks. Rotating it invalidates QR re-display for existing tokens but not the tokens themselves. Folded into R8's KMS/HSM answer. |
 | R11 | **No CSRF protection on the console's form posts.** With forward auth, a signed-in administrator visiting a hostile page could have their browser submit a policy change or enrollment token. Authentik's session cookie would be sent with it. | **Open.** Needs a per-session token on the form posts. Lower severity than R10 was — it requires an authenticated victim and a targeted attack — but it is the natural next gap now that sessions exist. |
 | R9 | **Pre-granting `WRITE_EXTERNAL_STORAGE` locks an app out of `MANAGE_EXTERNAL_STORAGE`** on Android 11+. Auto-granting runtime permissions is otherwise the obvious thing to do as Device Owner, so this fails silently and looks like an unrelated storage bug. Confirmed in Headwind's source, where they work around it explicitly. | **Open, must be handled in Chunk 6.** When pre-granting permissions, detect apps declaring `MANAGE_EXTERNAL_STORAGE` and skip the legacy storage permissions for them. Affects ATAK directly. |
 | R8 | CA private key is stored unencrypted at `pki/ca.key` (mode 0600, gitignored). Anyone holding it can mint a device identity. | **Open.** Acceptable on a single trusted host where the DB is equally exposed; move behind a KMS/HSM before that stops being true. |

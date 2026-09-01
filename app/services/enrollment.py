@@ -36,6 +36,7 @@ from app.db.models import (
     Tag,
 )
 from app.security.ca import CertificateAuthority
+from app.security.token_vault import TokenVault
 from app.services import effective_policy as eff
 
 _PREFIX_LENGTH = 8
@@ -69,12 +70,16 @@ def create_token(
     group_ids: Sequence[uuid.UUID] = (),
     tag_ids: Sequence[uuid.UUID] = (),
     created_by: str | None = None,
+    vault: TokenVault | None = None,
 ) -> IssuedToken:
     secret = secrets.token_urlsafe(32)
 
     token = EnrollmentToken(
         name=name,
         token_hash=_hash_secret(secret),
+        # Sealed so the QR can be shown again later. Without a vault the token
+        # still works; its QR simply cannot be re-displayed.
+        token_ciphertext=vault.seal(secret) if vault else None,
         prefix=secret[:_PREFIX_LENGTH],
         expires_at=_utcnow() + timedelta(hours=ttl_hours),
         max_uses=max_uses,
@@ -103,6 +108,11 @@ def resolve_token(session: Session, secret: str) -> EnrollmentToken:
     if token is None or not token.is_usable(now=_utcnow()):
         raise EnrollmentError("enrollment token is invalid, expired, revoked, or used up")
     return token
+
+
+def reveal_secret(token: EnrollmentToken, vault: TokenVault) -> str | None:
+    """Recover a token's secret so its QR can be re-rendered, or None."""
+    return vault.open(token.token_ciphertext)
 
 
 def revoke_token(session: Session, token: EnrollmentToken) -> None:

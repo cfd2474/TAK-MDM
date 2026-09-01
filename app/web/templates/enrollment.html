@@ -9,42 +9,6 @@
   it enrols — no second assignment step.
 </p>
 
-{% if secret %}
-<div class="panel">
-  <div class="banner">
-    This is the only time the secret is shown. Only a hash is stored, so it cannot
-    be recovered later.
-  </div>
-  <p><strong>Secret</strong> <code>{{ secret }}</code></p>
-
-  {% if qr_svg %}
-    <h2 style="margin-top:20px">Scan from the setup wizard</h2>
-    <p class="sub">
-      On a <strong>factory-reset</strong> tablet, tap the welcome screen six times
-      in the same spot to open the QR scanner, then scan this. Device Owner can only
-      be established during initial setup — after setup completes, the only way back
-      is another factory reset.
-    </p>
-    <div style="background:#fff; padding:16px; display:inline-block; border-radius:8px">
-      {{ qr_svg | safe }}
-    </div>
-    <details style="margin-top:16px">
-      <summary class="muted">Payload</summary>
-      <pre style="margin-top:8px">{{ payload | pretty_json }}</pre>
-    </details>
-  {% else %}
-    <div class="banner bad">
-      QR withheld: {{ qr_unavailable }}
-      <br><br>
-      Upload the agent APK, then set its <code>provisioning_checksum</code> as
-      <code>TAKMDM_AGENT_SIGNATURE_CHECKSUM</code>. Android rejects provisioning
-      without it and the on-device failure says nothing useful, so a payload is not
-      generated rather than handing you one that fails on the tablet.
-    </div>
-  {% endif %}
-</div>
-{% endif %}
-
 <h2>New token</h2>
 <div class="panel">
   <form method="post" action="/enrollment">
@@ -87,18 +51,31 @@
     <p class="muted">None yet.</p>
   {% else %}
   <table>
-    <thead><tr><th>Name</th><th>Prefix</th><th>Uses</th><th>Expires</th><th>Status</th></tr></thead>
+    <thead>
+      <tr>
+        <th>Name</th><th>Prefix</th><th>Scope</th><th>Uses</th>
+        <th>Expires</th><th>Status</th><th></th>
+      </tr>
+    </thead>
     <tbody>
     {% for t in tokens %}
+      {% set usable = not t.revoked_at and not (t.max_uses and t.use_count >= t.max_uses) %}
       <tr>
         <td>{{ t.name }}</td>
         <td class="mono">{{ t.prefix }}…</td>
+        <td class="muted">
+          {{ (t.groups | map(attribute='name') | list + t.tags | map(attribute='name') | list) | join(', ') or '—' }}
+        </td>
         <td class="mono">{{ t.use_count }}{% if t.max_uses %} / {{ t.max_uses }}{% endif %}</td>
         <td class="muted">{{ t.expires_at.strftime('%Y-%m-%d %H:%M') }}</td>
         <td>
           {% if t.revoked_at %}<span class="pill bad">revoked</span>
           {% elif t.max_uses and t.use_count >= t.max_uses %}<span class="pill warn">used up</span>
           {% else %}<span class="pill good">active</span>{% endif %}
+        </td>
+        <td>
+          {# Any live token's QR can be pulled up again, not just a new one. #}
+          {% if usable %}<a href="/enrollment/{{ t.id }}/qr">Show QR</a>{% endif %}
         </td>
       </tr>
     {% endfor %}

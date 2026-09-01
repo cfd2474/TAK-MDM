@@ -33,13 +33,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.api.deps import get_bundle_signer, get_ca, get_storage
+from app.api.deps import get_bundle_signer, get_ca, get_storage, get_token_vault
 from app.artifacts.storage import LocalArtifactStorage
 from app.config import Settings, get_settings
 from app.db.base import Base, get_session
 from app.main import app
 from app.security.bundle import BundleSigner
 from app.security.ca import CertificateAuthority
+from app.security.token_vault import TokenVault
 
 
 @pytest.fixture
@@ -80,6 +81,11 @@ def artifact_storage(tmp_path) -> LocalArtifactStorage:
 
 
 @pytest.fixture
+def token_vault(tmp_path) -> TokenVault:
+    return TokenVault.load_or_create(tmp_path / "pki")
+
+
+@pytest.fixture
 def settings() -> Settings:
     """Settings built in isolation from any local `.env`.
 
@@ -100,6 +106,7 @@ def client(
     ca: CertificateAuthority,
     signer: BundleSigner,
     artifact_storage: LocalArtifactStorage,
+    token_vault: TokenVault,
     settings: Settings,
 ) -> Iterator[TestClient]:
     def override() -> Iterator[Session]:
@@ -110,6 +117,7 @@ def client(
     app.dependency_overrides[get_ca] = lambda: ca
     app.dependency_overrides[get_bundle_signer] = lambda: signer
     app.dependency_overrides[get_storage] = lambda: artifact_storage
+    app.dependency_overrides[get_token_vault] = lambda: token_vault
     app.dependency_overrides[get_settings] = lambda: settings
     with TestClient(app) as test_client:
         yield test_client
