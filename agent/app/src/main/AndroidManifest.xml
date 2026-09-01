@@ -110,11 +110,19 @@
             </intent-filter>
         </receiver>
 
+        <!--
+          MY_PACKAGE_REPLACED as well as BOOT_COMPLETED. Replacing an app kills its
+          processes, and nothing brings a foreground service back on its own - so
+          without this an agent upgrade silently stops managing the device until it
+          next reboots, and the server just sees a tablet that stopped checking in.
+          Observed on SM-X520: 25 minutes of silence after an install -r.
+        -->
         <receiver
             android:name=".sync.BootReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 

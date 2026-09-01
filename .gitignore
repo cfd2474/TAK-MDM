@@ -18,7 +18,7 @@ __pycache__/
 # Android agent build output and machine-local SDK path.
 agent/.gradle/
 agent/build/
-agent/app/build/
+agent/*/build/
 agent/local.properties
 *.apk
 

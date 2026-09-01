@@ -78,10 +78,27 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     }
 }
 
+/**
+ * Restarts the agent after the two events that stop it running.
+ *
+ * `BOOT_COMPLETED` is the obvious one. `MY_PACKAGE_REPLACED` is the one that was
+ * missing: replacing the app kills its processes, and a foreground service does not
+ * come back by itself. An agent upgrade therefore left the device unmanaged until
+ * its next reboot — from the server it looked exactly like a tablet that had gone
+ * out of coverage, which is the worst kind of failure to diagnose.
+ */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
-            SyncScheduler.startAll(context)
+        when (intent.action) {
+            Intent.ACTION_BOOT_COMPLETED,
+            Intent.ACTION_MY_PACKAGE_REPLACED -> {
+                AgentLog.i(TAG, "restarting after ${intent.action}")
+                SyncScheduler.startAll(context)
+            }
         }
+    }
+
+    private companion object {
+        const val TAG = "BootReceiver"
     }
 }

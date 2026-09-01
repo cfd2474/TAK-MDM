@@ -447,7 +447,22 @@ class Reconciler(private val context: Context) {
 
             val desiredVersion = app.optLong("version_code", -1)
             val installed = installer.installedVersionCode(packageName)
-            if (installed != null && installed >= desiredVersion) continue
+            if (installed != null && installed >= desiredVersion) {
+                AgentLog.d(
+                    TAG,
+                    "$packageName already at versionCode $installed (want $desiredVersion); skipping"
+                )
+                continue
+            }
+
+            // Said out loud because "installed" and "skipped, already present" are
+            // indistinguishable otherwise, and the whole point of the collectable
+            // log is to explain what the reconciler did on a device nobody can see.
+            AgentLog.i(
+                TAG,
+                if (installed == null) "installing $packageName versionCode $desiredVersion"
+                else "upgrading $packageName from versionCode $installed to $desiredVersion"
+            )
 
             val files = app.optJSONArray("files") ?: continue
             val parts = mutableListOf<File>()
@@ -468,13 +483,20 @@ class Reconciler(private val context: Context) {
                     break
                 }
                 parts += target
+                AgentLog.d(TAG, "$packageName: ${part.optString("role")} part verified (${target.length()} bytes)")
             }
             if (downloadFailed) continue
 
             val result = installer.install(packageName, parts)
             if (result.success) {
+                AgentLog.i(
+                    TAG,
+                    "$packageName installed: versionCode " +
+                        "${installer.installedVersionCode(packageName)} from ${parts.size} part(s)"
+                )
                 errors += policyApplier.grantRuntimePermissions(packageName)
             } else {
+                AgentLog.e(TAG, "$packageName install failed: ${result.message}")
                 errors += "$packageName: ${result.message}"
             }
         }

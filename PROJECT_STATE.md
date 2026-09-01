@@ -9,7 +9,10 @@ update after every completed step.
 
 ## Current status
 
-**Phase:** ✅ **Chunks 10, 11 and 13 complete.** R11 and R13 both closed. Agent
+**Phase:** ✅ **Chunks 10–13 complete.** R11 and R13 closed. **App install and
+upgrade proven on hardware** — agent v15 (`0.4.2`) on `SM-X520`. Split-APK install
+is still unproven; the uploaded `com.atakmap.app` is a synthetic fixture, not the
+real application. Agent
 **v13 (`0.4.0`)** running on `SM-X520`, compliant, `state 2 = acked 2` and now
 correctly identified by its hardware serial `R5GL40MMHRN`.
 310 server tests + 30 agent tests.
@@ -48,7 +51,7 @@ written but have never actually run on a device:
 
 | Unproven | Why it matters |
 |---|---|
-| **App install** (`PackageInstaller`, split APKs) | The whole Chunk 4 pipeline terminates here |
+| ~~**App install**~~ ✅ **Proven 2026-09-01** — installed *and* upgraded by the agent on `SM-X520`, with Android recording `installerPackageName=org.takmdm.agent`. **Split APKs are still unproven**: writing base plus splits into one session has never run, and the uploaded ATAK is a 1.3 KB synthetic fixture, not the real app. |
 | **File placement and zip extraction** | Needs all-files access; the R1 path |
 | **Marketplace** (optional file selection) | F4 end to end |
 | **Kiosk / lock task** | F6 |
@@ -1157,7 +1160,79 @@ its next re-enrolment — the precise failure the chunk exists to prevent.
 | D101 | The migration **backfills every existing serial as a `LEGACY` identifier** | Preserves current matching exactly, whatever that string happens to be. Skipping it would orphan every enrolled device on its next re-enrolment. |
 | D102 | `identifiers` is **optional** on the enrolment request, and unknown kinds are kept rather than rejected | A fleet whose devices go dark for weeks cannot be upgraded before it is allowed to enrol, and a newer agent reporting a source this server has not heard of is still supplying usable identity. |
 
-### 🔜 Chunk 12 — Prove app install on hardware (PLANNED)
+### ✅ Chunk 12 — App install proven on hardware (single APK; splits still open)
+
+**Installed and upgraded on `SM-X520`, by the agent, with no user interaction.**
+
+```
+installerPackageName  = org.takmdm.agent
+initiatingPackageName = org.takmdm.agent
+versionCode=1 -> versionCode=2      state 4 acked 4, compliant
+```
+
+The provenance is the proof: Android records the agent as both installer and
+initiator, so this was `PackageInstaller` under Device Owner privilege and not an
+`adb install`. The whole Chunk 4 pipeline ran end to end — upload, inspect,
+content-address, resolve into desired state, download with hash verification,
+session write, commit, report.
+
+A disposable `org.takmdm.testapp` module was built for it (`agent/testapp/`):
+single APK, no splits, `targetSdk 36`, showing its own version on screen so an
+upgrade is confirmable by looking at the tablet rather than trusting a number.
+
+#### Three findings, none of which the test suite could have produced
+
+**1. An agent upgrade left the device unmanaged.** Replacing the APK kills its
+processes and a foreground service does not come back; the agent handled
+`BOOT_COMPLETED` but not `MY_PACKAGE_REPLACED`. Observed as **25 minutes of total
+silence** after an `adb install -r` — and from the server that is indistinguishable
+from a tablet that drove out of coverage. In the field this would have stopped
+management on every device at the first agent update. Fixed, then **verified by
+replacing the APK again and watching it revive itself**:
+
+```
+BootReceiver: restarting after android.intent.action.MY_PACKAGE_REPLACED
+```
+
+⚠️ A fetched summary claimed `MY_PACKAGE_REPLACED` is **not** exempt from Android
+8's implicit-broadcast restrictions and would not reach a manifest receiver. **The
+hardware says otherwise** — it is delivered only to the replaced app, so it is not
+an implicit broadcast at all. Observation supersedes; see the platform reference.
+
+**2. A successful install logged nothing.** The collectable log existed precisely
+to explain installs on a device nobody can see, and the entire success path was
+silent — "installed" and "skipped, already present" were indistinguishable. Now
+logged, and it immediately paid for itself: `already at versionCode 2 (want 2);
+skipping` is how the upgrade was confirmed as complete rather than stalled.
+
+**3. Resumable download (D8) earned its keep.** Transfers were truncating around
+1.15 MB during container churn; the agent resumed with `Range` and converged.
+Verified the server was blameless first — a real mTLS client got the full artifact
+with a matching hash, and a `Range` request at the agent's exact resume offset
+returned bytes that reassembled to the correct digest. The design decision to make
+downloads resumable was validated by a fault, not by a test.
+
+#### ⚠️ Correction: the uploaded "ATAK" is a synthetic fixture
+
+`com.atakmap.app` in the catalogue has parts of **1,351 / 1,377 / 300 bytes** — the
+synthetic APKs from Chunk 4's `tests/apk_fixtures.py`, not the real application.
+Earlier notes implying ATAK is uploaded and ready to install are misleading. It is
+adequate for exercising the *parser*, and would fail as a real install.
+
+**Consequence: split-APK install is still unproven.** `AppInstaller` writing base
+plus splits into one session has not run on hardware, and it is what ATAK will
+need. It needs either a real multi-part APK or a purpose-built one with density
+splits.
+
+#### Decisions taken during implementation
+
+| # | Decision | Rationale |
+|---|---|---|
+| D110 | The agent restarts itself on `MY_PACKAGE_REPLACED` as well as `BOOT_COMPLETED` | Without it an agent upgrade stops management until the next reboot, and the failure looks exactly like a device out of coverage — the worst kind to diagnose, because nothing is wrong at either end. |
+| D111 | The install path logs its decisions, including the no-op | A diagnostic channel that goes quiet on success cannot distinguish "installed", "skipped" and "never attempted". It was built to explain installs and said nothing about them. |
+| D112 | A disposable single-APK test app, rather than testing first with ATAK | ATAK is base + split + OBB, so a failure would have had three candidate causes. Isolating `PackageInstaller` meant the one bug found had one. |
+
+### 🔜 Chunk 13 — Split-APK install (PLANNED)
 
 The largest untested surface in the system, and the terminus of the entire Chunk 4
 pipeline: upload → inspect → content-address → resolve into desired state →

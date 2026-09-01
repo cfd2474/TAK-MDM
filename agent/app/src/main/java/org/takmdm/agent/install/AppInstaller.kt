@@ -62,6 +62,7 @@ class AppInstaller(private val context: Context) {
         var sessionId = -1
         return try {
             sessionId = installer.createSession(params)
+            AgentLog.d(TAG, "session $sessionId opened for $packageName (${parts.size} part(s))")
             installer.openSession(sessionId).use { session ->
                 parts.forEachIndexed { index, part ->
                     // Distinct names per part; the base must be written too, not

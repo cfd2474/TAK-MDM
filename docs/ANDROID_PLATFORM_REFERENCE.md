@@ -205,6 +205,50 @@ session, then commit.
 **Signature pinning:** Android refuses an update whose signing certificate differs
 from the installed app. Catch this at upload, where the message can say so.
 
+### ✅ Verified on `SM-X520`: a Device Owner installs silently
+
+`org.takmdm.testapp` was installed and then upgraded by the agent with no user
+interaction at all. Android's own record is the proof:
+
+```
+installerPackageName  = org.takmdm.agent
+initiatingPackageName = org.takmdm.agent
+```
+
+Both name the agent, so this was `PackageInstaller` under Device Owner privilege
+rather than an `adb install`. No "install unknown apps" prompt appeared, as
+documented.
+
+**Split installs remain unverified** — writing base plus splits into one session
+has not run on hardware.
+
+### ⚠️ Replacing the agent kills it, and nothing restarts it
+
+Installing over an app terminates its processes. A foreground service does **not**
+come back on its own, and neither does a WorkManager periodic job soon enough to
+matter: observed **25 minutes of silence** on `SM-X520` after an `adb install -r`.
+
+📖 The fix is `ACTION_MY_PACKAGE_REPLACED`, declared in the manifest alongside
+`BOOT_COMPLETED`.
+
+✅ **Verified: a manifest-declared receiver does receive it on Android 16.**
+
+```
+BootReceiver: restarting after android.intent.action.MY_PACKAGE_REPLACED
+```
+
+⚠️ A fetched summary asserted the opposite — that `MY_PACKAGE_REPLACED` is not
+exempt from the Android 8 implicit-broadcast restrictions and so would not reach a
+manifest receiver. That reasoning was by analogy with `ACTION_PACKAGE_REPLACED`,
+and it is wrong for this action: `MY_PACKAGE_REPLACED` is delivered **only to the
+app that was replaced**, which makes it explicit rather than implicit. The
+observation stands; do not "correct" it back on the strength of a general article
+about background execution limits.
+
+**Any DPC must handle this.** Without it, the first agent update silently ends
+management on every device in the fleet, and the symptom at the server is
+indistinguishable from a device that lost coverage.
+
 ---
 
 ## 6. Permissions

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ATLAS Install Test</string>
+    <string name="installed_version">Installed by ATLAS\n\nversion %1$s (code %2$d)</string>
+</resources>
