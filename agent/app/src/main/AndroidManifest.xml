@@ -83,5 +83,19 @@
         <receiver
             android:name=".install.InstallResultReceiver"
             android:exported="false" />
+
+        <!--
+          Bench configuration for the `dpm set-device-owner` path, which carries no
+          provisioning extras. Guarded by BuildConfig.DEBUG at runtime as well as
+          being exported only so `adb shell am broadcast` can reach it.
+        -->
+        <receiver
+            android:name=".admin.DebugConfigReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="org.takmdm.agent.CONFIGURE" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

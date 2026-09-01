@@ -29,8 +29,10 @@ android {
         // bundled BouncyCastle. Every device in this fleet is on Android 16.
         minSdk = 33
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // Bump on every build you intend to upload: the server refuses a duplicate
+        // versionCode, and Android refuses to install a downgrade.
+        versionCode = 2
+        versionName = "0.1.1"
     }
 
     buildTypes {
@@ -50,6 +52,10 @@ android {
 
     buildFeatures {
         viewBinding = true
+        // AGP 8 no longer generates BuildConfig unless asked. DebugConfigReceiver
+        // gates itself on BuildConfig.DEBUG, so this is load-bearing rather than
+        // convenience.
+        buildConfig = true
     }
 
     packaging {
