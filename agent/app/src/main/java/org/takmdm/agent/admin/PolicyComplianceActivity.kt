@@ -20,7 +20,7 @@ import android.app.admin.DevicePolicyManager
 import android.content.Intent
 import android.os.Bundle
 import android.os.PersistableBundle
-import android.util.Log
+import org.takmdm.agent.diag.AgentLog
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
@@ -75,7 +75,7 @@ class PolicyComplianceActivity : AppCompatActivity() {
         )
         config.seedFromProvisioning(extras)
 
-        Log.i(
+        AgentLog.i(
             TAG,
             "policy compliance: server=${config.serverUrl} " +
                 "deviceOwner=${MdmDeviceAdminReceiver.isDeviceOwner(this)}"
@@ -97,13 +97,13 @@ class PolicyComplianceActivity : AppCompatActivity() {
     private fun grantWhatWeCan() {
         val applier = PolicyApplier(this)
         if (!applier.isDeviceOwner) {
-            Log.w(TAG, "not device owner; runtime permissions cannot be pre-granted")
+            AgentLog.w(TAG, "not device owner; runtime permissions cannot be pre-granted")
             return
         }
         // Note this respects R9: our own manifest declares MANAGE_EXTERNAL_STORAGE,
         // so the legacy storage permissions are deliberately skipped for us too.
         val failures = applier.grantRuntimePermissions(packageName)
-        failures.forEach { Log.w(TAG, "self-grant: $it") }
+        failures.forEach { AgentLog.w(TAG, "self-grant: $it") }
     }
 
     private fun renderSteps() {
@@ -146,7 +146,7 @@ class PolicyComplianceActivity : AppCompatActivity() {
                 // No result handling: onResume re-reads the real state, which is
                 // more reliable than trusting a result code from a Settings screen.
                 runCatching { startActivity(requirement.grantIntent(this)) }
-                    .onFailure { Log.e(TAG, "could not open grant screen", it) }
+                    .onFailure { AgentLog.e(TAG, "could not open grant screen", it) }
             }
         }
         return row
@@ -163,7 +163,7 @@ class PolicyComplianceActivity : AppCompatActivity() {
     private fun finishProvisioning() {
         continueButton.isEnabled = false
         val missing = PermissionRequirement.outstanding(this)
-        if (missing.isNotEmpty()) Log.w(TAG, "continuing without: $missing")
+        if (missing.isNotEmpty()) AgentLog.w(TAG, "continuing without: $missing")
 
         if (config.serverUrl.isNullOrBlank()) {
             status.setText(R.string.compliance_no_server)
@@ -177,9 +177,9 @@ class PolicyComplianceActivity : AppCompatActivity() {
                 runCatching { Reconciler(applicationContext).sync() }
             }
             outcome.onSuccess {
-                Log.i(TAG, "enrolled: state=${it.stateVersion} errors=${it.errors}")
+                AgentLog.i(TAG, "enrolled: state=${it.stateVersion} errors=${it.errors}")
             }.onFailure {
-                Log.e(TAG, "enrollment failed; the agent will retry", it)
+                AgentLog.e(TAG, "enrollment failed; the agent will retry", it)
                 status.setText(R.string.compliance_retry)
             }
             SyncScheduler.startAll(applicationContext)

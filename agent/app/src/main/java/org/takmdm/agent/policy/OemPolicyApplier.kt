@@ -18,7 +18,7 @@ package org.takmdm.agent.policy
 
 import android.content.Context
 import android.os.Build
-import android.util.Log
+import org.takmdm.agent.diag.AgentLog
 import org.json.JSONObject
 
 /**
@@ -52,7 +52,7 @@ interface OemPolicyApplier {
         fun forDevice(context: Context): OemPolicyApplier {
             val candidates = listOf(KnoxPolicyApplier(), AospPolicyApplier())
             val chosen = candidates.first { it.isAvailable(context) }
-            Log.i(TAG, "OEM policy applier: ${chosen.name} (device=${Build.MANUFACTURER})")
+            AgentLog.i(TAG, "OEM policy applier: ${chosen.name} (device=${Build.MANUFACTURER})")
             return chosen
         }
     }
@@ -97,7 +97,7 @@ class KnoxPolicyApplier : OemPolicyApplier {
             Class.forName("com.samsung.android.knox.EnterpriseDeviceManager")
             true
         } catch (e: ClassNotFoundException) {
-            Log.i("KnoxPolicyApplier", "Knox SDK absent; using AOSP behaviour")
+            AgentLog.i("KnoxPolicyApplier", "Knox SDK absent; using AOSP behaviour")
             false
         }
     }

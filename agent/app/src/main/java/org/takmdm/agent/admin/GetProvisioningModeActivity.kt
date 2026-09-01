@@ -20,7 +20,7 @@ import android.app.Activity
 import android.app.admin.DevicePolicyManager
 import android.content.Intent
 import android.os.Bundle
-import android.util.Log
+import org.takmdm.agent.diag.AgentLog
 
 /**
  * Answers the system's `GET_PROVISIONING_MODE` question during provisioning.
@@ -53,7 +53,7 @@ class GetProvisioningModeActivity : Activity() {
             else -> allowed.first()
         }
 
-        Log.i(TAG, "provisioning mode: $mode (allowed=$allowed)")
+        AgentLog.i(TAG, "provisioning mode: $mode (allowed=$allowed)")
 
         val result = Intent().putExtra(
             DevicePolicyManager.EXTRA_PROVISIONING_MODE, mode

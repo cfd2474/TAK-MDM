@@ -22,7 +22,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
-import android.util.Log
+import org.takmdm.agent.diag.AgentLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -73,15 +73,15 @@ class SyncService : Service() {
         while (scope.isActive) {
             val ok = runCatching {
                 val outcome = reconciler.sync()
-                Log.i(
+                AgentLog.i(
                     TAG,
                     "sync: state=${outcome.stateVersion} applied=${outcome.appliedStateVersion} " +
                         "errors=${outcome.errors.size}"
                 )
-                outcome.errors.forEach { Log.w(TAG, "  $it") }
+                outcome.errors.forEach { AgentLog.w(TAG, "  $it") }
                 true
             }.getOrElse {
-                Log.e(TAG, "sync failed", it)
+                AgentLog.e(TAG, "sync failed", it)
                 false
             }
 

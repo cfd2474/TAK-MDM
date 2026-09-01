@@ -18,7 +18,7 @@ package org.takmdm.agent.files
 
 import android.content.Context
 import android.os.Environment
-import android.util.Log
+import org.takmdm.agent.diag.AgentLog
 import java.io.File
 import java.util.zip.ZipFile
 import org.json.JSONObject
@@ -122,7 +122,7 @@ class FileDeployer(private val context: Context, private val config: AgentConfig
                 }
             }
         }
-        Log.i(TAG, "extracted ${archive.name} into $targetDir")
+        AgentLog.i(TAG, "extracted ${archive.name} into $targetDir")
     }
 
     /** Key under which an applied file's hash is remembered. */

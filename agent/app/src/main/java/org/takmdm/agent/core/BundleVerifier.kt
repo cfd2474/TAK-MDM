@@ -17,7 +17,7 @@
 package org.takmdm.agent.core
 
 import android.util.Base64
-import android.util.Log
+import org.takmdm.agent.diag.AgentLog
 import java.security.KeyFactory
 import java.security.Signature
 import java.security.spec.X509EncodedKeySpec
@@ -60,7 +60,7 @@ object BundleVerifier {
         } catch (e: Exception) {
             // Never treat a verification error as a pass. A malformed key or
             // signature must reject the bundle, not skip the check.
-            Log.e(TAG, "bundle signature verification failed", e)
+            AgentLog.e(TAG, "bundle signature verification failed", e)
             false
         }
     }

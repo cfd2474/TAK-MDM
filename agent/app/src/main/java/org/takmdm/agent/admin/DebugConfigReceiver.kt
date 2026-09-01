@@ -19,7 +19,7 @@ package org.takmdm.agent.admin
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.util.Log
+import org.takmdm.agent.diag.AgentLog
 import org.takmdm.agent.BuildConfig
 import org.takmdm.agent.core.AgentConfig
 import org.takmdm.agent.sync.SyncScheduler
@@ -46,7 +46,7 @@ class DebugConfigReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (!BuildConfig.DEBUG) {
-            Log.w(TAG, "ignored: configuration over broadcast is debug-only")
+            AgentLog.w(TAG, "ignored: configuration over broadcast is debug-only")
             return
         }
         if (intent.action != ACTION) return
@@ -54,26 +54,26 @@ class DebugConfigReceiver : BroadcastReceiver() {
         val config = AgentConfig(context)
         intent.getStringExtra("server_url")?.let {
             config.serverUrl = it.trimEnd('/')
-            Log.i(TAG, "server_url set to ${config.serverUrl}")
+            AgentLog.i(TAG, "server_url set to ${config.serverUrl}")
         }
         intent.getStringExtra("enrollment_token")?.let {
             config.enrollmentToken = it
-            Log.i(TAG, "enrollment token set (${it.take(8)}…)")
+            AgentLog.i(TAG, "enrollment token set (${it.take(8)}…)")
         }
         intent.getStringExtra("server_ca_pem")?.let {
             // Newlines do not survive `am broadcast` cleanly, so accept a
             // single-line PEM with \n written literally.
             config.serverCaPem = it.replace("\\n", "\n")
-            Log.i(TAG, "server CA set (${config.serverCaPem?.length} chars)")
+            AgentLog.i(TAG, "server CA set (${config.serverCaPem?.length} chars)")
         }
         if (intent.getBooleanExtra("reset_identity", false)) {
             // Lets a bench device re-enrol without a factory reset.
             org.takmdm.agent.net.DeviceIdentity.deleteIdentity()
             config.deviceId = null
-            Log.i(TAG, "device identity cleared")
+            AgentLog.i(TAG, "device identity cleared")
         }
 
-        Log.i(
+        AgentLog.i(
             TAG,
             "configured: server=${config.serverUrl} enrolled=${config.isEnrolled} " +
                 "deviceOwner=${MdmDeviceAdminReceiver.isDeviceOwner(context)}"

@@ -22,7 +22,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.PersistableBundle
-import android.util.Log
+import org.takmdm.agent.diag.AgentLog
 import org.takmdm.agent.core.AgentConfig
 import org.takmdm.agent.sync.SyncScheduler
 
@@ -44,14 +44,14 @@ class MdmDeviceAdminReceiver : DeviceAdminReceiver() {
             PersistableBundle::class.java
         )
         AgentConfig(context).seedFromProvisioning(extras)
-        Log.i(TAG, "provisioning complete; server=${AgentConfig(context).serverUrl}")
+        AgentLog.i(TAG, "provisioning complete; server=${AgentConfig(context).serverUrl}")
 
         SyncScheduler.startAll(context)
     }
 
     override fun onEnabled(context: Context, intent: Intent) {
         super.onEnabled(context, intent)
-        Log.i(TAG, "device admin enabled; deviceOwner=${isDeviceOwner(context)}")
+        AgentLog.i(TAG, "device admin enabled; deviceOwner=${isDeviceOwner(context)}")
         SyncScheduler.startAll(context)
     }
 

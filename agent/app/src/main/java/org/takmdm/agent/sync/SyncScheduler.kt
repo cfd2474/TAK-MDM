@@ -19,7 +19,7 @@ package org.takmdm.agent.sync
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.util.Log
+import org.takmdm.agent.diag.AgentLog
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -60,7 +60,7 @@ object SyncScheduler {
     fun startAll(context: Context) {
         schedulePeriodic(context)
         runCatching { SyncService.start(context) }
-            .onFailure { Log.w(TAG, "could not start sync service", it) }
+            .onFailure { AgentLog.w(TAG, "could not start sync service", it) }
     }
 }
 
@@ -69,10 +69,10 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     override suspend fun doWork(): Result {
         return runCatching {
             val outcome = Reconciler(applicationContext).sync()
-            Log.i("SyncWorker", "periodic sync: state=${outcome.stateVersion}")
+            AgentLog.i("SyncWorker", "periodic sync: state=${outcome.stateVersion}")
             Result.success()
         }.getOrElse {
-            Log.e("SyncWorker", "periodic sync failed", it)
+            AgentLog.e("SyncWorker", "periodic sync failed", it)
             Result.retry()
         }
     }

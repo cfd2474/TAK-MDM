@@ -23,7 +23,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
-import android.util.Log
+import org.takmdm.agent.diag.AgentLog
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -75,7 +75,7 @@ class AppInstaller(private val context: Context) {
                 commitAndAwait(session, sessionId)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "install of $packageName failed", e)
+            AgentLog.e(TAG, "install of $packageName failed", e)
             if (sessionId >= 0) runCatching { installer.abandonSession(sessionId) }
             InstallResult(false, e.message ?: e.javaClass.simpleName)
         }

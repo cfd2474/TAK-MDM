@@ -18,7 +18,7 @@ package org.takmdm.agent.net
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import android.util.Log
+import org.takmdm.agent.diag.AgentLog
 import java.io.ByteArrayInputStream
 import java.security.KeyPair
 import java.security.KeyPairGenerator
@@ -67,7 +67,7 @@ object DeviceIdentity {
         return try {
             generate(useStrongBox = true)
         } catch (e: Exception) {
-            Log.w(TAG, "StrongBox unavailable, falling back to TEE-backed key", e)
+            AgentLog.w(TAG, "StrongBox unavailable, falling back to TEE-backed key", e)
             generate(useStrongBox = false)
         }
     }

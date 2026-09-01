@@ -18,7 +18,6 @@ package org.takmdm.agent.sync
 
 import android.content.Context
 import android.os.Build
-import android.util.Log
 import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
@@ -125,7 +124,7 @@ class Reconciler(private val context: Context) {
                 append(". The provisioning extras did not arrive.")
             }
             config.lastError = detail
-            Log.w(TAG, detail)
+            AgentLog.w(TAG, detail)
             return false
         }
 
@@ -167,14 +166,14 @@ class Reconciler(private val context: Context) {
             Redactor.forget(token)
 
             config.lastError = null
-            Log.i(TAG, "enrolled as ${config.deviceId}")
+            AgentLog.i(TAG, "enrolled as ${config.deviceId}")
             true
         }.getOrElse {
             // Record the class name too: "null" or an empty message is common and
             // tells the reader nothing on its own.
             val detail = "${it.javaClass.simpleName}: ${it.message ?: "no message"}"
             config.lastError = "enrollment failed - $detail"
-            Log.e(TAG, "enrollment failed", it)
+            AgentLog.e(TAG, "enrollment failed", it)
             false
         }
     }
@@ -198,7 +197,7 @@ class Reconciler(private val context: Context) {
         .getOrElse {
             val detail = "${it.javaClass.simpleName}: ${it.message ?: "no message"}"
             config.lastError = "sync failed - $detail"
-            Log.e(TAG, "sync failed", it)
+            AgentLog.e(TAG, "sync failed", it)
             throw it
         }
 
@@ -445,7 +444,7 @@ class Reconciler(private val context: Context) {
     private fun downloadArtifact(sha256: String, target: File): Boolean {
         if (target.exists() && ApiClient.sha256Of(target) == sha256.lowercase()) return true
         return runCatching { api.downloadArtifact(sha256, target) }.getOrElse {
-            Log.e(TAG, "download of $sha256 failed", it)
+            AgentLog.e(TAG, "download of $sha256 failed", it)
             false
         }
     }
@@ -458,7 +457,7 @@ class Reconciler(private val context: Context) {
     fun waitForChange(timeoutSeconds: Long): Boolean = runCatching {
         api.waitForChange(config.stateVersion, timeoutSeconds).optBoolean("should_checkin", false)
     }.getOrElse {
-        Log.w(TAG, "wait failed: ${it.message}")
+        AgentLog.w(TAG, "wait failed: ${it.message}")
         false
     }
 

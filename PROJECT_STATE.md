@@ -9,10 +9,10 @@ update after every completed step.
 
 ## Current status
 
-**Phase:** Chunk 10 in progress — agent command layer and remote diagnostics.
-Steps 1–6 done, 271 server tests + 30 agent tests. Agent **v9 (`0.3.0`) built and
-uploaded but not yet on the tablet**; the device is still running v8, and `adb` is
-not currently connected. Step 7 (hardware proof) is blocked on that.
+**Phase:** ✅ **Chunk 10 complete and hardware-validated.** Agent command layer and
+remote diagnostics. Agent **v10 (`0.3.1`)** running on `SM-X520`; `lock`, `locate`
+and `collect_logs` all dispatched and succeeded. 271 server tests + 30 agent tests.
+`adb` is connected again over wireless debugging at `192.168.68.92:43231`.
 
 > **`SM-X520` is enrolled, checking in, and applying policy over mTLS.** Live
 > propagation measured against the tablet: publishing a policy version woke the
@@ -48,7 +48,7 @@ written but have never actually run on a device:
 | **File placement and zip extraction** | Needs all-files access; the R1 path |
 | **Marketplace** (optional file selection) | F4 end to end |
 | **Kiosk / lock task** | F6 |
-| **Transient commands** (lock, wipe, locate, clear data, collect logs) | ⚠️ Was **not implemented agent-side at all** — discovered and confirmed on hardware 2026-09-01, see Chunk 10. **Now written and tested** (271 + 30 tests, verified through real nginx and mTLS), but running on **no device yet**: agent v9 carries it and the tablet is still on v8. `wipe` and `reboot` are the two nobody wants to discover are broken in the field. |
+| ~~**Transient commands**~~ | ✅ **Proven on `SM-X520`, 2026-09-01.** `lock`, `locate` and `collect_logs` all dispatched and succeeded at `attempts=1/5`. Was not implemented agent-side at all before Chunk 10. **`reboot` and `wipe` remain untried by choice** — they are the two whose deferred-result path (D90) cannot be rehearsed without actually rebooting or wiping the tablet. |
 | **StrongBox specifically** | Key generation worked; whether it used StrongBox or fell back to the TEE is unconfirmed |
 
 ### Housekeeping
@@ -748,7 +748,7 @@ credentials into it. 254 tests passing, verified live.
 | D77 | Creating a token redirects to its QR page | One place renders QR codes whether the token was made a second ago or last week, so there is no "you should have saved it" path through the UI. |
 | D78 | `TokenVault.open()` returns `None` rather than raising | Two cases are expected in normal operation — a token predating the vault, and one sealed under a replaced key. Neither is an error; the page simply says a QR cannot be offered. |
 
-### 🔄 Chunk 10 — Agent command layer and remote diagnostics (IN PROGRESS, started 2026-08-31)
+### ✅ Chunk 10 — Agent command layer and remote diagnostics (COMPLETE, hardware-validated)
 
 Inserted ahead of the install proof, for a reason that only surfaced on inspection:
 **the agent has no command handling at all.** The server queues six command types
@@ -846,7 +846,58 @@ gathered before the fix, not inferred after it (CLAUDE.md §4).
   cannot currently be removed without direct database access. Small gap, worth its
   own fix.
 
-#### Blocked: getting a new agent build onto the tablet
+#### ✅ Step 7 complete — proven on `SM-X520`
+
+`adb` was recovered by pairing over wireless debugging (the tablet was advertising
+`_adb-tls-connect` but this host had never paired). Agent v9, then v10, installed
+with `adb install -r`.
+
+**The before-and-after sits in one table**, the same command against the same
+device thirty minutes apart:
+
+```
+collect_logs   succeeded  attempts=1/5  result={'bytes': 512, 'lines': 6}   ← v10
+collect_logs   succeeded  attempts=1/5  result={'bytes': 170, 'lines': 2}   ← v9
+collect_logs   expired    attempts=5/5  error=exceeded max attempts         ← v7
+```
+
+Queue to settled was **7.3 seconds**, covering the doorbell wake, execution, upload
+and result report. Two further commands confirm the layer is not log-specific:
+
+```
+locate   succeeded  attempts=1/5  {network provider, ~40 m accuracy, age_seconds: 483}
+lock     succeeded  attempts=1/5
+```
+
+`reboot` and `wipe` are deliberately untried: their deferred-result path (D90)
+cannot be rehearsed without actually rebooting or wiping the device.
+
+#### A gap the hardware test exposed immediately
+
+The first collected bundle contained **two lines**. `SyncService`, `AppInstaller`,
+`PolicyApplier`, `FileDeployer` and `DeviceIdentity` were all still calling
+`android.util.Log` directly — 49 direct calls against 12 through `AgentLog` — so
+almost nothing an operator would want to read was reaching the collectable log. The
+mechanism worked and collected nothing useful, which is a worse failure than not
+building it: it invites trust it has not earned.
+
+Migrated all 49 (v10), and the next capture carried the sync loop. **`AppInstaller`
+was among them**, which matters directly: Chunk 11 exists to debug app installs, and
+its diagnostics would have been invisible to the very channel built to collect them.
+
+#### Two more corrections from hardware
+
+* **The tablet was on agent v7 (`0.2.3`), not v8** as this file claimed.
+* **Its real serial is `R5GL40MMHRN`**, but the server has it enrolled as
+  `SM-X520-6e5d7b239e5d39c3` — the `ANDROID_ID` fallback, meaning `Build.getSerial()`
+  failed at enrolment. Since re-enrolment matches on serial (D24), a device that
+  later reports its true serial would create a **second record** rather than
+  re-adopting the first. That is a plausible explanation for the stale
+  `SM-X520-421929662296025e` duplicate, and it means D24's guarantee is weaker in
+  practice than written. **Not yet investigated** — worth doing before the fleet
+  grows.
+
+#### Superseded: getting a new agent build onto the tablet
 
 Agent **v9 (`0.3.0`, versionCode 9)** is built and uploaded to the server, and its
 signature pins cleanly against the existing package. It is not on the tablet.
@@ -965,6 +1016,18 @@ re-investigated):
 
 ## Changelog
 
+- **2026-09-01** — **Chunk 10 complete, hardware-validated.** `adb` recovered by
+  pairing over wireless debugging; agent v10 (`0.3.1`) installed on `SM-X520`.
+  `lock`, `locate` and `collect_logs` all succeeded at `attempts=1/5`, against the
+  same `collect_logs` that had expired at 5/5 on the old build half an hour
+  earlier — 7.3 s from queue to settled. The hardware test immediately exposed
+  something the suite could not: the first collected bundle held **two lines**,
+  because 49 of the agent's 61 log calls still went straight to `android.util.Log`
+  and never reached the collectable log — `AppInstaller` among them, which is
+  precisely what Chunk 11 needs to debug. Migrated all of them. Also found the
+  tablet was on v7 not v8, and that its enrolment used the `ANDROID_ID` fallback
+  rather than its real serial `R5GL40MMHRN`, which weakens D24's re-enrolment
+  guarantee and may explain the stale duplicate record.
 - **2026-09-01** — **Chunk 10 steps 1–6.** Agent command layer and remote
   diagnostics. 271 server tests + 30 agent tests. Found by inspection that the
   agent **never read the `commands` array at all** — the server dispatched, counted

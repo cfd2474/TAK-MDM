@@ -20,7 +20,7 @@ import android.app.admin.DevicePolicyManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.UserManager
-import android.util.Log
+import org.takmdm.agent.diag.AgentLog
 import org.json.JSONObject
 import org.takmdm.agent.admin.MdmDeviceAdminReceiver
 
@@ -214,7 +214,7 @@ class PolicyApplier(private val context: Context) {
 
         for (permission in requested) {
             if (wantsAllFiles && permission in LEGACY_STORAGE_PERMISSIONS) {
-                Log.i(
+                AgentLog.i(
                     TAG,
                     "skipping $permission for $packageName: granting it would lock the " +
                         "app out of MANAGE_EXTERNAL_STORAGE (R9)"
@@ -234,7 +234,7 @@ class PolicyApplier(private val context: Context) {
         if (wantsAllFiles && !oem.grantAllFilesAccess(context, packageName)) {
             // Not a failure: no AOSP path exists, so this is a fact to report rather
             // than an error to retry.
-            Log.i(TAG, "$packageName needs all-files access; requires a manual grant")
+            AgentLog.i(TAG, "$packageName needs all-files access; requires a manual grant")
         }
 
         return failures
