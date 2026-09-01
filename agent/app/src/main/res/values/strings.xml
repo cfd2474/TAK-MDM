@@ -14,4 +14,8 @@
     <string name="install">Install</string>
     <string name="remove">Remove</string>
     <string name="installed">Installed</string>
+    <string name="compliance_enrolling">Enrolling this device…</string>
+    <string name="compliance_done">Enrolled. Setup is complete.</string>
+    <string name="compliance_retry">Could not reach the server. The device is managed and will keep trying.</string>
+    <string name="compliance_no_server">No server was configured. The device is managed but idle.</string>
 </resources>

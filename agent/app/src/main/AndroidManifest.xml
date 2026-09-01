@@ -44,6 +44,36 @@
             android:label="@string/marketplace_title" />
 
         <!--
+          Required from Android 12. Without handlers for these two actions the
+          system downloads the DPC, installs it, launches GET_PROVISIONING_MODE,
+          finds nothing, and aborts with a bare "something went wrong".
+
+          BIND_DEVICE_ADMIN on each activity is mandated too: it stops an
+          arbitrary app launching them.
+        -->
+        <activity
+            android:name=".admin.GetProvisioningModeActivity"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.app.action.GET_PROVISIONING_MODE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".admin.PolicyComplianceActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <intent-filter>
+                <action android:name="android.app.action.ADMIN_POLICY_COMPLIANCE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!--
           Not a launcher. The agent deliberately does not declare
           category.HOME - kiosk is opt-in per policy via lock task mode (F6),
           not an architectural commitment.
