@@ -53,7 +53,7 @@ written but have never actually run on a device:
 |---|---|
 | ~~**App install** (`PackageInstaller`, split APKs)~~ | ✅ **Proven 2026-09-01**, including splits. Real ATAK (107 MB, single APK) and real Butterfly IQ (**XAPK → base + 6 splits**, 323 MB) both installed by the agent; Android lists all seven parts and records `installerPackageName=org.takmdm.agent`. Upgrade proven too (`versionCode 1 → 2`). |
 | ~~**File placement and zip extraction**~~ | ✅ **Both proven 2026-09-01.** A map source pushed byte-identical to `/sdcard/atak/imagery`, and a DTED archive extracted into `/sdcard/atak/DTED/w125/` (~104 MB, hashes matching). Closes R1; F5 proven on hardware. |
-| **Marketplace** (optional file selection) | F4 end to end |
+| ~~**Marketplace**~~ | ✅ **Proven 2026-09-01** — offered not imposed, selected through the agent's real UI, placed immediately, and the selection reported back to the server. |
 | **Kiosk / lock task** | F6 |
 | ~~**Transient commands**~~ | ✅ **Proven on `SM-X520`, 2026-09-01.** `lock`, `locate` and `collect_logs` all dispatched and succeeded at `attempts=1/5`. Was not implemented agent-side at all before Chunk 10. **`reboot` and `wipe` remain untried by choice** — they are the two whose deferred-result path (D90) cannot be rehearsed without actually rebooting or wiping the tablet. |
 | **StrongBox specifically** | Key generation worked; whether it used StrongBox or fell back to the TEE is unconfirmed |
@@ -1159,6 +1159,38 @@ its next re-enrolment — the precise failure the chunk exists to prevent.
 | D100 | An identifier already held by another device is **never reassigned** | Silently moving it would change which record a third device resolves to. The fix for a genuine duplicate is a deliberate merge. |
 | D101 | The migration **backfills every existing serial as a `LEGACY` identifier** | Preserves current matching exactly, whatever that string happens to be. Skipping it would orphan every enrolled device on its next re-enrolment. |
 | D102 | `identifiers` is **optional** on the enrolment request, and unknown kinds are kept rather than rejected | A fleet whose devices go dark for weeks cannot be upgraded before it is allowed to enrol, and a newer agent reporting a source this server has not heard of is still supplying usable identity. |
+
+### ✅ Marketplace (F4) and `persist` — both proven on hardware
+
+**F4 end to end on `SM-X520`**, driving the agent's real UI rather than simulating
+a selection:
+
+| Step | Result |
+|---|---|
+| Optional entry appears under `available`, not `required` | ✅ |
+| **Not** installed on its own | ✅ verified by collected log — the file id appears nowhere |
+| User taps the offer | ✅ `placed …/atak/imagery/Google_Hybrid.xml (327 bytes)` |
+| Server records what the user took | ✅ `Google Hybrid map source`, with `applied_at` |
+| Untick | ✅ **file left in place** — deployment is write-only |
+| Delete it, tick again | ✅ re-pushed, so the record was forgotten rather than the file abandoned |
+
+**`persist` proven by differential test.** Both files deleted in the same breath,
+one reconcile pass, opposite outcomes decided purely by the flag:
+
+```
+4de83813 already placed at /sdcard/atak/DTED; not persisted, leaving it
+39c93edb is persisted but missing or incomplete at /sdcard/atak/imagery; replacing
+  → placed …/atak/imagery/Google_Terrain_NOPOI.xml (388 bytes)
+```
+
+**F1–F6 are now all satisfied, and F1–F5 are hardware-proven.** Only F6 (kiosk)
+remains unexercised on a device.
+
+#### A display bug worth the fix
+
+The catalogue rendered a 388-byte file as **"0 KB"** — integer division, and the
+catalogue mostly carries small config files, so the common case read as "there is
+nothing to download". Now `327 bytes` / `KB` / `MB`.
 
 ### ✅ Zip extraction into ATAK directories (COMPLETE, hardware-validated)
 

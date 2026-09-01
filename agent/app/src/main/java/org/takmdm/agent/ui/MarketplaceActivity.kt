@@ -142,12 +142,22 @@ private class OfferAdapter(
         holder.detail.text = buildString {
             offer.optString("description").takeIf { it.isNotBlank() }?.let { appendLine(it) }
             val bytes = offer.optLong("size_bytes", 0)
-            if (bytes > 0) append("${bytes / 1024} KB → ${offer.optString("dest_path")}")
+            // Integer KB rounded anything under 1 KB down to "0 KB", which reads as
+            // "there is nothing to download" for exactly the small config files this
+            // catalogue mostly carries.
+            if (bytes > 0) append("${humanSize(bytes)} → ${offer.optString("dest_path")}")
         }
         holder.action.setText(
             if (isSelected) R.string.remove else R.string.install
         )
         holder.action.setOnClickListener { onToggle(offer) }
+    }
+
+    /** Bytes for tiny files, KB, then MB — never a misleading "0 KB". */
+    private fun humanSize(bytes: Long): String = when {
+        bytes < 1024 -> "$bytes bytes"
+        bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+        else -> String.format(java.util.Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
     }
 
     class Holder(view: View) : RecyclerView.ViewHolder(view) {
