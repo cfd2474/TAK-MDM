@@ -33,6 +33,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.takmdm.agent.R
 import org.takmdm.agent.core.AgentConfig
+import org.takmdm.agent.files.FileDeployer
 import org.takmdm.agent.sync.Reconciler
 
 /**
@@ -81,7 +82,16 @@ class MarketplaceActivity : AppCompatActivity() {
         val fileId = offer.optString("file_id")
         val selected = config.selectedOptionalFiles.toMutableSet()
 
-        if (fileId in selected) selected.remove(fileId) else selected.add(fileId)
+        if (fileId in selected) {
+            selected.remove(fileId)
+            // Forget that we placed it, but leave the file alone: deployment is
+            // write-only and removing it is the user's business, not ours. Dropping
+            // the record is what lets them take it again later — otherwise the
+            // agent would remember placing it and skip the re-push forever.
+            config.forgetAppliedFile(FileDeployer.stateKeyFor(offer))
+        } else {
+            selected.add(fileId)
+        }
         config.selectedOptionalFiles = selected
         render()
 

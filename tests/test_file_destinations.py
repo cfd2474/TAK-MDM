@@ -66,3 +66,32 @@ def test_extract_to_is_checked_as_well_as_dest_path():
 def test_traversal_is_still_refused():
     with pytest.raises(ValidationError, match=r"\.\."):
         entry("/sdcard/atak/../../etc")
+
+
+# --------------------------------------------------------------------------- #
+# persist: replacement, never removal
+# --------------------------------------------------------------------------- #
+
+
+def test_required_files_persist_by_default():
+    # "Required" already means present. A required file that vanished should come
+    # back without the admin having to say so twice.
+    assert entry("/sdcard/atak/imagery").persist is True
+
+
+def test_optional_files_do_not_persist_by_default():
+    # The user opted in, so deleting it was their decision. They can take it again
+    # from the marketplace; the MDM re-imposing it would make "optional" a lie.
+    assert entry("/sdcard/atak/imagery", availability="optional").persist is False
+
+
+@pytest.mark.parametrize("availability,persist", [("required", False), ("optional", True)])
+def test_persist_can_be_set_against_the_default(availability, persist):
+    e = entry("/sdcard/atak/imagery", availability=availability, persist=persist)
+    assert e.persist is persist
+
+
+def test_the_derived_default_survives_persistence():
+    # exclude_unset would drop a value the validator derived, and the device would
+    # receive persist: null and have to guess — the same trap as extract_to (D50).
+    assert "persist" in entry("/sdcard/atak/imagery").model_dump(exclude_unset=True)

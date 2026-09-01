@@ -164,6 +164,13 @@ def resolve_files(session: Session, values: Mapping[str, Any]) -> dict[str, Any]
                 if entry.get("extract")
                 else entry.get("extract_to")
             ),
+            # Falls back to the tier for specs stored before persist existed, so an
+            # older policy behaves the way its author would have expected.
+            "persist": (
+                entry["persist"]
+                if entry.get("persist") is not None
+                else entry.get("availability", "required") != "optional"
+            ),
             "sha256": managed.artifact_sha256,
             "size_bytes": managed.artifact.size_bytes if managed.artifact else None,
             "url": f"/api/v1/device/artifacts/{managed.artifact_sha256}",

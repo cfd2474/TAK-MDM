@@ -680,19 +680,28 @@ class Reconciler(private val context: Context) {
         val key = deployer.stateKey(entry)
         // Already placed this exact content at this destination. Content addressing
         // makes "unchanged" cheap to determine and skips the download entirely.
-        // Both halves matter. The recorded hash says we placed *this* content; the
-        // disk check says it is still there. Trusting the record alone let a
-        // deleted file stay deleted forever while the device reported compliant.
-        if (config.appliedFileHash(key) == sha &&
-            deployer.isDeployed(entry, entry.optLong("size_bytes", -1))
-        ) {
-            AgentLog.d(TAG, "$fileId already placed at ${entry.optString("dest_path")}; skipping")
-            return emptyList()
-        }
         if (config.appliedFileHash(key) == sha) {
+            // Already placed this content here. Whether to look at the disk depends
+            // on what the policy asked for.
+            //
+            // **Deployment is write-only — the MDM never deletes a managed file.**
+            // `persist` governs replacement only: on, the file is kept present and
+            // is re-pushed if it goes missing or comes back the wrong size; off, it
+            // was placed once and a user who removed it meant to, and can take it
+            // again from the marketplace.
+            val persist = entry.optBoolean("persist", true)
+            if (!persist) {
+                AgentLog.d(TAG, "$fileId already placed at ${entry.optString("dest_path")}; not persisted, leaving it")
+                return emptyList()
+            }
+            if (deployer.isDeployed(entry, entry.optLong("size_bytes", -1))) {
+                AgentLog.d(TAG, "$fileId already placed at ${entry.optString("dest_path")}; skipping")
+                return emptyList()
+            }
             AgentLog.w(
                 TAG,
-                "$fileId was placed at ${entry.optString("dest_path")} but is gone; replacing"
+                "$fileId is persisted but missing or incomplete at " +
+                    "${entry.optString("dest_path")}; replacing"
             )
         }
         AgentLog.i(TAG, "deploying $fileId to ${entry.optString("dest_path")}")

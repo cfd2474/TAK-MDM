@@ -203,10 +203,17 @@ class FileDeployer(private val context: Context, private val config: AgentConfig
     }
 
     /** Key under which an applied file's hash is remembered. */
-    fun stateKey(entry: JSONObject): String =
-        "${entry.optString("file_id")}|${entry.optString("dest_path")}"
+    fun stateKey(entry: JSONObject): String = stateKeyFor(entry)
 
     companion object {
         private const val TAG = "FileDeployer"
+
+        /**
+         * Uses no instance state, and the marketplace needs it without a deployer:
+         * unticking an offer has to drop the same record the reconciler wrote, and
+         * a key computed two different ways is a key that eventually disagrees.
+         */
+        fun stateKeyFor(entry: JSONObject): String =
+            "${entry.optString("file_id")}|${entry.optString("dest_path")}"
     }
 }

@@ -64,6 +64,20 @@ class FileEntry(BaseModel):
     extract_to: str | None = Field(default=None, max_length=512)
 
     # Shown in the marketplace. Falls back to the managed file's own name.
+    # Whether the MDM keeps this file present, or places it once and leaves it.
+    #
+    # **The MDM never deletes a managed file.** Deployment is write-only, so this
+    # governs replacement, not removal:
+    #
+    #   on  - re-push whenever the file is missing or the wrong size on the device
+    #   off - place it once; if the user removes it, it stays removed until they
+    #         ask for it again from the agent's marketplace
+    #
+    # Left unset it derives from the tier, which is what each one already means:
+    # a *required* file that has vanished should come back, and an *optional* one
+    # the user took and then deleted was their decision to make.
+    persist: bool | None = None
+
     title: str | None = Field(default=None, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
 
@@ -84,6 +98,21 @@ class FileEntry(BaseModel):
     #: outside these resolves against the filesystem root, where nothing is
     #: writable.
     _DEVICE_ROOTS = ("/sdcard/", "/storage/emulated/0/")
+
+    @model_validator(mode="after")
+    def _default_persist(self) -> FileEntry:
+        """Derive `persist` from the tier when the admin has not said.
+
+        Marked explicitly set for the same reason `extract_to` is (D50): with
+        `exclude_unset` persistence a derived value is otherwise dropped, and the
+        device receives `persist: null` and has to guess.
+        """
+        if self.persist is None:
+            object.__setattr__(
+                self, "persist", self.availability is Availability.REQUIRED
+            )
+            self.__pydantic_fields_set__.add("persist")
+        return self
 
     @model_validator(mode="after")
     def _reject_unwritable_root(self) -> FileEntry:
