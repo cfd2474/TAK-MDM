@@ -85,6 +85,11 @@ class AgentConfig(context: Context) {
         get() = prefs.getString(KEY_LAST_ERROR, null)
         set(value) = prefs.edit { putString(KEY_LAST_ERROR, value) }
 
+    /** Problems from the last apply, reported to the server on the next check-in. */
+    var lastApplyErrors: List<String>
+        get() = prefs.getStringSet(KEY_APPLY_ERRORS, emptySet())?.toList() ?: emptyList()
+        set(value) = prefs.edit { putStringSet(KEY_APPLY_ERRORS, value.take(20).toSet()) }
+
     var lastSyncAt: Long
         get() = prefs.getLong(KEY_LAST_SYNC, 0L)
         set(value) = prefs.edit { putLong(KEY_LAST_SYNC, value) }
@@ -129,6 +134,7 @@ class AgentConfig(context: Context) {
         private const val KEY_FILE_PREFIX = "applied_file:"
         private const val KEY_LAST_ERROR = "last_error"
         private const val KEY_LAST_SYNC = "last_sync_at"
+        private const val KEY_APPLY_ERRORS = "last_apply_errors"
 
         // Keys inside PROVISIONING_ADMIN_EXTRAS_BUNDLE, matching the server's
         // provisioning payload generator.

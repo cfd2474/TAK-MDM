@@ -21,6 +21,13 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!--
+      Build.getSerial() needs this. Without it the agent falls back to ANDROID_ID,
+      which changes on factory reset — so a wiped device enrols as a NEW record
+      instead of re-adopting its own, breaking D24. Demonstrated: two SM-X520
+      records for one tablet after reprovisioning.
+    -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
     <!--
       All-files access, needed to place files into paths like /sdcard/atak that are

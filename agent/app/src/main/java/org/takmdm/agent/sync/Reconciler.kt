@@ -165,6 +165,10 @@ class Reconciler(private val context: Context) {
             .put("agent_version", AGENT_VERSION)
             .put("os_version", Build.VERSION.RELEASE)
             .put("applied_optional_files", JSONArray(config.selectedOptionalFiles.toList()))
+            // Without this the server cannot tell a healthy device from one that
+            // is failing to apply anything: it reported "compliant" while the
+            // tablet was stuck a version behind.
+            .put("apply_errors", JSONArray(config.lastApplyErrors))
 
         val response = api.checkin(request)
         val serverVersion = response.optInt("state_version", config.stateVersion)
@@ -188,9 +192,14 @@ class Reconciler(private val context: Context) {
             ?: return SyncOutcome(serverVersion, null, emptyList())
 
         val errors = applyDesiredState(desired)
-        if (errors.isEmpty()) {
-            config.appliedStateVersion = config.stateVersion
-        }
+        config.lastApplyErrors = errors
+
+        // Advance regardless of errors. acked_state_version means "this version has
+        // been processed", not "processed perfectly" — quality is what
+        // compliance_status is for (D28). Conflating them pinned the device a
+        // version behind forever over a single missing permission, and made a
+        // genuinely stuck device indistinguishable from a slightly degraded one.
+        config.appliedStateVersion = config.stateVersion
 
         return SyncOutcome(config.stateVersion, config.appliedStateVersion, errors)
     }
