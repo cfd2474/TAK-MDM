@@ -29,7 +29,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.x509.oid import NameOID
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -50,6 +50,21 @@ def session_factory() -> Iterator[sessionmaker]:
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+    @event.listens_for(engine, "connect")
+    def _enforce_foreign_keys(dbapi_connection, _record):
+        """Make SQLite behave like Postgres about referential integrity.
+
+        SQLite ignores foreign keys entirely unless this pragma is set, so every
+        ``ON DELETE CASCADE`` and ``ON DELETE SET NULL`` in the schema was a no-op
+        under test while being enforced in production. That is the same class of
+        dialect divergence as the naive-vs-aware timestamp bug behind D27: the
+        suite passes, the container does something else.
+        """
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     Base.metadata.create_all(engine)
     yield sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     Base.metadata.drop_all(engine)

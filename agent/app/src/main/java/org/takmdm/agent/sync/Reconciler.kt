@@ -22,8 +22,20 @@ import android.util.Log
 import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
+import org.takmdm.agent.BuildConfig
+import org.takmdm.agent.command.ClearAppDataCommandHandler
+import org.takmdm.agent.command.CollectLogsCommandHandler
+import org.takmdm.agent.command.CommandDispatcher
+import org.takmdm.agent.command.LocateCommandHandler
+import org.takmdm.agent.command.LockCommandHandler
+import org.takmdm.agent.command.RebootCommandHandler
+import org.takmdm.agent.command.ScreenshotCommandHandler
+import org.takmdm.agent.command.WipeCommandHandler
 import org.takmdm.agent.core.AgentConfig
 import org.takmdm.agent.core.BundleVerifier
+import org.takmdm.agent.diag.AgentLog
+import org.takmdm.agent.diag.Redactor
+import org.takmdm.agent.diag.RingFileLogSink
 import org.takmdm.agent.files.FileDeployer
 import org.takmdm.agent.install.AppInstaller
 import org.takmdm.agent.net.ApiClient
@@ -54,6 +66,40 @@ class Reconciler(private val context: Context) {
     private val installer = AppInstaller(context)
     private val deployer = FileDeployer(context, config)
 
+    /**
+     * Composition root for command handling.
+     *
+     * Built here because this is where the collaborators the handlers need already
+     * live. Registration is a list, so a new command type is one entry and no edit
+     * to the dispatcher (D88).
+     */
+    private val dispatcher = CommandDispatcher(
+        listOf(
+            LockCommandHandler(context),
+            RebootCommandHandler(context),
+            WipeCommandHandler(context),
+            LocateCommandHandler(context),
+            ClearAppDataCommandHandler(context),
+            ScreenshotCommandHandler(),
+            CollectLogsCommandHandler(
+                readLogs = { AgentLog.dump() },
+                uploadLogs = { text, commandId ->
+                    api.uploadLogs(
+                        content = text,
+                        commandId = commandId,
+                        agentVersion = AGENT_VERSION,
+                        // The ring buffer rotates rather than trims, so reaching one
+                        // full generation means older entries have already been
+                        // dropped. The reader needs to know the record starts
+                        // mid-story.
+                        truncated = text.length >= RingFileLogSink.DEFAULT_MAX_BYTES
+                    )
+                },
+                clearLogs = { AgentLog.clear() }
+            )
+        )
+    )
+
     private val cacheDir: File by lazy {
         File(context.cacheDir, "artifacts").apply { mkdirs() }
     }
@@ -82,6 +128,10 @@ class Reconciler(private val context: Context) {
             Log.w(TAG, detail)
             return false
         }
+
+        // Before anything can log it, and before the network code that carries it
+        // has a chance to appear in a stack trace.
+        Redactor.protect(token)
 
         // Each step below is a candidate for silent failure, so name the one in
         // progress: a stack trace alone does not say how far enrollment got.
@@ -114,6 +164,7 @@ class Reconciler(private val context: Context) {
             // The token is single-use and no longer needed; keeping it would leave a
             // usable enrollment credential on the device.
             config.enrollmentToken = null
+            Redactor.forget(token)
 
             config.lastError = null
             Log.i(TAG, "enrolled as ${config.deviceId}")
@@ -169,8 +220,18 @@ class Reconciler(private val context: Context) {
             // is failing to apply anything: it reported "compliant" while the
             // tablet was stuck a version behind.
             .put("apply_errors", JSONArray(config.lastApplyErrors))
+            // Outcomes of commands run since the last check-in. Carried on the
+            // request, so a result is reported exactly one cycle after execution.
+            .put("results", JSONArray(config.pendingCommandResults.map { JSONObject(it) }))
 
         val response = api.checkin(request)
+
+        // The server considers a reported result final, so only clear the queue
+        // once it has actually been accepted. Clearing on send would lose the
+        // outcome of a wipe or a log collection to one dropped response.
+        config.pendingCommandResults = emptyList()
+
+        runCommands(response.optJSONArray("commands") ?: JSONArray())
         val serverVersion = response.optInt("state_version", config.stateVersion)
 
         val bundle = response.optJSONObject("desired_state")
@@ -215,6 +276,69 @@ class Reconciler(private val context: Context) {
         errors += reconcileApps(desired.optJSONArray("apps") ?: JSONArray())
         errors += reconcileFiles(desired.optJSONObject("files") ?: JSONObject())
         return errors
+    }
+
+    // ----------------------------------------------------------------------- //
+    // Commands
+    // ----------------------------------------------------------------------- //
+
+    /**
+     * Execute the transient commands this check-in delivered.
+     *
+     * Results are normally carried on the *next* check-in request, one cycle later.
+     * Two commands cannot wait that long: a reboot kills the process and a wipe
+     * destroys the device, so the cycle that would report them never arrives. Those
+     * handlers return their effect instead of performing it, and it runs here only
+     * after an immediate check-in has actually delivered the result.
+     *
+     * Without that ordering the server never sees an outcome, redelivers the
+     * command, and the device reboots again on the next check-in — a loop that ends
+     * only when the queue exhausts its attempts.
+     */
+    private fun runCommands(commands: JSONArray) {
+        if (commands.length() == 0) return
+
+        val dispatched = dispatcher.dispatch(commands)
+        if (dispatched.results.isNotEmpty()) {
+            config.pendingCommandResults =
+                config.pendingCommandResults + dispatched.results.map { it.toJson().toString() }
+        }
+
+        if (dispatched.deferredEffects.isEmpty()) return
+
+        if (!flushCommandResults()) {
+            // Could not tell the server. Running the effect now would lose the
+            // outcome and earn a redelivery, so leave the result queued and let the
+            // command be executed on a later cycle instead.
+            AgentLog.w(TAG, "deferring ${dispatched.deferredEffects.size} effect(s): results not delivered")
+            return
+        }
+
+        for (effect in dispatched.deferredEffects) {
+            runCatching { effect() }
+                .onFailure { AgentLog.e(TAG, "deferred command effect failed", it) }
+        }
+    }
+
+    /** Post queued results on their own, ahead of the normal cycle. */
+    private fun flushCommandResults(): Boolean {
+        val queued = config.pendingCommandResults
+        if (queued.isEmpty()) return true
+
+        return runCatching {
+            api.checkin(
+                JSONObject()
+                    .put("state_version", config.stateVersion)
+                    .put("applied_state_version", config.appliedStateVersion)
+                    .put("agent_version", AGENT_VERSION)
+                    .put("results", JSONArray(queued.map { JSONObject(it) }))
+            )
+            config.pendingCommandResults = emptyList()
+            true
+        }.getOrElse {
+            AgentLog.e(TAG, "failed to flush command results", it)
+            false
+        }
     }
 
     // ----------------------------------------------------------------------- //
@@ -340,6 +464,16 @@ class Reconciler(private val context: Context) {
 
     companion object {
         private const val TAG = "Reconciler"
-        const val AGENT_VERSION = "0.1.0"
+
+        /**
+         * Read from the build rather than written here.
+         *
+         * The literal that used to sit in this slot said `0.1.0` while the build was
+         * at `0.2.4`, so every device in the console reported a version it was not
+         * running — and "which build is this tablet on?" is the first question asked
+         * of a device that is misbehaving. A constant that must be remembered
+         * separately is one that will not be.
+         */
+        const val AGENT_VERSION = BuildConfig.VERSION_NAME
     }
 }

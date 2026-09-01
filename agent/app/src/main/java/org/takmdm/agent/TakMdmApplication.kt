@@ -19,12 +19,29 @@ package org.takmdm.agent
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import java.io.File
+import org.takmdm.agent.core.AgentConfig
+import org.takmdm.agent.diag.AgentLog
+import org.takmdm.agent.diag.Redactor
+import org.takmdm.agent.diag.RingFileLogSink
+import org.takmdm.agent.sync.Reconciler
 import org.takmdm.agent.sync.SyncScheduler
 
 class TakMdmApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // First, so that everything after it is recorded. The log is what an
+        // operator collects from a device they cannot plug a cable into.
+        AgentLog.install(RingFileLogSink(File(filesDir, "diag")))
+
+        // Registered before any code can log it. The enrollment token is the one
+        // live secret the agent holds in a form that could reach a log line, and
+        // these logs now leave the device.
+        Redactor.protect(AgentConfig(this).enrollmentToken)
+
+        AgentLog.i(TAG, "agent starting (v${Reconciler.AGENT_VERSION})")
 
         val channel = NotificationChannel(
             SyncScheduler.NOTIFICATION_CHANNEL,
@@ -36,5 +53,9 @@ class TakMdmApplication : Application() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
 
         SyncScheduler.schedulePeriodic(this)
+    }
+
+    private companion object {
+        const val TAG = "Application"
     }
 }

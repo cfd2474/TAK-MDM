@@ -292,6 +292,70 @@ This cost several enrollments and was invisible without on-device diagnostics: t
 agent failed before any network call, so the server saw nothing at all. If an agent
 never contacts the server, suspect the identity and CSR path before the transport.
 
+## 6b. Reading logs, and why we do not use `logcat`
+
+📖 **`READ_LOGS` has been restricted since Android 4.1 (API 16).** Only privileged
+system apps — firmware-signed or in the privileged system image — can hold it. A
+normally-installed Device Owner cannot, and no `DevicePolicyManager` call grants it.
+
+⚠️ **Whether an unprivileged app can still read back its *own* lines is unresolved.**
+It is widely believed that `logd` filters by UID and therefore returns your own
+entries. Official documentation does **not** say so; the page below implies the
+opposite, that `READ_LOGS` gates logcat access outright. This was checked
+specifically because the belief was about to become load-bearing. **Do not build on
+it without testing on hardware first.**
+
+📖 Android's own recommendation settles the design question regardless:
+
+> "Avoid logging to `logcat`. If you need more detailed logs, **use internal storage
+> and manage your own logs directly**, instead of using the system log."
+
+**What we do (D87):** the agent keeps its own size-capped ring log in internal
+storage and tees to `logcat` as well, so `adb logcat` still works when a cable is
+available but nothing depends on reading it back. Redaction is ours to control,
+which matters because these logs leave the device when an operator collects them.
+
+### The Device Owner audit channel, which is a different thing
+
+📖 `setSecurityLoggingEnabled()` / `retrieveSecurityLogs()` /
+`DeviceAdminReceiver.onSecurityLogsAvailable()`, plus
+`retrievePreRebootSecurityLogs()` for the previous boot cycle (check for duplicates
+across the two). Device-owner only, and **only on fully managed devices with a
+single user or affiliated users** — which describes this fleet.
+
+This is a structured audit stream of system events, **not** the agent's own
+diagnostics, and it will not carry an agent stack trace. Useful for compliance
+later; it does not replace §6b. Not yet implemented.
+
+## 6c. `DevicePolicyManager` API levels that bite
+
+Verified against the official reference rather than recalled — a version branch
+written from memory named the wrong API level for `wipeDevice` and **would not have
+compiled**.
+
+| Member | API | Notes |
+|---|---|---|
+| `wipeData(int)` | 14 | **Deprecated at 26.** Do not use. |
+| `wipeData(int, CharSequence)` | 26 | Current. The reason is shown to whoever holds the device. **This is the one to call.** |
+| `wipeDevice(int)` | **37** | ⚠️ Does **not** exist against `compileSdk 36`. Calling it is a compile error, not a runtime fallback. |
+| `reboot(ComponentName)` | 24 | Throws if a call is active. |
+| `lockNow()` | 8 | Device *or* profile owner. |
+| `clearApplicationUserData(ComponentName, String, Executor, listener)` | **31** | Asynchronous — await the callback. Returns `false` for a package that is not installed, which is exactly the case an operator is checking. |
+| `WIPE_EXTERNAL_STORAGE` | 14 | Separate act on Samsung devices with a card. |
+| `WIPE_RESET_PROTECTION_DATA` | 26 | Also clears factory reset protection. |
+
+All of the above except `lockNow` require **device owner**, and the failure without
+it is a `SecurityException` whose message does not mention device ownership.
+
+### Screenshot is not available to a Device Owner
+
+There is no `DevicePolicyManager` call that captures the screen. `MediaProjection` is
+the only route and it requires interactive user consent, which defeats the point of
+a remote command on an unattended device. The agent registers a handler that
+**reports this as unsupported** rather than leaving the type unhandled — an
+unregistered type is retried until the queue expires and reads as a device fault
+(D89).
+
 ## 7. Kiosk and lock task
 
 📖 `setLockTaskPackages(admin, packages)` then `startLockTask()`. Available to a
@@ -349,6 +413,8 @@ AndroidDownloadManager/16 (Linux; U; Android 16; SM-X520 Build/BP4A.251205.006)
 * [Android minimum targetSdk matrix — Jason Bayton](https://bayton.org/android/android-minimum-targetsdk-matrix/)
 * [Advanced Protection Mode](https://developer.android.com/privacy-and-security/advanced-protection-mode)
 * [Knox SDK deprecation policy](https://docs.samsungknox.com/dev/knox-sdk/faq/general/)
+* [Log info disclosure](https://developer.android.com/privacy-and-security/risks/log-info-disclosure) — `READ_LOGS` restriction, and the "manage your own logs" recommendation
+* [Security — Android Enterprise](https://developer.android.com/work/dpc/security) — security logging for device owners
 
 ## Maintaining this file
 

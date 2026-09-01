@@ -417,6 +417,47 @@ class CheckinRequest(BaseModel):
     applied_optional_files: list[uuid.UUID] | None = None
 
 
+class DeviceLogUploadRequest(BaseModel):
+    """One diagnostic bundle from an enrolled device.
+
+    The agent's own log, not `logcat`: `READ_LOGS` is unavailable to a normally
+    installed app, and Android's guidance is to keep your own logs rather than use
+    the system buffer (D87).
+    """
+
+    content: str
+    # Which COLLECT_LOGS command this answers, when it answers one.
+    command_id: uuid.UUID | None = None
+    agent_version: str | None = None
+    # Set when the agent's ring buffer dropped older entries before sending, so a
+    # reader knows the record starts mid-story rather than at the beginning.
+    truncated: bool = False
+
+
+class DeviceLogUploadResponse(BaseModel):
+    id: uuid.UUID
+    size_bytes: int
+    collected_at: datetime
+
+
+class DeviceLogBundleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    device_id: uuid.UUID
+    command_id: uuid.UUID | None
+    size_bytes: int
+    agent_version: str | None
+    truncated: bool
+    collected_at: datetime
+
+
+class DeviceLogBundleDetail(DeviceLogBundleRead):
+    """A capture with its text. Separate from the listing, which omits it."""
+
+    content: str
+
+
 class CheckinResponse(BaseModel):
     device_id: uuid.UUID
     state_version: int

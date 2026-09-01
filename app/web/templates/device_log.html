@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% set nav = 'devices' %}
+{% block title %}Log — {{ device.serial_number }} — TAK MDM{% endblock %}
+
+{% block content %}
+<h1 class="mono">{{ device.serial_number }}</h1>
+<p class="sub">
+  <a href="/devices/{{ device.id }}#logs">← back to device</a> ·
+  collected {{ bundle.collected_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC ·
+  agent {{ bundle.agent_version or '—' }} ·
+  {{ '%.1f'|format(bundle.size_bytes / 1024) }} KB
+</p>
+
+{% if bundle.truncated %}
+  <div class="banner warn">
+    <strong>Truncated.</strong>
+    The agent's buffer filled and dropped its oldest entries, so this record starts
+    part-way through. The beginning of whatever went wrong may be missing.
+  </div>
+{% endif %}
+
+<div class="panel">
+  <pre class="mono logdump">{{ bundle.content }}</pre>
+</div>
+{% endblock %}

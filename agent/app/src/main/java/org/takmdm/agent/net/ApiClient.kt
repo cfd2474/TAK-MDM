@@ -165,6 +165,33 @@ class ApiClient(private val config: AgentConfig) {
         return mtlsClient.newCall(request).execute().readJson()
     }
 
+    /**
+     * Upload a diagnostic log bundle.
+     *
+     * Its own endpoint rather than a field on check-in: this body is up to a
+     * megabyte and is sent a handful of times in a device's life, while check-in
+     * runs every couple of minutes on a link assumed to be poor. Folding one into
+     * the other would make every routine check-in carry the worst case.
+     */
+    fun uploadLogs(
+        content: String,
+        commandId: String?,
+        agentVersion: String,
+        truncated: Boolean
+    ): JSONObject {
+        val body = JSONObject()
+            .put("content", content)
+            .put("command_id", commandId ?: JSONObject.NULL)
+            .put("agent_version", agentVersion)
+            .put("truncated", truncated)
+
+        val request = Request.Builder()
+            .url("$baseUrl/api/v1/device/logs")
+            .post(body.toString().toRequestBody(JSON))
+            .build()
+        return mtlsClient.newCall(request).execute().readJson()
+    }
+
     /** Blocks until the server says to check in, or the hold expires. */
     fun waitForChange(stateVersion: Int, timeoutSeconds: Long): JSONObject {
         val request = Request.Builder()

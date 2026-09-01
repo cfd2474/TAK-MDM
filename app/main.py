@@ -27,6 +27,7 @@ from app.api.routers import (
     assignments,
     checkin,
     commands,
+    device_logs,
     effective,
     enrollment,
     files,
@@ -68,6 +69,7 @@ app.include_router(checkin.router)
 app.include_router(artifacts.router)
 app.include_router(wait.router)
 app.include_router(enrollment.device_router)
+app.include_router(device_logs.router)
 
 # --------------------------------------------------------------------------- #
 # Administrative. Guarded here rather than per endpoint, so a new route is
@@ -84,6 +86,7 @@ for admin_router in (
     effective.router,
     enrollment.router,
     commands.router,
+    device_logs.admin_router,
     packages.router,
     files.router,
     files.selections_router,

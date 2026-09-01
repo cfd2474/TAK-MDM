@@ -93,6 +93,11 @@ class CommandType(str, enum.Enum):
     LOCATE = "locate"
     SCREENSHOT = "screenshot"
     CLEAR_APP_DATA = "clear_app_data"
+    # Ask the device to upload its own diagnostic log. A command rather than a
+    # policy because it is a momentary request for a snapshot, not state to
+    # converge on — and because an operator wants it *now*, on a device that is
+    # already misbehaving.
+    COLLECT_LOGS = "collect_logs"
 
 
 class CommandStatus(str, enum.Enum):
@@ -433,6 +438,39 @@ class DeviceCommand(Base):
         if self.status in (CommandStatus.SUCCEEDED, CommandStatus.FAILED, CommandStatus.EXPIRED):
             return False
         return now < self.expires_at and self.attempts < self.max_attempts
+
+
+class DeviceLogBundle(Base):
+    """One upload of a device's own diagnostic log.
+
+    Stored as text on the row rather than in the content-addressed artifact store.
+    That store exists to deduplicate blobs many devices download; a log bundle is
+    unique to one device and one moment, so content addressing buys nothing and
+    would cost a reference-counted delete on data that should simply age out.
+
+    Capped at upload, so a misbehaving or hostile agent cannot fill the disk one
+    check-in at a time.
+    """
+
+    __tablename__ = "device_log_bundle"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("device.id", ondelete="CASCADE"), index=True
+    )
+    # Which request produced it, when there was one. Null for a bundle the agent
+    # sent on its own initiative rather than in answer to a command.
+    command_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("device_command.id", ondelete="SET NULL"), default=None
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    # What the device said about itself when it uploaded, so a bundle stays
+    # interpretable after the device has moved on to another agent build.
+    agent_version: Mapped[str | None] = mapped_column(String(32), default=None)
+    # True when the agent's own cap trimmed the oldest entries before sending.
+    truncated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    collected_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
 
 
 # --------------------------------------------------------------------------- #

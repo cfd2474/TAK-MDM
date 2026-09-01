@@ -31,8 +31,8 @@ android {
         targetSdk = 36
         // Bump on every build you intend to upload: the server refuses a duplicate
         // versionCode, and Android refuses to install a downgrade.
-        versionCode = 8
-        versionName = "0.2.4"
+        versionCode = 9
+        versionName = "0.3.0"
     }
 
     buildTypes {
@@ -48,6 +48,16 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+    }
+
+    testOptions {
+        unitTests {
+            // android.util.Log and friends are stubs that throw in a JVM unit test.
+            // The command dispatcher and the redactor are ordinary logic worth
+            // testing off-device, and both log; without this they fail on the
+            // logging rather than on anything they are meant to verify.
+            isReturnDefaultValues = true
+        }
     }
 
     buildFeatures {

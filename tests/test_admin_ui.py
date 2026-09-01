@@ -465,3 +465,84 @@ def test_token_scoping_from_the_form(client: TestClient):
 
     tokens = client.get("/api/v1/enrollment-tokens").json()
     assert any(t["name"] == "Scoped" and t["groups"] for t in tokens)
+
+
+# --------------------------------------------------------------------------- #
+# Diagnostics
+# --------------------------------------------------------------------------- #
+
+
+def test_device_page_offers_log_collection(client: TestClient, enrolled):
+    device = enrolled(serial="UI-LOGS")
+
+    body = client.get(f"/devices/{device['device_id']}").text
+
+    assert "Collect logs" in body
+    assert f"/devices/{device['device_id']}/collect-logs" in body
+
+
+def test_device_page_says_when_no_logs_exist(client: TestClient, enrolled):
+    device = enrolled(serial="UI-NOLOGS")
+
+    body = text_of(client.get(f"/devices/{device['device_id']}").text)
+
+    # An empty table with no explanation reads like a broken page.
+    assert "No logs collected" in body
+
+
+def test_collect_logs_button_queues_a_command(client: TestClient, enrolled):
+    device = enrolled(serial="UI-QUEUE")
+
+    client.post(
+        f"/devices/{device['device_id']}/collect-logs", follow_redirects=False
+    )
+
+    commands = client.get(f"/api/v1/devices/{device['device_id']}/commands").json()
+    assert [c["command_type"] for c in commands] == ["collect_logs"]
+
+
+def test_page_shows_a_request_is_already_in_flight(client: TestClient, enrolled):
+    device = enrolled(serial="UI-INFLIGHT")
+    client.post(f"/devices/{device['device_id']}/collect-logs", follow_redirects=False)
+
+    body = text_of(client.get(f"/devices/{device['device_id']}").text)
+
+    # Without this an operator who sees nothing happen queues another, and another.
+    assert "already in flight" in body
+
+
+def test_an_uploaded_log_is_listed_and_readable(
+    client: TestClient, enrolled, mtls_headers
+):
+    device = enrolled(serial="UI-READ")
+    headers = mtls_headers(device["certificate_pem"])
+    client.post(
+        "/api/v1/device/logs",
+        json={"content": "E/Reconciler: install failed\n", "agent_version": "0.3.0"},
+        headers=headers,
+    )
+
+    listing = client.get(f"/devices/{device['device_id']}").text
+    assert "0.3.0" in listing
+
+    bundle_id = client.get(f"/api/v1/devices/{device['device_id']}/logs").json()[0]["id"]
+    body = client.get(f"/devices/{device['device_id']}/logs/{bundle_id}").text
+    assert "install failed" in body
+
+
+def test_a_log_cannot_be_read_through_another_device(
+    client: TestClient, enrolled, mtls_headers
+):
+    owner = enrolled(serial="UI-OWNER")
+    other = enrolled(serial="UI-OTHER")
+    client.post(
+        "/api/v1/device/logs",
+        json={"content": "private\n"},
+        headers=mtls_headers(owner["certificate_pem"]),
+    )
+    bundle_id = client.get(f"/api/v1/devices/{owner['device_id']}/logs").json()[0]["id"]
+
+    # Scoped to the device as well as the id, so a guessed id reveals nothing
+    # (the same rule as D34).
+    response = client.get(f"/devices/{other['device_id']}/logs/{bundle_id}")
+    assert response.status_code == 404

@@ -94,6 +94,18 @@ class AgentConfig(context: Context) {
         get() = prefs.getLong(KEY_LAST_SYNC, 0L)
         set(value) = prefs.edit { putLong(KEY_LAST_SYNC, value) }
 
+    /**
+     * Command outcomes awaiting delivery, each a serialised result object.
+     *
+     * Persisted rather than held in memory: a command executed just before the
+     * process is killed would otherwise be redelivered and run a second time, which
+     * for `clear_app_data` means destroying data the user recreated in between.
+     * At-least-once delivery (D31) obliges the agent to remember what it has done.
+     */
+    var pendingCommandResults: List<String>
+        get() = prefs.getStringSet(KEY_COMMAND_RESULTS, emptySet())?.toList() ?: emptyList()
+        set(value) = prefs.edit { putStringSet(KEY_COMMAND_RESULTS, value.takeLast(50).toSet()) }
+
     /** Optional file ids the user chose in the marketplace (F4). */
     var selectedOptionalFiles: Set<String>
         get() = prefs.getStringSet(KEY_SELECTED_FILES, emptySet()) ?: emptySet()
@@ -135,6 +147,7 @@ class AgentConfig(context: Context) {
         private const val KEY_LAST_ERROR = "last_error"
         private const val KEY_LAST_SYNC = "last_sync_at"
         private const val KEY_APPLY_ERRORS = "last_apply_errors"
+        private const val KEY_COMMAND_RESULTS = "pending_command_results"
 
         // Keys inside PROVISIONING_ADMIN_EXTRAS_BUNDLE, matching the server's
         // provisioning payload generator.

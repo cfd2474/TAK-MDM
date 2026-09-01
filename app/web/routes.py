@@ -54,6 +54,8 @@ from app.db.models import (
     AppPackage,
     Assignment,
     AssignmentScope,
+    CommandStatus,
+    CommandType,
     Device,
     DeviceGroup,
     EnrollmentToken,
@@ -63,6 +65,8 @@ from app.db.models import (
     Tag,
 )
 from app.policies.registry import PolicyTypeError, registry
+from app.services import commands as command_service
+from app.services import device_logs as log_service
 from app.services import effective_policy as eff
 from app.services import packages as package_service
 from app.services import provisioning
@@ -141,6 +145,64 @@ def device_detail(
         conflicts=payload.get("conflicts", []),
         apps=payload.get("apps", []),
         files=payload.get("files", {"required": [], "available": []}),
+        log_bundles=log_service.list_for_device(session, device_id),
+        pending_log_request=_has_open_log_request(session, device_id),
+    )
+
+
+def _has_open_log_request(session: Session, device_id: uuid.UUID) -> bool:
+    """True while a COLLECT_LOGS command is still awaiting an answer.
+
+    Shown so an operator who clicks twice understands the first request is still
+    in flight, rather than assuming nothing happened and queueing another.
+    """
+    return any(
+        command.command_type is CommandType.COLLECT_LOGS
+        and command.status in (CommandStatus.PENDING, CommandStatus.DISPATCHED)
+        for command in command_service.list_for_device(session, device_id)
+    )
+
+
+@router.post("/devices/{device_id}/collect-logs")
+def request_logs(
+    device_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Ask a device to upload its diagnostic log.
+
+    The doorbell (F3) wakes a parked device in the same second, so this is
+    normally answered within a check-in rather than at the next poll.
+    """
+    device = session.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
+
+    command_service.enqueue(session, device, command_type=CommandType.COLLECT_LOGS)
+    session.commit()
+    return _redirect(f"/devices/{device_id}#logs")
+
+
+@router.get("/devices/{device_id}/logs/{bundle_id}", response_class=HTMLResponse)
+def view_log(
+    device_id: uuid.UUID,
+    bundle_id: uuid.UUID,
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
+    device = session.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
+
+    bundle = log_service.get(session, bundle_id)
+    # Checked against the device too, so a guessed id cannot read another
+    # device's logs (the same rule as D34).
+    if bundle is None or bundle.device_id != device_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "log bundle not found")
+
+    return _render(
+        request, "device_log.html", identity=identity, device=device, bundle=bundle
     )
 
 

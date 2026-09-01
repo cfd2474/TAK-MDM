@@ -9,7 +9,10 @@ update after every completed step.
 
 ## Current status
 
-**Phase:** End to end working on real hardware. Agent v8. 254 tests passing.
+**Phase:** Chunk 10 in progress — agent command layer and remote diagnostics.
+Steps 1–6 done, 271 server tests + 30 agent tests. Agent **v9 (`0.3.0`) built and
+uploaded but not yet on the tablet**; the device is still running v8, and `adb` is
+not currently connected. Step 7 (hardware proof) is blocked on that.
 
 > **`SM-X520` is enrolled, checking in, and applying policy over mTLS.** Live
 > propagation measured against the tablet: publishing a policy version woke the
@@ -45,13 +48,16 @@ written but have never actually run on a device:
 | **File placement and zip extraction** | Needs all-files access; the R1 path |
 | **Marketplace** (optional file selection) | F4 end to end |
 | **Kiosk / lock task** | F6 |
-| **Transient commands** (lock, wipe, locate) | Never dispatched to a real device |
+| **Transient commands** (lock, wipe, locate, clear data, collect logs) | ⚠️ Was **not implemented agent-side at all** — discovered and confirmed on hardware 2026-09-01, see Chunk 10. **Now written and tested** (271 + 30 tests, verified through real nginx and mTLS), but running on **no device yet**: agent v9 carries it and the tablet is still on v8. `wipe` and `reboot` are the two nobody wants to discover are broken in the field. |
 | **StrongBox specifically** | Key generation worked; whether it used StrongBox or fell back to the TEE is unconfirmed |
 
 ### Housekeeping
 
 * A **stale duplicate device record** exists (`SM-X520-421929662296025e`) from an
-  enrolment that failed after registering. Safe to delete from the console.
+  enrolment that failed after registering, plus `VERIFY-LOGS-01` from Chunk 10's
+  verification run. ⚠️ **Neither can currently be removed:** there is no device
+  deletion in the console or the API (`DELETE /api/v1/devices/{id}` → 405). An
+  earlier note here claiming they were "safe to delete from the console" was wrong.
 * Build toolchain: JDK 17 at `C:\Program Files\Microsoft\jdk-17.0.20.8-hotspot`,
   Android SDK with API 36, build-tools 36.0.0, `adb` under
   `%LOCALAPPDATA%\Android\Sdk\platform-tools`.
@@ -742,6 +748,182 @@ credentials into it. 254 tests passing, verified live.
 | D77 | Creating a token redirects to its QR page | One place renders QR codes whether the token was made a second ago or last week, so there is no "you should have saved it" path through the UI. |
 | D78 | `TokenVault.open()` returns `None` rather than raising | Two cases are expected in normal operation — a token predating the vault, and one sealed under a replaced key. Neither is an error; the page simply says a QR cannot be offered. |
 
+### 🔄 Chunk 10 — Agent command layer and remote diagnostics (IN PROGRESS, started 2026-08-31)
+
+Inserted ahead of the install proof, for a reason that only surfaced on inspection:
+**the agent has no command handling at all.** The server queues six command types
+and `claim_for_delivery` puts them in every check-in response; `ApiClient` and
+`Reconciler` never read the `commands` array. They are delivered and dropped, and
+because each delivery counts an attempt, the console reports
+`EXPIRED — exceeded max attempts`: a device that received the command and failed,
+rather than an agent that cannot execute one. A remote wipe today promises
+something it cannot do.
+
+The second driver is diagnostics. `adb` was unavailable when this chunk was
+planned, and the install proof is expected to need several agent fixes (the
+enrolment work needed six). **Investigated rather than assumed:** nothing in ATLAS
+blocks `adb` — the tablet carries a single `PASSWORD` policy, no `RESTRICTIONS`
+policy exists for it, and `PolicyApplier.applyRestrictions` skips absent fields
+instead of applying defaults, so `DISALLOW_DEBUGGING_FEATURES` was never set.
+Developer Options is simply off. `adb` is therefore recoverable *and* remote log
+collection is still worth building, because it is the channel that works on a
+fielded device where nobody can plug in a cable.
+
+**Log collection deliberately does not scrape `logcat`.** `READ_LOGS` has been
+restricted to privileged system apps since API 16, so the agent cannot hold it.
+Whether an unprivileged app may still read *its own* lines is **not confirmed by
+any official source** — a recollection that it can was checked and left unproven,
+so nothing is built on it (CLAUDE.md §6). Android's own guidance settles it:
+"Avoid logging to `logcat`. If you need more detailed logs, use internal storage
+and manage your own logs directly." That is also the better design here, since
+these logs now leave the device and redaction must be ours to control.
+
+1. **Agent log store** — an `AgentLog` facade over a size-capped ring buffer on
+   internal storage, recording timestamp, level, tag, message and throwable. Tees
+   to `logcat` as well so `adb` stays useful when present. Never records token or
+   key material.
+2. **Command execution layer** — read `commands` from the check-in response and
+   dispatch through a handler registry keyed by type, so adding a command type
+   does not modify the dispatcher (OCP). Report results at the next check-in.
+   Implement the existing six.
+3. **`COLLECT_LOGS` command** — new type server-side (enum, TTL, validation, admin
+   enqueue) and its agent handler.
+4. **Log upload** — a device-facing mTLS endpoint with a hard size cap, a
+   `DeviceLogBundle` model, and a migration. Separate from check-in: a log bundle
+   has no business inflating a request that runs every two minutes.
+5. **Console** — a device page section listing captures newest first, and a
+   "Collect logs" button.
+6. **Tests** — server: command type, upload cap, auth, retention. Agent:
+   dispatcher, registry, redaction.
+7. **Prove on hardware** — enqueue `COLLECT_LOGS`, watch the doorbell wake the
+   device and the bundle arrive. Retires the transient-command item above.
+
+#### Decisions taken during implementation
+
+**Steps 1–6 complete. 271 server tests + 30 agent tests passing**, and the whole
+path verified through real nginx and mTLS: command delivered at check-in, bundle
+uploaded, result acknowledged, bundle read back byte-identical, size cap refused by
+the application (not the edge), and an uncertified upload refused at the edge.
+**Step 7 (hardware) is blocked on getting agent v9 onto the tablet — see below.**
+
+#### The dropped-command bug, confirmed on hardware rather than assumed
+
+A `COLLECT_LOGS` was queued against the live `SM-X520` while it was still running
+agent v8:
+
+```
+collect_logs   expired   attempts=5/5   error=exceeded max attempts
+```
+
+The device was online and healthy throughout — the doorbell woke it in the same
+second the command was queued (queued `:55.751`, check-in `:55.926`). It received
+the command five times and dropped it five times, and the console reports a device
+that would not answer. **That is indistinguishable from a device that tried and
+failed**, which is the whole problem: the symptom names the wrong cause. Evidence
+gathered before the fix, not inferred after it (CLAUDE.md §4).
+
+#### Decisions taken during implementation
+
+| # | Decision | Rationale |
+|---|---|---|
+| D87 | The agent keeps **its own log** rather than scraping `logcat` | `READ_LOGS` is unavailable to a normally-installed app, self-reading is unconfirmed by official sources, and Android's documentation explicitly recommends managing your own logs instead. It also puts redaction under our control, which matters once logs leave the device. |
+| D88 | Command dispatch is a **registry keyed by type**, not a `when` block | Adding a command type must not require editing the dispatcher (OCP). The `when` would have been shorter and is exactly how the seventh type gets forgotten. |
+| D89 | An **unknown command type is reported as unsupported**, never dropped | This is the bug that motivated the chunk, fixed structurally: the console must distinguish "this agent cannot do that" from "the device failed to do that". Silence made them identical. |
+| D90 | `reboot` and `wipe` are **deferred**: the handler returns the effect, and it runs only after an immediate check-in has delivered the result | Both end the session that would report them. Run inline, the result never arrives, the queue redelivers, and the device reboots again on the next check-in — a loop ending only when attempts are exhausted. The agent flushes results first and executes second; if the flush fails it does *not* execute. |
+| D91 | Command results are **persisted**, not held in memory | Delivery is at-least-once (D31), so a result lost to a process death means the command runs twice. For `clear_app_data` that destroys data the user recreated in between. |
+| D92 | `AGENT_VERSION` is read from `BuildConfig.VERSION_NAME` | The literal in its place said `0.1.0` while the build was at `0.2.4`, so every device reported a version it was not running — and "which build is this?" is the first question asked of a misbehaving device. A constant that must be remembered separately will not be. |
+| D93 | The test suite now sets `PRAGMA foreign_keys=ON` for SQLite | Without it SQLite ignores foreign keys entirely, so every `ON DELETE CASCADE` and `SET NULL` in the schema was a no-op under test while Postgres enforced it — the same dialect divergence as D27. Enabling it broke no existing test, so the rules were already consistent; they were simply never verified. |
+| D94 | `device_log_bundle.command_id` is `ON DELETE SET NULL`, not `CASCADE` | A log bundle outlives the request that produced it. Tidying the command queue must not destroy the evidence. |
+
+#### Corrections to earlier claims in this file
+
+* **Transient commands were described as "never dispatched to a real device"**,
+  implying the agent side existed. It did not — see above.
+* **"A stale duplicate device record … safe to delete from the console"** is
+  **wrong**. There is no device deletion anywhere: not in the console, not in the
+  API (`DELETE /api/v1/devices/{id}` returns 405). Two stale records
+  (`SM-X520-421929662296025e`, and `VERIFY-LOGS-01` from this chunk's verification)
+  cannot currently be removed without direct database access. Small gap, worth its
+  own fix.
+
+#### Blocked: getting a new agent build onto the tablet
+
+Agent **v9 (`0.3.0`, versionCode 9)** is built and uploaded to the server, and its
+signature pins cleanly against the existing package. It is not on the tablet.
+
+`adb devices` is still empty. **Investigated, not assumed:** nothing in ATLAS blocks
+it — the tablet's whole effective policy is one `PASSWORD` field, no `RESTRICTIONS`
+policy is assigned to it, and `PolicyApplier.applyRestrictions` skips absent fields
+rather than applying defaults, so `DISALLOW_DEBUGGING_FEATURES` was never set.
+Developer Options is simply switched off on the device.
+
+This is the constraint that matters most for Chunk 11: **that chunk is expected to
+need several agent fixes** (enrolment needed six), and without a way to ship one it
+stalls at the first. Routes, best first:
+
+1. **Enable Developer Options → Wireless debugging on the tablet**, then
+   `adb pair` / `adb connect`. Restores `logcat` as well.
+2. **Sideload from the tablet's own browser** — the agent APK is served in plaintext
+   at `:8080` precisely because provisioning needs it to be.
+3. **Self-update through the install path** — circular: that is what Chunk 11 exists
+   to prove, and it cannot be the way its own fixes are delivered.
+4. Factory reset and re-provision by QR. Works, and costs the most.
+
+### 🔜 Chunk 11 — Prove app install on hardware (PLANNED)
+
+The largest untested surface in the system, and the terminus of the entire Chunk 4
+pipeline: upload → inspect → content-address → resolve into desired state →
+download with hash verification → `PackageInstaller` session → commit → report.
+Every stage of it is written, tested, and has never run on a device.
+
+**Ordering decision: a small purpose-built APK first, ATAK second.** ATAK is already
+uploaded and is the real target, but it is base + split + OBB — three variables at
+once, one of which (OBB placement) is a known open risk (R2). Proving the install
+path with a single-APK package isolates `PackageInstaller` from storage and split
+handling, so a failure has one candidate cause instead of three.
+
+1. **Pre-flight** — confirm the tablet is checking in, capture its current
+   `state_version` / `acked_state_version`, and read the `apps` projection the
+   server actually emits for it today. Establish the diagnostic channel before
+   needing it (see below).
+2. **Build a disposable test app** — a trivial second Gradle module producing a
+   single-APK, no-splits, `targetSdk 36` package under our own control. Lets us
+   choose the package name and version code, and re-publish a v2 to prove the
+   *upgrade* path, which is a distinct behaviour from first install.
+3. **Upload and verify server-side inspection** — package name, version code,
+   `targetSdk >= 24`, signing certificate, and the content-addressed parts.
+4. **Publish an `APP_CATALOG` policy requiring it**, assign to `SM-X520`, and
+   confirm `state_version` bumps and the desired state carries hash, size and URL.
+5. **Watch the install happen** — long-poll wake → check-in → download → session
+   write → commit → `acked_state_version` advances and the app is on the tablet.
+6. **Escalate to ATAK** — base + split in one session. Expect OBB to be absent;
+   that is R2, not a regression.
+7. **Record** — ✅ entries in `docs/ANDROID_PLATFORM_REFERENCE.md`, decisions and
+   findings here, and update `HANDOFF.md`.
+
+**Diagnostic channel, decided up front.** `adb` currently sees no device, so
+`logcat` is not available. Unlike the enrollment work, that is survivable: the agent
+already reports apply failures to the server (`apply_errors` → `compliance_detail`),
+and `AppInstaller` puts the `PackageInstaller` status code and message into exactly
+that field. So an install failure arrives as
+`"<pkg>: status 4: INSTALL_FAILED_…"` on the next check-in. **This is the D79
+principle paying off a second time** — the channel that ended the enrollment
+deadlock is the one this chunk depends on. Restoring `adb` would still be strictly
+better and should be taken if it is cheap.
+
+**Hypotheses discharged before starting** (CLAUDE.md §4 — recorded so they are not
+re-investigated):
+
+* `AppInstaller.commitAndAwait` registers a `BroadcastReceiver` and blocks on a
+  `CountDownLatch`. Receivers dispatch on the main looper, so a main-thread caller
+  would deadlock and report every install as `"install timed out"` — precisely the
+  misleading shape this project keeps hitting. **Checked: not present.**
+  `SyncService` runs the reconciler on `Dispatchers.IO` and `SyncScheduler` in a
+  `CoroutineWorker`; both are background threads and leave the main looper free.
+* `Reconciler.reconcileApps` skips `role == "obb"` parts entirely — they are never
+  downloaded and never placed. **Confirmed by reading, not a surprise:** this is R2
+  still open, so ATAK will install without its OBB in step 6.
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |
@@ -783,6 +965,22 @@ credentials into it. 254 tests passing, verified live.
 
 ## Changelog
 
+- **2026-09-01** — **Chunk 10 steps 1–6.** Agent command layer and remote
+  diagnostics. 271 server tests + 30 agent tests. Found by inspection that the
+  agent **never read the `commands` array at all** — the server dispatched, counted
+  an attempt, and the device dropped it, so a remote wipe promised something it
+  could not do. Confirmed on the live tablet before fixing: a queued `COLLECT_LOGS`
+  went to `EXPIRED — exceeded max attempts` while the device was online and
+  answering the doorbell in the same second. Built the dispatcher as a type-keyed
+  registry (D88), unknown types now report as unsupported rather than vanishing
+  (D89), and `reboot`/`wipe` defer their effect until the result is delivered (D90).
+  Log collection deliberately does **not** scrape `logcat`: `READ_LOGS` is
+  unavailable to a normally-installed app, self-reading is unconfirmed by any
+  official source, and Android recommends keeping your own logs instead (D87).
+  Two corrections caught by checking sources rather than reasoning: `wipeDevice` is
+  **API 37** and would not have compiled against `compileSdk 36`, and the SQLite
+  test engine was ignoring every foreign key in the schema (D93). Also fixed
+  `AGENT_VERSION`, hardcoded at `0.1.0` while the build was `0.2.4` (D92).
 - **2026-08-31** — **Branding added.** Project named ATLAS (ATAK Tactical Lifecycle
   & Administration System); product family reserved (Console / Agent / Fleet /
   Provisioning) in new [docs/BRANDING.md](docs/BRANDING.md). Rebranded user-facing

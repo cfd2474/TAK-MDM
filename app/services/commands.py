@@ -46,6 +46,10 @@ DEFAULT_TTL_HOURS: dict[CommandType, int] = {
     CommandType.REBOOT: 24,
     CommandType.CLEAR_APP_DATA: 168,
     CommandType.WIPE: 720,
+    # Short on purpose. Logs are collected to answer a question being asked right
+    # now; a bundle that arrives four days later describes a device that has since
+    # rebooted, re-synced and moved on, and answers nothing.
+    CommandType.COLLECT_LOGS: 12,
 }
 _FALLBACK_TTL_HOURS = 24
 

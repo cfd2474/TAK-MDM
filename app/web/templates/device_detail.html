@@ -144,4 +144,40 @@
   </table>
 </div>
 {% endif %}
+
+<h2 id="logs">Diagnostics</h2>
+<div class="panel">
+  <p class="muted">
+    The agent keeps its own log on the device. Collecting it wakes the device
+    immediately rather than waiting for its next check-in.
+  </p>
+
+  <form method="post" action="/devices/{{ device.id }}/collect-logs">
+    <button type="submit">Collect logs</button>
+    {% if pending_log_request %}
+      <span class="pill warn">a request is already in flight</span>
+    {% endif %}
+  </form>
+
+  {% if log_bundles %}
+  <table>
+    <thead><tr><th>Collected</th><th>Size</th><th>Agent</th><th></th></tr></thead>
+    <tbody>
+    {% for bundle in log_bundles %}
+      <tr>
+        <td class="mono">{{ bundle.collected_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC</td>
+        <td class="muted">
+          {{ '%.1f'|format(bundle.size_bytes / 1024) }} KB
+          {% if bundle.truncated %}<span class="pill warn">truncated</span>{% endif %}
+        </td>
+        <td class="mono muted">{{ bundle.agent_version or '—' }}</td>
+        <td><a href="/devices/{{ device.id }}/logs/{{ bundle.id }}">view</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">No logs collected from this device yet.</p>
+  {% endif %}
+</div>
 {% endblock %}

@@ -48,6 +48,13 @@
       background: var(--code); border: 1px solid var(--line); border-radius: 6px;
       padding: 12px; overflow-x: auto; font-size: 12.5px; margin: 0;
     }
+    /* A collected log runs to hundreds of KB. Cap the height so the page stays
+       navigable, and wrap rather than scroll sideways: stack traces are long and
+       reading one a line at a time through a horizontal scrollbar is miserable. */
+    .logdump {
+      max-height: 70vh; overflow-y: auto;
+      white-space: pre-wrap; word-break: break-word;
+    }
     input, select, textarea, button {
       font: inherit; color: inherit; background: var(--panel);
       border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px;
