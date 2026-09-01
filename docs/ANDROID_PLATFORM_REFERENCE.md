@@ -383,6 +383,16 @@ Only `/sdcard/...` and `/storage/emulated/0/...` reach external storage; a relat
 path is resolved against it. The server now rejects anything else when the policy is
 published, and names the path that would have worked.
 
+### ✅ Zip extraction works into the same directories
+
+A DTED archive extracted by policy into `/sdcard/atak/DTED`, ~104 MB unpacked, with
+entry hashes matching the archive. Zip-slip is guarded by canonicalising each entry
+against the destination root.
+
+⚠️ Archives built on macOS carry `__MACOSX` resource forks and `.DS_Store`, which
+extract alongside the data unless filtered. Most ATAK data packages are zipped on a
+Mac, so this is the normal case rather than the exception.
+
 ---
 
 ## 6a. AndroidKeyStore and signing

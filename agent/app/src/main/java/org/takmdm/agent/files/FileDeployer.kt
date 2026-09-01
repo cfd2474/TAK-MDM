@@ -152,8 +152,13 @@ class FileDeployer(private val context: Context, private val config: AgentConfig
         targetDir.mkdirs()
         val root = targetDir.canonicalFile
 
+        var skipped = 0
         ZipFile(archive).use { zip ->
             for (entry in zip.entries()) {
+                if (isArchiverJunk(entry.name)) {
+                    skipped++
+                    continue
+                }
                 val output = File(targetDir, entry.name).canonicalFile
 
                 // Zip-slip: an archive entry named ../../something would otherwise
@@ -173,7 +178,28 @@ class FileDeployer(private val context: Context, private val config: AgentConfig
                 }
             }
         }
-        AgentLog.i(TAG, "extracted ${archive.name} into $targetDir")
+        AgentLog.i(
+            TAG,
+            "extracted ${archive.name} into $targetDir" +
+                if (skipped > 0) " (skipped $skipped archiver metadata entr${if (skipped == 1) "y" else "ies"})" else ""
+        )
+    }
+
+    /**
+     * Metadata the archiver added, which no device wants unpacked.
+     *
+     * `__MACOSX` resource forks and `.DS_Store` ride along in every zip built on a
+     * Mac, and ATAK data packages routinely are. They are an artifact of the tool
+     * rather than anything the operator chose to ship, so they are dropped — but
+     * the count is logged, because silently changing what an archive contains is
+     * its own kind of surprise.
+     */
+    private fun isArchiverJunk(name: String): Boolean {
+        val normalised = name
+        return normalised == "__MACOSX" ||
+            normalised.startsWith("__MACOSX/") ||
+            normalised.substringAfterLast('/') == ".DS_Store" ||
+            normalised.substringAfterLast('/').startsWith("._")
     }
 
     /** Key under which an applied file's hash is remembered. */

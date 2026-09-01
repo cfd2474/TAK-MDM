@@ -52,7 +52,7 @@ written but have never actually run on a device:
 | Unproven | Why it matters |
 |---|---|
 | ~~**App install** (`PackageInstaller`, split APKs)~~ | ✅ **Proven 2026-09-01**, including splits. Real ATAK (107 MB, single APK) and real Butterfly IQ (**XAPK → base + 6 splits**, 323 MB) both installed by the agent; Android lists all seven parts and records `installerPackageName=org.takmdm.agent`. Upgrade proven too (`versionCode 1 → 2`). |
-| ~~**File placement**~~ | ✅ **Proven 2026-09-01** — a map source pushed to `/sdcard/atak/imagery`, byte-identical, into ATAK's own tree. Closes R1. **Zip extraction is still unproven.** |
+| ~~**File placement and zip extraction**~~ | ✅ **Both proven 2026-09-01.** A map source pushed byte-identical to `/sdcard/atak/imagery`, and a DTED archive extracted into `/sdcard/atak/DTED/w125/` (~104 MB, hashes matching). Closes R1; F5 proven on hardware. |
 | **Marketplace** (optional file selection) | F4 end to end |
 | **Kiosk / lock task** | F6 |
 | ~~**Transient commands**~~ | ✅ **Proven on `SM-X520`, 2026-09-01.** `lock`, `locate` and `collect_logs` all dispatched and succeeded at `attempts=1/5`. Was not implemented agent-side at all before Chunk 10. **`reboot` and `wipe` remain untried by choice** — they are the two whose deferred-result path (D90) cannot be rehearsed without actually rebooting or wiping the tablet. |
@@ -1159,6 +1159,38 @@ its next re-enrolment — the precise failure the chunk exists to prevent.
 | D100 | An identifier already held by another device is **never reassigned** | Silently moving it would change which record a third device resolves to. The fix for a genuine duplicate is a deliberate merge. |
 | D101 | The migration **backfills every existing serial as a `LEGACY` identifier** | Preserves current matching exactly, whatever that string happens to be. Skipping it would orphan every enrolled device on its next re-enrolment. |
 | D102 | `identifiers` is **optional** on the enrolment request, and unknown kinds are kept rather than rejected | A fleet whose devices go dark for weeks cannot be upgraded before it is allowed to enrol, and a newer agent reporting a source this server has not heard of is still supplying usable identity. |
+
+### ✅ Zip extraction into ATAK directories (COMPLETE, hardware-validated)
+
+A DTED archive (12.5 MB compressed, ~104 MB unpacked) extracted by policy into
+`/sdcard/atak/DTED`, landing in ATAK's expected layout:
+
+```
+/sdcard/atak/DTED/w125/n39.dt2  n40.dt2  n41.dt2  n42.dt2
+  25,981,042 bytes each; sha256 of n41.dt2 identical to the archive entry
+```
+
+**F5 is now proven on hardware**, and the destination guard added an hour earlier
+caught the path as given (`/atak/DTED`) and named the one that works.
+
+#### Archiver metadata is skipped
+
+`__MACOSX` resource forks extracted alongside the data. They are an artifact of the
+tool that built the zip, not anything the operator chose to ship, and every data
+package zipped on a Mac carries them — which for ATAK packages is most of them.
+Now dropped, with the count logged rather than silently altering an archive's
+contents:
+
+```
+extracted w125.zip into /storage/emulated/0/atak/DTED (skipped 5 archiver metadata entries)
+```
+
+#### Operational note earned the hard way, again
+
+The destination guard did not fire on first use — **the container was running the
+old image.** Python changes need `docker compose up -d --build`, which is the first
+entry in the operational notes, and it still cost a wrong result and a confused
+minute. The failure looks exactly like the code being wrong.
 
 ### ✅ File placement into ATAK directories (COMPLETE, hardware-validated) — closes R1
 
