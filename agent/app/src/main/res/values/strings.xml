@@ -18,4 +18,11 @@
     <string name="compliance_done">Enrolled. Setup is complete.</string>
     <string name="compliance_retry">Could not reach the server. The device is managed and will keep trying.</string>
     <string name="compliance_no_server">No server was configured. The device is managed but idle.</string>
+    <string name="compliance_grant_intro">A few permissions cannot be granted automatically. Tap each one, allow it, then come back here.</string>
+    <string name="compliance_all_set">All permissions are in place.</string>
+    <string name="compliance_grant">Grant</string>
+    <string name="compliance_granted">Granted</string>
+    <string name="compliance_finish">Finish setup</string>
+    <string name="compliance_skip_rest">Continue without the rest</string>
+    <string name="action_review_permissions">Review permissions</string>
 </resources>

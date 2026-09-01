@@ -40,6 +40,6 @@
             android:id="@+id/grant_storage"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/action_grant_storage" />
+            android:text="@string/action_review_permissions" />
     </LinearLayout>
 </ScrollView>

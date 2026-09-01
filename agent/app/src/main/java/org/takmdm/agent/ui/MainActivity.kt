@@ -31,7 +31,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.takmdm.agent.R
 import org.takmdm.agent.admin.MdmDeviceAdminReceiver
+import org.takmdm.agent.admin.PolicyComplianceActivity
 import org.takmdm.agent.core.AgentConfig
+import org.takmdm.agent.permissions.PermissionRequirement
 import org.takmdm.agent.sync.Reconciler
 import org.takmdm.agent.sync.SyncScheduler
 
@@ -58,7 +60,11 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.open_marketplace).setOnClickListener {
             startActivity(Intent(this, MarketplaceActivity::class.java))
         }
-        findViewById<Button>(R.id.grant_storage).setOnClickListener { requestAllFilesAccess() }
+        findViewById<Button>(R.id.grant_storage).setOnClickListener {
+            // Reuses the provisioning wizard: permissions can be revoked long after
+            // setup, and there should be one place that knows how to restore them.
+            startActivity(Intent(this, PolicyComplianceActivity::class.java))
+        }
 
         SyncScheduler.startAll(this)
     }
@@ -79,9 +85,12 @@ class MainActivity : AppCompatActivity() {
             appendLine("Device id: ${config.deviceId ?: "-"}")
             appendLine("State version: ${config.stateVersion} (applied ${config.appliedStateVersion})")
             appendLine("All-files access: $storageOk")
+            val missing = PermissionRequirement.outstanding(this@MainActivity)
+            appendLine("Missing permissions: ${if (missing.isEmpty()) "none" else missing.joinToString()}")
         }
 
-        findViewById<Button>(R.id.grant_storage).isEnabled = !storageOk
+        findViewById<Button>(R.id.grant_storage).isEnabled =
+            PermissionRequirement.outstanding(this).isNotEmpty()
     }
 
     private fun syncNow() {

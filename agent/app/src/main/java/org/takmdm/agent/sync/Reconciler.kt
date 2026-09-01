@@ -28,6 +28,7 @@ import org.takmdm.agent.files.FileDeployer
 import org.takmdm.agent.install.AppInstaller
 import org.takmdm.agent.net.ApiClient
 import org.takmdm.agent.net.DeviceIdentity
+import org.takmdm.agent.permissions.PermissionRequirement
 import org.takmdm.agent.policy.PolicyApplier
 
 /** Outcome of one reconciliation pass. */
@@ -157,6 +158,11 @@ class Reconciler(private val context: Context) {
 
     fun applyDesiredState(desired: JSONObject): List<String> {
         val errors = mutableListOf<String>()
+        // A revoked app-op degrades the agent silently otherwise: files stop being
+        // placed, or the service is deferred, and it looks like a server fault.
+        errors += PermissionRequirement.outstanding(context).map {
+            "missing permission: $it (grant it in the agent)"
+        }
         errors += policyApplier.apply(desired.optJSONObject("policy") ?: JSONObject())
         errors += reconcileApps(desired.optJSONArray("apps") ?: JSONArray())
         errors += reconcileFiles(desired.optJSONObject("files") ?: JSONObject())
