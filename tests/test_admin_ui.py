@@ -580,3 +580,42 @@ def test_device_page_warns_when_there_is_no_hardware_serial(client: TestClient):
     # A device one wipe away from becoming a duplicate is invisible from anything
     # else on the page, so it has to be said outright.
     assert "No hardware serial" in body
+
+
+def test_device_page_offers_retire_not_delete_while_live(client: TestClient, enrolled):
+    device = enrolled(serial="UI-LIVE")
+
+    body = client.get(f"/devices/{device['device_id']}").text
+
+    # Delete must not be one click away from a working tablet.
+    assert f"/devices/{device['device_id']}/retire" in body
+    assert f"/devices/{device['device_id']}/delete" not in body
+
+
+def test_device_page_offers_delete_once_retired(client: TestClient, enrolled):
+    device = enrolled(serial="UI-RETIRED")
+    client.post(f"/devices/{device['device_id']}/retire", follow_redirects=False)
+
+    body = client.get(f"/devices/{device['device_id']}").text
+
+    assert f"/devices/{device['device_id']}/delete" in body
+
+
+def test_console_delete_removes_the_device(client: TestClient, enrolled):
+    device = enrolled(serial="UI-GONE")
+    client.post(f"/devices/{device['device_id']}/retire", follow_redirects=False)
+
+    client.post(f"/devices/{device['device_id']}/delete", follow_redirects=False)
+
+    assert client.get(f"/api/v1/devices/{device['device_id']}").status_code == 404
+
+
+def test_console_refuses_to_delete_a_live_device(client: TestClient, enrolled):
+    device = enrolled(serial="UI-STILL-LIVE")
+
+    response = client.post(
+        f"/devices/{device['device_id']}/delete", follow_redirects=False
+    )
+
+    assert response.status_code == 409
+    assert client.get(f"/api/v1/devices/{device['device_id']}").status_code == 200

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -40,6 +41,8 @@ from app.services import effective_policy as eff
 from app.services.enrollment import revoke_device_certificates
 
 router = APIRouter(prefix="/api/v1", tags=["inventory"])
+
+logger = logging.getLogger(__name__)
 
 
 def _commit(session: Session, conflict_message: str) -> None:
@@ -100,6 +103,47 @@ def retire_device(
     revoke_device_certificates(session, device, reason="device retired")
     session.commit()
     return device
+
+
+@router.delete(
+    "/devices/{device_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    # Explicit: FastAPI would otherwise infer a response model from the `-> None`
+    # return annotation, and a 204 is not allowed to carry a body.
+    response_model=None,
+)
+def delete_device(
+    device: Device = Depends(require_device), session: Session = Depends(get_db)
+) -> None:
+    """Permanently remove a device record.
+
+    **Retirement is the normal answer; this is for records that should never have
+    existed** — a failed enrolment that registered before erroring, or a test
+    device. A device that genuinely served has history worth keeping, and the
+    project's standing instinct is to archive rather than delete (D20).
+
+    Requires the device to be retired first. That is what makes deletion two
+    deliberate acts rather than one misplaced click on a working tablet, and
+    retirement has already revoked the certificates by the time we get here — so
+    there is no window where a live identity outlives its record.
+
+    Everything hanging off the device (certificates, commands, log bundles,
+    identifiers, group and tag membership, device-scoped assignments, cached
+    policy, file selections) is removed by database cascade.
+    """
+    if device.enrollment_state is not EnrollmentState.RETIRED:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "retire the device before deleting it: deletion is permanent and "
+            "removes its history, so it is deliberately two steps",
+        )
+
+    # Belt and braces. The certificate rows cascade away, but revoking first means
+    # the identity is dead even if the delete is rolled back.
+    revoke_device_certificates(session, device, reason="device deleted")
+    logger.info("deleting device %s (%s)", device.id, device.serial_number)
+    session.delete(device)
+    session.commit()
 
 
 # --------------------------------------------------------------------------- #

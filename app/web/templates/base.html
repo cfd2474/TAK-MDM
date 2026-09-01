@@ -65,6 +65,8 @@
       cursor: pointer; font-weight: 550; padding: 8px 16px;
     }
     button:hover { filter: brightness(1.08); }
+    /* Destructive actions read as destructive before they are clicked, not after. */
+    button.danger { background: var(--bad, #b3261e); border-color: var(--bad, #b3261e); }
     label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 12.5px; }
     .row { display: flex; gap: 16px; flex-wrap: wrap; }
     .row > * { flex: 1 1 320px; min-width: 0; }

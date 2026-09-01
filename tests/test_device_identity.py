@@ -243,3 +243,83 @@ def test_identifiers_are_listed_for_a_device(client: TestClient):
 
     assert {i["value"] for i in identifiers} == {REAL_SERIAL, FALLBACK}
     assert {i["kind"] for i in identifiers} == {"serial", "android_id"}
+
+
+# --------------------------------------------------------------------------- #
+# Deletion (housekeeping)
+# --------------------------------------------------------------------------- #
+
+
+def test_deleting_a_live_device_is_refused(client: TestClient):
+    device = enroll(client, serial="DEL-LIVE").json()
+
+    response = client.delete(f"/api/v1/devices/{device['device_id']}")
+
+    # One misplaced click must not remove a working tablet. Deletion is two
+    # deliberate acts, and retirement has already killed the certificates by the
+    # time the second one is possible.
+    assert response.status_code == 409
+    assert "retire" in response.json()["detail"]
+    assert client.get(f"/api/v1/devices/{device['device_id']}").status_code == 200
+
+
+def test_a_retired_device_can_be_deleted(client: TestClient):
+    device = enroll(client, serial="DEL-RETIRED").json()
+    client.post(f"/api/v1/devices/{device['device_id']}/retire")
+
+    assert client.delete(f"/api/v1/devices/{device['device_id']}").status_code == 204
+    assert client.get(f"/api/v1/devices/{device['device_id']}").status_code == 404
+
+
+def test_deletion_takes_everything_hanging_off_the_device(
+    client: TestClient, mtls_headers
+):
+    device = enroll(
+        client,
+        serial="DEL-CASCADE",
+        identifiers=[ident("serial", "DEL-CASCADE"), ident("android_id", "SM-del")],
+    ).json()
+    headers = mtls_headers(device["certificate_pem"])
+    client.post(
+        "/api/v1/device/logs", json={"content": "noise\n"}, headers=headers
+    )
+    client.post(
+        f"/api/v1/devices/{device['device_id']}/commands",
+        json={"command_type": "lock"},
+    )
+
+    client.post(f"/api/v1/devices/{device['device_id']}/retire")
+    client.delete(f"/api/v1/devices/{device['device_id']}")
+
+    # Left behind, these are rows pointing at a device that no longer exists —
+    # and an identifier still claimed would block the serial being reused.
+    for path in ("logs", "commands", "identifiers"):
+        assert (
+            client.get(f"/api/v1/devices/{device['device_id']}/{path}").status_code
+            == 404
+        )
+
+
+def test_a_deleted_serial_can_be_enrolled_again(client: TestClient):
+    first = enroll(client, serial="DEL-REUSE").json()
+    client.post(f"/api/v1/devices/{first['device_id']}/retire")
+    client.delete(f"/api/v1/devices/{first['device_id']}")
+
+    again = enroll(client, serial="DEL-REUSE").json()
+
+    # The point of deleting a junk record: the identity it was squatting on has to
+    # come free, or the cleanup achieved nothing.
+    assert again["device_id"] != first["device_id"]
+
+
+def test_a_deleted_device_can_no_longer_authenticate(client: TestClient, mtls_headers):
+    device = enroll(client, serial="DEL-AUTH").json()
+    headers = mtls_headers(device["certificate_pem"])
+    assert client.post("/api/v1/device/checkin", json={}, headers=headers).status_code == 200
+
+    client.post(f"/api/v1/devices/{device['device_id']}/retire")
+    client.delete(f"/api/v1/devices/{device['device_id']}")
+
+    # Fails closed. The certificate is still cryptographically valid and chains to
+    # our CA — what stops it is that it resolves to no device.
+    assert client.post("/api/v1/device/checkin", json={}, headers=headers).status_code == 401

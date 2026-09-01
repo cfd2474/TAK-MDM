@@ -57,11 +57,12 @@ written but have never actually run on a device:
 
 ### Housekeeping
 
-* A **stale duplicate device record** exists (`SM-X520-421929662296025e`) from an
-  enrolment that failed after registering, plus `VERIFY-LOGS-01` from Chunk 10's
-  verification run. ⚠️ **Neither can currently be removed:** there is no device
-  deletion in the console or the API (`DELETE /api/v1/devices/{id}` → 405). An
-  earlier note here claiming they were "safe to delete from the console" was wrong.
+* ✅ **Stale device records cleared, 2026-09-01.** `SM-X520-421929662296025e`
+  (a failed enrolment that registered before erroring) and `VERIFY-LOGS-01` (Chunk
+  10's verification run) are gone, via the new retire-then-delete flow. Verified no
+  orphans remain in any of the six tables that reference `device`.
+  `R5CN00TAK01` / `R5CN00TAK02` are left alone — they are `scripts/dev_enroll.py`
+  simulations, not accidents.
 * Build toolchain: JDK 17 at `C:\Program Files\Microsoft\jdk-17.0.20.8-hotspot`,
   Android SDK with API 36, build-tools 36.0.0, `adb` under
   `%LOCALAPPDATA%\Android\Sdk\platform-tools`.
@@ -969,6 +970,36 @@ stalls at the first. Routes, best first:
    to prove, and it cannot be the way its own fixes are delivered.
 4. Factory reset and re-provision by QR. Works, and costs the most.
 
+### ✅ Housekeeping — device deletion (COMPLETE)
+
+There was **no way to remove a device record at all** — not in the console, not in
+the API. Retirement existed server-side but was never exposed in the UI, so the
+console offered neither.
+
+**Retire, then delete.** Two deliberate acts, and the split is a real distinction
+rather than ceremony:
+
+* **Retire** — this device served and is now out of service. Certificates revoked,
+  history kept. The normal answer, and it matches the standing instinct to archive
+  rather than destroy (D20).
+* **Delete** — this record should never have existed: a failed enrolment that
+  registered before erroring, or a test device. There is no history worth keeping.
+
+Deletion is **refused with 409 unless the device is already retired**. That is what
+stops one misplaced click removing a working tablet, and it means the certificates
+are always revoked before the record goes — so no live identity ever outlives its
+row. All nine tables referencing `device` cascade, verified against real Postgres
+with an explicit orphan check across all of them afterwards.
+
+A deleted device fails closed: its certificate is still cryptographically valid and
+still chains to our CA, but it resolves to no device, so authentication returns 401.
+Tested.
+
+| # | Decision | Rationale |
+|---|---|---|
+| D103 | Deletion **requires prior retirement**, with no exception for never-enrolled records | One rule beats a special case nobody can reason about (the D68 instinct). It also guarantees certificates are dead before the row is, and makes removing a live tablet take two acts instead of one. |
+| D104 | Retire stays the default and is described as such in the UI | Most records are worth keeping. Presenting delete as the ordinary action would invite destroying history that cannot be recovered. |
+
 ### ✅ Chunk 11 — Multi-identifier device identity (COMPLETE, hardware-validated, closes R13)
 
 D24 matches a re-enrolling device on `serial_number` alone. That is one key, and a
@@ -1142,6 +1173,13 @@ re-investigated):
 
 ## Changelog
 
+- **2026-09-01** — **Housekeeping: device deletion.** 291 tests. There was no way
+  to remove a device record anywhere, and retirement — which did exist — was never
+  exposed in the console. Added retire-then-delete: deletion is refused with 409
+  unless the device is already retired, so removing a working tablet takes two
+  deliberate acts and the certificates are always dead before the row is. Cleared
+  the two stale records the housekeeping note had been carrying, and verified zero
+  orphans across all six tables referencing `device`.
 - **2026-09-01** — **Chunk 11 complete, hardware-validated. R13 closed.**
   282 tests. A device now enrols with a *set* of identifiers and the server matches
   on any it already knows, so a device that changes identity source re-adopts its

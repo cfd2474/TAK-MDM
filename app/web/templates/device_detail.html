@@ -145,6 +145,33 @@
 </div>
 {% endif %}
 
+<h2 id="lifecycle">Lifecycle</h2>
+<div class="panel">
+  {% if device.enrollment_state.value == 'retired' %}
+    <p class="muted">
+      <span class="pill bad">retired</span>
+      Certificates are revoked, so this device can no longer authenticate.
+    </p>
+    <form method="post" action="/devices/{{ device.id }}/delete"
+          onsubmit="return confirm('Permanently delete {{ device.serial_number }}? Its history, logs, identifiers and assignments go with it. This cannot be undone.');">
+      <button type="submit" class="danger">Delete permanently</button>
+      <span class="muted">
+        For records that should never have existed — a failed enrolment, or a test
+        device. A device that genuinely served is usually worth keeping retired.
+      </span>
+    </form>
+  {% else %}
+    <form method="post" action="/devices/{{ device.id }}/retire"
+          onsubmit="return confirm('Retire {{ device.serial_number }}? Its certificates are revoked and it stops being managed.');">
+      <button type="submit">Retire</button>
+      <span class="muted">
+        Revokes its certificates and takes it out of service. Deleting the record
+        outright is only possible once it is retired.
+      </span>
+    </form>
+  {% endif %}
+</div>
+
 <h2 id="identity">Identity</h2>
 <div class="panel">
   {% set kinds = identifiers | map(attribute='kind') | map(attribute='value') | list %}

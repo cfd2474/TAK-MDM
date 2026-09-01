@@ -58,6 +58,7 @@ from app.db.models import (
     CommandType,
     Device,
     DeviceGroup,
+    EnrollmentState,
     EnrollmentToken,
     ManagedFile,
     Policy,
@@ -71,7 +72,11 @@ from app.services import device_logs as log_service
 from app.services import effective_policy as eff
 from app.services import packages as package_service
 from app.services import provisioning
-from app.services.enrollment import create_token, reveal_secret
+from app.services.enrollment import (
+    create_token,
+    revoke_device_certificates,
+    reveal_secret,
+)
 
 router = APIRouter(tags=["admin-ui"], include_in_schema=False)
 
@@ -183,6 +188,51 @@ def request_logs(
     command_service.enqueue(session, device, command_type=CommandType.COLLECT_LOGS)
     session.commit()
     return _redirect(f"/devices/{device_id}#logs")
+
+
+@router.post("/devices/{device_id}/retire")
+def retire_device_form(
+    device_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Take a device out of service and revoke its certificates."""
+    device = session.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
+
+    device.enrollment_state = EnrollmentState.RETIRED
+    revoke_device_certificates(session, device, reason="device retired")
+    session.commit()
+    return _redirect(f"/devices/{device_id}")
+
+
+@router.post("/devices/{device_id}/delete")
+def delete_device_form(
+    device_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Remove a device record permanently.
+
+    Retirement is the normal answer; this exists for records that should never have
+    existed — a failed enrolment that registered before erroring, or a test device.
+    Refused unless the device is already retired, so removing a working tablet takes
+    two deliberate acts rather than one misplaced click.
+    """
+    device = session.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
+
+    if device.enrollment_state is not EnrollmentState.RETIRED:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "retire the device before deleting it"
+        )
+
+    revoke_device_certificates(session, device, reason="device deleted")
+    session.delete(device)
+    session.commit()
+    return _redirect("/")
 
 
 @router.get("/devices/{device_id}/logs/{bundle_id}", response_class=HTMLResponse)
