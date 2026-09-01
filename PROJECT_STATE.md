@@ -3,13 +3,18 @@
 Running state file per [CLAUDE.md](CLAUDE.md). Read before starting any step;
 update after every completed step.
 
-**Last updated:** 2026-08-31
+**Last updated:** 2026-09-01
 
 ---
 
 ## Current status
 
-**Phase:** Chunk 7 admin console complete. **Awaiting first agent run on hardware.**
+**Phase:** End to end working on real hardware. Agent v8. 254 tests passing.
+
+> **`SM-X520` is enrolled, checking in, and applying policy over mTLS.** Live
+> propagation measured against the tablet: publishing a policy version woke the
+> parked long-poll in the *same second*, bundle delivered one second later.
+> The server stack (Chunks 1–5) and the agent (Chunk 6) are proven together.
 
 - ✅ Requirements gathered
 - ✅ Architecture written → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
@@ -20,23 +25,36 @@ update after every completed step.
   resumable device download
 - ✅ **Chunk 5 complete** — managed files, marketplace tier, bulk assignment, live
   propagation. **F1–F5 all satisfied server-side.** 200 tests passing.
-- 🔨 **Chunk 6 built** — Kotlin Device Owner agent compiles and passes 9 unit tests;
-  QR provisioning payloads now generate. **Unproven on hardware.**
+- ✅ **Chunk 6 complete and hardware-validated** — Kotlin Device Owner agent
+  enrols, checks in, applies policy, and wakes on the long-poll. Guided permission
+  setup runs during provisioning.
 - ✅ **Chunk 7 complete** — admin console at http://localhost:8000
 - ✅ **Chunk 8 complete** — Authentik forward auth on the admin surface, closing R10
 - ✅ **Chunk 9 complete** — any live token's QR can be re-displayed, with optional
   Wi-Fi credentials embedded. 254 tests passing.
-- ⏸️ **Next: factory-reset the `SM-X520` and enrol it**, which is the only way to
-  validate enrollment, install, file placement, and kiosk. Generate the QR from the
-  Enrollment page and watch the device appear on the dashboard.
+**Everything is pushed to `origin/main`.**
 
-Chunks 1–3 plus the Docker stack are pushed to `origin/main`.
+### Not yet proven on hardware
 
-> **Chunk 5 is unblocked.** R6 and R1 are both retired by production evidence from
-> the operator's existing deployments. Build toolchain confirmed present: JDK 17,
-> Android SDK with the API 36 (Android 16) platform, build-tools 36.0.0, and `adb` at
-> `%LOCALAPPDATA%\Android\Sdk\platform-tools`. The agent can be compiled and
-> installed on the test tablet from this machine.
+Enrolment, check-in, policy application and live wake are verified. These are
+written but have never actually run on a device:
+
+| Unproven | Why it matters |
+|---|---|
+| **App install** (`PackageInstaller`, split APKs) | The whole Chunk 4 pipeline terminates here |
+| **File placement and zip extraction** | Needs all-files access; the R1 path |
+| **Marketplace** (optional file selection) | F4 end to end |
+| **Kiosk / lock task** | F6 |
+| **Transient commands** (lock, wipe, locate) | Never dispatched to a real device |
+| **StrongBox specifically** | Key generation worked; whether it used StrongBox or fell back to the TEE is unconfirmed |
+
+### Housekeeping
+
+* A **stale duplicate device record** exists (`SM-X520-421929662296025e`) from an
+  enrolment that failed after registering. Safe to delete from the console.
+* Build toolchain: JDK 17 at `C:\Program Files\Microsoft\jdk-17.0.20.8-hotspot`,
+  Android SDK with API 36, build-tools 36.0.0, `adb` under
+  `%LOCALAPPDATA%\Android\Sdk\platform-tools`.
 
 ---
 
@@ -171,6 +189,7 @@ without Knox; Knox is strictly additive.
 
 | File | Read it when |
 |---|---|
+| [HANDOFF.md](HANDOFF.md) | Starting a new session — orientation, how to run it, what is unproven, and where to go next |
 | **[docs/ANDROID_PLATFORM_REFERENCE.md](docs/ANDROID_PLATFORM_REFERENCE.md)** | **Before any change touching provisioning, the DPC, app installation, permissions, or file placement.** Android contracts traced to official sources, plus what is verified on our hardware. Consult it *every* iteration — three factory resets were spent on a failure the documentation states plainly. |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Design rationale for the server and agent |
 | "Operational notes" below | Before debugging anything that looks impossible |
@@ -512,7 +531,7 @@ Delivered: [app/policies/specs/files.py](app/policies/specs/files.py),
 | D51 | Bulk assignment `mode="replace"` describes the policy's complete target set, removals included | Otherwise unassigning needs a second pass and the two can drift. `mode="add"` stays available for purely additive rollouts. |
 | D52 | Waiters live in one process | Correct for a single uvicorn worker, which is ample at 50-500 devices. Scaling out needs the notification fanned through Redis or Postgres `LISTEN/NOTIFY`. Documented rather than pre-built. |
 
-### ▶ Chunk 6 — Kotlin Device Owner agent (IN PROGRESS)
+### ✅ Chunk 6 — Kotlin Device Owner agent (COMPLETE, hardware-validated)
 
 Implements the contract Chunks 1–5 defined. Built from scratch rather than forked,
 for the reasons recorded above.
@@ -538,13 +557,36 @@ for the reasons recorded above.
    selections reported at check-in (F4).
 7. **Build, install on the Tab S10 FE, and verify** against the running server.
 
-**Status: built, compiles, unit-tested. NOT yet run on hardware.**
+**Validated on `SM-X520` (Galaxy Tab S10 FE, Android 16 / One UI 8).** Agent v8.
 
-Done: the APK builds (21.5 MB, `org.takmdm.agent`, minSdk 33 / targetSdk 36), nine
-agent unit tests pass, and QR provisioning payloads now generate complete and
-verified. **Outstanding: nothing has run on a physical device.** Enrollment,
-install, file placement, and kiosk are written but unproven, and that requires a
-factory-reset tablet.
+```
+POST /api/v1/enroll          201   okhttp/4.12.0, HTTP/2
+POST /api/v1/device/checkin  200   compliant
+GET  /api/v1/device/wait     200   woken in the same second as the policy publish
+```
+
+#### Six bugs only hardware could find
+
+Every one passed the full test suite and every one was invisible from the server.
+Recorded because the *shape* of them repeats.
+
+| # | Bug | Why it was invisible |
+|---|---|---|
+| 1 | **Missing `GET_PROVISIONING_MODE` / `ADMIN_POLICY_COMPLIANCE` activities** — required from Android 12 | The system aborts with a bare "something went wrong" after a factory reset. Cost three resets. Found by reading the spec, not the symptom. |
+| 2 | **`onProfileProvisioningComplete` never runs** on a modern device — `ADMIN_POLICY_COMPLIANCE` replaces it | Hidden behind #1. The agent would never have started even if provisioning had succeeded. |
+| 3 | **Wrong admin component name** — a leading dot expands against the *package root*, so `.MdmDeviceAdminReceiver` missed the `.admin` segment | Identical failure message to #1 |
+| 4 | **CSR signing pinned to the `AndroidKeyStore` provider**, which supplies no `Signature` implementations — they live in `AndroidKeyStoreBCWorkaround` | Failed *before any network call*, so the server saw nothing at all |
+| 5 | **Device key restricted to `DIGEST_SHA256`** — a TLS handshake picks its own signature algorithm | Surfaced as an opaque `SSLHandshakeException` with no hint the key was at fault |
+| 6 | **nginx killed the long-poll at 60 s** (`proxy_read_timeout`) while the endpoint holds for 300 | The agent silently fell back to polling; F3 appeared to work but did not |
+
+**The pattern in 3, 4 and 5:** an over-specific constraint that looks careful and
+instead guarantees failure, reported as something unrelated. Worth watching for in
+the Knox work, where the same instinct will be tempting.
+
+**What actually broke the deadlock:** making the agent report its own errors on its
+own screen. Bugs 4 and 5 were found in one attempt each afterwards. Before that,
+three rounds of server-side diagnosis found nothing, because a client that never
+connects leaves no trace to diagnose.
 
 #### Verified along the way
 
@@ -572,6 +614,14 @@ factory-reset tablet.
 | D58 | `/api/v1/provisioning/agent.apk` is **unauthenticated** | Android's setup wizard downloads it before the device has any identity, so mTLS is impossible there by definition. Exposure is the agent binary every managed device gets anyway, and Android verifies it against the signature checksum, so a substituted APK is rejected by the device. |
 | D59 | `server_ca_pem` travels in the provisioning extras | A self-signed development server cannot otherwise be trusted by the agent, and provisioning happens long before it could be told separately. Omitted automatically when no local certificate exists. |
 | D60 | Test settings are built with `_env_file=None` | The suite was reading the developer's `.env`; setting a real agent checksum locally broke a test asserting behaviour when none is configured. Tests must describe the code, not the workstation. |
+| D79 | **The agent reports its own errors on its own screen** | Diagnosing a device that will not enrol otherwise needs USB debugging, which needs Developer Options on a device that may already be locked down — exactly when the information is hardest to get and most needed. This is what ended three rounds of blind guessing. |
+| D80 | Enrolment failure inside `PolicyComplianceActivity` is **not fatal** | Provisioning cannot be repeated without another factory reset, so a network blip must not undo it. The activity reports and the agent retries. |
+| D81 | Runtime permissions are **self-granted silently**; only app-ops are put to the operator | Prompting for something a Device Owner can grant itself would waste a tap on every device in the fleet. Only `MANAGE_EXTERNAL_STORAGE`, overlay and battery exemption genuinely need a human. |
+| D82 | **The device key allows a broad set of digests**, including `DIGEST_NONE` | A TLS handshake picks its own signature algorithm; a key restricted to SHA-256 fails opaquely the moment anything else is negotiated. |
+| D83 | **No provider is pinned when signing with a keystore key** | `AndroidKeyStore` supplies no `Signature` implementations. JCA's delayed provider selection resolves the right one from the key itself. |
+| D84 | **`acked_state_version` advances even when apply errors occur** | It means "this version has been processed", not "processed perfectly" — quality is `compliance_status` (D28). Conflating them pinned a device a version behind forever over one missing permission, and made a genuinely stuck device indistinguishable from a slightly degraded one. |
+| D85 | The agent offers **manual re-enrolment** with a pasted token | A device whose key or certificate is unusable would otherwise need a factory reset, because the token is deliberately cleared once used. That is a heavy price for a recoverable fault. |
+| D86 | Bench configuration over `adb` is **debug-build only** | A receiver that can repoint an agent at an arbitrary server is a fleet-takeover primitive. Gated on `BuildConfig.DEBUG`. |
 
 ### ✅ Chunk 7 — Admin portal (COMPLETE)
 
@@ -752,6 +802,12 @@ credentials into it. 254 tests passing, verified live.
   around mixed SoC vendors. Corrected the Knox SDK deprecation rationale behind D11.
 - **2026-08-30** — Q2 closed: ATAK server is configured on the EUD, no upstream
   integration needed.
+- **2026-09-01** — **First hardware enrolment.** `SM-X520` enrolled over mTLS,
+  checks in, applies policy, and is woken by the long-poll in the same second as a
+  policy publish. Six bugs found that the 254-test suite could not see; three of
+  them shared one shape — an over-specific constraint that looked careful and
+  guaranteed failure. The turning point was making the agent report its own errors
+  on its own screen (D79). Chunks 6–9 complete; agent v8.
 - **2026-08-31** — **Chunk 5 complete.** 200 tests passing. F1–F5 all satisfied
   server-side: a `FILES` policy type with a marketplace tier and admin-controlled zip
   extraction, policy-first bulk assignment, and live propagation via a long-poll
