@@ -78,6 +78,12 @@ class Settings(BaseSettings):
     # --- Enrollment ----------------------------------------------------------
     enrollment_token_ttl_hours: int = 168  # 7 days
 
+    # How long a QR minted from the persistent enrollment token stays scannable.
+    # Deliberately short: this is the only form of the token ever displayed, so a
+    # leaked QR image (a photo, a screenshot left on a shared screen) is bounded by
+    # this window rather than by the persistent token's own lifetime.
+    enrollment_qr_ttl_seconds: int = 900  # 15 minutes
+
     # --- Check-in ------------------------------------------------------------
     # WorkManager's periodic floor is 15 minutes, so anything lower is wishful.
     checkin_interval_seconds: int = 900

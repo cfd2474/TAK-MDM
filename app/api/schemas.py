@@ -227,6 +227,29 @@ class EnrollmentTokenCreated(BaseModel):
     provisioning: dict[str, Any]
 
 
+class PrimaryEnrollmentTokenCreate(BaseModel):
+    """Retire whichever primary token is live and stand up a new one (Chunk 14).
+
+    No ``ttl_hours`` or ``max_uses``: the primary is meant to persist until
+    deliberately retired, and its raw secret is never handed to a device directly —
+    only 15-minute derivatives of it are, which is what makes an unbounded lifetime
+    and unlimited uses safe to fix rather than expose as settings here.
+    """
+
+    name: str = Field(min_length=1, max_length=128)
+    group_ids: list[uuid.UUID] = Field(default_factory=list)
+    tag_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class PrimaryEnrollmentQrIssued(BaseModel):
+    """A fresh 15-minute QR minted from the active primary token."""
+
+    token: EnrollmentTokenRead
+    secret: str
+    expires_at: datetime
+    provisioning: dict[str, Any]
+
+
 class ProvisioningRequest(BaseModel):
     """Re-render provisioning payloads for a secret the operator already holds."""
 

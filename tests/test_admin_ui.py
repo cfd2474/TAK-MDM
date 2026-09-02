@@ -262,19 +262,27 @@ def test_enrollment_page_renders(client: TestClient):
     assert client.get("/enrollment").status_code == 200
 
 
-def test_creating_a_token_lands_on_its_qr_page(client: TestClient):
-    """One place renders QR codes, so there is no 'you should have saved it' path."""
+def test_enrollment_page_starts_empty(client: TestClient):
+    """No primary yet: the create form, not a device-bricking QR attempt."""
+    body = text_of(client.get("/enrollment").text)
+    assert "No active enrollment token" in body
+
+
+def test_creating_the_primary_renders_its_qr_directly(client: TestClient):
+    """No redirect to a per-token page any more — there is no such page."""
     response = client.post(
-        "/enrollment", data={"name": "Console token"}, follow_redirects=True
+        "/enrollment/primary", data={"name": "Fleet enrollment"}, follow_redirects=True
     )
 
-    assert response.url.path.endswith("/qr")
-    assert "Console token" in response.text
+    assert response.status_code == 200
+    assert "Fleet enrollment" in response.text
 
 
 def test_qr_is_withheld_without_a_signature_checksum(client: TestClient):
     """Matches the API's behaviour: no payload beats one that fails on the tablet."""
-    response = client.post("/enrollment", data={"name": "No checksum"}, follow_redirects=True)
+    response = client.post(
+        "/enrollment/primary", data={"name": "No checksum"}, follow_redirects=True
+    )
 
     assert "<svg" not in response.text
     assert "agent_signature_checksum is not configured" in text_of(response.text)
@@ -288,7 +296,7 @@ def test_qr_renders_when_a_checksum_is_configured(client: TestClient, settings):
     app.dependency_overrides[get_settings] = lambda: configured
     try:
         response = client.post(
-            "/enrollment", data={"name": "With checksum"}, follow_redirects=True
+            "/enrollment/primary", data={"name": "With checksum"}, follow_redirects=True
         )
         assert "<svg" in response.text
         assert "factory-reset" in text_of(response.text)
@@ -306,17 +314,13 @@ def configured_checksum(client: TestClient, settings):
     return lambda: app.dependency_overrides.__setitem__(get_settings, lambda: settings)
 
 
-def test_a_past_tokens_qr_can_be_shown_again(client: TestClient, settings):
-    """The point of sealing secrets: an old token is still scannable tomorrow."""
+def test_generate_qr_can_be_pressed_again(client: TestClient, settings):
+    """No per-token page to revisit any more — 'come back later' means press it again."""
     restore = configured_checksum(client, settings)
     try:
-        created = client.post(
-            "/enrollment", data={"name": "Reusable"}, follow_redirects=True
-        )
-        token_id = created.url.path.split("/")[-2]
+        client.post("/enrollment/primary", data={"name": "Reusable"})
 
-        # Come back later, as a fresh page load rather than the creation response.
-        again = client.get(f"/enrollment/{token_id}/qr")
+        again = client.post("/enrollment/qr")
 
         assert again.status_code == 200
         assert "<svg" in again.text
@@ -324,22 +328,21 @@ def test_a_past_tokens_qr_can_be_shown_again(client: TestClient, settings):
         restore()
 
 
-def test_token_list_links_to_the_qr(client: TestClient):
-    client.post("/enrollment", data={"name": "Listed"}, follow_redirects=True)
+def test_enrollment_page_shows_the_active_primary(client: TestClient):
+    client.post("/enrollment/primary", data={"name": "Listed"})
 
-    assert "Show QR" in client.get("/enrollment").text
+    body = text_of(client.get("/enrollment").text)
+    assert "Listed" in body
+    assert "Generate enrollment QR" in body
 
 
 def test_wifi_credentials_are_embedded_when_supplied(client: TestClient, settings):
     restore = configured_checksum(client, settings)
     try:
-        created = client.post(
-            "/enrollment", data={"name": "Wifi"}, follow_redirects=True
-        )
-        token_id = created.url.path.split("/")[-2]
+        client.post("/enrollment/primary", data={"name": "Wifi"})
 
         response = client.post(
-            f"/enrollment/{token_id}/qr",
+            "/enrollment/qr",
             data={
                 "wifi_ssid": "TAK-Field",
                 "wifi_password": "hunter2",
@@ -363,92 +366,43 @@ def test_wifi_password_is_not_persisted(client: TestClient, settings, db):
 
     restore = configured_checksum(client, settings)
     try:
-        created = client.post("/enrollment", data={"name": "Wifi"}, follow_redirects=True)
-        token_id = created.url.path.split("/")[-2]
+        client.post("/enrollment/primary", data={"name": "Wifi"})
         client.post(
-            f"/enrollment/{token_id}/qr",
+            "/enrollment/qr",
             data={"wifi_ssid": "TAK-Field", "wifi_password": "hunter2"},
         )
 
-        token = db.scalars(select(EnrollmentToken)).one()
+        token = db.scalars(
+            select(EnrollmentToken).where(EnrollmentToken.name == "Wifi")
+        ).one()
         assert "hunter2" not in str(token.__dict__)
 
-        # And a later render does not silently carry it forward.
-        assert "hunter2" not in client.get(f"/enrollment/{token_id}/qr").text
+        # And generating again, with no wifi fields this time, does not carry it
+        # forward — each QR is minted fresh, with no memory of the last one.
+        assert "hunter2" not in client.post("/enrollment/qr").text
     finally:
         restore()
 
 
-def test_qr_refuses_a_revoked_token(client: TestClient, settings):
-    """A scannable code that cannot enrol costs someone a factory reset."""
+def test_qr_refuses_once_the_primary_is_revoked(client: TestClient, settings):
+    """The primary is what verification re-checks on every use; revoking it while
+    a QR is still within its own 15 minutes must still refuse."""
     restore = configured_checksum(client, settings)
     try:
-        created = client.post("/enrollment", data={"name": "Doomed"}, follow_redirects=True)
-        token_id = created.url.path.split("/")[-2]
-        client.post(f"/api/v1/enrollment-tokens/{token_id}/revoke")
+        client.post("/enrollment/primary", data={"name": "Doomed"})
+        primary_id = client.get("/api/v1/enrollment-tokens/primary").json()["id"]
+        client.post(f"/api/v1/enrollment-tokens/{primary_id}/revoke")
 
-        response = client.get(f"/enrollment/{token_id}/qr")
+        response = client.post("/enrollment/qr")
 
         assert "<svg" not in response.text
-        assert "revoked" in text_of(response.text)
+        assert "no active enrollment token" in text_of(response.text)
     finally:
         restore()
 
 
-def test_qr_refuses_a_used_up_token(client: TestClient, settings, db):
-    from sqlalchemy import select
-
-    from app.db.models import EnrollmentToken
-
-    restore = configured_checksum(client, settings)
-    try:
-        created = client.post(
-            "/enrollment", data={"name": "One shot", "max_uses": "1"}, follow_redirects=True
-        )
-        token_id = created.url.path.split("/")[-2]
-        assert "<svg" in client.get(f"/enrollment/{token_id}/qr").text
-
-        token = db.scalars(
-            select(EnrollmentToken).where(EnrollmentToken.name == "One shot")
-        ).one()
-        token.use_count = 1
-        db.commit()
-
-        response = client.get(f"/enrollment/{token_id}/qr")
-
-        assert "<svg" not in response.text
-        assert "used all 1 time" in text_of(response.text)
-    finally:
-        restore()
-
-
-def test_qr_refuses_an_expired_token(client: TestClient, settings, db):
-    from datetime import datetime, timedelta, timezone
-
-    from sqlalchemy import select
-
-    from app.db.models import EnrollmentToken
-
-    restore = configured_checksum(client, settings)
-    try:
-        created = client.post("/enrollment", data={"name": "Stale"}, follow_redirects=True)
-        token_id = created.url.path.split("/")[-2]
-
-        token = db.scalars(
-            select(EnrollmentToken).where(EnrollmentToken.name == "Stale")
-        ).one()
-        token.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
-        db.commit()
-
-        response = client.get(f"/enrollment/{token_id}/qr")
-
-        assert "<svg" not in response.text
-        assert "expired" in text_of(response.text)
-    finally:
-        restore()
-
-
-def test_unknown_token_qr_is_404(client: TestClient):
+def test_no_route_exists_for_a_per_token_qr_page(client: TestClient):
+    """There is nothing to look up by id any more — every QR is minted fresh."""
     assert client.get(
         "/enrollment/00000000-0000-0000-0000-000000000000/qr"
     ).status_code == 404
@@ -458,13 +412,32 @@ def test_token_scoping_from_the_form(client: TestClient):
     group = client.post("/api/v1/groups", json={"name": "Console Group"}).json()
 
     client.post(
-        "/enrollment",
+        "/enrollment/primary",
         data={"name": "Scoped", "group_ids": [group["id"]]},
-        follow_redirects=True,
     )
 
-    tokens = client.get("/api/v1/enrollment-tokens").json()
-    assert any(t["name"] == "Scoped" and t["groups"] for t in tokens)
+    primary = client.get("/api/v1/enrollment-tokens/primary").json()
+    assert primary["name"] == "Scoped" and primary["groups"]
+
+
+def test_retiring_without_replacing_clears_the_primary(client: TestClient):
+    client.post("/enrollment/primary", data={"name": "Temporary"})
+    assert client.get("/api/v1/enrollment-tokens/primary").json() is not None
+
+    client.post("/enrollment/retire", follow_redirects=False)
+
+    assert client.get("/api/v1/enrollment-tokens/primary").json() is None
+
+
+def test_retire_and_create_replaces_in_one_call(client: TestClient):
+    client.post("/enrollment/primary", data={"name": "First"})
+    first_id = client.get("/api/v1/enrollment-tokens/primary").json()["id"]
+
+    client.post("/enrollment/primary", data={"name": "Second"})
+
+    primary = client.get("/api/v1/enrollment-tokens/primary").json()
+    assert primary["name"] == "Second"
+    assert primary["id"] != first_id
 
 
 # --------------------------------------------------------------------------- #

@@ -31,3 +31,7 @@ Test Files/
 
 # Local scratch space for hardware testing.
 scratch/
+
+# Vendored UI/UX Pro Max skill (github.com/nextlevelbuilder/ui-ux-pro-max-skill),
+# installed per-developer. Not part of this project's source.
+.claude/skills/

@@ -35,6 +35,7 @@ from sqlalchemy import (
     Column,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Table,
@@ -42,6 +43,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
 )
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, JsonDict, UtcDateTime
@@ -321,6 +323,21 @@ class EnrollmentToken(Base):
     """
 
     __tablename__ = "enrollment_token"
+    __table_args__ = (
+        # "At most one live primary" as a database guarantee rather than an
+        # application-level hope — the same reasoning as D24's unique device
+        # serial or R13's unique identifier value. Partial: a *revoked* primary
+        # does not block a new one, which is exactly the retire-and-replace flow.
+        # The index only ever contains rows matching the WHERE clause, so
+        # uniqueness on a single always-true column there means "at most one".
+        Index(
+            "uq_enrollment_token_one_live_primary",
+            "is_primary",
+            unique=True,
+            postgresql_where=sa_text("is_primary AND revoked_at IS NULL"),
+            sqlite_where=sa_text("is_primary AND revoked_at IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     name: Mapped[str] = mapped_column(String(128))
@@ -344,6 +361,13 @@ class EnrollmentToken(Base):
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
     # A token authorizes devices onto the fleet, so who minted it is worth keeping.
     created_by: Mapped[str | None] = mapped_column(String(128), default=None)
+
+    # Marks the one standing enrollment credential an operator manages day to day
+    # (Chunk 14). Its raw secret is never displayed; only a signed, 15-minute
+    # derivative of it is ever shown, as a QR. Everything else about this row —
+    # hash, vault seal, scoping, revocation — is the ordinary EnrollmentToken
+    # machinery, unchanged; a primary is just a token nobody types in by hand.
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     groups: Mapped[list[DeviceGroup]] = relationship(
         secondary=enrollment_token_group, lazy="selectin"

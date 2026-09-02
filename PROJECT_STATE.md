@@ -9,13 +9,13 @@ update after every completed step.
 
 ## Current status
 
-**Phase:** ✅ **Chunks 10–13 complete.** R11 and R13 closed. **App install, upgrade
-and split install all proven on hardware** — agent v15 (`0.4.2`) on `SM-X520`,
-running real ATAK 5.8.0.4 and a 7-part Butterfly IQ. The Chunk 4 pipeline is
-validated end to end against production artifacts. Agent
-**v13 (`0.4.0`)** running on `SM-X520`, compliant, `state 2 = acked 2` and now
-correctly identified by its hardware serial `R5GL40MMHRN`.
-310 server tests + 30 agent tests.
+**Phase:** ✅ **Chunks 10–14 complete.** F1–F6 all hardware-proven; R1, R11, R13
+closed. **Enrollment is now a single persistent token with 15-minute signed QR
+derivatives** (Chunk 14), verified live through real nginx — including that
+retiring the primary kills an already-issued, still-time-valid QR immediately.
+Agent **v27 (`0.7.1`)** running on `SM-X520`, compliant, correctly identified by
+its hardware serial `R5GL40MMHRN`.
+370 server tests + 30 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -1160,6 +1160,91 @@ its next re-enrolment — the precise failure the chunk exists to prevent.
 | D101 | The migration **backfills every existing serial as a `LEGACY` identifier** | Preserves current matching exactly, whatever that string happens to be. Skipping it would orphan every enrolled device on its next re-enrolment. |
 | D102 | `identifiers` is **optional** on the enrolment request, and unknown kinds are kept rather than rejected | A fleet whose devices go dark for weeks cannot be upgraded before it is allowed to enrol, and a newer agent reporting a source this server has not heard of is still supplying usable identity. |
 
+### ✅ Chunk 14 — Single persistent enrollment token, short-lived QR (COMPLETE)
+
+Operator requirement: exactly **one persistent enrollment token** exists at a time
+(retire-and-replace when a new one is needed, never two live at once). The console
+never displays that token's raw secret. Instead, "Generate QR" mints a **15-minute
+signed derivative** of it — the only thing ever shown as a scannable code — so a
+leaked QR image bounds the exposure to 15 minutes regardless of how long the
+persistent token itself lives.
+
+**Decided with the operator before implementation:**
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Mechanism | **Stateless signed token** (Option B), not a database child row (Option A) | Mirrors `CsrfGuard`, already reviewed in this codebase. Zero new rows per "Generate QR" click, which will be clicked routinely for the system's life — Option A would grow `enrollment_token` forever. Revocation is automatic: verification re-checks the primary at the moment of use, not at mint time, so no cascade-revoke logic is needed. |
+| Uses per QR | **Unlimited within the 15-minute window** | Matches enrolling a batch of tablets in one sitting. A leak is bounded by time, not device count. |
+| Console scope | **Replace** the existing multi-token UI with a single active-token panel | Matches the operator's model exactly. The old CRUD endpoints and ad-hoc `EnrollmentToken` rows are untouched at the API/DB layer — `scripts/dev_enroll.py` and the test suite keep working unchanged — they simply stop being console-managed. |
+
+**Property, not a question:** retiring the primary invalidates every QR derived from
+it immediately, including one mid-scan. Verification re-validates the primary's
+`is_usable()` on every use.
+
+1. **Model + migration** — `EnrollmentToken.is_primary: bool`, with a **partial
+   unique index** (`is_primary = true AND revoked_at IS NULL`) so "at most one live
+   primary" is a database guarantee, not an application hope. New setting
+   `enrollment_qr_ttl_seconds` (default 900), following the existing
+   `checkin_interval_seconds` / `csrf` TTL pattern.
+2. **`app/security/enrollment_qr.py`** — `EnrollmentQrGuard.load_or_create(pki_dir)`
+   mirroring `TokenVault`/`CsrfGuard`'s key-file pattern exactly
+   (`pki/enrollment_qr.key`, `0o600`). `issue(primary_id) -> str` produces
+   `{primary_id}.{issued_at}.{signature}`; `verify(token, now) -> uuid.UUID` checks
+   the signature and the 15-minute age, raising a typed error otherwise.
+3. **Service layer** (`app/services/enrollment.py`) — `get_primary_token`,
+   `retire_and_create_primary` (revokes any existing primary and creates the new one
+   in one call, matching "it can be retired and a new one made"), and
+   `mint_qr_secret`. `resolve_token` tries the QR-guard format first; on a format or
+   signature mismatch it falls through to today's hash lookup **unchanged**, so every
+   existing token, script and test keeps working.
+4. **API** — `GET/POST /api/v1/enrollment-tokens/primary`,
+   `POST /api/v1/enrollment-tokens/primary/qr`. The existing CRUD endpoints stay,
+   for automation.
+5. **Console** — `enrollment.html` rewritten to one panel: the active primary (or an
+   empty state), a "Retire & create new" form, and "Generate enrollment QR", which
+   mints a fresh secret and renders it through the existing QR-rendering code
+   (`_render_token_qr`), stating the 15-minute expiry plainly.
+6. **Tests** — `enrollment_qr.py` unit tests (issue/verify, expiry, tampered
+   signature, wrong primary id, primary revoked mid-window); service tests (atomic
+   retire-and-create, the partial-unique-index guarantee, unlimited use within the
+   window, an expired QR rejected, legacy tokens unaffected); console tests (empty
+   state, the two actions, the old multi-token form gone).
+**370 server tests** (was 339), all new tests exercising real behaviour rather
+than mocked internals, plus a full live pass against the running stack through real
+nginx + TLS:
+
+```
+1. no primary exists            -> null
+2. create the primary           -> expires_at 2076-08-20   (the +50y lifetime)
+3. mint a QR secret             -> secret + 15-minute expires_at
+4. enrol device A with the QR   -> 201
+5. enrol device B, SAME QR      -> 201   (unlimited within the window, as decided)
+6. use_count after 2 enrolments -> 2     (counted against the primary, for free)
+7. retire the primary           -> 200
+8. the SAME still-time-valid QR -> 401   (retiring kills a live QR immediately)
+9. mint a QR with no primary    -> 409 "no active enrollment token; create one first"
+10. primary is null again       -> confirms revoke, not merely "inactive"
+11. create a fresh primary      -> retire-and-replace cycle complete, live
+12. both devices appear         -> in /api/v1/devices, ready for policy assignment
+```
+
+Step 8 is the property the whole design rests on, proven against the real
+database rather than only asserted in a unit test: the QR secret used in step 5
+was still comfortably inside its 15-minute window when step 7 retired the primary,
+and step 8 shows it dead anyway — because verification re-checks the primary's
+`is_usable()` on every use, not at mint time. No cascade-revoke code exists, and
+none was needed.
+
+Expiry-by-time-elapsing itself is verified at the unit level
+(`tests/test_enrollment_qr.py`, `EnrollmentQrGuard.verify(..., now=...)`) rather
+than by a real 15-minute wait — the same approach already used for the CSRF
+token's TTL.
+
+Two of the three requirements needed no new work to confirm: **device visibility
+for policy assignment already existed** (the dashboard and policy pages), and the
+console's `.danger` button styling from the device-deletion feature was reused
+as-is for "Retire without replacing".
+
 ### ✅ Kiosk / lock task (F6) — COMPLETE, hardware-validated
 
 **Starting state: half-built.** `setLockTaskPackages` is called, so a kiosk app is
@@ -1653,6 +1738,40 @@ re-investigated):
 
 ## Changelog
 
+- **2026-09-02** — **Chunk 14: single persistent enrollment token, 15-minute
+  signed QR.** 370 server tests. Replaced the free-for-all multi-token console
+  with the operator's model: one standing enrollment credential, retired and
+  replaced rather than multiplied, whose raw secret is never displayed. Every
+  "Generate QR" click instead mints a stateless, HMAC-signed 15-minute derivative
+  — `{primary_id}.{nonce}.{issued}.{signature}`, mirroring the existing
+  `CsrfGuard` pattern rather than inventing a new one — so a leaked QR image is
+  bounded by 15 minutes regardless of the primary's own lifetime. No database row
+  is created per QR generation. Verified live through real nginx: two devices
+  enrolled from one QR within its window (unlimited use, by design), and —  the
+  property the whole design rests on — retiring the primary refused a still
+  time-valid QR immediately, because verification re-checks the primary's
+  `is_usable()` on every use rather than at mint time, so no cascade-revoke logic
+  exists or was needed. "At most one live primary" is a database guarantee (a
+  partial unique index on `is_primary WHERE revoked_at IS NULL`), not an
+  application-level hope. Every existing ad-hoc token, script and test keeps
+  working unchanged: a QR-shaped secret is tried first and falls through to the
+  original hash lookup on any shape or signature mismatch.
+- **2026-09-01** — **UI/UX Pro Max skill installed** (out of band, at user
+  request; not a project chunk). Vendored `github.com/nextlevelbuilder/ui-ux-pro-max-skill`
+  into `.claude/skills/` by replicating what `uipro init --ai claude` does (npm
+  global install was blocked): rendered `SKILL.md` from the CLI's base template
+  with the local script path, and copied the `data/`, `scripts/`, and the six
+  sibling skills (banner-design, brand, design, design-system, slides,
+  ui-styling). `.claude/skills/` is gitignored — per-developer tooling, not
+  project source. Search tool verified with `python` (Windows has no `python3`).
+  Bundled tests: `git clone` ran with `core.autocrlf=true`, so every data file
+  was checked out CRLF and the SHA-256 snapshot digests in `catalog-summary.json`
+  (computed on LF upstream) no longer matched — renormalized all 171 text files
+  to LF. Deleted two orphaned maintainer test modules (`test_catalog_refresh`,
+  `test_relevance_evaluator`) that import upstream-only `scripts/*.py` never
+  shipped in the package. `python -m unittest discover` on ui-ux-pro-max now
+  passes 130/130. Sub-skill suites (brand, design-system, ui-styling) are
+  pytest-based and need `pip install pytest` to run; not run here.
 - **2026-09-01** — **Chunk 13: CSRF protection. R11 closed.** 310 tests. Tokens
   signed over the administrator's identity on the console's forms, plus origin
   validation on every unsafe admin request — which is what covers the admin API's

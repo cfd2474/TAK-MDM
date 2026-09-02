@@ -21,6 +21,7 @@ import logging
 import secrets
 import uuid
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -37,6 +38,7 @@ from app.db.models import (
     Tag,
 )
 from app.security.ca import CertificateAuthority
+from app.security.enrollment_qr import EnrollmentQrError, EnrollmentQrGuard
 from app.security.token_vault import TokenVault
 from app.services import device_identity
 from app.services import effective_policy as eff
@@ -99,19 +101,117 @@ def create_token(
     return IssuedToken(token=token, secret=secret)
 
 
-def resolve_token(session: Session, secret: str) -> EnrollmentToken:
+def resolve_token(
+    session: Session, secret: str, *, qr_guard: EnrollmentQrGuard | None = None
+) -> EnrollmentToken:
     """Look up a usable token by its secret, or raise.
 
     Lookup is by hash, so the stored value is useless to anyone reading the
     database. The error message is deliberately uniform: distinguishing "no such
     token" from "expired" would let an attacker probe which secrets exist.
+
+    When `qr_guard` is supplied, a QR-derived secret (Chunk 14) is tried first —
+    verifying it costs no database lookup, only recomputing a signature. Every
+    legacy secret falls through unchanged: `secrets.token_urlsafe` never produces
+    a "." character, so an ordinary token can never look like the four-part
+    `{primary_id}.{nonce}.{issued}.{signature}` shape and this branch is a no-op
+    for it. Existing tokens, scripts and tests are therefore unaffected whether or
+    not a guard is passed.
     """
+    if qr_guard is not None:
+        primary_id: uuid.UUID | None = None
+        with suppress(EnrollmentQrError):
+            primary_id = qr_guard.verify(secret)
+        if primary_id is not None:
+            # The guard verified only the wrapper (signature, age). Whether the
+            # primary itself is still usable — not revoked, not expired — is
+            # re-checked here, on every use, which is what makes retiring a
+            # primary invalidate every QR derived from it immediately rather than
+            # only future ones.
+            primary = session.get(EnrollmentToken, primary_id)
+            if primary is None or not primary.is_usable(now=_utcnow()):
+                raise EnrollmentError(
+                    "enrollment token is invalid, expired, revoked, or used up"
+                )
+            return primary
+
     token = session.scalar(
         select(EnrollmentToken).where(EnrollmentToken.token_hash == _hash_secret(secret))
     )
     if token is None or not token.is_usable(now=_utcnow()):
         raise EnrollmentError("enrollment token is invalid, expired, revoked, or used up")
     return token
+
+
+# A primary token is meant to be persistent, not merely long-lived — the operator's
+# own word. Rather than make `expires_at` nullable and thread a None-handling branch
+# through every `is_usable()` / `unusable_reason()` call site, it gets an expiry far
+# enough out that reaching it is not a case worth designing for.
+_PRIMARY_TOKEN_LIFETIME_HOURS = 24 * 365 * 50  # 50 years
+
+
+def get_primary_token(session: Session) -> EnrollmentToken | None:
+    """The one standing enrollment token, if one has been created."""
+    return session.scalar(
+        select(EnrollmentToken).where(
+            EnrollmentToken.is_primary.is_(True),
+            EnrollmentToken.revoked_at.is_(None),
+        )
+    )
+
+
+def retire_and_create_primary(
+    session: Session,
+    *,
+    name: str,
+    group_ids: Sequence[uuid.UUID] = (),
+    tag_ids: Sequence[uuid.UUID] = (),
+    created_by: str | None = None,
+    vault: TokenVault | None = None,
+) -> EnrollmentToken:
+    """Retire whichever primary token is live, and stand up a new one.
+
+    One call for what the operator described as one action: "it can be retired and
+    a new one made". The old primary is revoked and flushed *before* the new row is
+    inserted — the database's partial unique index only allows one row with
+    `is_primary AND revoked_at IS NULL` at a time, so creating the replacement
+    first would violate the very guarantee this method exists to uphold.
+
+    The new token's raw secret is not returned. Nothing needs it: the primary is
+    never displayed or typed in by hand, only its QR-derived children are.
+    """
+    current = get_primary_token(session)
+    if current is not None:
+        revoke_token(session, current)
+
+    issued = create_token(
+        session,
+        name=name,
+        ttl_hours=_PRIMARY_TOKEN_LIFETIME_HOURS,
+        group_ids=group_ids,
+        tag_ids=tag_ids,
+        created_by=created_by,
+        vault=vault,
+    )
+    issued.token.is_primary = True
+    session.flush()
+    return issued.token
+
+
+def mint_qr_secret(
+    session: Session, guard: EnrollmentQrGuard
+) -> tuple[EnrollmentToken, str]:
+    """A fresh, 15-minute secret resolving to the active primary token.
+
+    Refuses outright when there is no live primary, rather than minting a
+    secret that is syntactically valid and will fail the moment a device
+    presents it — that failure belongs here, where it can be worded for an
+    operator, not on a tablet mid-provisioning.
+    """
+    primary = get_primary_token(session)
+    if primary is None:
+        raise EnrollmentError("no active enrollment token; create one first")
+    return primary, guard.issue(primary.id)
 
 
 def reveal_secret(token: EnrollmentToken, vault: TokenVault) -> str | None:
@@ -146,6 +246,7 @@ def enroll_device(
     os_version: str | None = None,
     agent_version: str | None = None,
     identifiers: list[dict] | None = None,
+    qr_guard: EnrollmentQrGuard | None = None,
 ) -> EnrollmentResult:
     """Enroll (or re-enroll) a device and issue it a client certificate.
 
@@ -153,7 +254,7 @@ def enroll_device(
     sends only ``serial_number`` still enrolls exactly as before, which matters for a
     fleet whose devices may be dark for weeks and cannot all be upgraded first.
     """
-    token = resolve_token(session, secret)
+    token = resolve_token(session, secret, qr_guard=qr_guard)
 
     # Match on any identifier this device has ever used, so a factory reset and
     # re-enrollment re-adopts the existing record (D24). Creating a second row would

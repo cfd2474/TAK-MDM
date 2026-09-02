@@ -5,25 +5,20 @@
 {% block content %}
 <h1>Enrollment</h1>
 <p class="sub">
-  A token scoped to groups and tags places a device in its policy stack the moment
-  it enrols — no second assignment step.
+  One persistent enrollment credential. Its raw secret is never shown here —
+  every QR is a 15-minute derivative of it, so a leaked photo of the code is a
+  15-minute problem, not a standing one.
 </p>
 
-<h2>New token</h2>
+{% if not primary %}
 <div class="panel">
-  <form method="post" action="/enrollment">
+  <p class="muted">No active enrollment token yet.</p>
+  <form method="post" action="/enrollment/primary">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="row">
       <div>
         <label for="name">Name</label>
-        <input id="name" name="name" required style="width:100%" placeholder="Field rollout">
-
-        <label for="max_uses">Max uses (blank = unlimited until expiry)</label>
-        <input id="max_uses" name="max_uses" type="number" min="1" style="width:160px">
-        <p class="muted" style="font-size:12px">
-          Unlimited is the Knox Mobile Enrollment case: one profile enrols a whole
-          shipment.
-        </p>
+        <input id="name" name="name" required style="width:100%" placeholder="Fleet enrollment">
       </div>
       <div>
         <label>Place enrolling devices in these groups</label>
@@ -42,46 +37,77 @@
         </div>
       </div>
     </div>
-    <button type="submit" style="margin-top:14px">Create token</button>
+    <button type="submit" style="margin-top:14px">Create enrollment token</button>
   </form>
 </div>
 
-<h2>Existing tokens</h2>
+{% else %}
 <div class="panel">
-  {% if not tokens %}
-    <p class="muted">None yet.</p>
-  {% else %}
-  <table>
-    <thead>
-      <tr>
-        <th>Name</th><th>Prefix</th><th>Scope</th><th>Uses</th>
-        <th>Expires</th><th>Status</th><th></th>
-      </tr>
-    </thead>
-    <tbody>
-    {% for t in tokens %}
-      {% set usable = not t.revoked_at and not (t.max_uses and t.use_count >= t.max_uses) %}
-      <tr>
-        <td>{{ t.name }}</td>
-        <td class="mono">{{ t.prefix }}…</td>
-        <td class="muted">
-          {{ (t.groups | map(attribute='name') | list + t.tags | map(attribute='name') | list) | join(', ') or '—' }}
-        </td>
-        <td class="mono">{{ t.use_count }}{% if t.max_uses %} / {{ t.max_uses }}{% endif %}</td>
-        <td class="muted">{{ t.expires_at.strftime('%Y-%m-%d %H:%M') }}</td>
-        <td>
-          {% if t.revoked_at %}<span class="pill bad">revoked</span>
-          {% elif t.max_uses and t.use_count >= t.max_uses %}<span class="pill warn">used up</span>
-          {% else %}<span class="pill good">active</span>{% endif %}
-        </td>
-        <td>
-          {# Any live token's QR can be pulled up again, not just a new one. #}
-          {% if usable %}<a href="/enrollment/{{ t.id }}/qr">Show QR</a>{% endif %}
-        </td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
+  <p class="sub">
+    <strong>{{ primary.name }}</strong> ·
+    used {{ primary.use_count }} time{{ 's' if primary.use_count != 1 }} ·
+    created {{ primary.created_at.strftime('%Y-%m-%d %H:%M') }}
+    {% if primary.created_by %}by {{ primary.created_by }}{% endif %}
+    {% if primary.groups %}· joins {{ primary.groups | map(attribute='name') | join(', ') }}{% endif %}
+    {% if primary.tags %}· tagged {{ primary.tags | map(attribute='name') | join(', ') }}{% endif %}
+  </p>
+
+  <form method="post" action="/enrollment/qr" style="display:inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit">Generate enrollment QR</button>
+  </form>
+  <span class="muted" style="font-size:12px">
+    Good for {{ (qr_ttl_seconds // 60) }} minutes, unlimited devices within that
+    window.
+  </span>
+
+  <details style="margin-top:18px">
+    <summary class="muted">Retire this token and start a new one</summary>
+    <p class="muted" style="font-size:12px; margin-top:8px">
+      Retiring takes effect immediately — including on any QR still on screen
+      elsewhere. Devices already enrolled are unaffected; this only governs new
+      enrollments.
+    </p>
+    <form method="post" action="/enrollment/primary" style="margin-top:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="row">
+        <div>
+          <label for="new_name">New name</label>
+          <input id="new_name" name="name" required style="width:100%" placeholder="Fleet enrollment">
+        </div>
+        <div>
+          <label>Place enrolling devices in these groups</label>
+          <div class="checks">
+            {% for g in groups %}
+              <label><input type="checkbox" name="group_ids" value="{{ g.id }}"> {{ g.name }}</label>
+            {% else %}<p class="muted">No groups.</p>{% endfor %}
+          </div>
+        </div>
+        <div>
+          <label>…and these tags</label>
+          <div class="checks">
+            {% for t in tags %}
+              <label><input type="checkbox" name="tag_ids" value="{{ t.id }}"> {{ t.name }}</label>
+            {% else %}<p class="muted">No tags.</p>{% endfor %}
+          </div>
+        </div>
+      </div>
+      <button type="submit" style="margin-top:14px">Retire &amp; create new</button>
+    </form>
+  </details>
+
+  <details style="margin-top:12px">
+    <summary class="muted">Retire without replacing</summary>
+    <p class="muted" style="font-size:12px; margin-top:8px">
+      No enrollment token will be active until a new one is created. Existing
+      devices are unaffected.
+    </p>
+    <form method="post" action="/enrollment/retire" style="margin-top:8px"
+          onsubmit="return confirm('Retire {{ primary.name }}? No device will be able to enrol until a new token is created.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="danger">Retire</button>
+    </form>
+  </details>
 </div>
+{% endif %}
 {% endblock %}

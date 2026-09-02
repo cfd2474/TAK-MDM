@@ -31,6 +31,7 @@ from app.db.models import Device, DeviceCertificate, EnrollmentState
 from app.artifacts.storage import ArtifactStorage, LocalArtifactStorage
 from app.security.bundle import BundleSigner
 from app.security.ca import CertificateAuthority, CertificateError
+from app.security.enrollment_qr import EnrollmentQrGuard
 from app.security.token_vault import TokenVault
 
 
@@ -76,6 +77,20 @@ def _token_vault(pki_dir: str) -> TokenVault:
 def get_token_vault(settings: Settings = Depends(get_settings)) -> TokenVault:
     """Seals and recovers enrollment token secrets."""
     return _token_vault(str(settings.pki_dir))
+
+
+@lru_cache
+def _enrollment_qr_guard(pki_dir: str, ttl_seconds: int) -> EnrollmentQrGuard:
+    from pathlib import Path
+
+    return EnrollmentQrGuard.load_or_create(Path(pki_dir), ttl_seconds=ttl_seconds)
+
+
+def get_enrollment_qr_guard(
+    settings: Settings = Depends(get_settings),
+) -> EnrollmentQrGuard:
+    """Mints and verifies the 15-minute secrets shown as enrollment QR codes."""
+    return _enrollment_qr_guard(str(settings.pki_dir), settings.enrollment_qr_ttl_seconds)
 
 
 @lru_cache

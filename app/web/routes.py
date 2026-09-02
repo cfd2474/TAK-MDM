@@ -33,7 +33,7 @@ from __future__ import annotations
 import io
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -45,9 +45,10 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, get_storage, get_token_vault
+from app.api.deps import get_db, get_enrollment_qr_guard, get_storage, get_token_vault
 from app.security import admin_auth, csrf
 from app.security.admin_auth import AdminIdentity, admin_required
+from app.security.enrollment_qr import EnrollmentQrGuard
 from app.security.token_vault import TokenVault
 from app.artifacts.storage import ArtifactStorage
 from app.config import Settings, get_settings
@@ -60,7 +61,6 @@ from app.db.models import (
     Device,
     DeviceGroup,
     EnrollmentState,
-    EnrollmentToken,
     ManagedFile,
     Policy,
     PolicyVersion,
@@ -74,9 +74,12 @@ from app.services import effective_policy as eff
 from app.services import packages as package_service
 from app.services import provisioning
 from app.services.enrollment import (
-    create_token,
+    EnrollmentError,
+    get_primary_token,
+    mint_qr_secret,
+    retire_and_create_primary,
     revoke_device_certificates,
-    reveal_secret,
+    revoke_token,
 )
 
 router = APIRouter(tags=["admin-ui"], include_in_schema=False)
@@ -475,135 +478,135 @@ def set_targets(
 def enrollment_page(
     request: Request,
     session: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
     identity: AdminIdentity = Depends(admin_required),
 ) -> HTMLResponse:
+    """The one active enrollment token, or an empty state (Chunk 14).
+
+    No list of ad-hoc tokens here any more: the operator's model is a single
+    persistent credential, retired and replaced rather than multiplied. Its raw
+    secret is never on this page — only "Generate QR", which mints a 15-minute
+    derivative each time it is pressed.
+    """
     return _render(
         request,
         "enrollment.html",
         identity=identity,
-        tokens=list(
-            session.scalars(select(EnrollmentToken).order_by(EnrollmentToken.created_at.desc()))
-        ),
+        primary=get_primary_token(session),
         groups=list(session.scalars(select(DeviceGroup).order_by(DeviceGroup.name))),
         tags=list(session.scalars(select(Tag).order_by(Tag.name))),
+        qr_ttl_seconds=settings.enrollment_qr_ttl_seconds,
         qr_svg=None,
         payload=None,
         secret=None,
+        problem=None,
     )
 
 
-@router.post("/enrollment")
-def create_enrollment(
+@router.post("/enrollment/primary")
+def create_primary(
     request: Request,
     name: str = Form(...),
-    max_uses: int | None = Form(default=None),
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
+    storage: ArtifactStorage = Depends(get_storage),
     vault: TokenVault = Depends(get_token_vault),
+    guard: EnrollmentQrGuard = Depends(get_enrollment_qr_guard),
     identity: AdminIdentity = Depends(admin_required),
-) -> RedirectResponse:
-    """Mint a token, then hand off to its QR page.
+) -> HTMLResponse:
+    """Retire whichever primary is live and stand up its replacement.
 
-    One place renders QR codes, whether the token was made a second ago or last
-    week — so there is no "you should have saved it" path through the UI.
+    Immediately mints and shows a QR for the new primary too — matching the
+    established "creating a token redirects to its QR" pattern (D77) — so getting
+    the fleet's one enrollment credential moving is a single action, not two.
     """
     form = _sync_form(request)
-    issued = create_token(
+    retire_and_create_primary(
         session,
         name=name,
-        ttl_hours=settings.enrollment_token_ttl_hours,
-        max_uses=max_uses,
         group_ids=_uuids(form.getlist("group_ids")),
         tag_ids=_uuids(form.getlist("tag_ids")),
         created_by=None if identity.is_anonymous else identity.username,
         vault=vault,
     )
     session.commit()
-    return _redirect(f"/enrollment/{issued.token.id}/qr")
+    return _render_primary_qr(request, session, settings, storage, guard, identity)
 
 
-@router.get("/enrollment/{token_id}/qr", response_class=HTMLResponse)
-def token_qr(
-    token_id: uuid.UUID,
-    request: Request,
+@router.post("/enrollment/retire")
+def retire_primary(
     session: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings),
-    vault: TokenVault = Depends(get_token_vault),
-    storage: ArtifactStorage = Depends(get_storage),
     identity: AdminIdentity = Depends(admin_required),
-) -> HTMLResponse:
-    return _render_token_qr(request, token_id, session, settings, vault, identity, storage)
+) -> RedirectResponse:
+    """Retire the active primary with nothing to replace it.
+
+    A deliberate "go dark" action: no enrollment can succeed — by QR or by any
+    already-issued one, since verification re-checks the primary on every use —
+    until a new primary is created.
+    """
+    primary = get_primary_token(session)
+    if primary is not None:
+        revoke_token(session, primary)
+        session.commit()
+    return _redirect("/enrollment")
 
 
-@router.post("/enrollment/{token_id}/qr", response_class=HTMLResponse)
-def token_qr_with_wifi(
-    token_id: uuid.UUID,
+@router.post("/enrollment/qr", response_class=HTMLResponse)
+def generate_qr(
     request: Request,
     wifi_ssid: str = Form(default=""),
     wifi_password: str = Form(default=""),
     wifi_security: str = Form(default="WPA"),
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
-    vault: TokenVault = Depends(get_token_vault),
     storage: ArtifactStorage = Depends(get_storage),
+    guard: EnrollmentQrGuard = Depends(get_enrollment_qr_guard),
     identity: AdminIdentity = Depends(admin_required),
 ) -> HTMLResponse:
-    """Re-render the QR with Wi-Fi credentials embedded.
+    """Mint a fresh 15-minute QR for the active primary.
 
-    The credentials are used for this render only and never persisted: a Wi-Fi
-    password in the database would be a second recoverable secret, and the tablet
-    only needs it once, to reach the server during provisioning.
+    Also what the Wi-Fi form on the QR page itself submits to: there is no
+    per-QR row to re-render with credentials added, so embedding Wi-Fi simply
+    mints a new secret with the credentials baked in. The one just displayed
+    keeps working until its own 15 minutes elapse — nothing revokes it.
     """
-    return _render_token_qr(
-        request, token_id, session, settings, vault, identity, storage,
+    return _render_primary_qr(
+        request, session, settings, storage, guard, identity,
         wifi_ssid=wifi_ssid.strip() or None,
         wifi_password=wifi_password or None,
         wifi_security=wifi_security,
     )
 
 
-def _render_token_qr(
+def _render_primary_qr(
     request: Request,
-    token_id: uuid.UUID,
     session: Session,
     settings: Settings,
-    vault: TokenVault,
-    identity: AdminIdentity,
     storage: ArtifactStorage,
+    guard: EnrollmentQrGuard,
+    identity: AdminIdentity,
     *,
     wifi_ssid: str | None = None,
     wifi_password: str | None = None,
     wifi_security: str = "WPA",
 ) -> HTMLResponse:
-    token = session.get(EnrollmentToken, token_id)
-    if token is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "enrollment token not found")
-
     context: dict[str, Any] = {
-        "token": token,
+        "primary": None,
         "wifi_ssid": wifi_ssid,
         "wifi_security": wifi_security,
         "qr_svg": None,
         "payload": None,
         "secret": None,
+        "qr_expires_at": None,
         "problem": None,
     }
 
-    # Refuse to render a QR that cannot enrol. Handing someone a scannable code
-    # that will fail costs them a factory reset before they discover it.
-    unusable = token.unusable_reason(now=datetime.now(timezone.utc))
-    if unusable:
-        context["problem"] = f"No QR: {unusable}. Create a new token instead."
+    try:
+        primary, secret = mint_qr_secret(session, guard)
+    except EnrollmentError as exc:
+        context["problem"] = str(exc)
         return _render(request, "token_qr.html", identity=identity, **context)
-
-    secret = reveal_secret(token, vault)
-    if secret is None:
-        context["problem"] = (
-            "This token's secret cannot be recovered — it was created before "
-            "secrets were stored recoverably, or under a different vault key. "
-            "Create a new token."
-        )
-        return _render(request, "token_qr.html", identity=identity, **context)
+    context["primary"] = primary
 
     try:
         payload = provisioning.qr_payload(
@@ -620,8 +623,12 @@ def _render_token_qr(
         context["problem"] = str(exc)
         return _render(request, "token_qr.html", identity=identity, **context)
 
+    session.commit()
     context["payload"] = payload
     context["secret"] = secret
+    context["qr_expires_at"] = datetime.now(timezone.utc) + timedelta(
+        seconds=settings.enrollment_qr_ttl_seconds
+    )
     context["qr_svg"] = _qr_svg(json.dumps(payload))
     return _render(request, "token_qr.html", identity=identity, **context)
 
