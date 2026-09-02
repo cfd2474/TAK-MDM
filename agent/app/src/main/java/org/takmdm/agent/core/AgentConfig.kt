@@ -68,6 +68,20 @@ class AgentConfig(context: Context) {
         get() = prefs.getString(KEY_BUNDLE_KEY, null)
         set(value) = prefs.edit { putString(KEY_BUNDLE_KEY, value) }
 
+    /**
+     * Base64 of the 32-byte reset-password token (W20), kept so a forced passcode
+     * (`PASSWORD.set_password`) can be re-applied after a process restart.
+     *
+     * Android warns this is credential-grade and must not be stored in plaintext.
+     * It sits in the agent's private prefs alongside [enrollmentToken] — the same
+     * exposure envelope — which is the pragmatic choice for a normally-installed
+     * Device Owner with no keystore-wrapped prefs. An un-activated token is
+     * memory-only in the OS and lost on reboot; the agent regenerates one.
+     */
+    var resetPasswordToken: String?
+        get() = prefs.getString(KEY_RESET_PW_TOKEN, null)
+        set(value) = prefs.edit { putString(KEY_RESET_PW_TOKEN, value) }
+
     /** The desired-state version the agent currently holds. */
     var stateVersion: Int
         get() = prefs.getInt(KEY_STATE_VERSION, -1)
@@ -192,6 +206,7 @@ class AgentConfig(context: Context) {
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_DEVICE_NAME = "device_name"
         private const val KEY_BUNDLE_KEY = "bundle_key"
+        private const val KEY_RESET_PW_TOKEN = "reset_password_token"
         private const val KEY_STATE_VERSION = "state_version"
         private const val KEY_APPLIED_VERSION = "applied_state_version"
         private const val KEY_DESIRED_STATE = "desired_state"

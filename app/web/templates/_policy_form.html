@@ -44,6 +44,14 @@
          placeholder="not managed" style="min-width:280px">
 {% endmacro %}
 
+{% macro _password(f, value, name) %}
+  <input type="password" name="{{ name }}" value="{{ value or '' }}"
+         autocomplete="new-password"
+         {% if f.minimum %}minlength="{{ f.minimum }}"{% endif %}
+         {% if f.maximum %}maxlength="{{ f.maximum }}"{% endif %}
+         placeholder="not set" style="min-width:220px">
+{% endmacro %}
+
 {% macro _package_list(f, items, name) %}
   <div class="rowset" data-rowset>
     {% for item in items or [] %}
@@ -164,6 +172,7 @@
   {% elif f.control == 'int' %}{{ _int(f, value, name) }}
   {% elif f.control == 'enum' %}{{ _enum(f, value, name) }}
   {% elif f.control == 'str' %}{{ _str(f, value, name) }}
+  {% elif f.control == 'password' %}{{ _password(f, value, name) }}
   {% elif f.control == 'package_list' %}{{ _package_list(f, value, name) }}
   {% elif f.control == 'app_list' %}{{ _app_list(f, value, name, app_packages) }}
   {% elif f.control == 'file_list' %}{{ _file_list(f, value, name, managed_files) }}
@@ -208,6 +217,6 @@
 {% macro resulting_spec(spec) %}
   <details class="pf-preview">
     <summary class="muted">Resulting spec (read-only)</summary>
-    <pre>{{ spec | pretty_json }}</pre>
+    <pre>{{ spec | spec_json }}</pre>
   </details>
 {% endmacro %}

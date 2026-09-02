@@ -466,9 +466,10 @@ class MainActivity : AppCompatActivity() {
                 setPadding(0, 0, 0, ConsoleViews.dp(this@MainActivity, 4))
             })
             for (field in section.keys()) {
-                body.addView(ConsoleViews.kv(
-                    this, prettyField(field), summarise(section.get(field)),
-                ))
+                val shown =
+                    if (field in SECRET_POLICY_FIELDS) "•••••• (enforced)"
+                    else summarise(section.get(field))
+                body.addView(ConsoleViews.kv(this, prettyField(field), shown))
             }
             root.addView(card)
         }
@@ -646,4 +647,9 @@ class MainActivity : AppCompatActivity() {
      */
     private fun JSONObject.str(key: String): String? =
         if (isNull(key)) null else optString(key).takeIf { it.isNotBlank() }
+
+    private companion object {
+        /** Policy fields whose value is a credential — never shown on the console. */
+        val SECRET_POLICY_FIELDS = setOf("set_password", "password")
+    }
 }

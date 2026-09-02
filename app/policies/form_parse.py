@@ -61,7 +61,7 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
             if value is not None:
                 spec[name] = value
 
-        elif field.control == "str":
+        elif field.control in ("str", "password"):
             raw = (form.get(name) or "").strip()
             if raw:
                 spec[name] = raw

@@ -672,6 +672,22 @@ def test_password_form_round_trip(client: TestClient):
     assert _stored_spec(client, pid) == {"min_length": 12, "min_digits": 2}
 
 
+def test_set_password_round_trips_but_is_masked_in_the_spec_views(client: TestClient):
+    import re
+
+    pid = _create_via_form(
+        client, "Fixed PW", "PASSWORD",
+        [("min_length", "6"), ("set_password", "atlas12")],
+    )
+    # stored verbatim — the device needs it
+    assert _stored_spec(client, pid) == {"min_length": 6, "set_password": "atlas12"}
+
+    body = client.get(f"/policies/{pid}").text
+    assert "••••••" in body  # masked in the resulting-spec / version-history views
+    # the raw value never appears in a rendered spec dump
+    assert not any("atlas12" in block for block in re.findall(r"<pre>.*?</pre>", body, re.S))
+
+
 def test_restrictions_tri_state(client: TestClient):
     pid = _create_via_form(
         client, "Restr form", "RESTRICTIONS",

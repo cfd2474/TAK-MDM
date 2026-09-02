@@ -26,6 +26,7 @@ import android.net.wifi.WifiConfiguration
 import android.net.wifi.WifiManager
 import android.os.UserManager
 import android.provider.Settings
+import android.util.Base64
 import androidx.core.content.ContextCompat
 import org.takmdm.agent.core.AgentConfig
 import org.takmdm.agent.diag.AgentLog
@@ -47,6 +48,8 @@ class PolicyApplier(private val context: Context) {
         context.getSystemService(DevicePolicyManager::class.java)
 
     private val admin = MdmDeviceAdminReceiver.componentName(context)
+
+    private val config: AgentConfig by lazy { AgentConfig(context) }
 
     private val oem: OemPolicyApplier by lazy { OemPolicyApplier.forDevice(context) }
 
@@ -144,7 +147,68 @@ class PolicyApplier(private val context: Context) {
             }.onFailure { failures += "password history: ${it.message}" }
         }
 
+        // Force an exact passcode (W20). Last, so the quality/length constraints
+        // above are in place before resetPasswordWithToken checks the value
+        // against them. Re-asserted on every reconcile — Android has no way to
+        // stop the user changing it, so setting it back is the only enforcement.
+        if (spec.has("set_password")) {
+            failures += ensurePasswordSet(spec.getString("set_password"))
+        }
+
         return failures
+    }
+
+    /**
+     * Make the device's screen-lock passcode equal [desired].
+     *
+     * `resetPasswordWithToken` needs a reset token from `setResetPasswordToken`
+     * (≥32 bytes). The token activates immediately only if the device has no
+     * passcode; if one is already set, the user must confirm their current
+     * credential once before it works — which cannot be forced, so that case is
+     * reported rather than worked around. The token is kept in the agent's
+     * private prefs (same store as the enrollment secret) so it survives a
+     * process restart; an un-activated one is lost on reboot and regenerated.
+     */
+    private fun ensurePasswordSet(desired: String): List<String> {
+        if (desired.isBlank()) return emptyList()
+        val failures = mutableListOf<String>()
+
+        val token = loadOrCreateResetToken()
+
+        if (!dpm.isResetPasswordTokenActive(admin)) {
+            val set = runCatching { dpm.setResetPasswordToken(admin, token) }
+                .onFailure { failures += "set passcode: reset token rejected: ${it.message}" }
+                .getOrDefault(false)
+            if (!set) return failures
+            if (!dpm.isResetPasswordTokenActive(admin)) {
+                failures += "set passcode: the device already has a passcode, so the " +
+                    "reset token needs the user to confirm it once " +
+                    "(Settings ▸ security ▸ confirm credentials) before it can be changed"
+                return failures
+            }
+        }
+
+        val ok = runCatching { dpm.resetPasswordWithToken(admin, desired, token, 0) }
+            .onFailure { failures += "set passcode: ${it.message}" }
+            .getOrDefault(false)
+        if (!ok && failures.isEmpty()) {
+            failures += "set passcode: rejected — the value does not meet the policy's " +
+                "own length/quality rules"
+        } else if (ok) {
+            AgentLog.i(TAG, "passcode set from policy (${desired.length} chars)")
+        }
+        return failures
+    }
+
+    private fun loadOrCreateResetToken(): ByteArray {
+        config.resetPasswordToken?.let { stored ->
+            runCatching { Base64.decode(stored, Base64.NO_WRAP) }.getOrNull()
+                ?.takeIf { it.size >= 32 }
+                ?.let { return it }
+        }
+        val fresh = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        config.resetPasswordToken = Base64.encodeToString(fresh, Base64.NO_WRAP)
+        return fresh
     }
 
     @Suppress("DEPRECATION")

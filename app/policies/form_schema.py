@@ -59,7 +59,7 @@ class FormField:
     label: str
     help: str
     group: str
-    #: bool | int | enum | str | package_list | app_list | file_list
+    #: bool | int | enum | str | password | package_list | app_list | file_list
     control: str
     merge_hint: str
     minimum: int | None = None
@@ -69,6 +69,8 @@ class FormField:
     true_label: str = "Yes"
     false_label: str = "No"
     choices: list[EnumChoice] = field(default_factory=list)
+    #: A value not to echo in previews or the read-only detail view.
+    secret: bool = False
 
 
 def _unwrap(annotation: object) -> object:
@@ -150,6 +152,7 @@ def form_fields(policy_type: str) -> list[FormField]:
                 true_label=extra.get("ui_true", "Yes"),
                 false_label=extra.get("ui_false", "No"),
                 choices=choices,
+                secret=bool(extra.get("ui_secret", False)),
             )
         )
     return fields

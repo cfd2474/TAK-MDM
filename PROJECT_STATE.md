@@ -2922,6 +2922,80 @@ Screenshots in the session scratchpad (`shots/01_device` … `05_policies`).
 * `ANDROID_PLATFORM_REFERENCE.md` unchanged — the console uses only documented
   APIs (`Build.getSerial()` behaviour already recorded in §identity).
 
+#### 🔻 W20 — PASSWORD policy: set an exact passcode (not just require one)
+
+**Operator ask:** on the PASSWORD policy, be able to *set* the device's screen-lock
+passcode, and have the user unable to change it.
+
+**Platform check (DPM reference, 2026-09-02):**
+* A Device Owner sets a specific passcode with **`resetPasswordWithToken`** (API
+  26+). It needs a reset token from **`setResetPasswordToken`** (≥32 bytes,
+  CSRNG). The token **activates immediately only if the device has no passcode**;
+  if one is already set, the user must confirm their current credential once
+  (`KeyguardManager.createConfirmDeviceCredentialIntent`) before it activates.
+  Un-activated tokens are memory-only and lost on reboot; an activated one
+  survives reboots and password changes.
+* The new passcode must satisfy the DPM quality/length constraints or
+  `resetPasswordWithToken` returns `false`.
+* **There is no AOSP API to stop the user changing the passcode.** Android's docs
+  state the token "remains effective even if the user changes or clears the
+  lockscreen password" — the DPC's only remedy is to set it back.
+
+**Decision (operator, 2026-09-02):** "unchangeable" = **re-asserted every sync**.
+The agent sets the policy passcode on each reconcile; a user change is undone at
+the next check-in (seconds after a policy edit, otherwise the poll interval).
+This is exactly the desired-state model everything else uses.
+
+##### Plan (7 steps)
+
+1. **Spec.** `PasswordSpec.set_password` — `Annotated[str | None,
+   Merge(HIGHEST_RANK)]`, 4–16 chars, `ui_control: "password"`, `ui_secret`.
+   A model validator: if set, it must be ≥ this policy's own `min_length`.
+2. **Form.** `FormField.secret` (from `ui_secret`); `_password` macro +
+   `_control` branch in `_policy_form.html`; `form_parse` `password` branch;
+   mask secret fields in the `resulting_spec` preview and the read-only detail.
+3. **Agent.** `AgentConfig.resetPasswordToken` (base64). `PolicyApplier.applyPassword`
+   gains `ensurePasswordSet(desired)` — runs after the quality/length block:
+   generate + persist a 32-byte token, `setResetPasswordToken` if not
+   `isResetPasswordTokenActive`, report if activation needs the user,
+   `resetPasswordWithToken(admin, desired, token, 0)`, report a `false` return.
+   Re-asserted every reconcile. Agent v36 (`0.9.6`).
+4. **DPC console.** Policies tab shows `set_password` as "•••••• (enforced)",
+   never the value.
+5. **Docs.** `ANDROID_PLATFORM_REFERENCE.md` §6c — the reset-password-token
+   contract and the "no way to block a user change, re-assert only" finding.
+6. **Tests.** Server: the `HIGHEST_RANK` merge contract, the validator, a form
+   round-trip with the value masked in the preview. Agent: builds clean (DPM
+   glue, no pure planner).
+7. **Hardware (`SM-X520`).** Push `set_password` + `min_length`; confirm the lock
+   screen adopts it; change it as the user; sync; confirm it reverts. Clear the
+   passcode afterwards. **Stop for approval.**
+
+##### Status: steps 1–6 ✅ COMPLETE — 452 server tests, 52 agent tests, agent v36 (`0.9.6`). Step 7 (hardware) awaiting go-ahead.
+
+- Spec: `PasswordSpec.set_password` (`HIGHEST_RANK`, 4–16 chars, `password`
+  control, `ui_secret`) + a validator (must be ≥ this policy's own `min_length`).
+- Form: `FormField.secret`; `_password` macro + `_control` branch;
+  `form_parse` `password` branch; a `spec_json` Jinja filter that masks secret
+  keys (`set_password`, `password`) in the version-history and resulting-spec
+  `<pre>` views (the edit `<input>` still carries the value, as Wi-Fi does).
+- Agent: `AgentConfig.resetPasswordToken`; `PolicyApplier.ensurePasswordSet` —
+  32-byte token, `setResetPasswordToken` when not active, reports the
+  confirm-credential requirement, `resetPasswordWithToken(admin, desired, token,
+  0)`, reports a `false` return. Runs last in `applyPassword`; re-asserted every
+  reconcile.
+- DPC console: `set_password` shows as "•••••• (enforced)" on the Policies tab.
+- Docs: `ANDROID_PLATFORM_REFERENCE.md` §6c — the reset-password-token contract
+  and the "no AOSP way to block a user change, re-assert only" finding.
+- Tests: `test_set_password_forces_an_exact_passcode`,
+  `test_set_password_shorter_than_the_policy_minimum_is_rejected`,
+  `test_set_password_round_trips_but_is_masked_in_the_spec_views`, and the
+  `HIGHEST_RANK` merge-contract assertion.
+
+**Hardware carries a lock-out risk** (the tablet currently has no screen lock) —
+the test sets one, so it needs a known value and a clean-up step. Holding for a
+go-ahead.
+
 ---
 
 ### Later chunks (sketch — to be detailed at approval time)

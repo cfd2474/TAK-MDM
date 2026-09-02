@@ -113,6 +113,27 @@ router = APIRouter(tags=["admin-ui"], include_in_schema=False)
 _TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 _TEMPLATES.env.filters["pretty_json"] = lambda value: json.dumps(value, indent=2, sort_keys=True)
 
+# Keys whose values are credentials the device needs but a console reader does not
+# (W20): the forced screen-lock passcode, Wi-Fi pre-shared keys.
+_SECRET_KEYS = {"set_password", "password"}
+
+
+def _redact_secrets(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            k: ("••••••" if k in _SECRET_KEYS and v not in (None, "")
+                else _redact_secrets(v))
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_secrets(v) for v in value]
+    return value
+
+
+_TEMPLATES.env.filters["spec_json"] = lambda value: json.dumps(
+    _redact_secrets(value), indent=2, sort_keys=True, ensure_ascii=False
+)
+
 
 def _render(
     request: Request, template: str, identity: AdminIdentity | None = None, **context: Any

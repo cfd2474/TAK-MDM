@@ -645,7 +645,34 @@ if a `min_length` is set, and `COMPLEX` if any `min_letters`/`min_digits`/
 `min_symbols` is set; calls `setPasswordQuality` first, then the length and
 per-character-class setters. `history_length` / expiry / lockout are unchanged.
 
-✅ **Verified on `SM-X520` (agent v34), both directions:**
+### Forcing an exact passcode: `resetPasswordWithToken` (W20)
+
+📖 A Device Owner sets a specific screen-lock passcode with
+`resetPasswordWithToken(admin, password, token, flags)` (API 26+). The token
+comes from `setResetPasswordToken(admin, token)` — **≥32 bytes, from a CSRNG**.
+
+| Rule | Source |
+|---|---|
+| The token **activates immediately only if the device has no passcode.** If one is already set, the user must complete a confirm-credential operation (`KeyguardManager.createConfirmDeviceCredentialIntent`) before it works — this **cannot be forced**. | `setResetPasswordToken` reference |
+| An un-activated token is **held in memory only and lost on reboot**; a fresh one must be provisioned. An activated token survives reboots and password changes. | `setResetPasswordToken` reference |
+| The new passcode must satisfy the active `getPasswordQuality` / `getPasswordMinimumLength` or `resetPasswordWithToken` **returns `false`**. So set the quality/length constraints first. | `resetPasswordWithToken` reference |
+| **There is no AOSP API to stop the user changing the passcode.** "Once provisioned and activated, the token will remain effective even if the user changes or clears the lockscreen password" — the DPC's only remedy is to set it back. | `setResetPasswordToken` reference |
+| `flags`: `RESET_PASSWORD_REQUIRE_ENTRY` locks the device so the user must enter the new passcode; `0` sets it silently. | `resetPasswordWithToken` reference |
+| The token is credential-grade — "NEVER store this token on device in plaintext". | `setResetPasswordToken` reference |
+
+**What the agent does** (`PolicyApplier.ensurePasswordSet`, W20): generates a
+32-byte token, keeps its base64 in the agent's private prefs (same store as the
+enrolment secret — the pragmatic choice for a normally-installed DO; noted as an
+exposure alongside R8/R12), `setResetPasswordToken` when not already active,
+reports the confirm-credential requirement rather than working around it, then
+`resetPasswordWithToken(admin, desired, token, 0)`. **Re-asserted on every
+reconcile** — since the user can change it, setting it back each sync is the
+enforcement. Flags `0`: a kiosk device in use is not kicked to the lock screen
+when the agent re-applies an unchanged passcode.
+
+📖→⏳ **Not yet verified on hardware.**
+
+### ✅ Verified on `SM-X520` (agent v34), both directions:
 
 | Policy | `dumpsys device_policy` for `org.takmdm.agent` |
 |---|---|

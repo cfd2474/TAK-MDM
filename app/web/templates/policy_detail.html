@@ -106,7 +106,7 @@
       <tr>
         <td class="mono">v{{ v.version }}</td>
         <td class="muted">{{ v.published_at.strftime('%Y-%m-%d %H:%M') }}</td>
-        <td><pre>{{ v.spec | pretty_json }}</pre></td>
+        <td><pre>{{ v.spec | spec_json }}</pre></td>
       </tr>
     {% endfor %}
     </tbody>
