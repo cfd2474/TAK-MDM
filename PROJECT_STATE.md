@@ -19,8 +19,7 @@ its hardware serial `R5GL40MMHRN`.
 console — Enroll, Manage, Policies, Apps, Content, Reports, Admin, Guides — on
 server-rendered Jinja with no build step. **W10 replaced JSON-textarea policy
 editing with generated typed forms** (dropdowns, tri-state controls, repeatable
-rows; per-field merge hints). **W11 wired the Periodic Sync policy type.**
-444 server tests + 30 agent tests.
+rows; per-field merge hints). 439 server tests + 30 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -2325,26 +2324,20 @@ managed" removed that section.
    one list and one object-list); "Not managed" omits the field; an out-of-range
    value is refused with a legible message; the merge hint is present.
 
-#### ✅ W11 — Periodic Sync policy type (COMPLETE)
+#### ❌ W11 — Periodic Sync policy type (BUILT, THEN REMOVED — 2026-09-02)
 
-**444 server tests (was 439).** The **Periodic Sync** category is a real policy
-now — a single dropdown (*Foreground service* / *Background service* / *Not
-managed*) with the trade-off explained inline. Delivered:
+Built as a `PERIODIC_SYNC` policy type with a foreground/background dropdown, then
+**removed at the operator's decision the same day**: the ATLAS agent always runs
+the periodic check-in as a foreground service, and enforcing "background" was
+never planned, so the setting offered a choice that does not exist. The
+`periodic_sync` category is now gone from the creator catalog entirely (not a
+placeholder — there is nothing to configure). `form_schema` / `form_parse` were
+reverted to their W10 state; the generic string-enum handling and `ui_choices`
+override go back in with the first real string-enum policy type.
 
-- **`app/policies/specs/periodic_sync.py`** — `SyncBehavior` str-enum,
-  `PeriodicSyncSpec.sync_behavior` with `Merge(HIGHEST_RANK)` and the screenshot's
-  explanation as the field `description`. Registered as `PERIODIC_SYNC`.
-- **`form_schema.py` / `form_parse.py`** — `ui_choices` label override for enum
-  dropdowns; string-enum handling (was int-only).
-- **`creator_catalog.py`** — `periodic_sync` flipped from placeholder to wired.
-- The resolver and desired-state projection are generic, so the value reaches the
-  device immediately. **Agent applier is still a follow-up** — the Kotlin agent
-  runs the foreground service by default and does not yet read `PERIODIC_SYNC`, so
-  "foreground" is the live behaviour regardless; enforcing "background" is an
-  agent change.
-
-Verified live: the dropdown renders with the help text; a `PERIODIC_SYNC` section
-created via the form resolves into the effective policy.
+Net effect on the tree: `app/policies/specs/periodic_sync.py` deleted, the
+`periodic_sync` `Category` removed, W11 tests removed. 439 server tests, as after
+W10.
 
 ##### Original plan
 
@@ -2411,11 +2404,11 @@ created via the form resolves into the effective policy.
 
 ## Changelog
 
-- **2026-09-02** — **W11: Periodic Sync policy type.** 444 tests. The category is
-  wired now — `PERIODIC_SYNC` spec (`sync_behavior`: foreground / background,
-  `HIGHEST_RANK` merge), registered, and shown in the creator as a dropdown with
-  the trade-off explained inline. Resolves and projects generically; the agent
-  applier is a follow-up (it already runs foreground).
+- **2026-09-02** — **W11 built then removed.** A `PERIODIC_SYNC` policy type
+  (foreground/background dropdown) was added, then reverted the same day: the
+  agent always runs a foreground service and "background" was never going to be
+  enforced, so the choice was not real. `periodic_sync` is no longer in the
+  creator catalog. Back to 439 tests.
 - **2026-09-02** — **W10: form-driven policy editing.** 439 tests. Overrides D64
   for the console (DW6): every policy JSON textarea is replaced by a generated
   form of typed controls — a tri-state select per restriction (Not managed /

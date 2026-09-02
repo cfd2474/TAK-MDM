@@ -56,15 +56,10 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
                 spec[name] = False
             # "" -> not managed
 
-        elif field.control == "int" or (field.control == "enum" and field.enum_is_int):
+        elif field.control in ("int", "enum"):
             value = _int_or_none(form.get(name))
             if value is not None:
                 spec[name] = value
-
-        elif field.control == "enum":
-            raw = (form.get(name) or "").strip()
-            if raw:
-                spec[name] = raw
 
         elif field.control == "str":
             raw = (form.get(name) or "").strip()

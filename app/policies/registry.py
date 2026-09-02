@@ -31,7 +31,6 @@ from app.policies.specs import (
     AppCatalogSpec,
     FilesSpec,
     PasswordSpec,
-    PeriodicSyncSpec,
     PolicySpec,
     RestrictionsSpec,
 )
@@ -131,9 +130,4 @@ registry.register(
     "FILES",
     FilesSpec,
     "Files placed on the device, required or offered in the marketplace.",
-)
-registry.register(
-    "PERIODIC_SYNC",
-    PeriodicSyncSpec,
-    "Whether the agent's periodic check-in runs as a foreground or background service.",
 )

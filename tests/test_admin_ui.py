@@ -696,54 +696,6 @@ def test_an_all_unmanaged_form_makes_an_empty_policy(client: TestClient):
 
 
 # --------------------------------------------------------------------------- #
-# Periodic Sync policy type (W11)
-# --------------------------------------------------------------------------- #
-
-
-def test_periodic_sync_renders_as_a_dropdown(client: TestClient):
-    body = client.get("/policies/new/single").text
-    assert 'name="sync_behavior"' in body
-    assert "Foreground service" in body
-    assert "Background service" in body
-
-
-def test_periodic_sync_form_round_trip(client: TestClient):
-    pid = _create_via_form(
-        client, "Sync policy", "PERIODIC_SYNC", [("sync_behavior", "background")]
-    )
-    assert _stored_spec(client, pid) == {"sync_behavior": "background"}
-
-
-def test_periodic_sync_not_managed_omits_the_field(client: TestClient):
-    pid = _create_via_form(
-        client, "Sync empty", "PERIODIC_SYNC", [("sync_behavior", "")]
-    )
-    assert _stored_spec(client, pid) == {}
-
-
-def test_periodic_sync_is_no_longer_a_placeholder(client: TestClient):
-    """The creator category is wired now — it shows the control, not the stub."""
-    pid = _make_profile(client, "Synced", {"periodic_sync": {"sync_behavior": "foreground"}})
-    section = client.get(f"/api/v1/profiles/{pid}", headers=ADMIN).json()["sections"][0]
-    assert section["profile_section"] == "periodic_sync"
-    assert section["versions"][0]["spec"] == {"sync_behavior": "foreground"}
-
-
-def test_periodic_sync_reaches_the_effective_policy(client: TestClient, enrolled):
-    device = enrolled(serial="W11-SYNC")
-    pid = _make_profile(client, "S", {"periodic_sync": {"sync_behavior": "foreground"}})
-    client.put(
-        f"/api/v1/profiles/{pid}/targets",
-        json={"device_ids": [device["device_id"]]},
-        headers=ADMIN,
-    )
-    values = client.get(
-        f"/api/v1/devices/{device['device_id']}/effective-policy"
-    ).json()["values"]
-    assert values["PERIODIC_SYNC"] == {"sync_behavior": "foreground"}
-
-
-# --------------------------------------------------------------------------- #
 # Policy list: tabs, templates, archive/restore (W3)
 # --------------------------------------------------------------------------- #
 
