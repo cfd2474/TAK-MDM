@@ -260,6 +260,39 @@ about background execution limits.
 management on every device in the fleet, and the symptom at the server is
 indistinguishable from a device that lost coverage.
 
+### ✅ A Device Owner can update **itself** through `PackageInstaller`
+
+Verified on `SM-X520` (2026-09-02): the agent was added to a policy's
+`required_apps` and pushed its own newer build. The whole sequence:
+
+```
+13:01:34.490  Reconciler: upgrading org.takmdm.agent from versionCode 37 to 38
+13:02:10.620  base part verified (23 303 571 bytes)          ← 36 s download
+13:02:10.623  AppInstaller: session opened for org.takmdm.agent
+              ← process killed at commit; no further logs from that PID
+13:02:15.047  BootReceiver: restarting after MY_PACKAGE_REPLACED   ← new PID, +4.4 s
+13:02:15.403  org.takmdm.agent already at versionCode 38 (want 38); skipping
+13:02:15.474  sync: state=53 applied=53 errors=1               ← the 1 was unrelated
+```
+
+Four facts worth keeping:
+
+* **The commit survives the caller's death.** Android kills the installing process
+  at commit, and the install still completes.
+* **The install-result callback never arrives** — the process that registered it is
+  gone. So the agent records **no error** for its own upgrade; silence is success.
+  Confirm by comparing `versionCode` after restart, never by waiting on the result.
+* **`MY_PACKAGE_REPLACED` brings it back in ~4.4 s.** That is the whole management
+  outage.
+* **No update loop.** After restart the reconciler sees itself already at the
+  wanted version and skips.
+
+⚠️ **There is no rollback.** Android refuses a downgrade, so a bad agent build
+cannot be reverted by re-pushing the old version — only by shipping a *new* build
+with a higher `versionCode` containing the old code. And a build that crashes on
+start takes remote management with it. Any self-update mechanism needs a canary
+gate before it is pointed at a fleet.
+
 ---
 
 ## 5a. Removing and suppressing apps
