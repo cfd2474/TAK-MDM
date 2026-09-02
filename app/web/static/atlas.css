@@ -41,8 +41,9 @@
   --code: #f0f3f7;
 
   /* The brand bar is dark in both themes — it is the one piece of fixed ATLAS
-     identity on the page. */
-  --brandbar: #0a1420;
+     identity on the page. Near-black so the logo lockup (which carries its own
+     dark ground) sits on it without a visible seam. */
+  --brandbar: #05090f;
   --brandbar-line: #23384f;
   --brandbar-ink: #e8eef6;
   --brandbar-muted: #8fa6be;
@@ -66,7 +67,7 @@
     --good: #5cc48d;
     --code: #0c1928;
 
-    --brandbar: #070f18;
+    --brandbar: #04070c;
     --brandbar-line: #1c2f43;
   }
 }
@@ -102,22 +103,18 @@ header {
 header .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-weight: 700;
-  letter-spacing: 1.5px;
   text-decoration: none;
-  color: var(--silver);
+  padding: 5px 0;
 }
 
-header .brand img { display: block; height: 22px; width: auto; }
+header .brand .brand-logo {
+  display: block;
+  height: 46px;
+  width: auto;
+}
 
-header .brand .mdm {
-  font-size: 10px;
-  letter-spacing: 1.5px;
-  padding: 2px 6px;
-  border: 1px solid var(--accent-2);
-  border-radius: 4px;
-  color: var(--accent-2);
+@media (max-width: 720px) {
+  header .brand .brand-logo { height: 34px; }
 }
 
 header nav {

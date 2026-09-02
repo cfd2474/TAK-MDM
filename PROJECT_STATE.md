@@ -2966,6 +2966,12 @@ Screenshots in the session scratchpad (`shots/01_device` … `05_policies`).
 
 ## Changelog
 
+- **2026-09-02** — **W19b: web console banner logo.** The admin console header
+  now uses the supplied `ATLAS.png` lockup (mark + "ATLAS MDM" + tagline) as a
+  single `atlas-logo.png` image, with a matching `favicon.png` (the emblem) and a
+  near-black brand bar so the logo's own dark ground blends seamlessly. The
+  improvised inline mark + text spans and `atlas-mark.svg` are retired. 449 tests
+  unchanged.
 - **2026-09-02** — **W19: DPC app UI — ATLAS MDM console.** 449 server tests, 52
   agent tests, agent v35 (`0.9.5`). The agent's on-device screen went from a
   monospace dump to a five-section `BottomNavigationView` console (Device /
