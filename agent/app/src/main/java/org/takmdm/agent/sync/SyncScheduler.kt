@@ -94,6 +94,21 @@ class BootReceiver : BroadcastReceiver() {
             Intent.ACTION_MY_PACKAGE_REPLACED -> {
                 AgentLog.i(TAG, "restarting after ${intent.action}")
                 SyncScheduler.startAll(context)
+
+                // Kiosk is re-engaged from the cached desired state rather than
+                // waiting for a check-in, which on a dark link could be minutes.
+                // Off the main thread: it launches an activity and talks to the
+                // package manager, and a receiver has ten seconds.
+                val pending = goAsync()
+                Thread {
+                    try {
+                        Reconciler(context.applicationContext)
+                            .reengageKioskIfConfigured()
+                            .forEach { AgentLog.w(TAG, it) }
+                    } finally {
+                        pending.finish()
+                    }
+                }.start()
             }
         }
     }

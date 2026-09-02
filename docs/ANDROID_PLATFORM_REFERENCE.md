@@ -578,6 +578,59 @@ Device Owner without any launcher role.
 launcher behaviour from a launcher is a rewrite. This agent declares no
 `category.HOME` and engages lock task only when a policy sets `kiosk_package` (F6).
 
+### Permitting is not locking
+
+📖 `setLockTaskPackages` only builds an allowlist. To actually lock a **third-party**
+app — ATAK will never call `startLockTask` itself — launch it with
+`ActivityOptions.makeBasic().setLockTaskEnabled(true)`.
+
+📖 That throws `SecurityException` unless `isLockTaskPermitted(pkg)` is already true,
+so check first and report rather than crash. 📖 It also "doesn't affect activities
+that are already running" — a running app must be **relaunched**
+(`FLAG_ACTIVITY_CLEAR_TASK`), or it is permitted and not locked.
+
+### ⚠️ NOTIFICATIONS cannot be enabled without HOME
+
+✅ Observed on `SM-X520`, and stated in neither the `setLockTaskFeatures`
+documentation nor the lock task guide:
+
+```
+java.lang.IllegalArgumentException:
+  Cannot use LOCK_TASK_FEATURE_NOTIFICATIONS without LOCK_TASK_FEATURE_HOME
+```
+
+This looks like it forces a hole in the kiosk, and does not, **provided the home
+button has somewhere safe to go**. Pair it with
+`addPersistentPreferredActivity(admin, <HOME filter>, <kiosk activity>)` so HOME
+returns to the kiosk app instead of the launcher, and set that **before** enabling
+the feature — otherwise there is a window where HOME is live and still points at the
+system launcher.
+
+✅ Verified: with HOME enabled and home pointed at the kiosk app, pressing HOME,
+pressing RECENTS, and launching `com.sec.android.app.launcher` directly all stayed
+inside the kiosk app.
+
+📖 `setLockTaskFeatures` defaults to **`GLOBAL_ACTIONS` only**, and any flag omitted
+is implicitly disabled — so it must be passed again alongside anything else, or the
+power menu disappears and a field device becomes recoverable only by a hard reset.
+
+📖 From Android 14, **lock task features and packages are a single policy**: "a
+failure to apply one will result in a failure to apply the other." ✅ Confirmed — the
+rejected feature set above left `mLockTaskPackages` empty rather than half-applied.
+
+### Getting out
+
+In order of preference, all verified on `SM-X520`:
+
+1. **Remove `kiosk_package` from policy.** Released in ~15 s, and it also clears the
+   allowlist and the home preference. No physical access needed.
+2. **`adb shell am task lock stop`** — "End the current task lock."
+3. `adb shell dpm remove-active-admin <component>`.
+4. Factory reset.
+
+There is no remote `stopLockTask`; clearing the allowlist is what ejects a locked
+app.
+
 ---
 
 ## 8. Version-specific behaviour

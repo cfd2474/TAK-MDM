@@ -344,6 +344,26 @@ class Reconciler(private val context: Context) {
         return SyncOutcome(config.stateVersion, config.appliedStateVersion, errors)
     }
 
+    /**
+     * Re-engage kiosk from the cached desired state, without waiting for a sync.
+     *
+     * Called at boot. A kiosk that stops being one until the next check-in is a
+     * window in which a fielded device is simply a tablet, and the whole point of
+     * F6 is that it is not.
+     */
+    fun reengageKioskIfConfigured(): List<String> {
+        val cached = config.cachedDesiredState?.let { runCatching { JSONObject(it) }.getOrNull() }
+            ?: return emptyList()
+        val kiosk = cached.optJSONObject("policy")
+            ?.optJSONObject("APP_CATALOG")
+            ?.optString("kiosk_package")
+            ?.takeIf { it.isNotBlank() }
+            ?: return emptyList()
+
+        AgentLog.i(TAG, "re-engaging kiosk on $kiosk after boot")
+        return policyApplier.applyKiosk(kiosk)
+    }
+
     fun applyDesiredState(desired: JSONObject): List<String> {
         val errors = mutableListOf<String>()
         // A revoked app-op degrades the agent silently otherwise: files stop being

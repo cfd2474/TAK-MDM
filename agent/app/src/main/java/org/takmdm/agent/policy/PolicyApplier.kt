@@ -17,6 +17,9 @@
 package org.takmdm.agent.policy
 
 import android.app.admin.DevicePolicyManager
+import android.app.ActivityOptions
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.UserManager
@@ -166,14 +169,7 @@ class PolicyApplier(private val context: Context) {
 
         // Kiosk is opt-in (F6). No kiosk_package means the agent stays a background
         // service and leaves the home screen alone.
-        val kioskPackage = spec.optString("kiosk_package").takeIf { it.isNotBlank() }
-        runCatching {
-            if (kioskPackage != null) {
-                dpm.setLockTaskPackages(admin, arrayOf(kioskPackage, context.packageName))
-            } else {
-                dpm.setLockTaskPackages(admin, emptyArray())
-            }
-        }.onFailure { failures += "kiosk: ${it.message}" }
+        failures += applyKiosk(spec.optString("kiosk_package").takeIf { it.isNotBlank() })
 
         return failures
     }
@@ -235,6 +231,133 @@ class PolicyApplier(private val context: Context) {
 
         return failures
     }
+
+    // ----------------------------------------------------------------------- //
+    // Kiosk
+    // ----------------------------------------------------------------------- //
+
+    /**
+     * Put the device into kiosk mode, or take it out of one.
+     *
+     * Both directions, deliberately. A policy that can only ever lock a device down
+     * is not desired state, it is a latch — and a latch on *this* feature strands a
+     * tablet. Everything set here is undone when `kiosk_package` goes away.
+     *
+     * Permitting an app is not the same as locking it: lock task features and the
+     * allowlist are one policy from Android 14 onward, and
+     * `ActivityOptions.setLockTaskEnabled` "doesn't affect activities that are
+     * already running", so the app has to be relaunched rather than merely allowed.
+     */
+    fun applyKiosk(kioskPackage: String?): List<String> {
+        val failures = mutableListOf<String>()
+
+        if (kioskPackage == null) {
+            failures += releaseKiosk()
+            return failures
+        }
+
+        if (!isInstalled(kioskPackage)) {
+            // Locking the device to an app that is not there would leave it on a
+            // blank screen with no way out. Refuse, and say why.
+            return listOf("kiosk: $kioskPackage is not installed; not engaging")
+        }
+
+        // Before the features are set, because those enable HOME. Doing it the
+        // other way round leaves a window in which the home button is live and
+        // still points at the system launcher.
+        failures += setHomeTo(kioskPackage)
+
+        runCatching {
+            dpm.setLockTaskPackages(admin, arrayOf(kioskPackage, context.packageName))
+            // GLOBAL_ACTIONS is the default but must be repeated: any feature not
+            // named here is implicitly disabled. Dropping it would remove the power
+            // menu and leave a field device recoverable only by a hard reset.
+            //
+            // HOME is not optional here, though it looks like a hole. The platform
+            // refuses NOTIFICATIONS without it:
+            //
+            //   "Cannot use LOCK_TASK_FEATURE_NOTIFICATIONS without
+            //    LOCK_TASK_FEATURE_HOME"
+            //
+            // - observed on SM-X520, and stated in neither doc consulted. It is
+            // safe only because setHomeTo() has already pointed HOME at the kiosk
+            // app itself, so pressing it returns to the kiosk rather than escaping
+            // to the launcher. The two decisions turn out to depend on each other:
+            // without the home takeover, enabling HOME here would be a way out.
+            dpm.setLockTaskFeatures(
+                admin,
+                DevicePolicyManager.LOCK_TASK_FEATURE_GLOBAL_ACTIONS or
+                    DevicePolicyManager.LOCK_TASK_FEATURE_HOME or
+                    DevicePolicyManager.LOCK_TASK_FEATURE_NOTIFICATIONS or
+                    DevicePolicyManager.LOCK_TASK_FEATURE_KEYGUARD
+            )
+        }.onFailure { return listOf("kiosk: could not configure lock task - ${it.message}") }
+
+        // Asked rather than assumed: startActivity throws SecurityException when the
+        // package is not permitted, and a crash is a worse diagnostic than a
+        // sentence.
+        if (!runCatching { dpm.isLockTaskPermitted(kioskPackage) }.getOrDefault(false)) {
+            return listOf("kiosk: the system did not permit lock task for $kioskPackage")
+        }
+
+        failures += launchIntoLockTask(kioskPackage)
+        return failures
+    }
+
+    /** Undo everything kiosk set, in the reverse order it was applied. */
+    fun releaseKiosk(): List<String> {
+        val failures = mutableListOf<String>()
+
+        runCatching {
+            // Clearing the allowlist is what actually ejects an app that is
+            // currently locked; there is no remote stopLockTask.
+            dpm.setLockTaskPackages(admin, emptyArray())
+            dpm.setLockTaskFeatures(admin, DevicePolicyManager.LOCK_TASK_FEATURE_NONE)
+        }.onFailure { failures += "kiosk: could not clear lock task - ${it.message}" }
+
+        runCatching {
+            dpm.clearPackagePersistentPreferredActivities(admin, context.packageName)
+        }.onFailure { failures += "kiosk: could not restore the home screen - ${it.message}" }
+
+        return failures
+    }
+
+    private fun setHomeTo(packageName: String): List<String> {
+        val home = IntentFilter(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_HOME)
+            addCategory(Intent.CATEGORY_DEFAULT)
+        }
+        val activity = context.packageManager
+            .getLaunchIntentForPackage(packageName)?.component
+            ?: return listOf("kiosk: $packageName has no launchable activity")
+
+        return runCatching {
+            dpm.addPersistentPreferredActivity(admin, home, activity)
+            emptyList<String>()
+        }.getOrElse { listOf("kiosk: could not make $packageName the home screen - ${it.message}") }
+    }
+
+    private fun launchIntoLockTask(packageName: String): List<String> {
+        val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+            ?: return listOf("kiosk: $packageName has no launchable activity")
+
+        // CLEAR_TASK forces a relaunch. Without it an app that is already running
+        // stays exactly as it is, outside lock task, and the kiosk silently is not
+        // one.
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        val options = ActivityOptions.makeBasic().setLockTaskEnabled(true).toBundle()
+
+        return runCatching {
+            context.startActivity(intent, options)
+            AgentLog.i(TAG, "kiosk: launched $packageName into lock task")
+            emptyList<String>()
+        }.getOrElse { listOf("kiosk: could not launch $packageName - ${it.message}") }
+    }
+
+    fun isInstalled(packageName: String): Boolean = runCatching {
+        context.packageManager.getPackageInfo(packageName, 0)
+        true
+    }.getOrDefault(false)
 
     /**
      * Grant the agent the runtime permissions its own manifest declares.

@@ -54,7 +54,7 @@ written but have never actually run on a device:
 | ~~**App install** (`PackageInstaller`, split APKs)~~ | ✅ **Proven 2026-09-01**, including splits. Real ATAK (107 MB, single APK) and real Butterfly IQ (**XAPK → base + 6 splits**, 323 MB) both installed by the agent; Android lists all seven parts and records `installerPackageName=org.takmdm.agent`. Upgrade proven too (`versionCode 1 → 2`). |
 | ~~**File placement and zip extraction**~~ | ✅ **Both proven 2026-09-01.** A map source pushed byte-identical to `/sdcard/atak/imagery`, and a DTED archive extracted into `/sdcard/atak/DTED/w125/` (~104 MB, hashes matching). Closes R1; F5 proven on hardware. |
 | ~~**Marketplace**~~ | ✅ **Proven 2026-09-01** — offered not imposed, selected through the agent's real UI, placed immediately, and the selection reported back to the server. |
-| **Kiosk / lock task** | F6 |
+| ~~**Kiosk / lock task**~~ | ✅ **Proven 2026-09-01.** Engaged, held against HOME/RECENTS/launcher, and released by policy in ~15 s. |
 | ~~**Transient commands**~~ | ✅ **Proven on `SM-X520`, 2026-09-01.** `lock`, `locate` and `collect_logs` all dispatched and succeeded at `attempts=1/5`. Was not implemented agent-side at all before Chunk 10. **`reboot` and `wipe` remain untried by choice** — they are the two whose deferred-result path (D90) cannot be rehearsed without actually rebooting or wiping the tablet. |
 | ~~**StrongBox**~~ | ✅ **Answered 2026-09-01.** `SM-X520` has **no StrongBox**; the key is `TRUSTED_ENVIRONMENT (TEE), insideSecureHardware=true`. D56's fallback worked as designed and the key is hardware-backed, which is the property that matters. ⚠️ One model on one SoC — the other two must be asked separately (R5). |
 
@@ -1159,6 +1159,97 @@ its next re-enrolment — the precise failure the chunk exists to prevent.
 | D100 | An identifier already held by another device is **never reassigned** | Silently moving it would change which record a third device resolves to. The fix for a genuine duplicate is a deliberate merge. |
 | D101 | The migration **backfills every existing serial as a `LEGACY` identifier** | Preserves current matching exactly, whatever that string happens to be. Skipping it would orphan every enrolled device on its next re-enrolment. |
 | D102 | `identifiers` is **optional** on the enrolment request, and unknown kinds are kept rather than rejected | A fleet whose devices go dark for weeks cannot be upgraded before it is allowed to enrol, and a newer agent reporting a source this server has not heard of is still supplying usable identity. |
+
+### ✅ Kiosk / lock task (F6) — COMPLETE, hardware-validated
+
+**Starting state: half-built.** `setLockTaskPackages` is called, so a kiosk app is
+*permitted* to enter lock task — and nothing ever starts it. No `startLockTask`, no
+`setLockTaskFeatures`, no launch-into-lock-task. Setting `kiosk_package` today
+configures an allowlist and produces no visible effect.
+
+**Kiosk is the one feature that can lock us out of the tablet**, and `adb` has
+dropped five times today. So the order is inverted: prove the escape before the
+entry, and never engage on ATAK first.
+
+#### Contracts verified before writing code (§6)
+
+| Fact | Consequence |
+|---|---|
+| `setLockTaskFeatures` defaults to **`GLOBAL_ACTIONS` only**; omitting a flag disables it | The power menu is already default. Notifications and keyguard must be passed *alongside* it, not instead. |
+| From Android 14, **features and packages are one policy** — "a failure to apply one will result in a failure to apply the other" | On 16 both must succeed together; a partial apply is not a state to design for. |
+| `ActivityOptions.setLockTaskEnabled(true)` + `startActivity` launches a **third-party** app into lock task | ATAK never has to cooperate or call `startLockTask` itself. |
+| It throws `SecurityException` unless `isLockTaskPermitted(pkg)` | Check first, so the failure is a legible message rather than a crash. |
+| **"Doesn't affect activities already running — relaunch to run in lock task mode"** | Permitting a running ATAK does nothing. It must be relaunched. |
+
+#### Decisions taken with the operator, before implementation
+
+| Decision | Rationale |
+|---|---|
+| The agent becomes the home screen **only while kiosk is active**, via `setPersistentPreferredActivity`, cleared when it is not | Without it, escaping lock task drops the user on the Samsung launcher with full access. Reversible, so D55/F6 hold: the agent is not a launcher, it is temporarily standing in as one. |
+| Lock-task features: **`GLOBAL_ACTIONS` + `NOTIFICATIONS` + `KEYGUARD`** | The power menu keeps a field device recoverable without a hard reset; notifications matter because ATAK alerts do; the keyguard keeps a `PASSWORD` policy meaningful, which it would not be if the device never locked. Home and overview stay **off** — allowing them defeats the point. |
+| Kiosk **re-engages after reboot** | A kiosk that stops being one after a restart is not a kiosk. |
+
+**Proven on `SM-X520`, both directions.**
+
+```
+engage   mLockTaskModeState=LOCKED
+         mLockTaskPackages u0:[org.takmdm.agent, org.takmdm.testapp]
+         topResumedActivity org.takmdm.testapp/.MainActivity
+
+escape   HOME            -> stays in the kiosk app
+         RECENTS         -> stays in the kiosk app
+         launch launcher -> stays in the kiosk app
+
+release  mLockTaskModeState=NONE, allowlist empty, ~15 s
+         HOME -> com.sec.android.app.launcher   (home preference cleared)
+```
+
+Released **by policy alone in about 15 seconds**, no `adb` needed — which is the
+escape route that matters, because a stranded tablet in the field has no cable.
+
+#### The constraint that reshaped the design
+
+The first engage attempt failed, and the agent said exactly why:
+
+```
+kiosk: could not configure lock task -
+  Cannot use LOCK_TASK_FEATURE_NOTIFICATIONS without LOCK_TASK_FEATURE_HOME
+```
+
+**Neither document consulted mentions this.** It looks like it forces a hole in the
+kiosk — and it does not, *because* of the home-screen decision taken beforehand:
+with `addPersistentPreferredActivity` pointing HOME at the kiosk app, enabling HOME
+returns the user to the kiosk instead of the launcher. The two choices turned out to
+depend on each other, and the ordering matters — home is pointed first, or there is
+a window where HOME is live and still aimed at the system launcher.
+
+Also confirmed on the same failure: features and packages really are one policy from
+Android 14. The rejected feature set left `mLockTaskPackages` **empty** rather than
+half-applied, exactly as documented.
+
+#### Escape ladder, all verified
+
+1. **Remove `kiosk_package`** — ~15 s, clears lock task, allowlist and home preference.
+2. **`adb shell am task lock stop`** — "End the current task lock."
+3. `adb shell dpm remove-active-admin <component>`.
+4. Factory reset.
+
+There is no remote `stopLockTask`; clearing the allowlist is what ejects a locked app.
+
+1. **Prove the exit first**, on an unlocked device: clearing `kiosk_package` releases
+   lock task and restores home, plus the documented `adb` fallback for a stuck
+   tablet. Nothing gets locked until this is written down.
+2. **Engage** — permit, set features, verify `isLockTaskPermitted`, then relaunch
+   the app into lock task. Report clearly when the package is absent.
+3. **Home takeover** — `setPersistentPreferredActivity` while kiosk is set,
+   cleared when it is not.
+4. **Disengage** — release lock task, clear the allowlist and the home preference.
+   Tested in both directions, because one-way convergence has been the recurring
+   bug all session.
+5. **Persistence** — re-engage on boot and after the app is force-stopped.
+6. **Tests** — server-side spec and merge, agent-side where it is testable.
+7. **Prove on hardware** with `org.takmdm.testapp`. ATAK only once the exit path
+   has been demonstrated twice.
 
 ### ✅ StrongBox question answered (2026-09-01)
 
