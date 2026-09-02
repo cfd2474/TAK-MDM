@@ -154,6 +154,25 @@ def test_upload_lists_a_package(client: TestClient):
     assert "Tool" in body
 
 
+def test_a_package_carrying_an_obb_is_flagged(client: TestClient):
+    """A Device Owner cannot place OBB files on the device (R2) — the operator
+    needs to see that before assigning, not as missing assets at runtime."""
+    from tests.apk_fixtures import build_xapk
+
+    response = client.post(
+        "/apps/upload",
+        data={"label": ""},
+        files={"file": ("app.xapk", build_xapk("com.example.withobb", 1, with_obb=True),
+                        "application/octet-stream")},
+        follow_redirects=False,
+    )
+    assert response.status_code in (303, 200), response.text
+
+    body = client.get("/apps").text
+    assert "com.example.withobb" in body
+    assert ">OBB</span>" in body
+
+
 def test_add_to_store_and_it_shows_in_the_store_tab(client: TestClient):
     _upload_app(client, "com.example.store")
     pkg_id = client.get("/api/v1/packages", headers=ADMIN).json()[0]["id"]

@@ -25,6 +25,10 @@
       <p class="muted" style="font-size:12px">
         The server reads the package name, version, and signing certificate from the
         file. An XAPK is unpacked into base + splits + OBB server-side (D13).
+        A package that carries an <span class="pill">OBB</span> expansion file is
+        flagged below: a Device Owner cannot place OBB files on the device
+        (Android scoped storage), so the APK installs but the app may be missing
+        assets.
       </p>
     </div>
 
@@ -47,7 +51,12 @@
                 {{ p.latest_version.version_code }}{% if p.latest_version.version_name %} ({{ p.latest_version.version_name }}){% endif %}
               {% else %}—{% endif %}
             </td>
-            <td class="muted">{{ (p.latest_version.files | length) if p.latest_version else 0 }}</td>
+            <td class="muted">
+              {{ (p.latest_version.files | length) if p.latest_version else 0 }}
+              {% if p.latest_version and p.latest_version.has_obb %}
+                <span class="pill" title="This package includes an OBB expansion file. A Device Owner cannot place OBB files on the device — the app installs but may be missing assets.">OBB</span>
+              {% endif %}
+            </td>
             <td class="mono muted" title="{{ p.signature_sha256 or '' }}">
               {{ (p.signature_sha256[:12] ~ '…') if p.signature_sha256 else '—' }}
               {% if p.signature_scheme %}<span class="pill">v{{ p.signature_scheme }}</span>{% endif %}

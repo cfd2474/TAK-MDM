@@ -74,6 +74,9 @@ class DebugConfigReceiver : BroadcastReceiver() {
         if (intent.getBooleanExtra("diagnose_identity", false)) {
             reportIdentitySources(context)
         }
+        if (intent.getBooleanExtra("probe_obb", false)) {
+            probeObbWrite()
+        }
         if (intent.getBooleanExtra("reset_identity", false)) {
             // Lets a bench device re-enrol without a factory reset.
             org.takmdm.agent.net.DeviceIdentity.deleteIdentity()
@@ -131,6 +134,26 @@ class DebugConfigReceiver : BroadcastReceiver() {
             context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
         )
         AgentLog.i(TAG, "identity: ANDROID_ID fallback -> '${android.os.Build.MODEL}-$androidId'")
+    }
+
+    /**
+     * Can this agent — a normally-installed Device Owner with all-files access —
+     * write into another app's `Android/obb/<pkg>/` directory? The official docs
+     * exclude "most subdirectories of /sdcard/Android" from MANAGE_EXTERNAL_STORAGE
+     * but do not name `Android/obb` explicitly, and it has flip-flopped across
+     * releases. This settles it for this OEM (R2).
+     */
+    private fun probeObbWrite() {
+        val dir = java.io.File("/sdcard/Android/obb/org.takmdm.testapp")
+        val probe = java.io.File(dir, "atlas_obb_probe.txt")
+        val result = runCatching {
+            val made = dir.mkdirs() || dir.isDirectory
+            probe.writeText("atlas obb probe")
+            val readBack = probe.readText()
+            probe.delete()
+            "mkdirs=$made write+read=${readBack == "atlas obb probe"}"
+        }.getOrElse { "FAILED: ${it.javaClass.simpleName}: ${it.message}" }
+        AgentLog.i(TAG, "obb probe /sdcard/Android/obb/org.takmdm.testapp -> $result")
     }
 
     companion object {

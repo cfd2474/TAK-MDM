@@ -423,6 +423,32 @@ against the destination root.
 extract alongside the data unless filtered. Most ATAK data packages are zipped on a
 Mac, so this is the normal case rather than the exception.
 
+### ❌ Verified: the agent cannot write another app's `Android/obb/` (R2)
+
+The [Manage all files](https://developer.android.com/training/data-storage/manage-all-files)
+doc says `MANAGE_EXTERNAL_STORAGE` does **not** grant access to "`/Android/data/`,
+`/sdcard/Android`, and most subdirectories of `/sdcard/Android`" — without naming
+`Android/obb` either way, and it has flip-flopped across releases. A `probe_obb`
+debug action (`DebugConfigReceiver`) settled it on `SM-X520`:
+
+```
+I DebugConfigReceiver: obb probe /sdcard/Android/obb/org.takmdm.testapp ->
+  FAILED: FileNotFoundException: .../atlas_obb_probe.txt: open failed: EACCES (Permission denied)
+```
+
+The agent had all-files access — the same grant that makes `/sdcard/atak` writable
+(✅ above). Writing **another app's** `Android/obb/<pkg>/` is still blocked. There
+is no all-files route around it; the remaining routes are Knox or root, neither of
+which a normally-installed Device Owner has.
+
+**Consequence for XAPKs:** an XAPK unpacks server-side into base + splits + OBB,
+but the agent can only place the APK parts. It installs, then the app fails at
+runtime with its expansion assets missing. `Reconciler.reconcileApps` raises an
+apply_error naming the package rather than skipping the OBB silently, and the Apps
+page flags a package that carries one. Re-run `probe_obb` on the Qualcomm
+(`SM-G736U1`) and MediaTek (`SM-X828U`) devices before assuming it holds there
+(R5).
+
 ---
 
 ## 6a. AndroidKeyStore and signing

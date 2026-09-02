@@ -13,9 +13,11 @@ update after every completed step.
 closed. **Enrollment is now a single persistent token with 15-minute signed QR
 derivatives** (Chunk 14), verified live through real nginx — including that
 retiring the primary kills an already-issued, still-time-valid QR immediately.
-Agent **v32 (`0.9.2`)** running on `SM-X520`, compliant, correctly identified by
+Agent **v33 (`0.9.3`)** running on `SM-X520`, compliant, correctly identified by
 its hardware serial `R5GL40MMHRN`. **W14 Wi-Fi, W15 quick wins and W16 allowlist
-enforcement all hardware-proven on it.**
+enforcement all hardware-proven on it. W17 closed R2** — a Device Owner cannot
+place XAPK OBB files (EACCES probed on hardware); the agent now says so loudly
+and the Apps page flags it.
 **✅ Web UI expansion (Chunks W1–W10, plus W4b) COMPLETE.** Eight-section ATLAS
 console — Enroll, Manage, Policies, Apps, Content, Reports, Admin, Guides — on
 server-rendered Jinja with no build step. **W10 replaced JSON-textarea policy
@@ -24,7 +26,8 @@ rows; per-field merge hints). **W12 split each category's sub-topics into
 navigable sub-pages** with green-check completion markers. **W13 wired the
 Networks type; W14's agent Wi-Fi applier and W15's agent quick wins (password
 history, screen timeout, app auto_update) and W16's allowlist enforcement are
-hardware-proven on `SM-X520`.** 447 server tests + 46 agent tests.
+hardware-proven on `SM-X520`. W17 closed R2 (OBB placement) as not feasible,
+made loud.** 448 server tests + 46 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -2605,8 +2608,10 @@ but **not reverted** when the field is dropped from the policy — only the bool
 is to set the field to a permissive value (`history_length: 0`, a large timeout),
 which the agent does apply.
 
-**Still unresolved after W16** (from the policy→agent audit):
-* XAPK **OBB** placement (R2) — `role == "obb"` parts are skipped.
+**Still unresolved after W17** (from the policy→agent audit):
+* ~~XAPK **OBB** placement (R2)~~ — ✅ closed 2026-09-02: not feasible for a
+  normally-installed DO (EACCES probed on `SM-X520`); agent now reports it loudly
+  and the Apps page flags it. See W17 and R2.
 * `PASSWORD.min_letters` / `min_digits` / `min_symbols` — no modern DPM API;
   spec fields are dead. Candidates for removal.
 * `NETWORKS.wifi_networks[].auto_join` / `mac_randomization` — no public DO API.
@@ -2664,6 +2669,61 @@ the allowlist.
 7. Hardware: allowlist that excludes `org.takmdm.testapp` → it suspends; remove
    the allowlist → it un-suspends. `org.takmdm.agent` and the launcher untouched.
 
+#### 🔻 W17 — R2 (XAPK OBB placement): confirmed not feasible, made loud
+
+**Finding (hardware, `SM-X520`, 2026-09-02).** A `probe_obb` debug action wrote,
+read back and deleted a file under `/sdcard/Android/obb/org.takmdm.testapp/`:
+
+```
+I DebugConfigReceiver: obb probe /sdcard/Android/obb/org.takmdm.testapp ->
+  FAILED: FileNotFoundException: .../atlas_obb_probe.txt: open failed: EACCES (Permission denied)
+```
+
+The agent holds `MANAGE_EXTERNAL_STORAGE` (all-files access, granted at
+provisioning — the same grant that lets it write `/sdcard/atak`). Scoped storage
+still blocks writing **another app's** `Android/obb/<pkg>/`. This is the same
+class of limitation as VPN: a platform restriction a normally-installed Device
+Owner cannot work around without Knox or root. **R2 is not feasible on this
+device; the resolution is to stop failing silently.**
+
+Before W17 `Reconciler.reconcileApps` did `if (role == "obb") continue` — the
+OBB part was never downloaded and never mentioned. The XAPK's APK installs fine
+and the app then fails at runtime with its assets missing, which is the hardest
+possible failure to diagnose from the operator's seat.
+
+##### Plan (7 steps)
+
+1. **Agent — make it loud.** `Reconciler.reconcileApps`: when an app's `files`
+   include a `role == "obb"` part, add an apply_error naming the package and the
+   reason (device goes `DEGRADED`, operator sees it), keep skipping the download.
+2. **Server — flag it at rest.** `AppPackageVersion.has_obb` property; Apps page
+   shows an "OBB" pill on the Parts cell and a one-line caption that a Device
+   Owner cannot place OBB expansion files on the device.
+3. **Docs.** `docs/ANDROID_PLATFORM_REFERENCE.md` — new ❌-verified subsection
+   under §6 (writing to `/sdcard`): the EACCES probe, what it means, that
+   all-files access does not help. Keep it beside the ✅ R1 finding.
+4. **Commit the probe.** `DebugConfigReceiver.probe_obb` is the evidence and the
+   way to re-check on the Qualcomm / MediaTek devices (R5) — commit it.
+5. **Agent version bump** (`0.9.3`, versionCode 33). No new unit test — the
+   change is a branch in reconcile glue, not pure logic; note why.
+6. **PROJECT_STATE.md** — close R2 in the risk table as "not feasible for a
+   normally-installed DO, documented and loud"; changelog; this record.
+7. **Server tests** — a version with an OBB part reports `has_obb` and the Apps
+   page renders the pill. Full server + agent suites green.
+
+##### Status: ✅ COMPLETE — 448 server tests, 46 agent tests, agent v33 (`0.9.3`)
+
+- Agent: `Reconciler.reconcileApps` raises `"<pkg>: needs an OBB expansion file,
+  which a Device Owner cannot place on this device …"` when a `role == "obb"`
+  part is present (device → `DEGRADED`), still skips the download. No new unit
+  test — it is a branch in reconcile glue, not pure decision logic.
+- Server: `AppPackageVersion.has_obb`; Apps page shows an `OBB` pill on the Parts
+  cell + a caption on the upload panel. New test
+  `test_a_package_carrying_an_obb_is_flagged`.
+- `docs/ANDROID_PLATFORM_REFERENCE.md` §6 — ❌-verified subsection with the
+  `probe_obb` EACCES output and the R5 note to re-check on the other two SoCs.
+- `DebugConfigReceiver.probe_obb` committed (evidence + R5 re-check tool).
+
 ---
 
 ### Later chunks (sketch — to be detailed at approval time)
@@ -2682,7 +2742,7 @@ the allowlist.
 | # | Item | Status |
 |---|---|---|
 | R1 | ~~Writing to `/sdcard/atak/` needs `MANAGE_EXTERNAL_STORAGE`~~ ✅ **CLOSED 2026-09-01, hardware-verified.** A map source was pushed by policy to `/sdcard/atak/imagery` and landed byte-identical in ATAK's own directory tree, with all-files access granted once at provisioning. No Knox, no root. Original concern: it needs `MANAGE_EXTERNAL_STORAGE`, an app-op that `setPermissionGrantState` does not grant. Matters for the TAK pack: ATAK config is not in a MediaStore collection, so shared-storage APIs do not reach it. | ✅ **Downgraded to an implementation choice, 2026-08-31.** The operator has seen a commercial MDM push files into ATAK directories on Device Owner devices with an MDM app as manager. So it is demonstrably achievable and no longer a design risk — only a question of which mechanism. On Samsung the overwhelmingly likely answer is Knox permission/app-op control, which is already the chosen path (D11). **Design response:** file push sits behind its own interface with a Knox implementation first and a one-time-grant fallback (Settings special-access, or a persisted SAF directory grant — one tap at provisioning, acceptable on a kiosk device). Costs nothing to build defensively, so no further investigation is warranted before Chunk 5. |
-| R2 | OBB placement for XAPKs inherits R1 | Open |
+| R2 | OBB placement for XAPKs inherits R1 | ✅ **CLOSED 2026-09-02 — not feasible, made loud (W17).** A `probe_obb` write to `/sdcard/Android/obb/org.takmdm.testapp/` on `SM-X520` returned `EACCES` even with all-files access. Scoped storage blocks writing another app's `Android/obb/` for a normally-installed Device Owner (same class as VPN — needs Knox or root). Resolution: the agent raises an apply_error (device `DEGRADED`, operator sees it) instead of skipping silently; the Apps page flags any package carrying an OBB; recorded in the Android reference §6. **Re-check on `SM-G736U1` / `SM-X828U` (R5)** — the probe action ships for it. |
 | R3 | Knox partner application pending — gates KME and KPE | Tracking; AOSP path must not depend on it |
 | R4 | `INTERSECT` on app allowlists is correct but counter-intuitive | Make configurable per policy; show resulting set before publish |
 | R5 | Mixed SoC vendors (Qualcomm XCover6 Pro / MediaTek Tab S10+) on One UI 8 | Test every firmware-level behavior on **both** models |
@@ -2708,6 +2768,17 @@ the allowlist.
 
 ## Changelog
 
+- **2026-09-02** — **W17: R2 (XAPK OBB placement) closed — not feasible, made
+  loud.** 448 server tests, 46 agent tests, agent v33 (`0.9.3`). A `probe_obb`
+  debug action wrote to `/sdcard/Android/obb/org.takmdm.testapp/` on `SM-X520`
+  and got `EACCES` — a normally-installed Device Owner cannot place another app's
+  OBB even with all-files access (Knox or root only; same class as VPN).
+  `Reconciler.reconcileApps` now raises an apply_error naming the package instead
+  of skipping the OBB part silently; the Apps page shows an `OBB` pill on any
+  package that carries one. Android reference §6 gets the ❌-verified probe
+  output; `DebugConfigReceiver.probe_obb` committed for the R5 re-check on the
+  Qualcomm / MediaTek devices. **The policy→agent audit is now fully resolved
+  except for dead spec fields (candidates for removal).**
 - **2026-09-02** — **W16: agent enforces `allowed_packages`.** 447 server tests,
   46 agent tests, agent v32 (`0.9.2`). The app allowlist now suspends every
   non-system user app not on it (via `setPackagesSuspended`); required apps and

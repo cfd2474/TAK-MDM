@@ -747,6 +747,17 @@ class AppPackageVersion(Base):
         back_populates="version", cascade="all, delete-orphan", lazy="selectin"
     )
 
+    @property
+    def has_obb(self) -> bool:
+        """True when this version carries an OBB expansion file.
+
+        A normally-installed Device Owner cannot place another app's OBB on the
+        device — scoped storage blocks ``Android/obb/<pkg>/`` even with all-files
+        access (verified EACCES on ``SM-X520``). Surfaced so the operator sees it
+        before assigning, not as missing assets at runtime.
+        """
+        return any(f.role == PartRole.OBB for f in self.files)
+
 
 class AppPackageFile(Base):
     """One installable part: the base APK, a split, or an OBB expansion file."""

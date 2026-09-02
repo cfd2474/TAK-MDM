@@ -513,6 +513,19 @@ class Reconciler(private val context: Context) {
                 .mapNotNull { files.optJSONObject(it) }
                 .sortedBy { if (it.optString("role") == "base") 0 else 1 }
 
+            // R2: a normally-installed Device Owner cannot write another app's
+            // Android/obb directory — verified EACCES on SM-X520, and it is a
+            // deliberate scoped-storage restriction (not fixed by all-files
+            // access). Report it rather than skipping silently: the APK installs
+            // and the app then fails at runtime with its assets missing, which is
+            // the worst kind of failure to diagnose.
+            if (ordered.any { it.optString("role") == "obb" }) {
+                AgentLog.w(TAG, "$packageName: OBB present but cannot be deployed (scoped storage, R2)")
+                errors += "$packageName: needs an OBB expansion file, which a Device Owner " +
+                    "cannot place on this device (Android blocks writing another app's " +
+                    "Android/obb). The APK installs but the app may be missing assets."
+            }
+
             for (part in ordered) {
                 if (part.optString("role") == "obb") continue
                 val sha = part.optString("sha256")
