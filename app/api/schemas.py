@@ -591,6 +591,9 @@ class CheckinRequest(BaseModel):
     apply_errors: list[str] = Field(default_factory=list)
 
     agent_version: str | None = None
+    # The numeric versionCode. The display version above cannot be compared, and
+    # the self-update gate has to decide "is the target newer than this" (W27).
+    agent_version_code: int | None = None
     os_version: str | None = None
     results: list[CommandResultReport] = Field(default_factory=list)
     # Escape hatch for an agent whose local cache is gone.
@@ -654,6 +657,9 @@ class CheckinResponse(BaseModel):
     # The names of the policies currently reaching this device, so the on-device
     # console can list them without the server sending policy content.
     policy_names: list[str] = Field(default_factory=list)
+    # An agent build this device should install now, or null. Decided server-side
+    # per device (W27) — candidate builds reach canaries only.
+    agent_update: dict[str, Any] | None = None
     # Omitted when the device already holds the current version — the bandwidth
     # saving that makes frequent check-in viable on a metered link.
     desired_state: dict[str, Any] | None = None

@@ -3388,6 +3388,102 @@ The agent reports the *previous* pass's `apply_errors`, so a device that has jus
 fixed itself still shows the old error until it checks in once more. That is by
 design (D28 separates intent from reported reality) but it reads as a failed fix.
 
+#### 🔻 W27 — DPC self-update: a first-class agent-update channel (Plan B)
+
+**Why not Plan A.** Pushing the agent through a policy's `required_apps` works —
+the spike proved the whole sequence on `SM-X520` — but it is *policy*, so the
+updater can be un-assigned by accident, its ordering inside a reconcile pass is
+uncontrolled, and there is no rollout control. A bad build reaches the entire
+fleet at once, and **there is no rollback**: Android refuses a downgrade, so the
+only cure is a new build with a higher `versionCode`. A canary gate is therefore
+not a nicety, it is the whole point.
+
+**What the spike already settled** (Android reference, `PackageInstaller`
+self-install): the commit survives the caller's death, the result callback never
+arrives so silence is success, `MY_PACKAGE_REPLACED` recovers in ~4.4 s, and
+there is no update loop. The mechanism is proven; W27 adds *control*.
+
+**Design, kept deliberately small.** No new release table and no status machine —
+agent builds are already `AppPackageVersion` rows for `org.takmdm.agent`, which
+is where the upload history and the content-addressed artifact already live. All
+that is missing is which version is aimed at whom.
+
+* Two settings: `agent.current_version_code` (the fleet) and
+  `agent.candidate_version_code` (canaries only). Promotion is
+  `current := candidate`; withdrawal clears one.
+* One device flag: `Device.is_agent_canary`.
+* One device fact: `Device.agent_version_code`, reported at check-in — the gate
+  needs the code, and today only the display `agent_version` string is reported.
+
+**Eligibility, per device, evaluated server-side at check-in.** Offer the highest
+version the device is entitled to (candidate if canary, else current), and only
+when **all** hold:
+1. it is newer than the device's reported `agent_version_code`;
+2. the device is **not** `degraded`/`failed` — never stack an agent swap on a
+   device that is already failing to apply things;
+3. the device has completed at least one clean check-in **on its current agent
+   version** — the settle rule, so a crash-looping build cannot churn.
+
+##### Plan (7 steps)
+
+1. **Model + migration.** `Device.is_agent_canary` (bool) and
+   `Device.agent_version_code` (int|null). Alembic on top of `h8j0l2n4p6r8`.
+2. **Service `agent_update.py`.** `offer_for(session, device) -> dict | None`
+   implementing the three rules above, with the decision logic pure enough to
+   unit-test without a device.
+3. **Check-in wiring.** `CheckinRequest.agent_version_code`;
+   `CheckinResponse.agent_update` = `{package_name, version_code, version_name,
+   sha256, size_bytes, url}` or null.
+4. **Agent.** Consume `agent_update`, compare against `BuildConfig.VERSION_CODE`,
+   download via the existing resumable artifact path, install **last** in the
+   reconcile pass and **only when that pass produced no errors**. Log loudly
+   immediately before commit — that line is the last thing the dying process
+   will ever write.
+5. **Console.** Admin → *Agent updates*: the `org.takmdm.agent` version history,
+   which version is current vs candidate, how many canaries are healthy on the
+   candidate, and Promote / Withdraw. A canary toggle per device.
+6. **Tests.** Eligibility truth table (newer/older, canary/not, degraded, settle),
+   the check-in contract, the console page.
+7. **Hardware on `SM-X520`.** Flag it canary, publish a candidate, watch only the
+   canary take it, promote, confirm. Agent v40.
+
+⚠️ **Large chunk.** If it runs long the natural split is 1–4 + 6 (the mechanism,
+drivable by API) as one checkpoint, then 5 + 7 (console and hardware).
+
+##### Status: steps 1–4 and 6 done (the mechanism). Steps 5 and 7 open.
+
+**Done.**
+
+* `Device.agent_version_code` / `Device.is_agent_canary`, migration
+  `i9k1m3o5q7s9`, applied to the running stack (head confirmed).
+* `app/services/agent_update.py`. The gate is a pure `decide()` returning
+  `Decision(offer, reason)` — every refusal names itself, because on this one
+  feature a silent no-op and a silent disaster look identical from outside.
+* Check-in carries `agent_version_code` up and `agent_update` down. The offer is
+  built **after** `_record_convergence`, so the compliance gate reads the errors
+  *this* check-in reported rather than the previous one's.
+* Agent: `Reconciler.selfUpdate()`, called last in `applyDesiredState` and only
+  when `errors.isEmpty()`. Logs the replacement immediately before commit.
+* 19 tests (`tests/test_agent_update.py`), suite 464 → **483 green**. Mutation-
+  checked: neutering either the settle gate or the compliance gate fails 5.
+
+**Two decisions worth knowing about.**
+
+* *Settled* is computed as "the device reported the same `agent_version_code` it
+  reported last time", evaluated **before** the column is overwritten. So the
+  first check-in after any update never counts. A build that crashes after
+  managing one check-in per launch therefore never gets offered a second update
+  — it stays put and stays visible, which is the failure mode we can actually
+  fix from the console.
+* Targeting a canary returns `max(current, candidate)`, not simply the candidate.
+  Withdrawing a bad candidate by pointing it at an older build must not turn into
+  an offer to downgrade the canary that already took the newer one — Android
+  would refuse it forever and the device would retry on every check-in.
+
+**Not done: steps 5 (console) and 7 (hardware).** Until the console page exists
+the two settings can only be moved by hand, so nothing is aimed at the fleet yet
+and the channel is inert in production. `SM-X520` is still on v39.
+
 ---
 
 ### Later chunks (sketch — to be detailed at approval time)

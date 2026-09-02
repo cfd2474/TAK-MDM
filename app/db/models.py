@@ -143,6 +143,16 @@ class Device(Base):
     imei: Mapped[str | None] = mapped_column(String(32), default=None)
     os_version: Mapped[str | None] = mapped_column(String(32), default=None)
     agent_version: Mapped[str | None] = mapped_column(String(32), default=None)
+    # The agent's versionCode, distinct from the display versionName above: the
+    # self-update gate has to compare numerically, and Android's own upgrade rule
+    # is on the code. NULL until an agent new enough to report it checks in.
+    agent_version_code: Mapped[int | None] = mapped_column(Integer, default=None)
+    # Takes agent builds while they are still candidates, ahead of the fleet.
+    # A bad agent build cannot be rolled back — Android refuses a downgrade — so
+    # something has to run it first, and that has to be a deliberate choice.
+    is_agent_canary: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=sa_false()
+    )
     enrollment_state: Mapped[EnrollmentState] = mapped_column(
         Enum(EnrollmentState, native_enum=False, length=16), default=EnrollmentState.PENDING
     )

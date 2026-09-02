@@ -100,6 +100,19 @@ def get(session: Session, key: str, default: str = "") -> str:
     return row.value if row is not None else default
 
 
+def put(session: Session, key: str, value: str, *, updated_by: str | None = None) -> None:
+    """Set one setting that is not part of a form group — the agent-update
+    pointers, for instance, which are edited by dedicated buttons rather than a
+    generic field list."""
+    row = session.get(AppSetting, key)
+    if row is None:
+        row = AppSetting(key=key)
+        session.add(row)
+    row.value = value
+    row.updated_by = updated_by
+    session.flush()
+
+
 def group_values(session: Session, group_key: str) -> dict[str, str]:
     group = GROUPS[group_key]
     stored = {

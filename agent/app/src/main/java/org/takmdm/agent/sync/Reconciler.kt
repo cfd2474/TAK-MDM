@@ -295,6 +295,10 @@ class Reconciler(private val context: Context) {
             .put("state_version", config.stateVersion)
             .put("applied_state_version", config.appliedStateVersion)
             .put("agent_version", AGENT_VERSION)
+            // The numeric code as well as the display name: the server's
+            // self-update gate compares versionCodes, which is also the only
+            // thing Android's own upgrade rule looks at (W27).
+            .put("agent_version_code", BuildConfig.VERSION_CODE)
             .put("os_version", Build.VERSION.RELEASE)
             .put("applied_optional_files", JSONArray(config.selectedOptionalFiles.toList()))
             // Without this the server cannot tell a healthy device from one that
@@ -356,7 +360,50 @@ class Reconciler(private val context: Context) {
         // genuinely stuck device indistinguishable from a slightly degraded one.
         config.appliedStateVersion = config.stateVersion
 
+        // Absolutely last, and only from a clean pass (W27). Installing over
+        // ourselves kills this process mid-call, so anything after it would not
+        // run — and swapping the agent on a device that is already failing to
+        // apply its policy only makes the failure harder to read.
+        if (errors.isEmpty()) {
+            response.optJSONObject("agent_update")?.let { selfUpdate(it) }
+        }
+
         return SyncOutcome(config.stateVersion, config.appliedStateVersion, errors)
+    }
+
+    /**
+     * Replace this agent with the build the server has offered.
+     *
+     * The server decides eligibility — candidate builds reach canaries only — so
+     * the only check here is that the offer really is newer, guarding against a
+     * stale cached response.
+     *
+     * Nothing after the commit runs: Android kills this process to replace it.
+     * The install still completes and `MY_PACKAGE_REPLACED` restarts the service
+     * about four seconds later, at which point the reconciler sees itself already
+     * at the wanted version and does nothing. There is therefore no success path
+     * to report and no result callback to await — silence is success, and the
+     * proof is the next check-in arriving with a higher versionCode.
+     */
+    private fun selfUpdate(offer: JSONObject) {
+        val wanted = offer.optLong("version_code", -1)
+        if (wanted <= BuildConfig.VERSION_CODE) return
+
+        val sha = offer.optString("sha256").takeIf { it.isNotBlank() } ?: return
+        val target = File(cacheDir, sha)
+        if (!downloadArtifact(sha, target)) {
+            AgentLog.w(TAG, "agent update $wanted: download failed verification")
+            return
+        }
+
+        // The last line this process will ever write. If a device goes quiet after
+        // an update, this is the entry that says it was deliberate.
+        AgentLog.i(
+            TAG,
+            "agent update: replacing ${BuildConfig.VERSION_CODE} with $wanted " +
+                "(${offer.optString("version_name")}); this process is about to be killed"
+        )
+        installer.install(context.packageName, listOf(target))
     }
 
     /**
