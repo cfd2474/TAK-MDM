@@ -731,6 +731,84 @@ def test_a_pristine_subpage_has_no_check(client: TestClient):
     assert "rail-check" not in link[: link.index("</a>")]
 
 
+def test_networks_wifi_and_vpn_subpages(client: TestClient):
+    body = client.get("/policies/new").text
+    assert 'data-page="networks:wi-fi"' in body
+    assert 'data-page="networks:vpn"' in body
+    assert 'name="wifi_networks__ssid"' in body
+    assert 'name="vpn_profiles__server"' in body
+
+
+def test_wifi_form_round_trip(client: TestClient):
+    pid = _create_via_form(
+        client, "Wi-Fi policy", "NETWORKS",
+        [
+            ("wifi_networks__ssid", "TAK-Field"),
+            ("wifi_networks__security", "wpa_psk"),
+            ("wifi_networks__password", "hunter22"),
+            ("wifi_networks__auto_join", "no"),
+            ("wifi_networks__hidden", "yes"),
+            ("wifi_networks__mac_randomization", "none"),
+        ],
+    )
+    spec = _stored_spec(client, pid)
+    entry = spec["wifi_networks"][0]
+    assert entry["ssid"] == "TAK-Field"
+    assert entry["password"] == "hunter22"
+    assert entry["auto_join"] is False
+    assert entry["hidden"] is True
+    assert entry["mac_randomization"] == "none"
+
+
+def test_wifi_short_password_is_rejected(client: TestClient):
+    r = client.post(
+        "/policies",
+        data={
+            "name": "Bad wifi", "policy_type": "NETWORKS",
+            "wifi_networks__ssid": "x", "wifi_networks__security": "wpa_psk",
+            "wifi_networks__password": "short",
+        },
+        follow_redirects=True,
+    )
+    assert "error" in r.url.query.decode()
+
+
+def test_vpn_form_round_trip(client: TestClient):
+    pid = _create_via_form(
+        client, "VPN policy", "NETWORKS",
+        [
+            ("vpn_profiles__name", "HQ"),
+            ("vpn_profiles__connection_type", "l2tp_ipsec_psk"),
+            ("vpn_profiles__server", "vpn.tak-solutions.com"),
+            ("vpn_profiles__username", "mike"),
+            ("vpn_profiles__password", "s3cret"),
+            ("vpn_profiles__mppe", "no"),
+        ],
+    )
+    entry = _stored_spec(client, pid)["vpn_profiles"][0]
+    assert entry["name"] == "HQ"
+    assert entry["server"] == "vpn.tak-solutions.com"
+    assert entry["username"] == "mike"
+    assert entry["mppe"] is False
+
+
+def test_networks_reaches_the_effective_policy(client: TestClient, enrolled):
+    device = enrolled(serial="W13-NET")
+    pid = _make_profile(
+        client, "Netted",
+        {"networks": {"wifi_networks": [{"ssid": "Ops", "security": "open"}]}},
+    )
+    client.put(
+        f"/api/v1/profiles/{pid}/targets",
+        json={"device_ids": [device["device_id"]]},
+        headers=ADMIN,
+    )
+    values = client.get(
+        f"/api/v1/devices/{device['device_id']}/effective-policy"
+    ).json()["values"]
+    assert values["NETWORKS"]["wifi_networks"][0]["ssid"] == "Ops"
+
+
 def test_all_subpages_of_a_category_share_one_form(client: TestClient):
     """So saving while on one sub-page keeps the others' fields."""
     pid = _make_profile(

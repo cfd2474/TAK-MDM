@@ -20,8 +20,8 @@ console — Enroll, Manage, Policies, Apps, Content, Reports, Admin, Guides — 
 server-rendered Jinja with no build step. **W10 replaced JSON-textarea policy
 editing with generated typed forms** (dropdowns, tri-state controls, repeatable
 rows; per-field merge hints). **W12 split each category's sub-topics into
-navigable sub-pages** with green-check completion markers. 443 server tests +
-30 agent tests.
+navigable sub-pages** with green-check completion markers. **W13 wired the
+Networks type (Wi-Fi + VPN).** 448 server tests + 30 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -2425,6 +2425,65 @@ group is a leaf (click it, get the form); 2+ groups expand to sub-pages.
    bubbles to the category, editing one sub-page and saving leaves the others
    intact.
 
+#### ✅ W13 — Networks policy type: Wi-Fi + VPN (COMPLETE)
+
+**448 server tests (was 443).** The **Networks** category is wired — **Wi-Fi** and
+**VPN** are its two sub-pages, each a repeatable list of profiles. Delivered:
+
+- **`app/policies/specs/networks.py`** — `WifiSecurity` / `MacRandomization` /
+  `VpnConnectionType` enums, `WifiNetwork` (ssid, security, password, auto_join,
+  hidden, mac_randomization; validates password length by security) and
+  `VpnProfile` (name, connection_type, server, username, password, mppe) models,
+  `NetworksSpec` (`wifi_networks` keyed by `ssid`, `vpn_profiles` keyed by
+  `name`, both `MERGE_BY_KEY`). Registered `NETWORKS`.
+- **`form_schema` / `form_parse`** — `wifi_list` / `vpn_list` controls and their
+  positional row-builders. Row-level booleans render as Yes/No `<select>` (a
+  checkbox does not submit when unchecked, which would break the positional
+  parsing).
+- **`_policy_form.html`** — `_wifi_row` / `_vpn_row` macros with the fields from
+  the screenshots; passwords as `type="password"` (masked, value present so an
+  edit round-trips).
+- **`creator_catalog.py`** — `networks` flipped from placeholder to `NETWORKS`.
+
+Verified live: the Networks category shows Wi-Fi / VPN sub-pages; a form submit
+produces a `NETWORKS` section carrying one Wi-Fi network and one VPN profile with
+every field.
+
+##### Caveats
+
+| # | Decision | Rationale |
+|---|---|---|
+| DW9 | **Wi-Fi and VPN passwords are stored in the policy spec in cleartext**, and travel in the signed bundle to the device. | The device genuinely needs them to connect, and a policy Wi-Fi config is persistent by nature (unlike the one-shot enrolment credential, D75). Widens the `pki/` + database exposure envelope (R8/R12); does not change what already had to be protected. Console shows them `type="password"`-masked. |
+
+**The Kotlin agent does not apply Wi-Fi/VPN yet** — builder + storage only, applier
+is a tracked follow-up (like Knox).
+
+##### Original plan
+
+**Wi-Fi entry:** SSID, auto-join, hidden network, MAC randomization
+(persistent / non-persistent / none), security (open / WEP / WPA-PSK / WPA3-SAE),
+password.
+**VPN entry:** profile name, connection type (PPTP / L2TP-IPsec-PSK /
+IPsec-Xauth-PSK), server, MPPE, username, password.
+
+1. **`app/policies/specs/networks.py`** — the two enums, `WifiNetwork` /
+   `VpnProfile` models, `NetworksSpec` (`wifi_networks` keyed by `ssid`,
+   `vpn_profiles` keyed by `name`, both `MERGE_BY_KEY`). Form metadata:
+   `ui_group` "Wi-Fi" / "VPN", `ui_control` "wifi_list" / "vpn_list". Register
+   `NETWORKS`.
+2. **`form_schema.py` / `form_parse.py`** — the two new list controls + their
+   row-builders (`wifi_networks__ssid` etc.).
+3. **`_policy_form.html`** — `_wifi_row` / `_vpn_row` macros with the fields
+   above (password as `type="password"` — visually masked, value present so an
+   edit round-trips).
+4. **`creator_catalog.py`** — flip `networks` from placeholder to `NETWORKS`.
+5. **Tests** — spec validation, sub-pages render (Wi-Fi / VPN under Networks),
+   form round-trip for one Wi-Fi and one VPN entry, resolver stacking.
+6. **Caveats, documented:** Wi-Fi/VPN passwords sit in the policy spec in
+   cleartext (the device genuinely needs them; folded into R8/R12). The Kotlin
+   agent does not apply Wi-Fi/VPN yet — builder + storage only, applier is a
+   tracked follow-up.
+
 ---
 
 ### Later chunks (sketch — to be detailed at approval time)
@@ -2469,6 +2528,11 @@ group is a leaf (click it, get the form); 2+ groups expand to sub-pages.
 
 ## Changelog
 
+- **2026-09-02** — **W13: Networks policy type (Wi-Fi + VPN).** 448 tests. New
+  `NETWORKS` spec with `wifi_networks` / `vpn_profiles` lists (models with the
+  fields from the reference UI, `MERGE_BY_KEY` on ssid / name), `wifi_list` /
+  `vpn_list` form controls, and the `networks` category wired. Passwords sit in
+  the spec cleartext (DW9 — the device needs them). Agent applier deferred.
 - **2026-09-02** — **W12: sub-paged policy categories.** 443 tests. A policy
   category's sub-topics are now separate sub-pages in the left rail (a sub-page =
   a field `ui_group`), each with its own controls, and a green check marks a

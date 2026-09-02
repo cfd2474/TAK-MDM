@@ -62,7 +62,11 @@ CATALOG: tuple[Category, ...] = (
         ),
         blurb="Required apps, blocklist, allowlist, and kiosk app.",
     ),
-    Category("networks", "Networks", None, subtopics=("wifi", "vpn")),
+    Category(
+        "networks", "Networks", "NETWORKS",
+        subtopics=("wifi", "vpn"),
+        blurb="Wi-Fi networks and built-in VPN profiles.",
+    ),
     Category(
         "security", "Security", None,
         subtopics=(

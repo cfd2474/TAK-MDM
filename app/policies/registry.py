@@ -30,6 +30,7 @@ from pydantic import ValidationError
 from app.policies.specs import (
     AppCatalogSpec,
     FilesSpec,
+    NetworksSpec,
     PasswordSpec,
     PolicySpec,
     RestrictionsSpec,
@@ -130,4 +131,9 @@ registry.register(
     "FILES",
     FilesSpec,
     "Files placed on the device, required or offered in the marketplace.",
+)
+registry.register(
+    "NETWORKS",
+    NetworksSpec,
+    "Wi-Fi networks and built-in VPN profiles.",
 )

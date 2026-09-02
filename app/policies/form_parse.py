@@ -121,4 +121,65 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
             if rows:
                 spec[name] = rows
 
+        elif field.control == "wifi_list":
+            ssids = form.getlist(f"{name}__ssid")
+            security = form.getlist(f"{name}__security")
+            passwords = form.getlist(f"{name}__password")
+            auto_join = form.getlist(f"{name}__auto_join")
+            hidden = form.getlist(f"{name}__hidden")
+            mac = form.getlist(f"{name}__mac_randomization")
+            rows = []
+            for i, ssid in enumerate(ssids):
+                ssid = (ssid or "").strip()
+                if not ssid:
+                    continue
+                row = {"ssid": ssid}
+                _put(row, "security", security, i)
+                _put(row, "mac_randomization", mac, i)
+                row["auto_join"] = _yes(auto_join, i, default=True)
+                row["hidden"] = _yes(hidden, i, default=False)
+                pw = (passwords[i] if i < len(passwords) else "").strip()
+                if pw:
+                    row["password"] = pw
+                rows.append(row)
+            if rows:
+                spec[name] = rows
+
+        elif field.control == "vpn_list":
+            names = form.getlist(f"{name}__name")
+            conn = form.getlist(f"{name}__connection_type")
+            servers = form.getlist(f"{name}__server")
+            usernames = form.getlist(f"{name}__username")
+            passwords = form.getlist(f"{name}__password")
+            mppe = form.getlist(f"{name}__mppe")
+            rows = []
+            for i, profile in enumerate(names):
+                profile = (profile or "").strip()
+                server = (servers[i] if i < len(servers) else "").strip()
+                if not profile or not server:
+                    continue
+                row = {"name": profile, "server": server}
+                _put(row, "connection_type", conn, i)
+                row["mppe"] = _yes(mppe, i, default=True)
+                user = (usernames[i] if i < len(usernames) else "").strip()
+                if user:
+                    row["username"] = user
+                pw = (passwords[i] if i < len(passwords) else "").strip()
+                if pw:
+                    row["password"] = pw
+                rows.append(row)
+            if rows:
+                spec[name] = rows
+
     return spec
+
+
+def _put(row: dict, key: str, values: list[str], i: int) -> None:
+    if i < len(values) and values[i]:
+        row[key] = values[i]
+
+
+def _yes(values: list[str], i: int, *, default: bool) -> bool:
+    if i < len(values) and values[i] in ("yes", "no"):
+        return values[i] == "yes"
+    return default
