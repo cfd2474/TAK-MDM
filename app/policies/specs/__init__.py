@@ -22,12 +22,14 @@ from app.policies.specs.app_catalog import AppCatalogSpec
 from app.policies.specs.base import PolicySpec
 from app.policies.specs.files import FilesSpec
 from app.policies.specs.password import PasswordSpec
+from app.policies.specs.periodic_sync import PeriodicSyncSpec
 from app.policies.specs.restrictions import RestrictionsSpec
 
 __all__ = [
     "AppCatalogSpec",
     "FilesSpec",
     "PasswordSpec",
+    "PeriodicSyncSpec",
     "PolicySpec",
     "RestrictionsSpec",
 ]

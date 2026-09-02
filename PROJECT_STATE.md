@@ -19,7 +19,8 @@ its hardware serial `R5GL40MMHRN`.
 console — Enroll, Manage, Policies, Apps, Content, Reports, Admin, Guides — on
 server-rendered Jinja with no build step. **W10 replaced JSON-textarea policy
 editing with generated typed forms** (dropdowns, tri-state controls, repeatable
-rows; per-field merge hints). 439 server tests + 30 agent tests.
+rows; per-field merge hints). **W11 wired the Periodic Sync policy type.**
+444 server tests + 30 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -2324,6 +2325,48 @@ managed" removed that section.
    one list and one object-list); "Not managed" omits the field; an out-of-range
    value is refused with a legible message; the merge hint is present.
 
+#### ✅ W11 — Periodic Sync policy type (COMPLETE)
+
+**444 server tests (was 439).** The **Periodic Sync** category is a real policy
+now — a single dropdown (*Foreground service* / *Background service* / *Not
+managed*) with the trade-off explained inline. Delivered:
+
+- **`app/policies/specs/periodic_sync.py`** — `SyncBehavior` str-enum,
+  `PeriodicSyncSpec.sync_behavior` with `Merge(HIGHEST_RANK)` and the screenshot's
+  explanation as the field `description`. Registered as `PERIODIC_SYNC`.
+- **`form_schema.py` / `form_parse.py`** — `ui_choices` label override for enum
+  dropdowns; string-enum handling (was int-only).
+- **`creator_catalog.py`** — `periodic_sync` flipped from placeholder to wired.
+- The resolver and desired-state projection are generic, so the value reaches the
+  device immediately. **Agent applier is still a follow-up** — the Kotlin agent
+  runs the foreground service by default and does not yet read `PERIODIC_SYNC`, so
+  "foreground" is the live behaviour regardless; enforcing "background" is an
+  agent change.
+
+Verified live: the dropdown renders with the help text; a `PERIODIC_SYNC` section
+created via the form resolves into the effective policy.
+
+##### Original plan
+
+1. **`app/policies/specs/periodic_sync.py`** — `SyncBehavior` enum
+   (`foreground` / `background`), `PeriodicSyncSpec.sync_behavior`
+   (`Merge(HIGHEST_RANK)` — a single operational choice with no safety ordering,
+   like `kiosk_package`; equal-rank clash surfaces as a conflict), form metadata
+   (title, the screenshot's explanation condensed, `ui_choices` for the two
+   labels). Register `PERIODIC_SYNC` in the registry.
+2. **`form_schema.py` / `form_parse.py`** — `ui_choices` label override for enum
+   dropdowns, and string-enum handling (today's only enum, `PasswordQuality`, is
+   int-based).
+3. **`creator_catalog.py`** — flip `periodic_sync` from placeholder to
+   `policy_type="PERIODIC_SYNC"`.
+4. **Tests** — spec validation, form round-trip, resolver stacking, the
+   desired-state projection carries `PERIODIC_SYNC`.
+5. **Agent applier is a follow-up.** The value reaches the device in the
+   desired-state document immediately (the projection is generic), but the Kotlin
+   agent does not read it yet — it already runs the foreground sync service by
+   default, so "foreground" is the current behaviour regardless. Enforcing
+   "background" is an agent change, tracked separately.
+
 ---
 
 ### Later chunks (sketch — to be detailed at approval time)
@@ -2368,6 +2411,11 @@ managed" removed that section.
 
 ## Changelog
 
+- **2026-09-02** — **W11: Periodic Sync policy type.** 444 tests. The category is
+  wired now — `PERIODIC_SYNC` spec (`sync_behavior`: foreground / background,
+  `HIGHEST_RANK` merge), registered, and shown in the creator as a dropdown with
+  the trade-off explained inline. Resolves and projects generically; the agent
+  applier is a follow-up (it already runs foreground).
 - **2026-09-02** — **W10: form-driven policy editing.** 439 tests. Overrides D64
   for the console (DW6): every policy JSON textarea is replaced by a generated
   form of typed controls — a tri-state select per restriction (Not managed /

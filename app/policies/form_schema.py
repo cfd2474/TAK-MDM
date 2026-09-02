@@ -63,6 +63,8 @@ class FormField:
     true_label: str = "Yes"
     false_label: str = "No"
     choices: list[EnumChoice] = field(default_factory=list)
+    #: for control == "enum": whether the member values are integers
+    enum_is_int: bool = False
 
 
 def _unwrap(annotation: object) -> object:
@@ -96,22 +98,26 @@ def _bounds(field_info) -> tuple[int | None, int | None, str | None]:
     return lo, hi, pattern
 
 
-def _control(annotation: object, extra: dict) -> tuple[str, list[EnumChoice]]:
+def _control(annotation: object, extra: dict) -> tuple[str, list[EnumChoice], bool]:
     override = extra.get("ui_control")
     if override:
-        return override, []
+        return override, [], False
     base = _unwrap(annotation)
     if base is bool:
-        return "bool", []
+        return "bool", [], False
     if isinstance(base, type) and issubclass(base, _enum.Enum):
+        labels = extra.get("ui_choices", {})
         choices = [
-            EnumChoice(str(member.value), member.name.replace("_", " ").title())
+            EnumChoice(
+                str(member.value),
+                labels.get(str(member.value), member.name.replace("_", " ").title()),
+            )
             for member in base
         ]
-        return "enum", choices
+        return "enum", choices, issubclass(base, int)
     if base is int:
-        return "int", []
-    return "str", []
+        return "int", [], False
+    return "str", [], False
 
 
 def form_fields(policy_type: str) -> list[FormField]:
@@ -122,7 +128,7 @@ def form_fields(policy_type: str) -> list[FormField]:
     fields: list[FormField] = []
     for name, info in spec_class.model_fields.items():
         extra = _extra(info)
-        control, choices = _control(info.annotation, extra)
+        control, choices, enum_is_int = _control(info.annotation, extra)
         lo, hi, pattern = _bounds(info)
         rule = merge_rules.get(name)
         hint = _STRATEGY_HINT.get(rule.strategy, "") if rule else ""
@@ -144,6 +150,7 @@ def form_fields(policy_type: str) -> list[FormField]:
                 true_label=extra.get("ui_true", "Yes"),
                 false_label=extra.get("ui_false", "No"),
                 choices=choices,
+                enum_is_int=enum_is_int,
             )
         )
     return fields

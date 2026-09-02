@@ -54,7 +54,10 @@ CATALOG: tuple[Category, ...] = (
         blurb="Device feature restrictions and screen timeout.",
     ),
     Category("knox", "Knox Configurations", None, blurb="Samsung Knox policy. Placeholder."),
-    Category("periodic_sync", "Periodic sync", None),
+    Category(
+        "periodic_sync", "Periodic sync", "PERIODIC_SYNC",
+        blurb="Foreground or background service for the agent's periodic check-in.",
+    ),
     Category(
         "app_management", "App Management", "APP_CATALOG",
         subtopics=(
