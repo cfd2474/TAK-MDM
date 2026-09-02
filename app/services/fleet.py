@@ -48,6 +48,40 @@ class FleetRow:
         return len(self.policy_names)
 
 
+def policy_names_for_device(session: Session, device: Device) -> list[str]:
+    """The names of every non-archived policy reaching this device — directly, or
+    through one of its groups or tags. Matches what the resolver applies."""
+    names: set[str] = set()
+
+    direct = session.execute(
+        select(Assignment, Policy.name)
+        .join(Policy, Assignment.policy_id == Policy.id)
+        .where(
+            Assignment.enabled.is_(True),
+            Policy.archived_at.is_(None),
+            Policy.is_template.is_(False),
+        )
+    ).all()
+    profiles = session.execute(
+        select(ProfileAssignment, PolicyProfile.name)
+        .join(PolicyProfile, ProfileAssignment.profile_id == PolicyProfile.id)
+        .where(
+            ProfileAssignment.enabled.is_(True), PolicyProfile.archived_at.is_(None)
+        )
+    ).all()
+
+    group_ids = {g.id for g in device.groups}
+    tag_ids = {t.id for t in device.tags}
+    for assignment, name in (*direct, *profiles):
+        if (
+            (assignment.scope is AssignmentScope.DEVICE and assignment.device_id == device.id)
+            or (assignment.scope is AssignmentScope.GROUP and assignment.group_id in group_ids)
+            or (assignment.scope is AssignmentScope.TAG and assignment.tag_id in tag_ids)
+        ):
+            names.add(name)
+    return sorted(names)
+
+
 def fleet_rows(session: Session) -> list[FleetRow]:
     """Every device, newest-checked-in style ordering left to the caller.
 

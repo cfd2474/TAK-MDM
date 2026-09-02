@@ -48,6 +48,13 @@
             <a href="/devices/{{ d.id }}">{{ d.name or d.serial_number }}</a>
             {% if d.name %}<span class="mono">{{ d.serial_number }}</span>{% endif %}
           </div>
+          <form method="post" action="/devices/{{ d.id }}/rename" class="inline-rename">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="next" value="/">
+            <input type="text" name="name" value="{{ d.name or '' }}"
+                   placeholder="name this device" maxlength="128" aria-label="rename {{ d.serial_number }}">
+            <button type="submit" class="ghost" title="Save name">Save</button>
+          </form>
         </td>
         <td class="mono">{{ d.serial_number }}</td>
         <td>{{ d.model or '—' }}</td>

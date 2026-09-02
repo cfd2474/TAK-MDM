@@ -43,8 +43,9 @@ implemented and proven on the tablet). W19 rebuilt the DPC's on-device UI as the
 branded ATLAS MDM console; W20 added a forced screen-lock passcode to the
 PASSWORD policy, hardware-proven; W21 unified every policy into the composite
 kind with a values-in-fields editor; W22 added quick archive from the list with
-an impact modal; W23 hardened live push and added a "Check in now" button.**
-461 server tests + 52 agent tests.
+an impact modal; W23 hardened live push and added a "Check in now" button; W24
+made the DPC show policy names and added console inline rename.**
+464 server tests + 52 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -3213,6 +3214,56 @@ gives ~1 s. Single uvicorn worker is fine for 50–500 devices; a multi-process
 deployment would fan the notify through Postgres `LISTEN/NOTIFY` (documented in
 `notifications.py`, not built).
 
+#### 🔻 W24 — DPC Policies tab shows names; console device rename; OS device-name deferred
+
+**Operator asks:** (a) the DPC app's Policies tab should list the applied policy
+*names*, not the field contents; (b) the admin portal needs a way to name/rename
+devices; (c) a rename should change the device name in the OS system settings.
+
+**Platform finding on (c):** a normally-installed Device Owner **cannot** write
+`Settings > About phone > Device name` (`Settings.Global.DEVICE_NAME`).
+`setGlobalSetting` has a fixed whitelist that excludes it; a direct write needs
+`WRITE_SECURE_SETTINGS`, which a DO cannot self-grant. Commercial MDMs
+(ManageEngine, Hexnode) can't either. **Decision (operator, 2026-09-02): defer
+to Knox** (R3 — Samsung Knox has a real API). Documented in the Android
+reference; nothing built for it now.
+
+##### Plan (6 steps)
+
+1. **Server → device: policy names.** `fleet.policy_names_for_device(session,
+   device)`; `CheckinResponse.policy_names` populated from it (metadata, does not
+   touch `state_version`, like `name` in W19).
+2. **Agent caches it.** `AgentConfig.policyNames` from the check-in response.
+3. **DPC Policies tab.** `renderPolicies` lists the names, one per row, with the
+   policy-version footer — no field content, no per-category cards. Falls back to
+   the cached bundle's category types if names haven't arrived yet. The
+   now-unused `summarise`/`describeObject`/`SECRET_POLICY_FIELDS` helpers go.
+   Agent v37 (`0.9.7`).
+4. **Console device rename.** Inline rename on the fleet table (name field per
+   row, "Save", `next=/` so it stays on the list) alongside the existing rename
+   on the device page. `/devices/{id}/rename` gains a validated `next`.
+5. **Docs.** Android reference §6c — the `setGlobalSetting` whitelist and the
+   ❌ device-name finding; R3 note.
+6. **Tests + hardware.** `policy_names` in the check-in response; the inline
+   rename round-trips; the DPC tab shows names on `SM-X520`.
+
+##### Status: ✅ COMPLETE (server + agent) — 464 server tests, 52 agent tests, agent v37 (`0.9.7`). DPC on-device verify pending (tablet not adb-reachable this session).
+
+- Server: `fleet.policy_names_for_device`; `CheckinResponse.policy_names`. Test
+  `test_checkin_lists_the_policy_names_reaching_the_device`.
+- Agent: `AgentConfig.policyNames` cached from the check-in; `renderPolicies`
+  lists the names (one "Policy" row each) + the version footer, nothing else.
+  `summarise` / `describeObject` / `SECRET_POLICY_FIELDS` removed. Falls back to
+  the cached bundle's category types if names have not arrived.
+- Console: inline rename on every fleet-table row (name field + Save, `next=/`
+  so it stays on the list), plus the existing rename on the device page.
+  `/devices/{id}/rename` takes a validated `next` (offsite values ignored — new
+  test).
+- Docs: Android reference §6c — the `setGlobalSetting` whitelist and the
+  ❌ "a DO cannot set the OS Device name" finding; deferred to Knox (R3).
+- The friendly name still only reaches the ATLAS console + the ATLAS MDM app's
+  Device tab; the OS "About phone" name is unchanged (platform limitation).
+
 ---
 
 ### Later chunks (sketch — to be detailed at approval time)
@@ -3257,6 +3308,14 @@ deployment would fan the notify through Postgres `LISTEN/NOTIFY` (documented in
 
 ## Changelog
 
+- **2026-09-02** — **W24: DPC shows policy names; console inline rename.** 464
+  server tests, 52 agent tests, agent v37 (`0.9.7`). The ATLAS MDM app's Policies
+  tab now lists the applied policy *names* (carried on the check-in via
+  `CheckinResponse.policy_names`) instead of the field contents. Every fleet-table
+  row gets an inline rename. **A normally-installed Device Owner cannot write the
+  OS "About phone > Device name"** (`setGlobalSetting` whitelist; commercial MDMs
+  can't either) — recorded in the Android reference, deferred to the Knox layer
+  (R3). The friendly name stays in the console + the app's Device tab.
 - **2026-09-02** — **W23: reliable push + a "Check in now" button.** 461 server
   tests. Policy changes already pushed via the long-poll doorbell (F3); W23
   closes the lost-ring gap — `/device/wait` sub-parks in 10 s slices and

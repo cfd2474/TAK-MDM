@@ -651,6 +651,9 @@ class CheckinResponse(BaseModel):
     # Echoed so the on-device console can show the operator-assigned name.
     # Null when the device has not been named.
     name: str | None = None
+    # The names of the policies currently reaching this device, so the on-device
+    # console can list them without the server sending policy content.
+    policy_names: list[str] = Field(default_factory=list)
     # Omitted when the device already holds the current version — the bandwidth
     # saving that makes frequent check-in viable on a metered link.
     desired_state: dict[str, Any] | None = None

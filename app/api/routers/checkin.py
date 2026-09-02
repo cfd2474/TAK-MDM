@@ -41,6 +41,7 @@ from app.services import commands as command_service
 from app.services import desired_state as desired_state_service
 from app.services import effective_policy as eff
 from app.services import files as file_service
+from app.services import fleet as fleet_service
 
 router = APIRouter(prefix="/api/v1/device", tags=["device"])
 
@@ -111,6 +112,7 @@ def checkin(
         desired_state_service.build_signed(session, device, signer) if send_bundle else None
     )
     live_commands = command_service.claim_for_delivery(session, device)
+    policy_names = fleet_service.policy_names_for_device(session, device)
 
     session.commit()
 
@@ -120,6 +122,7 @@ def checkin(
         generated_at=datetime.now(timezone.utc),
         policy_changed=policy_changed,
         name=device.name,
+        policy_names=policy_names,
         desired_state=bundle["desired_state"] if bundle else None,
         signature=bundle["signature"] if bundle else None,
         commands=[

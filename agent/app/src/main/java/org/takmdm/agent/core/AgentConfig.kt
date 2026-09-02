@@ -63,6 +63,16 @@ class AgentConfig(context: Context) {
         get() = prefs.getString(KEY_DEVICE_NAME, null)
         set(value) = prefs.edit { putString(KEY_DEVICE_NAME, value) }
 
+    /**
+     * Names of the policies currently reaching this device, echoed on every
+     * check-in. The on-device console lists these instead of policy content —
+     * the desired-state bundle carries values only, no names.
+     */
+    var policyNames: List<String>
+        get() = prefs.getString(KEY_POLICY_NAMES, "")
+            ?.split("\n")?.filter { it.isNotBlank() } ?: emptyList()
+        set(value) = prefs.edit { putString(KEY_POLICY_NAMES, value.joinToString("\n")) }
+
     /** Ed25519 public key, base64, pinned at enrollment to verify policy bundles. */
     var bundleKeyBase64: String?
         get() = prefs.getString(KEY_BUNDLE_KEY, null)
@@ -205,6 +215,7 @@ class AgentConfig(context: Context) {
         private const val KEY_SERVER_CA = "server_ca_pem"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_DEVICE_NAME = "device_name"
+        private const val KEY_POLICY_NAMES = "policy_names"
         private const val KEY_BUNDLE_KEY = "bundle_key"
         private const val KEY_RESET_PW_TOKEN = "reset_password_token"
         private const val KEY_STATE_VERSION = "state_version"

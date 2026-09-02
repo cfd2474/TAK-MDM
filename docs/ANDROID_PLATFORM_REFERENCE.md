@@ -614,9 +614,29 @@ compiled**.
 | `WIPE_RESET_PROTECTION_DATA` | 26 | Also clears factory reset protection. |
 | `setPasswordHistoryLength(admin, n)` | 8 | ⚠️ **Not deprecated** with the `setPasswordMinimum*` family at API 31 — history length has no complexity-bucket equivalent, so it still applies directly. ✅ Verified on `SM-X520`: policy `history_length: 6` → `dumpsys device_policy` shows `passwordHistoryLength=6`. |
 | `setSystemSetting(admin, key, value)` | 28 | Device Owner only. **Exactly three keys** allowed: `Settings.System.SCREEN_BRIGHTNESS`, `SCREEN_BRIGHTNESS_MODE`, `SCREEN_OFF_TIMEOUT` — anything else throws. Value is a string; `SCREEN_OFF_TIMEOUT` is milliseconds. Applies even under `DISALLOW_CONFIG_SCREEN_TIMEOUT`. ✅ Verified on `SM-X520`: policy `screen_timeout_seconds: 45` → `settings get system screen_off_timeout` returns `45000`. |
+| `setGlobalSetting(admin, key, value)` | 21 | Device Owner only, **mostly deprecated**. Fixed whitelist: `ADB_ENABLED`, `USB_MASS_STORAGE_ENABLED`, `STAY_ON_WHILE_PLUGGED_IN`, `WIFI_DEVICE_OWNER_CONFIGS_LOCKDOWN` — anything else throws `SecurityException`. |
 
 All of the above except `lockNow` require **device owner**, and the failure without
 it is a `SecurityException` whose message does not mention device ownership.
+
+### ❌ A Device Owner cannot set the OS "Device name" (W24)
+
+`Settings > About phone > Device name` is `Settings.Global.DEVICE_NAME`.
+
+* `dpm.setGlobalSetting(admin, "device_name", …)` — **`DEVICE_NAME` is not on the
+  whitelist**, so it throws.
+* A direct `contentResolver` write needs `WRITE_SECURE_SETTINGS`
+  (`signature|privileged|development`) — a Device Owner **cannot self-grant** it
+  (`setPermissionGrantState` reaches only `dangerous` runtime permissions). Only
+  `adb shell settings put global device_name …` works, because adb shell holds it.
+* Commercial MDMs (ManageEngine, Hexnode) hit the same wall — their "device name"
+  shows only in their own console, not in Android Settings.
+
+The nearest achievable thing is `BluetoothAdapter.setName()` (needs
+`BLUETOOTH_CONNECT`, which a DO *can* grant) — it changes the Bluetooth broadcast
+name, not the About-phone name. **Deferred to the Knox layer (R3)**: Samsung Knox
+has a real device-name API. Until then the ATLAS friendly name lives in the
+console and on the ATLAS MDM app's Device tab only.
 
 ### Passcode: the granular `setPasswordMinimum*` family (W18)
 

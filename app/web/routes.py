@@ -312,17 +312,26 @@ def force_checkin_form(
 def rename_device_form(
     device_id: uuid.UUID,
     name: str = Form(default=""),
+    next: str = Form(default=""),
     session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
 ) -> RedirectResponse:
-    """Set or clear a device's friendly name."""
+    """Set or clear a device's friendly name.
+
+    The name also travels back to the device on its next check-in, where the
+    ATLAS MDM app shows it. Note: a normally-installed Device Owner cannot write
+    the OS "About phone > Device name" — that is a platform restriction
+    (`setGlobalSetting` has a fixed whitelist that excludes it), deferred to the
+    Knox layer (R3).
+    """
     device = session.get(Device, device_id)
     if device is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
 
     device.name = name.strip() or None
     session.commit()
-    return _redirect(f"/devices/{device_id}")
+    dest = next if next.startswith("/") and not next.startswith("//") else f"/devices/{device_id}"
+    return _redirect(dest)
 
 
 @router.post("/devices/{device_id}/retire")

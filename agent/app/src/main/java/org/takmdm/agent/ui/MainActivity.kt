@@ -449,35 +449,35 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderPolicies(root: LinearLayout, desired: JSONObject?) {
         root.addView(ConsoleViews.sectionTitle(this, getString(R.string.section_policies_title)))
-        val policy = desired?.optJSONObject("policy")
-        if (policy == null || policy.length() == 0) {
-            root.addView(ConsoleViews.emptyNote(this, getString(R.string.empty_policies)))
-            return
-        }
 
-        for (type in policy.keys()) {
-            val section = policy.optJSONObject(type) ?: continue
-            val card = ConsoleViews.card(this)
-            val body = ConsoleViews.body(card)
-            body.addView(TextView(this).apply {
-                text = prettyType(type)
-                setTextAppearance(R.style.TextAppearance_Atlas_SectionTitle)
-                textSize = 16f
-                setPadding(0, 0, 0, ConsoleViews.dp(this@MainActivity, 4))
-            })
-            for (field in section.keys()) {
-                val shown =
-                    if (field in SECRET_POLICY_FIELDS) "•••••• (enforced)"
-                    else summarise(section.get(field))
-                body.addView(ConsoleViews.kv(this, prettyField(field), shown))
+        val names = config.policyNames
+        // Fall back to the category types from the cached bundle if the server has
+        // not sent names yet (older server, or first sync still pending).
+        val fallback = desired?.optJSONObject("policy")?.keys()?.asSequence()?.map { prettyType(it) }?.toList()
+
+        val show = when {
+            names.isNotEmpty() -> names
+            !fallback.isNullOrEmpty() -> fallback
+            else -> {
+                root.addView(ConsoleViews.emptyNote(this, getString(R.string.empty_policies)))
+                root.addView(policyVersionNote())
+                return
             }
-            root.addView(card)
         }
 
-        root.addView(ConsoleViews.emptyNote(
-            this, "Policy version ${config.stateVersion} (applied ${config.appliedStateVersion})",
-        ))
+        val card = ConsoleViews.card(this)
+        val body = ConsoleViews.body(card)
+        show.forEachIndexed { i, name ->
+            if (i > 0) body.addView(ConsoleViews.divider(this))
+            body.addView(ConsoleViews.kv(this, "Policy", name))
+        }
+        root.addView(card)
+        root.addView(policyVersionNote())
     }
+
+    private fun policyVersionNote(): TextView = ConsoleViews.emptyNote(
+        this, "Policy version ${config.stateVersion} (applied ${config.appliedStateVersion})",
+    )
 
     // --------------------------------------------------------------------- //
     // Sync + re-enrol
@@ -611,35 +611,6 @@ class MainActivity : AppCompatActivity() {
         else -> type.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }
     }
 
-    private fun prettyField(field: String): String =
-        field.replace('_', ' ').replaceFirstChar { it.uppercase() }
-
-    /** Scalars verbatim; arrays and objects as a short readable summary. */
-    private fun summarise(value: Any?): String = when (value) {
-        is JSONArray -> {
-            val items = (0 until value.length()).map { value.get(it) }
-            when {
-                items.isEmpty() -> getString(R.string.value_none)
-                items.all { it is JSONObject } -> items.joinToString("\n") { "• " + describeObject(it as JSONObject) }
-                else -> items.joinToString(", ") { it.toString() }
-            }
-        }
-        is JSONObject -> describeObject(value)
-        JSONObject.NULL, null -> getString(R.string.value_none)
-        is Boolean -> if (value) "Yes" else "No"
-        else -> value.toString()
-    }
-
-    private fun describeObject(obj: JSONObject): String {
-        for (key in listOf("title", "name", "package_name", "ssid", "dest_path", "file_id")) {
-            obj.str(key)?.let { primary ->
-                val extra = obj.str("min_version_code")?.let { " (min v$it)" } ?: ""
-                return primary + extra
-            }
-        }
-        return obj.toString()
-    }
-
     /**
      * A string field, or null. Android's [JSONObject.optString] returns the
      * literal "null" for an explicit JSON null and "" for a missing key — this
@@ -647,9 +618,4 @@ class MainActivity : AppCompatActivity() {
      */
     private fun JSONObject.str(key: String): String? =
         if (isNull(key)) null else optString(key).takeIf { it.isNotBlank() }
-
-    private companion object {
-        /** Policy fields whose value is a credential — never shown on the console. */
-        val SECRET_POLICY_FIELDS = setOf("set_password", "password")
-    }
 }

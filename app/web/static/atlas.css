@@ -390,6 +390,10 @@ label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 12.5
 .stack-name { display: flex; flex-direction: column; }
 .stack-name .mono { font-size: 12px; color: var(--muted); }
 
+.inline-rename { display: flex; gap: 4px; align-items: center; margin: 4px 0 0; }
+.inline-rename input[type="text"] { width: 15ch; padding: 2px 6px; font-size: 12px; }
+.inline-rename button { padding: 2px 8px; font-size: 11px; }
+
 /* --------------------------------------------------------------------------- */
 /* Section stub (pages not built yet)                                           */
 /* --------------------------------------------------------------------------- */

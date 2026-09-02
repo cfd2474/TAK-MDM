@@ -534,6 +534,32 @@ def test_a_device_can_be_named_and_the_name_is_shown(client: TestClient, enrolle
     assert "Command Post 1" in text_of(client.get(f"/devices/{device['device_id']}").text)
 
 
+def test_fleet_list_has_an_inline_rename_that_returns_to_the_list(client: TestClient, enrolled):
+    device = enrolled(serial="W24-INLINE")
+
+    page = client.get("/").text
+    assert f'action="/devices/{device["device_id"]}/rename"' in page
+    assert 'name="next" value="/"' in page
+
+    r = client.post(
+        f"/devices/{device['device_id']}/rename",
+        data={"name": "Bench 4", "next": "/"},
+        follow_redirects=False,
+    )
+    assert r.headers["location"] == "/"
+    assert "Bench 4" in text_of(client.get("/").text)
+
+
+def test_rename_ignores_an_offsite_next(client: TestClient, enrolled):
+    device = enrolled(serial="W24-OPENREDIR")
+    r = client.post(
+        f"/devices/{device['device_id']}/rename",
+        data={"name": "x", "next": "//evil.example/"},
+        follow_redirects=False,
+    )
+    assert r.headers["location"] == f"/devices/{device['device_id']}"
+
+
 def test_a_blank_name_clears_it(client: TestClient, enrolled):
     device = enrolled(serial="W2-CLEAR")
     client.post(f"/devices/{device['device_id']}/rename", data={"name": "Temp"})

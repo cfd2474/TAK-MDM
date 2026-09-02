@@ -316,6 +316,9 @@ class Reconciler(private val context: Context) {
                 if (response.isNull("name")) null
                 else response.optString("name").takeIf { it.isNotBlank() }
         }
+        response.optJSONArray("policy_names")?.let { arr ->
+            config.policyNames = (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotBlank() } }
+        }
 
         // The server considers a reported result final, so only clear the queue
         // once it has actually been accepted. Clearing on send would lose the
