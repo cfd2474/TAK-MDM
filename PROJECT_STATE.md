@@ -223,9 +223,14 @@ a convergent one — it is a known-good path on these exact devices. Headwind is
 a Samsung Knox partner, which independently supports the Knox-forward direction in
 D11.
 
-**External dependency:** Samsung Knox partner/developer application is *pending*.
-KME and KPE licensing are gated on it. The AOSP path must be fully functional
-without Knox; Knox is strictly additive.
+**External dependency (corrected 2026-09-02 — see [docs/KNOX.md](docs/KNOX.md)):**
+**KPE is not gated on a partner agreement.** KPE Premium is free and the *end
+customer* generates their own key in the Knox Admin Portal; a Knox **developer**
+account is needed only to download the SDK, at build time, by whoever compiles the
+agent. Samsung express approval is being sought to settle whether a Knox-built APK
+may be distributed to third parties. **Knox Mobile Enrollment** for a self-hosted
+EMM remains genuinely open. The AOSP path must be fully functional without Knox;
+Knox is strictly additive.
 
 ---
 
@@ -236,6 +241,7 @@ without Knox; Knox is strictly additive.
 | [HANDOFF.md](HANDOFF.md) | Starting a new session — orientation, how to run it, what is unproven, and where to go next |
 | **[docs/ANDROID_PLATFORM_REFERENCE.md](docs/ANDROID_PLATFORM_REFERENCE.md)** | **Before any change touching provisioning, the DPC, app installation, permissions, or file placement.** Android contracts traced to official sources, plus what is verified on our hardware. Consult it *every* iteration — three factory resets were spent on a failure the documentation states plainly. |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Design rationale for the server and agent |
+| [docs/KNOX.md](docs/KNOX.md) | Before planning or writing Knox code, or answering what Knox will/will not allow. Licensing, distribution model, the assessed capability surface, and the walls Knox does **not** close. |
 | "Operational notes" below | Before debugging anything that looks impossible |
 
 ## Operational notes — read before debugging anything "impossible"
@@ -3225,8 +3231,15 @@ devices; (c) a rename should change the device name in the OS system settings.
 `setGlobalSetting` has a fixed whitelist that excludes it; a direct write needs
 `WRITE_SECURE_SETTINGS`, which a DO cannot self-grant. Commercial MDMs
 (ManageEngine, Hexnode) can't either. **Decision (operator, 2026-09-02): defer
-to Knox** (R3 — Samsung Knox has a real API). Documented in the Android
-reference; nothing built for it now.
+to Knox.** Documented in the Android reference; nothing built for it now.
+
+⚠️ **Correction (2026-09-02, later the same day):** the "Knox has a real API"
+premise was wrong — I asserted it from expectation, not from the docs. There is
+**no `setDeviceName` in the Knox SDK**; `custom.SettingsManager` is a fixed
+allow-list of ~40 toggles and cannot write arbitrary secure/global settings.
+Device naming is a **Knox Configure** feature — a separate Samsung provisioning
+product, not KPE or the SDK. So this is not "deferred", it is **closed as not
+achievable** by any path currently in scope. See [docs/KNOX.md](docs/KNOX.md) §4.2.
 
 ##### Plan (6 steps)
 
@@ -3260,9 +3273,11 @@ reference; nothing built for it now.
   `/devices/{id}/rename` takes a validated `next` (offsite values ignored — new
   test).
 - Docs: Android reference §6c — the `setGlobalSetting` whitelist and the
-  ❌ "a DO cannot set the OS Device name" finding; deferred to Knox (R3).
+  ❌ "a DO cannot set the OS Device name" finding. (Originally logged as
+  "deferred to Knox"; **corrected the same day — Knox cannot do it either**, see
+  [docs/KNOX.md](docs/KNOX.md) §4.2.)
 - The friendly name still only reaches the ATLAS console + the ATLAS MDM app's
-  Device tab; the OS "About phone" name is unchanged (platform limitation).
+  Device tab; the OS "About phone" name is unchanged, and stays that way.
 
 ---
 
@@ -3270,10 +3285,62 @@ reference; nothing built for it now.
 
 | # | Chunk | Notes |
 |---|---|---|
-| 7 | Knox layer | `OemPolicyApplier`, KSP restriction-bundle generation, KPE licensing, SDK fallbacks |
+| 7 | **Knox layer** | Planned in detail below |
 | 8 | TAK pack | ATAK policy type: data packages, `.pref` files, plugin sets, cert enrollment |
-| 9 | Admin UI | Policy builder, stacking view, fleet dashboard |
+| 9 | ~~Admin UI~~ | ✅ Delivered as W1–W24 |
 | 10 | Offline / LAN relay | Only if required — D9 keeps the door open |
+| 11 | **Hardening for distribution** | New, from the scope change below. Auth defaults, `pki/ca.key` at rest (R8), multi-worker push (R7-adjacent), a real install guide |
+
+### Scope change (operator, 2026-09-02)
+
+ATLAS is to be **published as a repo other people self-host** — not a single
+private deployment. Two consequences:
+
+* Knox has to work on a **bring-your-own-licence** basis, with no Samsung
+  relationship required of the downstream operator.
+* The current dev defaults become real risks for a stranger's deployment:
+  `TAKMDM_ADMIN_AUTH_MODE=disabled` out of the box, an unencrypted CA key at
+  `pki/ca.key` (R8), and a live-push bus that assumes a single uvicorn worker.
+  Those belong in a deliberate **Chunk 11**, not as a surprise.
+
+### Chunk 7 — Knox layer
+
+**Read [docs/KNOX.md](docs/KNOX.md) first.** It carries the licensing model, the
+distribution analysis, the assessed capability surface, and — importantly — the
+walls Knox does **not** close, so they are not re-litigated.
+
+**Settled by research (2026-09-02):**
+* **SDK, not KSP.** KSP/OEMConfig requires managed Google Play; ATLAS has none by
+  design (D11). The SDK path is Play-free end to end.
+* **KPE Premium is free**, customer-generated in the Knox Admin Portal. No
+  partner agreement needed for their key to work. R3 corrected accordingly.
+* **`knoxsdk.jar` is `compileOnly`** — no Samsung code in the APK. Skip
+  `supportlib.jar` (that one *is* packaged, and is only for Knox ≤ 2.7.1).
+* **Build against what AE never attempted** — firewall, attestation, audit log,
+  per-app VPN, cert provisioning. Anything resembling a nicer AE feature is being
+  deprecated and is a bad bet.
+
+##### Plan (5 steps)
+
+1. **Flavours.** Gradle `aosp` / `knox` product flavours; `src/knox/kotlin/` and
+   a gitignored `libs/knoxsdk.jar`. `assembleAospDebug` must stay the default and
+   stay green on a fresh clone with no jar; the `knox` flavour fails with a clear
+   message when the jar is missing. Both suites still pass.
+2. **Licence plumbing.** `knox_license_key` admin setting → desired state →
+   agent `activateLicense` + the `KNOX_LICENSE_STATUS` broadcast → activation
+   state reported on check-in and surfaced on the device page and the ATLAS MDM
+   app's Device tab. Failure falls back to AOSP, loudly.
+3. **`KNOX` policy type** in the registry + the creator-catalog category wired
+   (the placeholder already exists).
+4. **Firewall first** — the highest-value capability with no AOSP equivalent —
+   end-to-end through the existing `OemPolicyApplier` seam, proving it carries a
+   real feature rather than a stub.
+5. **Docs + release.** Promote `docs/KNOX.md` §5 into the README; publish both
+   flavour APKs as release artifacts.
+
+**Blocked on nothing** except that step 5's *published* `knox` APK depends on
+Samsung's answer to KNOX.md §7 Q1. Steps 1–4 can proceed regardless; worst case
+the `knox` flavour is build-it-yourself.
 
 ---
 
@@ -3283,7 +3350,7 @@ reference; nothing built for it now.
 |---|---|---|
 | R1 | ~~Writing to `/sdcard/atak/` needs `MANAGE_EXTERNAL_STORAGE`~~ ✅ **CLOSED 2026-09-01, hardware-verified.** A map source was pushed by policy to `/sdcard/atak/imagery` and landed byte-identical in ATAK's own directory tree, with all-files access granted once at provisioning. No Knox, no root. Original concern: it needs `MANAGE_EXTERNAL_STORAGE`, an app-op that `setPermissionGrantState` does not grant. Matters for the TAK pack: ATAK config is not in a MediaStore collection, so shared-storage APIs do not reach it. | ✅ **Downgraded to an implementation choice, 2026-08-31.** The operator has seen a commercial MDM push files into ATAK directories on Device Owner devices with an MDM app as manager. So it is demonstrably achievable and no longer a design risk — only a question of which mechanism. On Samsung the overwhelmingly likely answer is Knox permission/app-op control, which is already the chosen path (D11). **Design response:** file push sits behind its own interface with a Knox implementation first and a one-time-grant fallback (Settings special-access, or a persisted SAF directory grant — one tap at provisioning, acceptable on a kiosk device). Costs nothing to build defensively, so no further investigation is warranted before Chunk 5. |
 | R2 | OBB placement for XAPKs inherits R1 | ✅ **CLOSED 2026-09-02 — not feasible, made loud (W17).** A `probe_obb` write to `/sdcard/Android/obb/org.takmdm.testapp/` on `SM-X520` returned `EACCES` even with all-files access. Scoped storage blocks writing another app's `Android/obb/` for a normally-installed Device Owner (same class as VPN — needs Knox or root). Resolution: the agent raises an apply_error (device `DEGRADED`, operator sees it) instead of skipping silently; the Apps page flags any package carrying an OBB; recorded in the Android reference §6. **Re-check on `SM-G736U1` / `SM-X828U` (R5)** — the probe action ships for it. |
-| R3 | Knox partner application pending — gates KME and KPE | Tracking; AOSP path must not depend on it |
+| R3 | ~~Knox partner application pending — gates KME **and KPE**~~ | ⚠️ **Largely stale, corrected 2026-09-02 — see [docs/KNOX.md](docs/KNOX.md).** KPE is **not** gated on a partner agreement: **KPE Premium is free** and the *end customer* generates their own key self-service in the Knox Admin Portal. A Knox **developer** account is needed only to download the SDK, which is a build-time concern for whoever compiles the agent — and the jar is `compileOnly`, so no Samsung code ships in the APK. **What remains open:** (a) whether Samsung permits distributing a Knox-built APK to third parties (a licence-agreement question, in the express-approval conversation now); (b) **Knox Mobile Enrollment** for a self-hosted EMM — that part of R3 stands. AOSP path must still not depend on Knox. |
 | R4 | `INTERSECT` on app allowlists is correct but counter-intuitive | Make configurable per policy; show resulting set before publish |
 | R5 | Mixed SoC vendors (Qualcomm XCover6 Pro / MediaTek Tab S10+) on One UI 8 | Test every firmware-level behavior on **both** models |
 | R6 | ~~Advanced Protection Mode blocks Device Owner install~~ | ✅ **Downgraded to low, 2026-08-31.** The operator runs commercial MDMs and Headwind in production on this exact hardware and One UI 8, installing apps successfully. Device Owner `PackageInstaller` holds system install privilege and does not go through the user-facing "install unknown apps" gate — as predicted, now corroborated by production use rather than documentation. Residual risk is only a user *opting into* Advanced Protection, which a Device Owner can largely prevent by restricting Settings anyway. No lab work needed. |
@@ -3308,14 +3375,27 @@ reference; nothing built for it now.
 
 ## Changelog
 
+- **2026-09-02** — **Knox assessed; scope changed to a published self-hosted
+  repo.** No code. New [docs/KNOX.md](docs/KNOX.md) records the Knox research:
+  the **SDK path is Play-free** (KSP is not, so it is out), **KPE Premium is free
+  and customer-generated**, and **`knoxsdk.jar` is `compileOnly`** so no Samsung
+  code ships in the APK — meaning a downstream operator needs neither a developer
+  account nor the SDK. Three earlier optimistic claims corrected: Knox does **not**
+  grant the all-files app-op (`applyRuntimePermissions` dead since Android 12),
+  does **not** give built-in VPN profiles (still needs a vendor client app), and
+  does **not** set the OS device name (no `setDeviceName`; that is Knox Configure).
+  **R3 corrected** — KPE was never gated on a partner agreement; KME still is.
+  Chunk 7 planned in detail; new Chunk 11 added for distribution hardening.
 - **2026-09-02** — **W24: DPC shows policy names; console inline rename.** 464
   server tests, 52 agent tests, agent v37 (`0.9.7`). The ATLAS MDM app's Policies
   tab now lists the applied policy *names* (carried on the check-in via
   `CheckinResponse.policy_names`) instead of the field contents. Every fleet-table
   row gets an inline rename. **A normally-installed Device Owner cannot write the
   OS "About phone > Device name"** (`setGlobalSetting` whitelist; commercial MDMs
-  can't either) — recorded in the Android reference, deferred to the Knox layer
-  (R3). The friendly name stays in the console + the app's Device tab.
+  can't either) — recorded in the Android reference. Logged that day as "deferred
+  to Knox"; **corrected the same day — Knox cannot do it either** (no
+  `setDeviceName` in the SDK; device naming is Knox Configure). The friendly name
+  stays in the console + the app's Device tab.
 - **2026-09-02** — **W23: reliable push + a "Check in now" button.** 461 server
   tests. Policy changes already pushed via the long-poll doorbell (F3); W23
   closes the lost-ring gap — `/device/wait` sub-parks in 10 s slices and

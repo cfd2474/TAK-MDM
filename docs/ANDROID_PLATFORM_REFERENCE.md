@@ -634,9 +634,17 @@ it is a `SecurityException` whose message does not mention device ownership.
 
 The nearest achievable thing is `BluetoothAdapter.setName()` (needs
 `BLUETOOTH_CONNECT`, which a DO *can* grant) — it changes the Bluetooth broadcast
-name, not the About-phone name. **Deferred to the Knox layer (R3)**: Samsung Knox
-has a real device-name API. Until then the ATLAS friendly name lives in the
-console and on the ATLAS MDM app's Device tab only.
+name, not the About-phone name.
+
+⚠️ **Correction (2026-09-02): Knox does not fix this either.** W24 recorded this as
+"deferred to Knox"; a read of the Knox SDK reference says otherwise. There is no
+`setDeviceName` anywhere in the SDK, `RestrictionPolicy` has no device-name setter,
+and `custom.SettingsManager` is an allow-list of ~40 predefined toggles that
+**cannot write arbitrary secure/global settings**. Device naming and branding are a
+**Knox Configure** feature — a separate Samsung provisioning product, not KPE or the
+SDK. See [KNOX.md](KNOX.md). The ATLAS friendly name therefore lives in the console
+and on the ATLAS MDM app's Device tab, and that is the end state unless Knox
+Configure is ever brought in.
 
 ### Passcode: the granular `setPasswordMinimum*` family (W18)
 
