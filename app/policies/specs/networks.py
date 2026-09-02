@@ -43,21 +43,18 @@ class WifiSecurity(str, enum.Enum):
     WPA3_SAE = "wpa3_sae"
 
 
-class MacRandomization(str, enum.Enum):
-    PERSISTENT = "persistent"
-    NON_PERSISTENT = "non_persistent"
-    NONE = "none"
-
-
 class WifiNetwork(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # auto_join and mac_randomization were dropped in W18: the per-network
+    # auto-join toggle and WifiConfiguration.macRandomizationSetting are both
+    # @SystemApi, so a normally-installed Device Owner cannot set either. A
+    # configured network auto-joins by default and the platform picks the MAC
+    # randomization mode itself.
     ssid: str = Field(min_length=1, max_length=32)
     security: WifiSecurity = WifiSecurity.WPA_PSK
     password: str | None = Field(default=None, max_length=64)
-    auto_join: bool = True
     hidden: bool = False
-    mac_randomization: MacRandomization = MacRandomization.PERSISTENT
 
     @model_validator(mode="after")
     def _password_present_when_needed(self) -> "WifiNetwork":

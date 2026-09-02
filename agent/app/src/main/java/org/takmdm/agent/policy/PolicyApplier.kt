@@ -71,24 +71,48 @@ class PolicyApplier(private val context: Context) {
     // Passcode
     // ----------------------------------------------------------------------- //
 
+    @Suppress("DEPRECATION")
     private fun applyPassword(spec: JSONObject): List<String> {
         val failures = mutableListOf<String>()
 
-        runCatching {
-            // Android 12 deprecated the granular setPasswordMinimum* family in
-            // favour of complexity buckets. Mapping the server's numeric strength
-            // onto a bucket keeps the policy meaningful on modern releases.
-            val complexity = when {
-                spec.optInt("min_length", 0) >= 12 -> DevicePolicyManager.PASSWORD_COMPLEXITY_HIGH
-                spec.optInt("min_length", 0) >= 8 -> DevicePolicyManager.PASSWORD_COMPLEXITY_MEDIUM
-                spec.has("min_length") || spec.has("quality") ->
-                    DevicePolicyManager.PASSWORD_COMPLEXITY_LOW
-                else -> DevicePolicyManager.PASSWORD_COMPLEXITY_NONE
-            }
-            if (complexity != DevicePolicyManager.PASSWORD_COMPLEXITY_NONE) {
-                dpm.requiredPasswordComplexity = complexity
-            }
-        }.onFailure { failures += "password complexity: ${it.message}" }
+        // The granular setPasswordMinimum* family, not the complexity buckets: it
+        // maps 1:1 onto the spec (quality / min_length / min_letters / min_digits
+        // / min_symbols) and a Device Owner on a company-owned device may still
+        // use it (see the Android platform reference §6c). setPasswordQuality
+        // must run first — the per-character-class setters throw below COMPLEX,
+        // and calling it also clears any earlier setRequiredPasswordComplexity.
+        val quality = PasswordPlan.effectiveQuality(
+            quality = spec.optInt("quality").takeIf { spec.has("quality") },
+            minLength = spec.optInt("min_length").takeIf { spec.has("min_length") },
+            minLetters = spec.optInt("min_letters").takeIf { spec.has("min_letters") },
+            minDigits = spec.optInt("min_digits").takeIf { spec.has("min_digits") },
+            minSymbols = spec.optInt("min_symbols").takeIf { spec.has("min_symbols") },
+        )
+        if (quality != null) {
+            runCatching {
+                dpm.setPasswordQuality(admin, dpmPasswordQuality(quality))
+            }.onFailure { failures += "password quality: ${it.message}" }
+        }
+
+        if (spec.has("min_length")) {
+            runCatching {
+                dpm.setPasswordMinimumLength(admin, spec.getInt("min_length"))
+            }.onFailure { failures += "password min length: ${it.message}" }
+        }
+
+        // effectiveQuality() already forces COMPLEX whenever any of these is set,
+        // so this guard is belt-and-braces against a future change to that rule.
+        if (PasswordPlan.charClassMinimumsApply(quality)) {
+            if (spec.has("min_letters")) runCatching {
+                dpm.setPasswordMinimumLetters(admin, spec.getInt("min_letters"))
+            }.onFailure { failures += "password min letters: ${it.message}" }
+            if (spec.has("min_digits")) runCatching {
+                dpm.setPasswordMinimumNumeric(admin, spec.getInt("min_digits"))
+            }.onFailure { failures += "password min digits: ${it.message}" }
+            if (spec.has("min_symbols")) runCatching {
+                dpm.setPasswordMinimumSymbols(admin, spec.getInt("min_symbols"))
+            }.onFailure { failures += "password min symbols: ${it.message}" }
+        }
 
         if (spec.has("max_failed_attempts_before_wipe")) {
             runCatching {
@@ -121,6 +145,17 @@ class PolicyApplier(private val context: Context) {
         }
 
         return failures
+    }
+
+    @Suppress("DEPRECATION")
+    private fun dpmPasswordQuality(q: PasswordPlan.PwQuality): Int = when (q) {
+        PasswordPlan.PwQuality.UNSPECIFIED -> DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED
+        PasswordPlan.PwQuality.SOMETHING -> DevicePolicyManager.PASSWORD_QUALITY_SOMETHING
+        PasswordPlan.PwQuality.NUMERIC -> DevicePolicyManager.PASSWORD_QUALITY_NUMERIC
+        PasswordPlan.PwQuality.NUMERIC_COMPLEX -> DevicePolicyManager.PASSWORD_QUALITY_NUMERIC_COMPLEX
+        PasswordPlan.PwQuality.ALPHABETIC -> DevicePolicyManager.PASSWORD_QUALITY_ALPHABETIC
+        PasswordPlan.PwQuality.ALPHANUMERIC -> DevicePolicyManager.PASSWORD_QUALITY_ALPHANUMERIC
+        PasswordPlan.PwQuality.COMPLEX -> DevicePolicyManager.PASSWORD_QUALITY_COMPLEX
     }
 
     // ----------------------------------------------------------------------- //
@@ -245,9 +280,8 @@ class PolicyApplier(private val context: Context) {
                     return@runCatching
                 }
                 // enableNetwork makes it a connection candidate; a configured
-                // network auto-joins by default. There is no public per-network
-                // auto-join toggle for a DO, so `auto_join: false` is accepted and
-                // recorded on the server but not enforced here.
+                // network auto-joins by default and there is no public per-network
+                // auto-join toggle for a DO (the spec dropped the field in W18).
                 wifi.enableNetwork(id, false)
                 config.recordWifiNetworkId(n.ssid, id)
                 managed.add(n.ssid)

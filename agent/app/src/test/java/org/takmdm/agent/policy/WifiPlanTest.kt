@@ -34,17 +34,15 @@ class WifiPlanTest {
         assertEquals("TAK-Field", n.ssid)
         assertEquals("wpa_psk", n.security)
         assertEquals("hunter22", n.password)
-        assertTrue(n.autoJoin)        // default true
         assertEquals(false, n.hidden) // default false
     }
 
     @Test
-    fun `honours explicit auto-join and hidden`() {
+    fun `honours explicit hidden`() {
         val spec = JSONObject(
-            """{"wifi_networks":[{"ssid":"Ops","security":"open","auto_join":false,"hidden":true}]}"""
+            """{"wifi_networks":[{"ssid":"Ops","security":"open","hidden":true}]}"""
         )
         val n = WifiPlan.desired(spec)[0]
-        assertEquals(false, n.autoJoin)
         assertEquals(true, n.hidden)
         assertEquals(null, n.password)
     }

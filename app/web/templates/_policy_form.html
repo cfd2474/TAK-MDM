@@ -153,14 +153,7 @@
       </select></div>
     <div><label>Password</label>
       <input type="password" name="{{ name }}__password" value="{{ e.password if e and e.password else '' }}" placeholder="min 8" style="width:130px"></div>
-    <div><label>Auto-join</label>{{ _yesno(name ~ '__auto_join', (e.auto_join if e else true)) }}</div>
     <div><label>Hidden</label>{{ _yesno(name ~ '__hidden', (e.hidden if e else false)) }}</div>
-    <div><label>MAC randomisation</label>
-      <select name="{{ name }}__mac_randomization">
-        {% for v, lbl in [('persistent','Persistent'),('non_persistent','Non-persistent'),('none','None')] %}
-          <option value="{{ v }}" {{ 'selected' if (e.mac_randomization if e else 'persistent') == v }}>{{ lbl }}</option>
-        {% endfor %}
-      </select></div>
     <button type="button" class="ghost" data-remove-row>Remove</button>
   </div>
 {% endmacro %}

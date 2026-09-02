@@ -56,16 +56,22 @@ class PasswordSpec(PolicySpec):
         default=None, ge=0, le=16, title="Minimum length",
         json_schema_extra={"ui_group": _STRENGTH},
     )
+    # Any of these three forces the passcode to "Complex" quality on the device
+    # (the granular DPM setters require PASSWORD_QUALITY_COMPLEX or they throw),
+    # regardless of what `quality` is set to.
     min_letters: Annotated[int | None, Merge(MergeStrategy.MAX)] = Field(
         default=None, ge=0, le=16, title="Minimum letters",
+        description="At least this many letters. Forces a complex passcode.",
         json_schema_extra={"ui_group": _STRENGTH},
     )
     min_digits: Annotated[int | None, Merge(MergeStrategy.MAX)] = Field(
         default=None, ge=0, le=16, title="Minimum digits",
+        description="At least this many digits. Forces a complex passcode.",
         json_schema_extra={"ui_group": _STRENGTH},
     )
     min_symbols: Annotated[int | None, Merge(MergeStrategy.MAX)] = Field(
         default=None, ge=0, le=16, title="Minimum symbols",
+        description="At least this many symbols. Forces a complex passcode.",
         json_schema_extra={"ui_group": _STRENGTH},
     )
     history_length: Annotated[int | None, Merge(MergeStrategy.MAX)] = Field(

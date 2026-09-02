@@ -24,7 +24,6 @@ data class DesiredWifi(
     val security: String,       // open | wep | wpa_psk | wpa3_sae
     val password: String?,
     val hidden: Boolean,
-    val autoJoin: Boolean,
 )
 
 /**
@@ -47,7 +46,6 @@ object WifiPlan {
                 security = o.optString("security", "wpa_psk"),
                 password = o.optString("password").takeIf { it.isNotEmpty() },
                 hidden = o.optBoolean("hidden", false),
-                autoJoin = o.optBoolean("auto_join", true),
             )
         }
         return out

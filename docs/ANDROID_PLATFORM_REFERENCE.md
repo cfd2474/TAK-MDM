@@ -618,6 +618,38 @@ compiled**.
 All of the above except `lockNow` require **device owner**, and the failure without
 it is a `SecurityException` whose message does not mention device ownership.
 
+### Passcode: the granular `setPasswordMinimum*` family (W18)
+
+📖 `setPasswordQuality`, `setPasswordMinimumLength`, `setPasswordMinimumLetters`,
+`setPasswordMinimumNumeric`, `setPasswordMinimumSymbols` are all marked
+`@Deprecated` (Android 12) in favour of `setRequiredPasswordComplexity`, which
+offers only four buckets (NONE / LOW / MEDIUM / HIGH) with **no per-character-class
+control**. But the deprecation note is explicit:
+
+> Company-owned devices (fully-managed and organization-owned managed profile
+> devices) are able to continue using this method.
+
+So a Device Owner may still use the granular family, and the agent does (W18) —
+it maps 1:1 onto the `PASSWORD` spec, which the complexity buckets do not.
+
+| Rule | Source |
+|---|---|
+| `setPasswordMinimum{Letters,Numeric,Symbols}` **throw `IllegalStateException`** for an app targeting API 30+ unless `setPasswordQuality(PASSWORD_QUALITY_COMPLEX)` was called first. Default value of each is 1. | `setPasswordMinimumLetters` reference |
+| `setPasswordQuality` **clears** any complexity set via `setRequiredPasswordComplexity` (on the primary instance, for a DO, it just clears — no throw). Don't mix the two APIs. | `setPasswordQuality` reference |
+| `setPasswordQuality` on the **parent** `DevicePolicyManager` instance throws `IllegalArgumentException` for an app targeting API 31+ (except a PO on an org-owned device). The agent only ever calls the primary instance. | `setPasswordQuality` reference |
+| The calling admin needs `USES_POLICY_LIMIT_PASSWORD` in its `device_admin.xml` (`<limit-password />`). Already declared. | `setPasswordMinimumLetters` reference |
+
+**What the agent does** (`PasswordPlan.effectiveQuality` + `PolicyApplier.applyPassword`):
+derives the quality to enforce as the strictest of the `quality` field, `NUMERIC`
+if a `min_length` is set, and `COMPLEX` if any `min_letters`/`min_digits`/
+`min_symbols` is set; calls `setPasswordQuality` first, then the length and
+per-character-class setters. `history_length` / expiry / lockout are unchanged.
+
+📖→⏳ **Not yet re-verified on hardware after W18** — the pre-W18 path (complexity
+buckets) was verified; the granular path needs a `quality: complex` +
+`min_digits: 2` policy pushed to `SM-X520` to confirm the device then demands a
+complex passcode.
+
 ### Screenshot is not available to a Device Owner
 
 There is no `DevicePolicyManager` call that captures the screen. `MediaProjection` is
@@ -664,7 +696,11 @@ configured.
 Wi-Fi (`LeckliterFIOS`) was untouched throughout. `errors=0` on both syncs.
 
 **MAC randomization** (`WifiConfiguration.macRandomizationSetting`) is `@SystemApi`
-— not settable by a DO. The policy field is accepted and ignored; not a failure.
+— not settable by a DO. **Per-network auto-join** has no public toggle for a DO
+either (`WifiManager.allowAutojoin` is `@SystemApi`). W18 removed both fields
+(`mac_randomization`, `auto_join`) from `NetworksSpec` rather than keep accepting
+values the agent can never honour. A configured network auto-joins by default and
+the platform picks the randomization mode.
 
 **VPN** is deliberately absent. Android's built-in VPN profile
 (`com.android.internal.net.VpnProfile` + `IVpnManager`) is private and

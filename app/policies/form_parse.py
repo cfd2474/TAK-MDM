@@ -125,9 +125,7 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
             ssids = form.getlist(f"{name}__ssid")
             security = form.getlist(f"{name}__security")
             passwords = form.getlist(f"{name}__password")
-            auto_join = form.getlist(f"{name}__auto_join")
             hidden = form.getlist(f"{name}__hidden")
-            mac = form.getlist(f"{name}__mac_randomization")
             rows = []
             for i, ssid in enumerate(ssids):
                 ssid = (ssid or "").strip()
@@ -135,8 +133,6 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
                     continue
                 row = {"ssid": ssid}
                 _put(row, "security", security, i)
-                _put(row, "mac_randomization", mac, i)
-                row["auto_join"] = _yes(auto_join, i, default=True)
                 row["hidden"] = _yes(hidden, i, default=False)
                 pw = (passwords[i] if i < len(passwords) else "").strip()
                 if pw:

@@ -764,18 +764,17 @@ def test_wifi_form_round_trip(client: TestClient):
             ("wifi_networks__ssid", "TAK-Field"),
             ("wifi_networks__security", "wpa_psk"),
             ("wifi_networks__password", "hunter22"),
-            ("wifi_networks__auto_join", "no"),
             ("wifi_networks__hidden", "yes"),
-            ("wifi_networks__mac_randomization", "none"),
         ],
     )
     spec = _stored_spec(client, pid)
     entry = spec["wifi_networks"][0]
     assert entry["ssid"] == "TAK-Field"
     assert entry["password"] == "hunter22"
-    assert entry["auto_join"] is False
     assert entry["hidden"] is True
-    assert entry["mac_randomization"] == "none"
+    # auto_join / mac_randomization were dropped in W18 (both @SystemApi for a DO)
+    assert "auto_join" not in entry
+    assert "mac_randomization" not in entry
 
 
 def test_wifi_short_password_is_rejected(client: TestClient):

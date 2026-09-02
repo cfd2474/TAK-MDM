@@ -13,11 +13,14 @@ update after every completed step.
 closed. **Enrollment is now a single persistent token with 15-minute signed QR
 derivatives** (Chunk 14), verified live through real nginx — including that
 retiring the primary kills an already-issued, still-time-valid QR immediately.
-Agent **v33 (`0.9.3`)** running on `SM-X520`, compliant, correctly identified by
-its hardware serial `R5GL40MMHRN`. **W14 Wi-Fi, W15 quick wins and W16 allowlist
-enforcement all hardware-proven on it. W17 closed R2** — a Device Owner cannot
-place XAPK OBB files (EACCES probed on hardware); the agent now says so loudly
-and the Apps page flags it.
+Agent **v34 (`0.9.4`)** — v32 is what is running on `SM-X520` (compliant, serial
+`R5GL40MMHRN`). **W14 Wi-Fi, W15 quick wins and W16 allowlist enforcement all
+hardware-proven. W17 closed R2** — a DO cannot place XAPK OBB files (EACCES probed
+on hardware); the agent says so loudly and the Apps page flags it. **W18 closed
+the policy→agent audit** — Wi-Fi `auto_join`/`mac_randomization` dropped
+(`@SystemApi`), password `min_letters`/`min_digits`/`min_symbols` implemented via
+the granular DPM family. **W17 and W18 agent changes are not yet pushed to the
+tablet.**
 **✅ Web UI expansion (Chunks W1–W10, plus W4b) COMPLETE.** Eight-section ATLAS
 console — Enroll, Manage, Policies, Apps, Content, Reports, Admin, Guides — on
 server-rendered Jinja with no build step. **W10 replaced JSON-textarea policy
@@ -27,7 +30,9 @@ navigable sub-pages** with green-check completion markers. **W13 wired the
 Networks type; W14's agent Wi-Fi applier and W15's agent quick wins (password
 history, screen timeout, app auto_update) and W16's allowlist enforcement are
 hardware-proven on `SM-X520`. W17 closed R2 (OBB placement) as not feasible,
-made loud.** 448 server tests + 46 agent tests.
+made loud; W18 closed the policy→agent audit (Wi-Fi `@SystemApi` fields dropped,
+password character-class minimums implemented).** 448 server tests + 52 agent
+tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -2608,14 +2613,15 @@ but **not reverted** when the field is dropped from the policy — only the bool
 is to set the field to a permissive value (`history_length: 0`, a large timeout),
 which the agent does apply.
 
-**Still unresolved after W17** (from the policy→agent audit):
-* ~~XAPK **OBB** placement (R2)~~ — ✅ closed 2026-09-02: not feasible for a
-  normally-installed DO (EACCES probed on `SM-X520`); agent now reports it loudly
-  and the Apps page flags it. See W17 and R2.
-* `PASSWORD.min_letters` / `min_digits` / `min_symbols` — no modern DPM API;
-  spec fields are dead. Candidates for removal.
-* `NETWORKS.wifi_networks[].auto_join` / `mac_randomization` — no public DO API.
-  Candidates for removal.
+**The policy→agent audit is closed (W18):**
+* ~~XAPK **OBB** placement (R2)~~ — ✅ W17: not feasible for a normally-installed
+  DO (EACCES probed on `SM-X520`); agent reports it loudly, Apps page flags it.
+* ~~`PASSWORD.min_letters` / `min_digits` / `min_symbols`~~ — ✅ W18: the audit
+  was wrong that these were dead. `setPasswordMinimum{Letters,Numeric,Symbols}`
+  are deprecated but usable by a company-owned DO; the agent now wires them via
+  the granular family. Hardware proof pending.
+* ~~`NETWORKS.wifi_networks[].auto_join` / `mac_randomization`~~ — ✅ W18:
+  genuinely dead (both `@SystemApi`), removed from the spec and form.
 
 #### ✅ W16 — Agent: enforce `APP_CATALOG.allowed_packages` (COMPLETE, hardware-proven)
 
@@ -2724,6 +2730,80 @@ possible failure to diagnose from the operator's seat.
   `probe_obb` EACCES output and the R5 note to re-check on the other two SoCs.
 - `DebugConfigReceiver.probe_obb` committed (evidence + R5 re-check tool).
 
+#### 🔻 W18 — dead spec fields: implement the password ones, drop the Wi-Fi ones
+
+The policy→agent audit's last item. Research (official DPM reference, 2026-09-02)
+**corrected the audit's assumption**:
+
+* **Wi-Fi `auto_join` / `mac_randomization` — genuinely dead.**
+  `WifiConfiguration.macRandomizationSetting` and the per-network auto-join
+  toggle are both `@SystemApi`, unavailable to a normally-installed Device Owner.
+  → **remove** the fields.
+* **Password `min_letters` / `min_digits` / `min_symbols` — NOT dead.**
+  `setPasswordMinimumLetters/Numeric/Symbols` are `@Deprecated` but "company-owned
+  devices (fully-managed …) are able to continue using" them. The agent simply
+  never wired them. → **implement** them (operator's call, 2026-09-02).
+
+**Contract that shapes the agent change** (DevicePolicyManager reference):
+* `setPasswordMinimum{Letters,Numeric,Symbols}` **throw `IllegalStateException`**
+  for an app targeting R+ unless `setPasswordQuality(PASSWORD_QUALITY_COMPLEX)`
+  was set first. Default value of each is 1.
+* `setPasswordQuality` **clears** any `setRequiredPasswordComplexity` (no throw on
+  the primary instance for a DO — they just don't coexist).
+* So the agent's password path moves **off** the complexity-bucket API and onto
+  the granular deprecated family, which maps 1:1 to our spec fields.
+
+##### Plan (7 steps)
+
+1. **Specs.** `NetworksSpec`: drop `WifiNetwork.auto_join`, `.mac_randomization`,
+   delete the `MacRandomization` enum. `PasswordSpec`: keep the three `min_*`
+   fields; sharpen their `description` (they force Complex quality).
+2. **Form.** `_policy_form.html` `_wifi_row` — remove the Auto-join and MAC
+   controls. `form_parse.py` `wifi_list` — stop reading `__auto_join` /
+   `__mac_randomization`.
+3. **Agent — pure planner.** `PasswordPlan.kt`: `enum PwQuality`;
+   `effectiveQuality(qualityOrdinal, minLetters, minDigits, minSymbols)` — maps
+   the server's `quality` (0–6) to the enum and bumps to `COMPLEX` when any
+   char-class minimum is > 0. Plain-JUnit unit tests (the `WifiPlan` pattern).
+4. **Agent — applier.** `PolicyApplier.applyPassword` moves to the granular
+   family: `setPasswordQuality(effectiveQuality → DPM const)`, then
+   `setPasswordMinimumLength`, and `setPasswordMinimum{Letters,Numeric,Symbols}`
+   guarded on the effective quality being `COMPLEX`. Each `runCatching`, failures
+   collected. `history_length` / expiry / lockout paths unchanged.
+5. **Agent — Wi-Fi cleanup.** Drop `autoJoin` from `DesiredWifi` /
+   `WifiPlan.desired`; fix the stale `applyNetworks` comment; adjust
+   `WifiPlanTest`.
+6. **Docs.** `ANDROID_PLATFORM_REFERENCE.md` §6c — the granular password family
+   contract (deprecated-but-live for a company-owned DO; the
+   `PASSWORD_QUALITY_COMPLEX` precondition; the `setRequiredPasswordComplexity`
+   clash). §6d — the Wi-Fi fields removed, and why.
+7. **Tests + version.** Update `test_api.py` / `test_resolver.py` /
+   `test_admin_ui.py` for the removed Wi-Fi fields and the password path; agent
+   v34 (`0.9.4`); full server + agent suites green. **Then stop** — hardware
+   verification on `SM-X520` (`quality: complex` + `min_digits: 2` → the device
+   demands a complex passcode) is the checkpoint.
+
+##### Status: ✅ steps 1–7 COMPLETE — 448 server tests, 52 agent tests, agent v34 (`0.9.4`). Hardware verification pending.
+
+- Specs: `WifiNetwork.auto_join` / `.mac_randomization` and the `MacRandomization`
+  enum removed. `PasswordSpec` `min_*` descriptions sharpened; fields kept.
+- Form: the Auto-join / MAC controls gone from `_wifi_row`; `form_parse` no longer
+  reads them.
+- Agent: new pure `PasswordPlan` (`effectiveQuality` + `charClassMinimumsApply`,
+  6 unit tests). `PolicyApplier.applyPassword` rewritten onto the granular
+  `setPasswordQuality` → `setPasswordMinimumLength` →
+  `setPasswordMinimum{Letters,Numeric,Symbols}` family (guarded on COMPLEX).
+  `DesiredWifi.autoJoin` dropped; `WifiPlanTest` adjusted (still 6).
+- Docs: `ANDROID_PLATFORM_REFERENCE.md` §6c — the granular password family
+  contract (deprecated-but-live for a company-owned DO; the
+  `PASSWORD_QUALITY_COMPLEX` precondition; the complexity-bucket clash), marked
+  ⏳ not-yet-re-verified. §6d — the two Wi-Fi fields removed and why.
+- Tests: `test_wifi_form_round_trip` updated for the removed fields.
+
+**Not done:** push v34 to `SM-X520` and confirm a `quality: complex` +
+`min_digits: 2` policy makes the device demand a complex passcode (the granular
+path replaced a hardware-verified bucket path, so it needs its own proof).
+
 ---
 
 ### Later chunks (sketch — to be detailed at approval time)
@@ -2768,6 +2848,18 @@ possible failure to diagnose from the operator's seat.
 
 ## Changelog
 
+- **2026-09-02** — **W18: dead spec fields resolved.** 448 server tests, 52 agent
+  tests, agent v34 (`0.9.4`). Research corrected the audit: Wi-Fi `auto_join` /
+  `mac_randomization` are genuinely `@SystemApi` (removed from the spec + form),
+  but the password `min_letters` / `min_digits` / `min_symbols` fields are NOT
+  dead — deprecated yet usable by a company-owned Device Owner. The agent's
+  password path moved off the complexity buckets onto the granular
+  `setPasswordQuality` → `setPasswordMinimum*` family (new pure `PasswordPlan`,
+  6 tests: quality is derived as the strictest of the `quality` field, NUMERIC
+  for a length floor, COMPLEX for any character-class minimum). Android reference
+  §6c gets the family's contract (the `PASSWORD_QUALITY_COMPLEX` precondition,
+  the `setRequiredPasswordComplexity` clash). **Hardware proof of the granular
+  path is still pending** — it replaced a bucket path that was verified.
 - **2026-09-02** — **W17: R2 (XAPK OBB placement) closed — not feasible, made
   loud.** 448 server tests, 46 agent tests, agent v33 (`0.9.3`). A `probe_obb`
   debug action wrote to `/sdcard/Android/obb/org.takmdm.testapp/` on `SM-X520`
