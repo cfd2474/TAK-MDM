@@ -3,6 +3,30 @@
 {% set nav = 'policies' %}
 {% block title %}Policies — ATLAS{% endblock %}
 
+{% macro policy_contents(pr) %}
+  {% set names = pr.sections | map(attribute='profile_section') | reject('none') | map('category_label') | list %}
+  {{ names | join(', ') if names else 'no categories yet' }}
+{% endmacro %}
+
+{% macro policy_summary(pr) %}
+  {% set sections = pr.sections | selectattr('latest_version') | list %}
+  {% if not sections %}
+    <p class="muted">This policy has no categories configured — it would apply nothing.</p>
+  {% else %}
+    {% for s in sections %}
+      <div style="margin-bottom:10px">
+        <strong>{{ s.profile_section | category_label }}</strong>
+        {% set rows = s.latest_version.spec | spec_rows(s.policy_type) %}
+        {% if rows %}
+          <dl class="kv" style="margin-top:4px">
+            {% for r in rows %}<dt>{{ r.label }}</dt><dd>{{ r.value }}</dd>{% endfor %}
+          </dl>
+        {% else %}<div class="muted">nothing set</div>{% endif %}
+      </div>
+    {% endfor %}
+  {% endif %}
+{% endmacro %}
+
 {% block content %}
 {{ page_header('Policies', 'A policy bundles the settings for as many categories as you need. Build it once, then assign it — several policies still stack per-field where they overlap.') }}
 
@@ -23,25 +47,30 @@
         {{ empty_state('No policies yet. Use "New Policy" to create one.') }}
       {% else %}
       <table data-sortable>
-        <thead><tr><th data-sort>Name</th><th data-sort>Kind</th><th data-sort>Contents</th><th>Description</th></tr></thead>
+        <thead><tr>
+          <th data-sort>Name</th><th data-sort>Categories</th><th data-sort>On devices</th>
+          <th>Description</th><th></th>
+        </tr></thead>
         <tbody>
         {% for pr in profiles %}
           <tr>
             <td><a href="/profiles/{{ pr.id }}">{{ pr.name }}</a></td>
-            <td><span class="pill accent">policy</span></td>
+            <td class="muted">{{ policy_contents(pr) }}</td>
             <td class="muted">
-              {% set names = pr.sections | map(attribute='profile_section') | reject('none') | list %}
-              {{ names | join(', ') if names else 'no sections yet' }}
+              {% set on = reaches.get(pr.id | string, []) %}
+              {{ on | length if on else '—' }}
             </td>
             <td class="muted">{{ pr.description or '—' }}</td>
+            <td><button type="button" class="ghost" data-modal-open="archive-{{ pr.id }}">Archive</button></td>
           </tr>
         {% endfor %}
         {% for p in device_policies %}
           <tr>
             <td><a href="/policies/{{ p.id }}">{{ p.name }}</a></td>
             <td><span class="pill">{{ p.policy_type }}</span></td>
-            <td class="mono">v{{ p.latest_version.version if p.latest_version else 0 }}</td>
+            <td class="muted">—</td>
             <td class="muted">{{ p.description or '—' }}</td>
+            <td></td>
           </tr>
         {% endfor %}
         </tbody>
@@ -85,15 +114,29 @@
   <div class="tab-panel" data-tab-panel="archived" hidden>
     <div class="panel">
       <p class="sub">
-        Archived policies stop applying but are never deleted, so what a device
-        once had stays answerable (D20). Restoring one can change devices immediately.
+        Archived policies stop applying and are taken off every device, but they
+        are never deleted — what a device once had stays answerable (D20).
+        Restoring one brings it back assigned to nothing.
       </p>
-      {% if not archived %}
+      {% if not archived_profiles and not archived %}
         {{ empty_state('Nothing archived.') }}
       {% else %}
       <table>
-        <thead><tr><th>Name</th><th>Type</th><th>Archived</th><th>Restore</th></tr></thead>
+        <thead><tr><th>Name</th><th>Categories</th><th>Archived</th><th>Restore</th></tr></thead>
         <tbody>
+        {% for pr in archived_profiles %}
+          <tr>
+            <td><a href="/profiles/{{ pr.id }}">{{ pr.name }}</a></td>
+            <td class="muted">{{ policy_contents(pr) }}</td>
+            <td class="muted">{{ pr.archived_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td>
+              <form method="post" action="/profiles/{{ pr.id }}/restore" style="margin:0">
+                {{ csrf_field(csrf_token) }}
+                <button type="submit" class="ghost">Restore</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
         {% for p in archived %}
           <tr>
             <td><a href="/policies/{{ p.id }}">{{ p.name }}</a>{% if p.is_template %} <span class="pill">template</span>{% endif %}</td>
@@ -113,6 +156,34 @@
     </div>
   </div>
 </div>
+
+{% for pr in profiles %}
+  {% call modal('archive-' ~ pr.id, 'Archive ' ~ pr.name) %}
+    <p class="sub">Archiving stops this policy applying and removes it from the devices below. Its history is kept and you can restore it later.</p>
+
+    <h3>What it does</h3>
+    {{ policy_summary(pr) }}
+
+    <h3>On devices now</h3>
+    {% set on = reaches.get(pr.id | string, []) %}
+    {% if on %}
+      <ul class="checks" style="max-height:none">
+        {% for name in on %}<li class="mono">{{ name }}</li>{% endfor %}
+      </ul>
+      <p class="muted">These {{ on | length }} device(s) will drop this policy at their next check-in.</p>
+    {% else %}
+      <p class="muted">Not assigned to anything — archiving only files it away.</p>
+    {% endif %}
+
+    <div class="toolbar" style="margin-top:16px">
+      <form method="post" action="/profiles/{{ pr.id }}/archive" style="margin:0">
+        {{ csrf_field(csrf_token) }}
+        <button type="submit" class="danger">Archive policy</button>
+      </form>
+      <button type="button" class="ghost" data-modal-close>Cancel</button>
+    </div>
+  {% endcall %}
+{% endfor %}
 
 {% call modal('new-policy', 'New Policy') %}
   <p class="sub">Start from nothing, or copy an existing template.</p>

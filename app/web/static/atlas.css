@@ -350,9 +350,14 @@ label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 12.5
   padding: 22px;
   width: 100%;
   max-width: 560px;
+  max-height: 84vh;
+  overflow-y: auto;
   box-shadow: 0 24px 60px rgba(0, 0, 0, .35);
 }
 .modal h2 { margin-top: 0; }
+.modal h3 { margin: 16px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.modal ul.checks { margin: 4px 0 0; padding-left: 18px; }
+.modal ul.checks li { list-style: disc; }
 .modal .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
 
 .choice-grid { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }

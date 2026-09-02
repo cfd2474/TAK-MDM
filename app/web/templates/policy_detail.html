@@ -107,7 +107,7 @@
         <td class="mono">v{{ v.version }}</td>
         <td class="muted">{{ v.published_at.strftime('%Y-%m-%d %H:%M') }}</td>
         <td>
-          {% set rows = v.spec | spec_rows %}
+          {% set rows = v.spec | spec_rows(policy.policy_type) %}
           {% if rows %}
             <dl class="kv">
               {% for r in rows %}<dt>{{ r.label }}</dt><dd>{{ r.value }}</dd>{% endfor %}

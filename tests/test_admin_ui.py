@@ -1171,6 +1171,55 @@ def test_archiving_an_assigned_profile_stops_it_applying(client: TestClient, enr
     assert _effective(client, device["device_id"])["values"] == {}
 
 
+def test_archive_from_the_list_shows_an_impact_modal(client: TestClient, enrolled):
+    device = enrolled(serial="W22-MODAL")
+    pid = _make_profile(client, "Kiosk Baseline", {"password": {"min_length": 12}})
+    client.put(
+        f"/api/v1/profiles/{pid}/targets",
+        json={"device_ids": [device["device_id"]]},
+        headers=ADMIN,
+    )
+
+    body = client.get("/policies").text
+    assert f'data-modal-open="archive-{pid}"' in body      # the quick button
+    assert f'id="archive-{pid}"' in body                   # the modal
+    assert "Password" in body and "Minimum length" in body  # what it does
+    assert "W22-MODAL" in body                             # device it is on
+    assert f'action="/profiles/{pid}/archive"' in body     # confirm target
+    assert "Cancel" in body
+
+
+def test_archiving_a_profile_drops_its_assignments(client: TestClient, enrolled):
+    device = enrolled(serial="W22-DROP")
+    pid = _make_profile(client, "Droppable", {"password": {"min_length": 13}})
+    client.put(
+        f"/api/v1/profiles/{pid}/targets",
+        json={"device_ids": [device["device_id"]]},
+        headers=ADMIN,
+    )
+
+    client.post(f"/profiles/{pid}/archive", follow_redirects=False)
+
+    profile = client.get(f"/api/v1/profiles/{pid}", headers=ADMIN).json()
+    assert profile["assignments"] == [] if "assignments" in profile else True
+    assert _effective(client, device["device_id"])["values"] == {}
+
+    # restored profile is back but assigned to nothing
+    client.post(f"/profiles/{pid}/restore", follow_redirects=False)
+    assert _effective(client, device["device_id"])["values"] == {}
+    assert "Droppable" in client.get("/policies").text
+
+
+def test_archived_profile_appears_in_the_archived_tab(client: TestClient):
+    pid = _make_profile(client, "Old Baseline", {"password": {"min_length": 8}})
+    client.post(f"/profiles/{pid}/archive", follow_redirects=False)
+
+    body = client.get("/policies").text
+    tail = body.split('data-tab-panel="archived"')[1]
+    assert "Old Baseline" in tail
+    assert f'action="/profiles/{pid}/restore"' in tail
+
+
 def test_removing_a_section_stops_it_applying(client: TestClient, enrolled):
     device = enrolled(serial="W4B-RMSEC")
     pid = _make_profile(

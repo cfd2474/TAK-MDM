@@ -42,7 +42,8 @@ R2 (OBB placement) as not feasible, made loud; W18 closed the policy→agent aud
 implemented and proven on the tablet). W19 rebuilt the DPC's on-device UI as the
 branded ATLAS MDM console; W20 added a forced screen-lock passcode to the
 PASSWORD policy, hardware-proven; W21 unified every policy into the composite
-kind with a values-in-fields editor.** 454 server tests + 52 agent tests.
+kind with a values-in-fields editor; W22 added quick archive from the list with
+an impact modal.** 457 server tests + 52 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -3093,6 +3094,58 @@ Delivered a little differently from the plan — cleaner:
 templates; low priority). The single-concern create route (`POST /policies`)
 still works for the API and tests but has no UI entry point.
 
+#### 🔻 W22 — quick archive from the policy list, with an impact modal
+
+**Operator ask:** on the policy list, archive a policy in one step; an
+intermediate modal first shows what the policy does and which devices it is on,
+with confirm / cancel; archiving removes the policy from those devices.
+
+**Today:** archiving is only reachable from inside the editor, and it flags the
+profile (`archived_at`) but leaves the `ProfileAssignment` rows — the resolver
+skips an archived profile, so the device does drop it, but the assignment set
+lingers and `restore()` silently re-applies it. Archived profiles also do not
+appear anywhere in the console.
+
+##### Plan (6 steps)
+
+1. **Service.** `profile_service.archive` also **deletes the profile's
+   `ProfileAssignment` rows** (capturing the affected devices first, invalidating
+   them after) — archiving genuinely removes the policy from devices. `restore`
+   now brings back an unassigned policy; adjust its note.
+2. **List data.** `list_policies` also loads archived profiles, and builds a
+   per-profile preview: each section's category label + `spec_rows`, and the
+   device display-names the profile currently reaches
+   (`eff.devices_affected_by_profile` → `Device`).
+3. **List UI.** `policies.html` Device-policies tab gets an **Archive** button
+   per profile row → opens `modal("archive-<id>")`. The modal shows the
+   what-it-does summary, the current device list (or "not assigned to
+   anything"), and Confirm (posts `/profiles/{id}/archive`) / Cancel.
+4. **Archived tab.** Show archived **profiles** there with a Restore button
+   (today it only lists archived standalone policies).
+5. **Route.** `archive_profile_form` → back to `/policies#tab-device`; the modal
+   is the confirmation, so drop the old `data-confirm`.
+6. **Tests + verify.** archive-from-list drops the assignments and the device's
+   effective policy; the modal renders the summary + device names; an archived
+   profile shows in the Archived tab and restores. Click-through on the console;
+   archive + restore "Tablet Live Test" against `SM-X520`.
+
+##### Status: ✅ COMPLETE and hardware-proven — 457 server tests.
+
+- `profile_service.archive` now deletes the profile's `ProfileAssignment` rows
+  (capturing the affected devices first, invalidating after). `restore` note
+  updated — it comes back assigned to nothing.
+- The policy list has a **Categories** column (real labels), an **On devices**
+  count, and a per-row **Archive** button → `modal("archive-<id>")` showing the
+  per-category `spec_rows` summary, the device names it currently reaches, and
+  **Archive policy** / **Cancel**.
+- The Archived tab now lists archived **profiles** with a Restore button.
+- `_spec_rows` takes an optional `policy_type` so the summary uses the same
+  field titles as the editor ("Minimum length", not "min length").
+- **Hardware (`SM-X520`):** archiving "Tablet Live Test" (`min_length: 13`,
+  assigned to the tablet) dropped `PASSWORD` from the effective policy — server
+  `state 42 → 43`, the tablet synced and acked 43, `compliant`. Restore +
+  re-assign brought it back (`state 44`, `min_length: 13`).
+
 ---
 
 ### Later chunks (sketch — to be detailed at approval time)
@@ -3137,6 +3190,13 @@ still works for the API and tests but has no UI entry point.
 
 ## Changelog
 
+- **2026-09-02** — **W22: quick archive from the policy list.** 457 server tests.
+  Each policy row gets an Archive button that opens an impact modal — the
+  per-category summary, the devices it is on now, Archive / Cancel. Archiving
+  deletes the assignments (not just flags the profile), so the policy genuinely
+  leaves the fleet; archived profiles show in the Archived tab and restore
+  unassigned. **Hardware-proven on `SM-X520`** — archiving the tablet's PASSWORD
+  policy dropped it from the effective policy and the device acked the change.
 - **2026-09-02** — **W21: one kind of policy; values-in-fields editor.** 454
   server tests. The console now has a single policy kind — the composite.
   Migration `h8j0l2n4p6r8` converted the 12 standalone policies to one-section

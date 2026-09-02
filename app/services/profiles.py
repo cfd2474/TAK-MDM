@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import Policy, PolicyProfile, PolicyVersion
+from app.db.models import Policy, PolicyProfile, PolicyVersion, ProfileAssignment
 from app.policies import creator_catalog
 from app.policies.registry import PolicyTypeError, registry
 from app.services import effective_policy as eff
@@ -168,14 +168,27 @@ def remove_section(session: Session, profile: PolicyProfile, category_key: str) 
 
 
 def archive(session: Session, profile: PolicyProfile) -> None:
+    """Archive the profile and take it off every device it was on.
+
+    The assignment rows are deleted, not just ignored: 'archived' should mean the
+    policy is genuinely off the fleet, and restoring it should not silently push
+    it back out. History (the profile and its section versions) is kept.
+    """
     if profile.archived_at is not None:
         return
+    affected = eff.devices_affected_by_profile(session, profile.id)
     profile.archived_at = datetime.now(timezone.utc)
+    for pa in session.scalars(
+        select(ProfileAssignment).where(ProfileAssignment.profile_id == profile.id)
+    ):
+        session.delete(pa)
     session.flush()
-    eff.invalidate_for_profile(session, profile.id)
+    eff.invalidate(session, affected)
 
 
 def restore(session: Session, profile: PolicyProfile) -> None:
+    """Un-archive. The profile comes back assigned to nothing — archiving dropped
+    its assignments — so it reaches no device until it is assigned again."""
     if profile.archived_at is None:
         return
     profile.archived_at = None

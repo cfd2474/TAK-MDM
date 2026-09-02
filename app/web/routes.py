@@ -114,8 +114,18 @@ _TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 _TEMPLATES.env.filters["pretty_json"] = lambda value: json.dumps(value, indent=2, sort_keys=True)
 
 
-def _spec_rows(spec: Any) -> list[dict[str, str]]:
-    """A policy spec as flat label/value rows for a readable, no-JSON summary."""
+def _spec_rows(spec: Any, policy_type: str | None = None) -> list[dict[str, str]]:
+    """A policy spec as flat label/value rows for a readable, no-JSON summary.
+
+    Given the policy type, field labels come from the spec's own ``title`` (the
+    same text the editor shows); otherwise the raw key is de-underscored.
+    """
+    labels: dict[str, str] = {}
+    if policy_type:
+        try:
+            labels = {f.name: f.label for f in form_schema.form_fields(policy_type)}
+        except Exception:
+            labels = {}
     rows: list[dict[str, str]] = []
 
     def render(value: Any) -> str:
@@ -136,11 +146,16 @@ def _spec_rows(spec: Any) -> list[dict[str, str]]:
         return str(value)
 
     for key, value in (spec or {}).items():
-        rows.append({"label": key.replace("_", " "), "value": render(value)})
+        rows.append(
+            {"label": labels.get(key, key.replace("_", " ")), "value": render(value)}
+        )
     return rows
 
 
 _TEMPLATES.env.filters["spec_rows"] = _spec_rows
+_TEMPLATES.env.filters["category_label"] = lambda key: (
+    creator_catalog.get(key).label if creator_catalog.get(key) else key
+)
 
 
 def _render(
@@ -370,11 +385,27 @@ def list_policies(
     session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
 ) -> HTMLResponse:
+    all_profiles = profile_service.list_profiles(session, include_archived=True)
+    live = [p for p in all_profiles if p.archived_at is None]
+
+    # For the archive-confirmation modal: which devices each live policy is on now.
+    reaches: dict[str, list[str]] = {}
+    for profile in live:
+        device_ids = eff.devices_affected_by_profile(session, profile.id)
+        devices = (
+            session.scalars(select(Device).where(Device.id.in_(device_ids))).all()
+            if device_ids
+            else []
+        )
+        reaches[str(profile.id)] = sorted(d.name or d.serial_number for d in devices)
+
     return _render(
         request,
         "policies.html",
         identity=identity,
-        profiles=profile_service.list_profiles(session),
+        profiles=live,
+        archived_profiles=[p for p in all_profiles if p.archived_at is not None],
+        reaches=reaches,
         device_policies=policy_admin.list_tab(session, "device"),
         templates=policy_admin.list_tab(session, "templates"),
         archived=policy_admin.list_tab(session, "archived"),
@@ -701,7 +732,7 @@ def archive_profile_form(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
     profile_service.archive(session, profile)
     session.commit()
-    return _redirect("/policies")
+    return _redirect("/policies#tab-archived")
 
 
 @router.post("/profiles/{profile_id}/restore")
