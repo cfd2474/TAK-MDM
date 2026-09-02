@@ -470,6 +470,41 @@ the old record is orphaned along with its group membership and policy stack.
 **Grant `READ_PHONE_STATE` before enrolling, and treat the fallback as a degraded
 state worth reporting**, not as an equivalent alternative.
 
+## 6a-iii. StrongBox: where the device key actually lives
+
+✅ **`SM-X520` (Galaxy Tab S10 FE, Exynos 1580) has no StrongBox.** Asked of the key
+itself rather than inferred:
+
+```
+device key -> TRUSTED_ENVIRONMENT (TEE), insideSecureHardware=true
+StrongBox present on this device = false
+```
+
+The feature list agrees — `android.hardware.hardware_keystore=300` is advertised,
+`android.hardware.strongbox_keystore` is not.
+
+**The security property that matters holds.** The key is inside secure hardware, so
+it is non-exportable and the private key never reaches userspace. D56's fallback
+behaved exactly as designed: StrongBox attempted, TEE used, and never a silent drop
+to a software key.
+
+### How to ask
+
+`KeyInfo.getSecurityLevel()` (API 31+) is the **only** call that distinguishes
+StrongBox from the TEE. `isInsideSecureHardware()` answers a different and weaker
+question — "not software" — and cannot tell the two apart, so it is useless for this.
+
+```kotlin
+val info = KeyFactory.getInstance(key.algorithm, "AndroidKeyStore")
+    .getKeySpec(key, KeyInfo::class.java)
+info.securityLevel   // SECURITY_LEVEL_STRONGBOX / _TRUSTED_ENVIRONMENT / _SOFTWARE
+```
+
+⚠️ **Do not extrapolate to the rest of the fleet (R5).** This is one model on one
+SoC. `SM-G736U1` (Snapdragon 778G) and `SM-X828U` (Dimensity 9300+) are different
+silicon from different vendors and must each be asked. A device that *does* have
+StrongBox will use it automatically — nothing in the agent needs changing.
+
 ## 6b. Reading logs, and why we do not use `logcat`
 
 📖 **`READ_LOGS` has been restricted since Android 4.1 (API 16).** Only privileged

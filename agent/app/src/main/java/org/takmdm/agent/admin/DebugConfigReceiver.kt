@@ -117,6 +117,15 @@ class DebugConfigReceiver : BroadcastReceiver() {
                     context, android.Manifest.permission.READ_PHONE_STATE
                 ) == android.content.pm.PackageManager.PERMISSION_GRANTED)
         )
+        AgentLog.i(
+            TAG,
+            "identity: device key -> " + org.takmdm.agent.net.DeviceIdentity.keySecurityLevel()
+        )
+        AgentLog.i(
+            TAG,
+            "identity: StrongBox present on this device = " + context.packageManager
+                .hasSystemFeature("android.hardware.strongbox_keystore")
+        )
         @Suppress("HardwareIds")
         val androidId = android.provider.Settings.Secure.getString(
             context.contentResolver, android.provider.Settings.Secure.ANDROID_ID

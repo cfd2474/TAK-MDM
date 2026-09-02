@@ -56,7 +56,7 @@ written but have never actually run on a device:
 | ~~**Marketplace**~~ | ✅ **Proven 2026-09-01** — offered not imposed, selected through the agent's real UI, placed immediately, and the selection reported back to the server. |
 | **Kiosk / lock task** | F6 |
 | ~~**Transient commands**~~ | ✅ **Proven on `SM-X520`, 2026-09-01.** `lock`, `locate` and `collect_logs` all dispatched and succeeded at `attempts=1/5`. Was not implemented agent-side at all before Chunk 10. **`reboot` and `wipe` remain untried by choice** — they are the two whose deferred-result path (D90) cannot be rehearsed without actually rebooting or wiping the tablet. |
-| **StrongBox specifically** | Key generation worked; whether it used StrongBox or fell back to the TEE is unconfirmed |
+| ~~**StrongBox**~~ | ✅ **Answered 2026-09-01.** `SM-X520` has **no StrongBox**; the key is `TRUSTED_ENVIRONMENT (TEE), insideSecureHardware=true`. D56's fallback worked as designed and the key is hardware-backed, which is the property that matters. ⚠️ One model on one SoC — the other two must be asked separately (R5). |
 
 ### Housekeeping
 
@@ -1159,6 +1159,30 @@ its next re-enrolment — the precise failure the chunk exists to prevent.
 | D100 | An identifier already held by another device is **never reassigned** | Silently moving it would change which record a third device resolves to. The fix for a genuine duplicate is a deliberate merge. |
 | D101 | The migration **backfills every existing serial as a `LEGACY` identifier** | Preserves current matching exactly, whatever that string happens to be. Skipping it would orphan every enrolled device on its next re-enrolment. |
 | D102 | `identifiers` is **optional** on the enrolment request, and unknown kinds are kept rather than rejected | A fleet whose devices go dark for weeks cannot be upgraded before it is allowed to enrol, and a newer agent reporting a source this server has not heard of is still supplying usable identity. |
+
+### ✅ StrongBox question answered (2026-09-01)
+
+Asked of the key itself rather than inferred from what generation attempted:
+
+```
+device key -> TRUSTED_ENVIRONMENT (TEE), insideSecureHardware=true
+StrongBox present on this device = false
+```
+
+`SM-X520` (Exynos 1580) has no StrongBox — the feature list agrees, advertising
+`hardware_keystore=300` and no `strongbox_keystore`. **D56 behaved exactly as
+written:** StrongBox attempted, TEE used, and never a silent drop to a software
+key. The key is inside secure hardware and non-exportable, which is the property
+the design actually depends on.
+
+`KeyInfo.getSecurityLevel()` is the only call that separates StrongBox from the
+TEE; `isInsideSecureHardware()` answers the weaker "not software" question and
+cannot distinguish them.
+
+⚠️ **This is one model on one SoC.** `SM-G736U1` (Snapdragon) and `SM-X828U`
+(MediaTek) are different silicon and must be asked separately — R5 exists precisely
+to stop this being extrapolated. Nothing needs changing for a device that does have
+StrongBox; it will simply be used.
 
 ### ✅ Marketplace (F4) and `persist` — both proven on hardware
 

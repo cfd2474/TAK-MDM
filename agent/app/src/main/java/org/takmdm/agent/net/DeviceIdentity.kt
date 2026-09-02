@@ -20,6 +20,8 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import org.takmdm.agent.diag.AgentLog
 import java.io.ByteArrayInputStream
+import android.security.keystore.KeyInfo
+import java.security.KeyFactory
 import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.KeyStore
@@ -101,6 +103,40 @@ object DeviceIdentity {
     }
 
     /** A PKCS#10 CSR proving possession of the keystore-held private key. */
+    /**
+     * Where the device's private key actually lives, asked of the key itself.
+     *
+     * Generation prefers StrongBox and falls back to the TEE, and the fallback is a
+     * warning logged once at enrolment — long gone by the time anyone wonders. The
+     * answer that matters is what the key *is* now, not what was attempted, so this
+     * reads `KeyInfo` rather than trusting a record of the attempt.
+     */
+    fun keySecurityLevel(): String {
+        val store = keyStore()
+        val key = runCatching { store.getKey(ALIAS, null) as? PrivateKey }.getOrNull()
+            ?: return "no key at alias $ALIAS"
+
+        return runCatching {
+            val factory = KeyFactory.getInstance(key.algorithm, ANDROID_KEYSTORE)
+            val info = factory.getKeySpec(key, KeyInfo::class.java)
+
+            // getSecurityLevel() is API 31+ and is the only call that distinguishes
+            // StrongBox from the TEE. isInsideSecureHardware() only says "not
+            // software", which cannot answer this question.
+            val level = runCatching { info.securityLevel }.getOrNull()
+            val named = when (level) {
+                KeyProperties.SECURITY_LEVEL_STRONGBOX -> "STRONGBOX"
+                KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT -> "TRUSTED_ENVIRONMENT (TEE)"
+                KeyProperties.SECURITY_LEVEL_SOFTWARE -> "SOFTWARE"
+                KeyProperties.SECURITY_LEVEL_UNKNOWN -> "UNKNOWN"
+                KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE -> "UNKNOWN_SECURE"
+                else -> "unreported ($level)"
+            }
+            @Suppress("DEPRECATION")
+            "$named, insideSecureHardware=${info.isInsideSecureHardware}"
+        }.getOrElse { "could not read KeyInfo: ${it.javaClass.simpleName}: ${it.message}" }
+    }
+
     fun createCsrPem(keyPair: KeyPair, serialNumber: String): String {
         // The server discards this subject and builds its own, but a CSR must carry
         // one, and the serial makes an intercepted request self-describing.
