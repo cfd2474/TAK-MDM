@@ -3527,12 +3527,47 @@ held builds 38, 4, 3 while the device ran 39 — v39 was built and sideloaded
 without ever passing through the server. Publishing 38 would have been a silent
 no-op (the gate refuses a downgrade).
 
-⚠️ **`assembleRelease` produces an *unsigned* APK.** Everything so far is
-`assembleDebug`, signed with the debug keystore, and an update must carry the
-same signature as the installed build. Before distribution the agent needs a real
-signing config, and the first release-signed build cannot be delivered over this
-channel to any device already running a debug-signed one — signatures differ, so
-Android will refuse it. That is a one-time re-enrol, and it belongs in Chunk 11.
+#### 🔻 W28 — Release signing for the agent
+
+**Done.** `assembleRelease` used to emit `app-release-unsigned.apk` and say
+nothing; that artifact cannot be installed and looks like a real build until a
+device rejects it. Now:
+
+* `agent/keystore.properties` (**gitignored**) or `ATLAS_KEYSTORE_*` environment
+  variables supply the key. `agent/keystore.properties.example` is the committed
+  template. The password is never in `build.gradle.kts` or in git.
+* **A release build with no keystore fails**, with the message telling you which
+  file to copy. Verified by moving the properties file aside: `BUILD FAILED in 1s`.
+* Verified output: `app-release.apk`, one signer, `CN=Michael Leckliter`,
+  RSA-2048, APK Signature Scheme **v2**.
+
+**D34 — the signing key is graded with the device CA, not with build settings.**
+Android refuses an update whose signing certificate differs from the installed
+app's, and Device Owner privilege does not override it. Losing or changing this
+key means a **factory reset** on every device that ever ran a build signed with
+it — the agent is Device Owner, so it cannot be uninstalled and replaced. That
+puts it in the same tier as `pki/ca.key` (R8), and it is why the password lives
+outside the repo rather than in a convenience default.
+
+##### ⚠️ Not migrated — this is a decision, not a task
+
+`SM-X520` runs a **debug-signed** build. Moving the fleet to the release key is a
+one-way door and costs a **factory reset + re-enrol per device**. Nothing has
+been switched. When you decide to:
+
+1. `TAKMDM_AGENT_SIGNATURE_CHECKSUM` must change in the same breath —
+   `h5QFWJTb6y5MX0kxuTiEeP7-wzHaSizE5zgAT-PzWA4` (debug) →
+   `IJS8zAVMaB9G2MgSN4wHZXzzOd19ToC1RgJrd6_yxkQ` (release). A QR with the wrong
+   checksum fails provisioning with a generic message.
+2. Delete the existing `org.takmdm.agent` package from the library, or the
+   upload is refused — correctly. Attempting it produced:
+   *"signing certificate for org.takmdm.agent does not match the stored one
+   (have 8794055894dbeb2e…, got 2094bccc054c681f…)"*. **That guard is the reason
+   a mis-signed build cannot silently become an undeliverable published build.**
+3. Factory-reset and re-enrol each device.
+
+**v42 (`0.11.0`) exists only as a release-signed artifact.** It is not uploaded
+and cannot reach the current device. v41 remains the deployed build.
 
 ---
 

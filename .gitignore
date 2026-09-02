@@ -22,6 +22,11 @@ agent/*/build/
 agent/local.properties
 *.apk
 
+# Release signing for the agent. The key is the fleet's identity — a signature
+# change cannot be delivered over the update channel, so this is closer to the
+# device CA than to a build flag. The .example template is committed; this is not.
+agent/keystore.properties
+
 # Generated provisioning payloads embed a live enrollment token.
 qr_payload*.json
 

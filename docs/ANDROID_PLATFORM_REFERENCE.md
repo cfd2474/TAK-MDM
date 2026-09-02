@@ -325,6 +325,43 @@ It reports no `agent_version_code`, so the gate refuses it by design. Reaching t
 channel costs exactly one manual install per device, which is a one-time
 migration cost and not a recurring one.
 
+### ⚠️ The signing certificate is a one-way commitment for the life of a device
+
+📖 Android refuses to install an update whose signing certificate differs from the
+installed app's. There is no override, and Device Owner privilege does not help —
+this is the check that stops an attacker replacing a privileged app.
+
+Verified on this project (2026-09-02) at both ends:
+
+* **The APK.** `apksigner verify --print-certs -v` on the debug and release builds
+  gives different certificate digests, `8794055894dbeb2e…` (debug keystore) and
+  `2094bccc054c681f…` (`CN=Michael Leckliter`, RSA-2048, v2 scheme).
+* **The server refuses the upload**, before any device is involved:
+
+  > signing certificate for org.takmdm.agent does not match the stored one
+  > (have 8794055894dbeb2e…, got 2094bccc054c681f…). Android would reject this
+  > update on device; upload it under a different package or remove the existing
+  > package first.
+
+Two consequences worth internalising before choosing a key:
+
+* **Switching keys strands every device already running the old one.** The agent
+  is Device Owner, so it cannot simply be uninstalled and replaced — clearing
+  Device Owner requires a **factory reset**. Migration cost is a reset and
+  re-enrol per device, not a re-install.
+* **`EXTRA_PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM` changes with the key.**
+  It is `base64url(SHA-256(signing certificate DER))`, unpadded — the same bytes
+  `apksigner` prints as "certificate SHA-256 digest". Confirmed by deriving the
+  deployed debug value from the debug APK and getting a byte-exact match:
+
+  ```
+  debug    8794055894dbeb2e…  →  h5QFWJTb6y5MX0kxuTiEeP7-wzHaSizE5zgAT-PzWA4
+  release  2094bccc054c681f…  →  IJS8zAVMaB9G2MgSN4wHZXzzOd19ToC1RgJrd6_yxkQ
+  ```
+
+  A provisioning QR carrying the wrong checksum fails during setup with a generic
+  message, so this must be changed in the same breath as the signing key.
+
 ---
 
 ## 5a. Removing and suppressing apps

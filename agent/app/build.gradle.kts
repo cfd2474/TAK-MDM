@@ -14,9 +14,35 @@
  * limitations under the License.
  */
 
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+/**
+ * Release signing, loaded from `agent/keystore.properties` (gitignored) or from
+ * the environment for CI.
+ *
+ * Kept out of this file on purpose. The signing key *is* the fleet's identity:
+ * Android refuses to install a build whose signature differs from the installed
+ * one, and the agent-update channel cannot work around that — a key change means
+ * a manual re-install on every device that ever ran a build signed with the old
+ * one. So the key is worth protecting like the device CA, not like a build flag.
+ */
+val signingProps: Properties? = run {
+    val file = rootProject.file("keystore.properties")
+    when {
+        file.exists() -> Properties().apply { file.inputStream().use(::load) }
+        System.getenv("ATLAS_KEYSTORE_FILE") != null -> Properties().apply {
+            setProperty("storeFile", System.getenv("ATLAS_KEYSTORE_FILE"))
+            setProperty("storePassword", System.getenv("ATLAS_KEYSTORE_PASSWORD") ?: "")
+            setProperty("keyAlias", System.getenv("ATLAS_KEY_ALIAS") ?: "key0")
+            setProperty("keyPassword", System.getenv("ATLAS_KEY_PASSWORD") ?: "")
+        }
+        else -> null
+    }
 }
 
 android {
@@ -31,13 +57,27 @@ android {
         targetSdk = 36
         // Bump on every build you intend to upload: the server refuses a duplicate
         // versionCode, and Android refuses to install a downgrade.
-        versionCode = 41
-        versionName = "0.10.1"
+        versionCode = 42
+        versionName = "0.11.0"
+    }
+
+    signingConfigs {
+        signingProps?.let { props ->
+            create("release") {
+                storeFile = file(props.getProperty("storeFile"))
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Null when no keystore is configured. The task below turns that into
+            // a failed build rather than an unsigned APK.
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 
@@ -101,4 +141,24 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+}
+
+/**
+ * Refuse to build an unsigned release.
+ *
+ * AGP's default is to produce `app-release-unsigned.apk` and say nothing. That
+ * artifact cannot be installed, and it looks exactly like a real build until a
+ * device rejects it — which, for a fleet agent, is the slowest possible way to
+ * find out. Failing here costs seconds instead.
+ */
+tasks.matching { it.name == "packageRelease" || it.name == "assembleRelease" }.configureEach {
+    doFirst {
+        if (signingProps == null) {
+            throw GradleException(
+                "Release signing is not configured. Copy agent/keystore.properties.example " +
+                    "to agent/keystore.properties and fill it in, or set ATLAS_KEYSTORE_FILE / " +
+                    "ATLAS_KEYSTORE_PASSWORD / ATLAS_KEY_ALIAS / ATLAS_KEY_PASSWORD."
+            )
+        }
+    }
 }
