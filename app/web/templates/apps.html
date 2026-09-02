@@ -54,7 +54,7 @@
             <td class="muted">
               {{ (p.latest_version.files | length) if p.latest_version else 0 }}
               {% if p.latest_version and p.latest_version.has_obb %}
-                <span class="pill" title="This package includes an OBB expansion file. A Device Owner cannot place OBB files on the device — the app installs but may be missing assets.">OBB</span>
+                <span class="pill" title="This package ships an OBB expansion file. A Device Owner cannot place OBB files on the device, so the APK installs WITHOUT it and the app will be missing the assets it expects. Assigning this package will mark a device degraded.">OBB</span>
               {% endif %}
             </td>
             <td class="mono muted" title="{{ p.signature_sha256 or '' }}">

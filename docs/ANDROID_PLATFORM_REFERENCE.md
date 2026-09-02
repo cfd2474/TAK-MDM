@@ -552,7 +552,30 @@ page flags a package that carries one.
 ✅ **The apply_error path is verified on `SM-X520`** (2026-09-02): an XAPK carrying
 an OBB was assigned, the agent logged `errors=2` and raised *"…needs an OBB
 expansion file, which a Device Owner cannot place on this device…"*, and the
-device went **DEGRADED** with that text in `compliance_detail`.
+device went **DEGRADED** with that text in `compliance_detail`. ⚠️ That test used a
+**synthetic** XAPK from `tests/apk_fixtures.py::build_xapk(with_obb=True)`. It
+proves the error path, not that any real package needs it — see below.
+
+⚠️ **No package this project deploys actually carries an OBB** (checked
+2026-09-02, by reading the files rather than assuming):
+
+* **ATAK** (`ATAK-5.8.0.4-174b425-civSmall-release.apk`) is one self-contained
+  APK — 112 MB, 4 637 entries, **no** OBB and no trace of Google's expansion-file
+  downloader library. Its bulk is native geospatial code: `lib/` 128 MB
+  (`libgdal.so` 35 MB, `libtakengine.so` 25 MB, `libspatialite.so` 18 MB),
+  `assets/` 38 MB, `res/` 17 MB, three dex files 22 MB. Native libraries *must*
+  live inside the APK, so an OBB was never available to them. The map and imagery
+  data that would be expansion content in a consumer app is pushed at runtime into
+  `/sdcard/atak/…` instead — the path a Device Owner **can** write (✅ R1 above).
+* **`butterfly-iq-2.49.0.xapk`** has no OBB either. It is base + splits, three of
+  them large *feature* splits (`dltools` 112 MB, `quicktips` 76 MB, `firmware`
+  45 MB). Splits install normally.
+
+So R2 is a real platform limitation with, so far, **no known package that
+triggers it**. Failing loudly stays correct — an app installing "successfully"
+and then failing at runtime on missing assets looks like an app bug, not an MDM
+one — but this is not blocking any current deployment, and it is a weak argument
+for Knox on its own.
 
 Re-run `probe_obb` on the Qualcomm (`SM-G736U1`) and MediaTek (`SM-X828U`) devices
 before assuming the underlying EACCES holds there (R5).

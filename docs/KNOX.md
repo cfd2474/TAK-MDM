@@ -138,7 +138,7 @@ These were hoped for and are ruled out. Recorded so nobody re-litigates them.
 | **All-files access app-op** (R1's one-tap grant) | `ApplicationPolicy.applyRuntimePermissions()` is deprecated at API 30 and **unavailable since Android 12**. Samsung stepped back because AE covers runtime permissions — and that still never reached app-ops. |
 | **VPN without a client app** (W14) | `GenericVpnPolicy` still **binds to a third-party VPN vendor app**; it does not implement IPsec/L2TP itself. Per-app routing is the gain, not built-in profiles. |
 | **OS device name** (W24) | No `setDeviceName` anywhere. `custom.SettingsManager` is a fixed allow-list of ~40 toggles and **cannot write arbitrary secure/global settings**. Device naming is **Knox Configure**, a separate provisioning product. |
-| **XAPK OBB placement** (R2) | Nothing in the SDK addresses another app's `Android/obb`. Not re-checked in depth, but no package looks like a candidate. |
+| **XAPK OBB placement** (R2) | Nothing in the SDK addresses another app's `Android/obb`. ⬇️ Also **moot in practice** (checked 2026-09-02 by reading the files): ATAK 5.8.0.4 is one self-contained 112 MB APK with no OBB and no expansion-downloader library, and the only XAPK we hold is base + feature splits, also no OBB. Do not cite OBB placement as a reason to adopt Knox. |
 
 ### 4.3 The deprecation trend — read this before choosing a feature
 

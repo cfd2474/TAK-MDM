@@ -581,9 +581,11 @@ class Reconciler(private val context: Context) {
             // the worst kind of failure to diagnose.
             if (ordered.any { it.optString("role") == "obb" }) {
                 AgentLog.w(TAG, "$packageName: OBB present but cannot be deployed (scoped storage, R2)")
-                errors += "$packageName: needs an OBB expansion file, which a Device Owner " +
+                errors += "$packageName: ships an OBB expansion file, which a Device Owner " +
                     "cannot place on this device (Android blocks writing another app's " +
-                    "Android/obb). The APK installs but the app may be missing assets."
+                    "Android/obb). The APK is installed WITHOUT it, so the app will be " +
+                    "missing the assets it expects. Install the OBB by hand, or deploy a " +
+                    "build that does not use one."
             }
 
             for (part in ordered) {
