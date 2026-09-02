@@ -44,7 +44,12 @@ class AppCatalogSpec(PolicySpec):
     required_apps: Annotated[
         list[RequiredApp] | None,
         Merge(MergeStrategy.MERGE_BY_KEY, key="package_name"),
-    ] = None
+    ] = Field(
+        default=None,
+        title="Required apps",
+        description="Apps the device must have installed. Pick from uploaded packages.",
+        json_schema_extra={"ui_group": "Apps", "ui_control": "app_list"},
+    )
 
     # The blacklist: make these packages unusable by whatever means each one allows.
     #
@@ -58,7 +63,13 @@ class AppCatalogSpec(PolicySpec):
     # **Reversible.** Taking a package off this list unhides it, and the agent only
     # unhides what it hid. Removal is not reversible; that is the trade for it
     # actually reclaiming the storage.
-    blocked_packages: Annotated[list[str] | None, Merge(MergeStrategy.UNION)] = None
+    blocked_packages: Annotated[list[str] | None, Merge(MergeStrategy.UNION)] = Field(
+        default=None,
+        title="Blocklist (hide / uninstall)",
+        description="Made unusable: an ordinary app is uninstalled, a preinstalled "
+        "one is hidden. Reversible.",
+        json_schema_extra={"ui_group": "Apps", "ui_control": "package_list"},
+    )
 
     # Packages that must **not be installed** — the strict form of the blacklist.
     #
@@ -77,7 +88,13 @@ class AppCatalogSpec(PolicySpec):
     # UNION for the same reason as the blocklist: with several policies stacked, any
     # one of them saying "not this" is the restrictive answer, and a merge that
     # could drop that instruction would be a policy that silently fails to remove.
-    removed_packages: Annotated[list[str] | None, Merge(MergeStrategy.UNION)] = None
+    removed_packages: Annotated[list[str] | None, Merge(MergeStrategy.UNION)] = Field(
+        default=None,
+        title="Must-not-be-installed (uninstall, verified)",
+        description="Uninstalled outright and checked afterwards. Not reversible. "
+        "Use the blocklist for preinstalled apps.",
+        json_schema_extra={"ui_group": "Apps", "ui_control": "package_list"},
+    )
 
     # INTERSECT is the correct "most restrictive" reading of an allowlist but it
     # surprises people: stacking two allowlists yields only their overlap, which can
@@ -88,9 +105,19 @@ class AppCatalogSpec(PolicySpec):
             MergeStrategy.INTERSECT,
             note="Stacking allowlists yields only their overlap, which may be empty.",
         ),
-    ] = None
+    ] = Field(
+        default=None,
+        title="Allowlist (only these may run)",
+        description="If set, only these packages are permitted.",
+        json_schema_extra={"ui_group": "Apps", "ui_control": "package_list"},
+    )
 
     # No natural ordering between two kiosk apps — someone has to lose, loudly.
     kiosk_package: Annotated[str | None, Merge(MergeStrategy.HIGHEST_RANK)] = Field(
-        default=None, pattern=_PACKAGE_PATTERN
+        default=None,
+        pattern=_PACKAGE_PATTERN,
+        title="Kiosk app",
+        description="Lock the device to this single app. Leave unmanaged for a "
+        "normal (non-kiosk) device.",
+        json_schema_extra={"ui_group": "Kiosk"},
     )

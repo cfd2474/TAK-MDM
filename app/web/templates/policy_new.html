@@ -1,11 +1,13 @@
 {% extends "base.html" %}
 {% from "_macros.html" import page_header, csrf_field %}
+{% from "_policy_form.html" import policy_form, app_group_buttons %}
 {% set nav = 'policies' %}
-{% block title %}New policy — ATLAS{% endblock %}
+{% block title %}New single-concern policy — ATLAS{% endblock %}
+{% block main_class %}wide{% endblock %}
 
 {% block content %}
-{{ page_header('New policy', 'Single-concern and stackable. Build one narrow policy and apply it wherever it belongs, rather than rebuilding it inside every profile.') }}
-<p class="sub"><a href="/policies">← back to policies</a></p>
+{{ page_header('New single-concern policy', 'One typed policy of a single kind, outside any bundle. Most operators use a composite policy instead.') }}
+<p class="sub"><a href="/policies">← policies</a> · <a href="/policies/new">build a composite policy</a></p>
 
 <div class="panel">
   <form method="post" action="/policies">
@@ -14,63 +16,36 @@
       <div>
         <label for="name">Name</label>
         <input id="name" name="name" required class="field-full" placeholder="Baseline Password">
-
-        <label for="policy_type">Type</label>
-        <select id="policy_type" name="policy_type" class="field-full" onchange="showRef(this.value)">
-          {% for t in policy_types %}
-            <option value="{{ t.name }}">{{ t.name }} — {{ t.description }}</option>
-          {% endfor %}
-        </select>
-
+      </div>
+      <div>
         <label for="description">Description</label>
         <input id="description" name="description" class="field-full">
-
-        <label for="spec">Spec (JSON)</label>
-        <textarea id="spec" name="spec" rows="10">{}</textarea>
-        <p class="muted" style="font-size:12px">
-          Only the fields you set are stored, so a narrow policy stacks on a broad
-          one without blanking it.
-        </p>
-
-        <label class="checks" style="display:flex; gap:8px; align-items:center; max-height:none">
-          <input type="checkbox" name="is_template" value="true" style="width:auto">
-          Save as a template (a reusable blueprint — never assigned, only cloned)
-        </label>
-
-        <button type="submit" style="margin-top:12px">Create</button>
       </div>
-
       <div>
-        <label>Fields and how they merge when stacked</label>
-        {% for t in policy_types %}
-        <div class="checks" id="ref-{{ t.name }}" style="display:none; max-height:420px">
-          <table>
-            <thead><tr><th>Field</th><th>Strategy</th></tr></thead>
-            <tbody>
-            {% for field, rule in t.merge_rules.items() %}
-              <tr>
-                <td class="mono">{{ field }}</td>
-                <td>
-                  <span class="pill">{{ rule.strategy }}</span>
-                  {% if rule.note %}<br><small class="muted">{{ rule.note }}</small>{% endif %}
-                </td>
-              </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% endfor %}
+        <label for="policy_type">Type</label>
+        <select id="policy_type" name="policy_type" class="field-full"
+                onchange="var v=this.value;document.querySelectorAll('[data-type-form]').forEach(function(el){el.hidden=el.dataset.typeForm!==v})">
+          {% for t in wired_types %}
+            <option value="{{ t.policy_type }}">{{ t.label }} ({{ t.policy_type }})</option>
+          {% endfor %}
+        </select>
       </div>
     </div>
+
+    <label class="checks" style="display:flex; gap:8px; align-items:center; max-height:none; margin-top:10px">
+      <input type="checkbox" name="is_template" value="true" style="width:auto">
+      Save as a template (a reusable blueprint — never assigned, only cloned)
+    </label>
+
+    {% for t in wired_types %}
+      <div data-type-form="{{ t.policy_type }}" {{ 'hidden' if not loop.first }}>
+        <h2>{{ t.label }}</h2>
+        {% if t.policy_type == 'APP_CATALOG' %}{{ app_group_buttons(app_groups) }}{% endif %}
+        {{ policy_form(t.grouped, {}, app_packages, managed_files) }}
+      </div>
+    {% endfor %}
+
+    <button type="submit" style="margin-top:12px">Create</button>
   </form>
 </div>
-
-<script>
-  function showRef(name) {
-    document.querySelectorAll('[id^="ref-"]').forEach(el => el.style.display = 'none');
-    const target = document.getElementById('ref-' + name);
-    if (target) target.style.display = 'block';
-  }
-  showRef(document.getElementById('policy_type').value);
-</script>
 {% endblock %}

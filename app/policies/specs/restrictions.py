@@ -17,6 +17,10 @@
 Every boolean here is phrased as an *allow* so that MOST_RESTRICTIVE is a plain
 logical AND. Naming a field ``disallow_x`` would invert the meaning of the strategy
 and is the kind of subtle trap that produces a permissive fleet by accident.
+
+Field ``title`` / ``description`` / ``json_schema_extra`` drive the form-driven
+editor (W10). ``ui_group`` buckets fields into sections; ``ui_true`` / ``ui_false``
+are the words shown for an allow-boolean's two managed states.
 """
 
 from __future__ import annotations
@@ -31,18 +35,57 @@ from app.policies.strategies import Merge, MergeStrategy
 _DENY_WINS = Merge(MergeStrategy.MOST_RESTRICTIVE)
 
 
+def _allow(title: str, group: str, description: str = ""):
+    """An allow-boolean field with its form metadata."""
+    return Field(
+        default=None,
+        title=title,
+        description=description,
+        json_schema_extra={"ui_group": group, "ui_true": "Allowed", "ui_false": "Blocked"},
+    )
+
+
 class RestrictionsSpec(PolicySpec):
-    allow_camera: Annotated[bool | None, _DENY_WINS] = None
-    allow_screen_capture: Annotated[bool | None, _DENY_WINS] = None
-    allow_bluetooth: Annotated[bool | None, _DENY_WINS] = None
-    allow_usb_file_transfer: Annotated[bool | None, _DENY_WINS] = None
-    allow_factory_reset: Annotated[bool | None, _DENY_WINS] = None
-    allow_safe_mode: Annotated[bool | None, _DENY_WINS] = None
-    allow_developer_options: Annotated[bool | None, _DENY_WINS] = None
-    allow_install_unknown_sources: Annotated[bool | None, _DENY_WINS] = None
-    allow_outgoing_calls: Annotated[bool | None, _DENY_WINS] = None
-    allow_location_services: Annotated[bool | None, _DENY_WINS] = None
+    allow_camera: Annotated[bool | None, _DENY_WINS] = _allow(
+        "Camera", "Device functionality"
+    )
+    allow_screen_capture: Annotated[bool | None, _DENY_WINS] = _allow(
+        "Screen capture", "Device functionality"
+    )
+    allow_safe_mode: Annotated[bool | None, _DENY_WINS] = _allow(
+        "Safe mode", "Device functionality",
+        "Booting into safe mode disables device-admin apps.",
+    )
+    allow_factory_reset: Annotated[bool | None, _DENY_WINS] = _allow(
+        "Factory reset", "Device functionality"
+    )
+    allow_developer_options: Annotated[bool | None, _DENY_WINS] = _allow(
+        "Developer options", "Device functionality",
+        "Also gates USB/wireless debugging.",
+    )
+    allow_install_unknown_sources: Annotated[bool | None, _DENY_WINS] = _allow(
+        "Install from unknown sources", "Device functionality"
+    )
+
+    allow_bluetooth: Annotated[bool | None, _DENY_WINS] = _allow(
+        "Bluetooth", "Network & communication"
+    )
+    allow_outgoing_calls: Annotated[bool | None, _DENY_WINS] = _allow(
+        "Outgoing calls", "Network & communication"
+    )
+    allow_location_services: Annotated[bool | None, _DENY_WINS] = _allow(
+        "Location services", "Network & communication"
+    )
+    allow_usb_file_transfer: Annotated[bool | None, _DENY_WINS] = _allow(
+        "USB file transfer", "Network & communication",
+        "MTP/PTP access to device storage over USB.",
+    )
 
     screen_timeout_seconds: Annotated[int | None, Merge(MergeStrategy.MIN)] = Field(
-        default=None, ge=15, le=3_600
+        default=None,
+        ge=15,
+        le=3_600,
+        title="Screen timeout",
+        description="Seconds of inactivity before the screen locks (15–3600).",
+        json_schema_extra={"ui_group": "Display", "ui_unit": "seconds"},
     )

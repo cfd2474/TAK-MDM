@@ -15,9 +15,11 @@ derivatives** (Chunk 14), verified live through real nginx — including that
 retiring the primary kills an already-issued, still-time-valid QR immediately.
 Agent **v27 (`0.7.1`)** running on `SM-X520`, compliant, correctly identified by
 its hardware serial `R5GL40MMHRN`.
-**✅ Web UI expansion (Chunks W1–W9, plus W4b) COMPLETE.** Eight-section ATLAS
+**✅ Web UI expansion (Chunks W1–W10, plus W4b) COMPLETE.** Eight-section ATLAS
 console — Enroll, Manage, Policies, Apps, Content, Reports, Admin, Guides — on
-server-rendered Jinja with no build step. 434 server tests + 30 agent tests.
+server-rendered Jinja with no build step. **W10 replaced JSON-textarea policy
+editing with generated typed forms** (dropdowns, tri-state controls, repeatable
+rows; per-field merge hints). 439 server tests + 30 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -2236,6 +2238,92 @@ HTML.
 5. Tests: guide index lists articles, an article renders its Markdown, release
    notes page renders.
 
+#### ✅ W10 — Form-driven policy editing (COMPLETE)
+
+**439 server tests (was 434).** Operator request (with a Hexnode screenshot):
+build policies with **typed controls — dropdowns, number fields, repeatable rows —
+not a JSON textarea.**
+
+Delivered:
+
+- **Field metadata on the four specs** — `title` / `description` /
+  `json_schema_extra` (`ui_group`, `ui_true`/`ui_false`, `ui_unit`, `ui_control`).
+  `RESTRICTIONS` grouped "Device functionality" / "Network & communication" /
+  "Display" like the screenshot; `PASSWORD` into "Strength" / "Lockout & expiry".
+  Metadata-only — no behaviour change.
+- **`app/policies/form_schema.py`** — `FormField` + `grouped_fields(type)` derives
+  every control (bool → tri-state, int → number with min/max, IntEnum → dropdown,
+  str → text with pattern, list → repeatable rows) plus a plain-English **merge
+  hint** per field, all from the registered spec (Pydantic fields + the `Merge`
+  annotation). No parallel descriptor.
+- **`app/policies/form_parse.py`** — HTTP form multidict → raw spec dict of the
+  *managed* fields only (tri-state "" omits; blank number omits; list de-dupes;
+  object-list rows built from `name__subfield` groups) → straight into
+  `registry.validate_spec`. The form layer never validates.
+- **`app/web/templates/_policy_form.html`** — grouped control renderer with the
+  tri-state select ("Not managed" / Allowed / Blocked), number spinners, enum
+  dropdowns, repeatable package / app / file rows (`atlas.js` gains
+  `[data-rowset]` add/remove-row wiring and `atlasAddAppGroup`), per-field merge
+  hint, and a collapsed read-only "resulting spec" panel.
+- **Wired into** `profile_editor.html` (create + edit), `policy_new.html`
+  (single-concern, type switcher), `policy_detail.html` (publish new version).
+  The three console routes read the form via `parse_form`; **every JSON textarea
+  is gone** from the console.
+- **Emptying a profile section's form and saving removes the section** — the
+  form's "no fields managed" state maps cleanly to "this policy no longer manages
+  this category".
+- Field names are globally unique across the four wired types, so the profile
+  creator's single `<form>` carries all category sub-forms and `parse_form(type)`
+  picks out each type's own fields.
+
+Verified live: `/policies/new` renders the typed controls with merge hints;
+submitting `min_length=12 / allow_camera=false / kiosk_package=…` created a
+composite policy whose three sections held exactly the managed fields; the edit
+form pre-selected the stored values; clearing the restrictions form to all "Not
+managed" removed that section.
+
+##### Decisions
+
+| # | Decision | Rationale |
+|---|---|---|
+
+| # | Decision | Rationale |
+|---|---|---|
+| DW6 | **Override D64 for the editing surface.** The policy / profile-section editor becomes a generated form of typed controls. No JSON *typing* anywhere in the console. | D64 chose a JSON box because a generated form would "hide the thing that matters — that `min_length` merges by MAX". W10 keeps that visible: a plain-English **merge hint sits next to every control** ("strongest wins", "any policy blocking wins", "stacked allowlists yield only their overlap"), and a **read-only "resulting spec"** panel shows exactly what the form produces. The concern is answered without making operators type JSON. The API keeps its JSON `spec` object — that is a machine surface, not typing. |
+| DW7 | **A boolean is tri-state in the UI:** *Not managed* / *Allowed* / *Blocked*. "Not managed" omits the field. | Our specs store only set fields (D3/D18) so a stacked policy composes. A plain checkbox is binary and would force every restriction into every policy — the one-config-per-group model D1 exists to avoid. The third state is the honest representation. |
+| DW8 | **Field metadata (label, help, group, bool wording) lives on the Pydantic `Field`** via `title` / `description` / `json_schema_extra`. | Single source of truth, co-located with the merge rule. `model_json_schema()` already surfaces `title`/`description`; the form generator reads the rest. No parallel descriptor file to drift. |
+
+##### Original plan
+
+1. **Field metadata** — add `title`, `description`, `json_schema_extra` (`ui_group`,
+   and `ui_true`/`ui_false` for allow-booleans) to the four spec files. Group
+   `RESTRICTIONS` like the screenshot ("Device functionality", "Network",
+   "Display"); `PASSWORD` into "Strength" / "Lockout & expiry". No behaviour
+   change — existing tests stay green.
+2. **`app/policies/form_schema.py`** — `FormField` (name, label, help, control,
+   group, constraints, merge_hint) and `form_fields(policy_type)` deriving it all
+   from `registry.get(type)` (Pydantic fields + the `Merge` annotation translated
+   to plain English).
+3. **`app/policies/form_parse.py`** — an HTTP form multidict → raw spec dict
+   (managed fields only, list/object builders included), then straight through
+   `registry.validate_spec` so the form never bypasses validation.
+4. **`app/web/templates/_policy_form.html`** — grouped control renderer: tri-state
+   select, number spinner with min/max, enum dropdown, text input with pattern
+   hint, repeatable list/row builders, per-field merge hint, and a collapsed
+   read-only "resulting spec" `<pre>`.
+5. **Wire in + drop the JSON boxes** — `profile_editor.html` (new + edit),
+   `policy_new.html`, `policy_detail.html` (publish new version); the three
+   console routes switch from a `spec` string to `form_parse`. `atlas.js` gains a
+   small add/remove-row helper.
+6. **Catalogue-fed list controls** — `required_apps` rows pick a package from the
+   uploaded `AppPackage`s (+ optional min version code); `files.entries` rows pick
+   a `ManagedFile`, destination, tier, persist and extract. The app-group helper
+   becomes "add this group's packages as rows".
+7. **Tests** — every field renders with the right control and its constraints; a
+   render → submit → stored-spec round-trip for each of the four types (including
+   one list and one object-list); "Not managed" omits the field; an out-of-range
+   value is refused with a legible message; the merge hint is present.
+
 ---
 
 ### Later chunks (sketch — to be detailed at approval time)
@@ -2280,6 +2368,17 @@ HTML.
 
 ## Changelog
 
+- **2026-09-02** — **W10: form-driven policy editing.** 439 tests. Overrides D64
+  for the console (DW6): every policy JSON textarea is replaced by a generated
+  form of typed controls — a tri-state select per restriction (Not managed /
+  Allowed / Blocked, DW7), number spinners with the spec's own min/max, enum
+  dropdowns, and repeatable package / app / file rows. `form_schema.py` derives
+  it all from the registered spec (Pydantic fields + `Merge` annotation), with a
+  plain-English merge hint beside every control so stacking stays legible;
+  `form_parse.py` turns the submission back into a managed-fields-only spec dict
+  and hands it to the existing validator. Field metadata (`title`, `ui_group`,
+  bool wording) lives on the Pydantic `Field` (DW8). Verified live against the
+  Docker stack. Migrations unchanged.
 - **2026-09-02** — **W9: Guides. Web UI expansion (W1–W9 + W4b) complete.**
   434 tests. Hand-written `markdown_lite.py` (no new dependency), `guides.py`
   reading `app/web/guides/**/*.md`, six how-to articles + two FAQ files + release

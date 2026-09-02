@@ -1,28 +1,9 @@
 {% extends "base.html" %}
 {% from "_macros.html" import page_header, csrf_field, empty_state %}
+{% from "_policy_form.html" import policy_form, app_group_buttons %}
 {% set nav = 'policies' %}
 {% block title %}{{ (profile.name if profile else 'New policy') }} — ATLAS{% endblock %}
 {% block main_class %}wide{% endblock %}
-
-{% macro merge_reference(definition) %}
-  <label>Fields and how they merge when this stacks with another policy</label>
-  <div class="checks" style="max-height:320px">
-    <table>
-      <thead><tr><th>Field</th><th>Strategy</th></tr></thead>
-      <tbody>
-      {% for field, rule in definition.merge_rules.items() %}
-        <tr>
-          <td class="mono">{{ field }}</td>
-          <td>
-            <span class="pill">{{ rule.strategy }}</span>
-            {% if rule.note %}<br><small class="muted">{{ rule.note }}</small>{% endif %}
-          </td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
-{% endmacro %}
 
 {% block content %}
 {% if mode == 'new' %}
@@ -79,21 +60,6 @@
         <p class="sub">Covers: {{ row.category.subtopics | join(' · ') }}</p>
       {% endif %}
 
-      {% if row.category.key == 'app_management' and app_groups %}
-        {% set target_id = ('spec__' if mode == 'new' else 'spec-') ~ row.category.key %}
-        <details class="panel" style="margin-bottom:12px">
-          <summary class="muted">Insert an app group into <code>required_apps</code></summary>
-          <div class="toolbar" style="margin-top:8px">
-            {% for grp in app_groups %}
-              <button type="button" class="ghost"
-                      onclick='atlasInsertAppGroup("{{ target_id }}", {{ grp.packages | tojson }})'>
-                {{ grp.name }} ({{ grp.packages | length }})
-              </button>
-            {% endfor %}
-          </div>
-        </details>
-      {% endif %}
-
       {% if not row.category.wired %}
         <div class="panel stub">
           <div class="big">Not available yet.</div>
@@ -105,47 +71,29 @@
 
       {% elif mode == 'new' %}
         <div class="panel">
-          <div class="row">
-            <div>
-              <label for="spec__{{ row.category.key }}">Spec (JSON) — leave as <code>{}</code> to skip this category</label>
-              <textarea id="spec__{{ row.category.key }}" name="spec__{{ row.category.key }}" rows="12">{}</textarea>
-              <p class="muted" style="font-size:12px">
-                {{ row.definition.description }} Only the fields you set are stored.
-              </p>
-            </div>
-            <div>{{ merge_reference(row.definition) }}</div>
-          </div>
+          <p class="sub">
+            Leave every control at <em>Not managed</em> to skip this category — it
+            is only part of the policy once you set something.
+          </p>
+          {% if row.category.key == 'app_management' %}{{ app_group_buttons(app_groups) }}{% endif %}
+          {{ policy_form(row.grouped, row.spec, app_packages, managed_files) }}
         </div>
 
       {% else %}
         <div class="panel">
           <form method="post" action="/profiles/{{ profile.id }}/sections/{{ row.category.key }}">
             {{ csrf_field(csrf_token) }}
-            <div class="row">
-              <div>
-                <label for="spec-{{ row.category.key }}">Spec (JSON)</label>
-                <textarea id="spec-{{ row.category.key }}" name="spec" rows="12">{{ row.spec_json }}</textarea>
-                <p class="muted" style="font-size:12px">{{ row.definition.description }}</p>
-                <div class="toolbar" style="margin-top:8px">
-                  <button type="submit">Save {{ row.category.label }}</button>
-                  {% if row.section %}
-                    <span class="muted">v{{ row.section.latest_version.version if row.section.latest_version else 0 }}</span>
-                  {% else %}
-                    <span class="muted">not configured</span>
-                  {% endif %}
-                </div>
-              </div>
-              <div>{{ merge_reference(row.definition) }}</div>
+            {% if row.category.key == 'app_management' %}{{ app_group_buttons(app_groups) }}{% endif %}
+            {{ policy_form(row.grouped, row.spec, app_packages, managed_files) }}
+            <div class="toolbar" style="margin-top:12px">
+              <button type="submit">Save {{ row.category.label }}</button>
+              {% if row.section %}
+                <span class="muted">v{{ row.section.latest_version.version if row.section.latest_version else 0 }} · set everything to “Not managed” and save to remove this section</span>
+              {% else %}
+                <span class="muted">not configured</span>
+              {% endif %}
             </div>
           </form>
-          {% if row.section %}
-          <form method="post" action="/profiles/{{ profile.id }}/sections/{{ row.category.key }}/remove"
-                data-confirm="Remove the {{ row.category.label }} section from this policy? Its version history goes with it."
-                style="margin-top:10px">
-            {{ csrf_field(csrf_token) }}
-            <button type="submit" class="ghost">Remove this section</button>
-          </form>
-          {% endif %}
         </div>
       {% endif %}
     </section>

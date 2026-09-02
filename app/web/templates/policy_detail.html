@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% from "_macros.html" import csrf_field %}
+{% from "_policy_form.html" import policy_form %}
 {% set nav = 'policies' %}
+{% block main_class %}wide{% endblock %}
 {% block title %}{{ policy.name }} — ATLAS{% endblock %}
 
 {% block content %}
@@ -113,35 +115,15 @@
 
 <h2>Publish a new version</h2>
 <div class="panel">
-  <div class="row">
-    <div>
-      <form method="post" action="/policies/{{ policy.id }}/versions">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <label for="spec">Spec (JSON)</label>
-        <textarea id="spec" name="spec" rows="14">{{ (policy.latest_version.spec if policy.latest_version else {}) | pretty_json }}</textarea>
-        <button type="submit" style="margin-top:10px">Publish</button>
-      </form>
-    </div>
-    <div>
-      <label>Fields and how they merge when stacked</label>
-      <div class="checks" style="max-height:420px">
-        <table>
-          <thead><tr><th>Field</th><th>Strategy</th></tr></thead>
-          <tbody>
-          {% for field, rule in definition.merge_rules.items() %}
-            <tr>
-              <td class="mono">{{ field }}</td>
-              <td>
-                <span class="pill">{{ rule.strategy }}</span>
-                {% if rule.note %}<br><small class="muted">{{ rule.note }}</small>{% endif %}
-              </td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
+  <p class="sub">
+    Editing publishes a new immutable version. Each control shows how its field
+    merges when this policy stacks with another.
+  </p>
+  <form method="post" action="/policies/{{ policy.id }}/versions">
+    {{ csrf_field(csrf_token) }}
+    {{ policy_form(grouped, current_spec, app_packages, managed_files) }}
+    <button type="submit" style="margin-top:12px">Publish</button>
+  </form>
 </div>
 
 <h2>Manage</h2>

@@ -400,6 +400,55 @@ label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 12.5
 .stub .big { font-size: 15px; color: var(--ink); margin-bottom: 6px; }
 
 /* --------------------------------------------------------------------------- */
+/* Form-driven policy editor (W10)                                              */
+/* --------------------------------------------------------------------------- */
+
+.pf-group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 16px 14px;
+  margin: 0 0 14px;
+}
+.pf-group legend {
+  padding: 0 8px;
+  font-weight: 650;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--muted);
+}
+.pf-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 14px;
+  align-items: start;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+.pf-field:last-child { border-bottom: none; }
+.pf-label label { margin: 0; color: var(--ink); font-size: 13.5px; }
+.pf-control { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pf-control select, .pf-control input[type="text"], .pf-control input[type="number"] { max-width: 100%; }
+.pf-preview { margin-top: 14px; }
+.pf-preview pre { margin-top: 8px; }
+
+.rowset { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.rs-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+@media (max-width: 720px) {
+  .pf-field { grid-template-columns: 1fr; gap: 6px; }
+}
+
+/* --------------------------------------------------------------------------- */
 /* Rendered Markdown (Guides)                                                    */
 /* --------------------------------------------------------------------------- */
 

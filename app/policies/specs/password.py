@@ -37,27 +37,55 @@ class PasswordQuality(enum.IntEnum):
     COMPLEX = 6
 
 
+_STRENGTH = "Strength"
+_LOCKOUT = "Lockout & expiry"
+
+
 class PasswordSpec(PolicySpec):
     quality: Annotated[
         PasswordQuality | None,
         Merge(MergeStrategy.MAX, note="Integer-ordered; MAX selects the strictest."),
-    ] = None
+    ] = Field(
+        default=None,
+        title="Password quality",
+        description="Minimum complexity class the passcode must meet.",
+        json_schema_extra={"ui_group": _STRENGTH},
+    )
 
-    min_length: Annotated[int | None, Merge(MergeStrategy.MAX)] = Field(default=None, ge=0, le=16)
-    min_letters: Annotated[int | None, Merge(MergeStrategy.MAX)] = Field(default=None, ge=0, le=16)
-    min_digits: Annotated[int | None, Merge(MergeStrategy.MAX)] = Field(default=None, ge=0, le=16)
-    min_symbols: Annotated[int | None, Merge(MergeStrategy.MAX)] = Field(default=None, ge=0, le=16)
+    min_length: Annotated[int | None, Merge(MergeStrategy.MAX)] = Field(
+        default=None, ge=0, le=16, title="Minimum length",
+        json_schema_extra={"ui_group": _STRENGTH},
+    )
+    min_letters: Annotated[int | None, Merge(MergeStrategy.MAX)] = Field(
+        default=None, ge=0, le=16, title="Minimum letters",
+        json_schema_extra={"ui_group": _STRENGTH},
+    )
+    min_digits: Annotated[int | None, Merge(MergeStrategy.MAX)] = Field(
+        default=None, ge=0, le=16, title="Minimum digits",
+        json_schema_extra={"ui_group": _STRENGTH},
+    )
+    min_symbols: Annotated[int | None, Merge(MergeStrategy.MAX)] = Field(
+        default=None, ge=0, le=16, title="Minimum symbols",
+        json_schema_extra={"ui_group": _STRENGTH},
+    )
     history_length: Annotated[int | None, Merge(MergeStrategy.MAX)] = Field(
-        default=None, ge=0, le=50
+        default=None, ge=0, le=50, title="Password history",
+        description="How many previous passcodes cannot be reused.",
+        json_schema_extra={"ui_group": _STRENGTH},
     )
 
     # Lower is stricter for these three, hence MIN.
     expiration_days: Annotated[int | None, Merge(MergeStrategy.MIN)] = Field(
-        default=None, ge=1, le=730
+        default=None, ge=1, le=730, title="Expiry",
+        description="Days before the passcode must be changed (1–730).",
+        json_schema_extra={"ui_group": _LOCKOUT, "ui_unit": "days"},
     )
     max_failed_attempts_before_wipe: Annotated[int | None, Merge(MergeStrategy.MIN)] = Field(
-        default=None, ge=1, le=100
+        default=None, ge=1, le=100, title="Failed attempts before wipe",
+        json_schema_extra={"ui_group": _LOCKOUT},
     )
     lock_timeout_seconds: Annotated[int | None, Merge(MergeStrategy.MIN)] = Field(
-        default=None, ge=15, le=86_400
+        default=None, ge=15, le=86_400, title="Auto-lock timeout",
+        description="Seconds of inactivity before the device locks (15–86400).",
+        json_schema_extra={"ui_group": _LOCKOUT, "ui_unit": "seconds"},
     )

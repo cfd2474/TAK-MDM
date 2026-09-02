@@ -1,0 +1,181 @@
+{#
+  Copyright 2026 TAK-Solutions LLC — Apache 2.0.
+
+  Form-driven policy editor (W10). Renders grouped, typed controls for one policy
+  type. No JSON typing (DW6). Import:
+    {% from "_policy_form.html" import policy_form %}
+  and call:
+    {{ policy_form(grouped, spec, app_packages, managed_files) }}
+  `grouped` is app.policies.form_schema.grouped_fields(type); `spec` is the
+  current stored spec dict (or {}). Field names are globally unique across the
+  four wired policy types, so the profile creator can render several policy_form
+  blocks in one <form> and parse_form(type, whole_form) picks out each type's
+  own fields.
+#}
+
+{% macro _bool(f, value, name) %}
+  <select name="{{ name }}">
+    <option value="" {{ 'selected' if value is none }}>Not managed</option>
+    <option value="true" {{ 'selected' if value is true }}>{{ f.true_label }}</option>
+    <option value="false" {{ 'selected' if value is false }}>{{ f.false_label }}</option>
+  </select>
+{% endmacro %}
+
+{% macro _int(f, value, name) %}
+  <input type="number" name="{{ name }}" value="{{ '' if value is none else value }}"
+         {% if f.minimum is not none %}min="{{ f.minimum }}"{% endif %}
+         {% if f.maximum is not none %}max="{{ f.maximum }}"{% endif %}
+         placeholder="not managed" style="width:160px">
+  {% if f.unit %}<span class="muted">{{ f.unit }}</span>{% endif %}
+  {% if f.minimum is not none or f.maximum is not none %}
+    <span class="muted" style="font-size:11px">({{ f.minimum }}–{{ f.maximum }})</span>
+  {% endif %}
+{% endmacro %}
+
+{% macro _enum(f, value, name) %}
+  <select name="{{ name }}">
+    <option value="" {{ 'selected' if value is none }}>Not managed</option>
+    {% for c in f.choices %}
+      <option value="{{ c.value }}" {{ 'selected' if value is not none and (value | string) == c.value }}>{{ c.label }}</option>
+    {% endfor %}
+  </select>
+{% endmacro %}
+
+{% macro _str(f, value, name) %}
+  <input type="text" name="{{ name }}" value="{{ value or '' }}"
+         {% if f.pattern %}pattern="{{ f.pattern }}"{% endif %}
+         placeholder="not managed" style="min-width:280px">
+{% endmacro %}
+
+{% macro _package_list(f, items, name) %}
+  <div class="rowset" data-rowset>
+    {% for item in items or [] %}
+      <div class="rs-row"><input type="text" name="{{ name }}" value="{{ item }}" placeholder="com.example.app">
+        <button type="button" class="ghost" data-remove-row>Remove</button></div>
+    {% endfor %}
+    <template data-row-template>
+      <div class="rs-row"><input type="text" name="{{ name }}" placeholder="com.example.app">
+        <button type="button" class="ghost" data-remove-row>Remove</button></div>
+    </template>
+    <button type="button" class="ghost" data-add-row>Add package</button>
+  </div>
+{% endmacro %}
+
+{% macro _app_list(f, items, name, app_packages) %}
+  <div class="rowset" data-rowset="{{ name }}">
+    {% for entry in items or [] %}
+      {{ _app_row(name, app_packages, entry) }}
+    {% endfor %}
+    <template data-row-template>{{ _app_row(name, app_packages, none) }}</template>
+    <button type="button" class="ghost" data-add-row>Add app</button>
+  </div>
+{% endmacro %}
+
+{% macro _app_row(name, app_packages, entry) %}
+  <div class="rs-row">
+    <select name="{{ name }}__package_name">
+      <option value="">— pick an uploaded app —</option>
+      {% for p in app_packages %}
+        <option value="{{ p.package_name }}" {{ 'selected' if entry and entry.package_name == p.package_name }}>
+          {{ p.label or p.package_name }} ({{ p.package_name }})
+        </option>
+      {% endfor %}
+    </select>
+    <input type="number" name="{{ name }}__min_version_code" min="0" style="width:150px"
+           value="{{ (entry.min_version_code if entry and entry.min_version_code is not none else '') }}"
+           placeholder="min version code">
+    <button type="button" class="ghost" data-remove-row>Remove</button>
+  </div>
+{% endmacro %}
+
+{% macro _file_list(f, items, name, managed_files) %}
+  <div class="rowset" data-rowset>
+    {% for entry in items or [] %}{{ _file_row(name, managed_files, entry) }}{% endfor %}
+    <template data-row-template>{{ _file_row(name, managed_files, none) }}</template>
+    <button type="button" class="ghost" data-add-row>Add file</button>
+  </div>
+{% endmacro %}
+
+{% macro _file_row(name, managed_files, entry) %}
+  <div class="rs-row" style="flex-wrap:wrap">
+    <select name="{{ name }}__file_id">
+      <option value="">— pick an uploaded file —</option>
+      {% for mf in managed_files %}
+        <option value="{{ mf.id }}" {{ 'selected' if entry and (entry.file_id | string) == (mf.id | string) }}>{{ mf.name }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" name="{{ name }}__dest_path" style="min-width:220px"
+           value="{{ entry.dest_path if entry else '' }}" placeholder="/sdcard/atak/imagery">
+    <select name="{{ name }}__availability">
+      <option value="required" {{ 'selected' if not entry or entry.availability != 'optional' }}>required</option>
+      <option value="optional" {{ 'selected' if entry and entry.availability == 'optional' }}>optional (marketplace)</option>
+    </select>
+    <select name="{{ name }}__persist">
+      <option value="inherit" {{ 'selected' if not entry or entry.persist is none }}>persist: from tier</option>
+      <option value="yes" {{ 'selected' if entry and entry.persist is true }}>persist: yes</option>
+      <option value="no" {{ 'selected' if entry and entry.persist is false }}>persist: no</option>
+    </select>
+    <label class="muted" style="display:flex;gap:4px;align-items:center;margin:0">
+      <input type="checkbox" name="{{ name }}__extract" style="width:auto" {{ 'checked' if entry and entry.extract }}> extract
+    </label>
+    <input type="text" name="{{ name }}__extract_to" style="width:180px"
+           value="{{ entry.extract_to if entry and entry.extract_to else '' }}" placeholder="extract to (opt)">
+    <select name="{{ name }}__overwrite">
+      {% for o in ['if_newer', 'always', 'if_absent'] %}
+        <option value="{{ o }}" {{ 'selected' if entry and entry.overwrite == o }}>{{ o }}</option>
+      {% endfor %}
+    </select>
+    <button type="button" class="ghost" data-remove-row>Remove</button>
+  </div>
+{% endmacro %}
+
+{% macro _control(f, spec, name, app_packages, managed_files) %}
+  {% set value = spec.get(f.name) %}
+  {% if f.control == 'bool' %}{{ _bool(f, value, name) }}
+  {% elif f.control == 'int' %}{{ _int(f, value, name) }}
+  {% elif f.control == 'enum' %}{{ _enum(f, value, name) }}
+  {% elif f.control == 'str' %}{{ _str(f, value, name) }}
+  {% elif f.control == 'package_list' %}{{ _package_list(f, value, name) }}
+  {% elif f.control == 'app_list' %}{{ _app_list(f, value, name, app_packages) }}
+  {% elif f.control == 'file_list' %}{{ _file_list(f, value, name, managed_files) }}
+  {% endif %}
+{% endmacro %}
+
+{% macro app_group_buttons(app_groups) %}
+  {% if app_groups %}
+  <div class="toolbar" style="margin-bottom:10px">
+    <span class="muted" style="font-size:12px">Add an app group to Required apps:</span>
+    {% for grp in app_groups %}
+      <button type="button" class="ghost"
+              onclick='atlasAddAppGroup("required_apps", {{ grp.packages | tojson }})'>
+        {{ grp.name }} ({{ grp.packages | length }})
+      </button>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endmacro %}
+
+{% macro policy_form(grouped, spec, app_packages, managed_files) %}
+  {% for group, fields in grouped %}
+  <fieldset class="pf-group">
+    <legend>{{ group }}</legend>
+    {% for f in fields %}
+    <div class="pf-field">
+      <div class="pf-label">
+        <label>{{ f.label }}</label>
+        {% if f.help %}<div class="muted" style="font-size:12px">{{ f.help }}</div>{% endif %}
+        {% if f.merge_hint %}<div class="muted" style="font-size:11px">↳ {{ f.merge_hint }}</div>{% endif %}
+      </div>
+      <div class="pf-control">
+        {{ _control(f, spec, f.name, app_packages, managed_files) }}
+      </div>
+    </div>
+    {% endfor %}
+  </fieldset>
+  {% endfor %}
+
+  <details class="pf-preview">
+    <summary class="muted">Resulting spec (read-only)</summary>
+    <pre>{{ spec | pretty_json }}</pre>
+  </details>
+{% endmacro %}

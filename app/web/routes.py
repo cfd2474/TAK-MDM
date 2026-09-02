@@ -81,6 +81,7 @@ from app.db.models import (
     Tag,
 )
 from app.policies import creator_catalog
+from app.policies import form_parse, form_schema
 from app.policies.registry import PolicyTypeError, registry
 from app.services import app_groups as app_group_service
 from app.services import commands as command_service
@@ -352,13 +353,10 @@ def list_policies(
 
 
 def _catalog_view(profile=None) -> list[dict[str, Any]]:
-    """The creator/editor category rail: each category with its merge reference and
-    (in edit mode) the current section spec."""
+    """The creator/editor category rail: each wired category with its generated
+    form fields (W10) and, in edit mode, the section's current spec."""
     view: list[dict[str, Any]] = []
     for category in creator_catalog.CATALOG:
-        definition = (
-            registry.get(category.policy_type).describe() if category.wired else None
-        )
         section = (
             profile_service.section_for(profile, category.key) if profile else None
         )
@@ -370,12 +368,26 @@ def _catalog_view(profile=None) -> list[dict[str, Any]]:
         view.append(
             {
                 "category": category,
-                "definition": definition,
+                "grouped": form_schema.grouped_fields(category.policy_type)
+                if category.wired
+                else [],
                 "section": section,
-                "spec_json": json.dumps(spec, indent=2, sort_keys=True) if spec else "{}",
+                "spec": spec,
             }
         )
     return view
+
+
+def _form_catalogs(session: Session) -> dict[str, Any]:
+    """Uploaded apps and files, for the policy form's list controls."""
+    return {
+        "app_packages": list(
+            session.scalars(select(AppPackage).order_by(AppPackage.package_name))
+        ),
+        "managed_files": list(
+            session.scalars(select(ManagedFile).order_by(ManagedFile.name))
+        ),
+    }
 
 
 def _app_group_hints(session: Session) -> list[dict[str, Any]]:
@@ -401,20 +413,32 @@ def new_policy_page(
         profile=None,
         catalog=_catalog_view(),
         app_groups=_app_group_hints(session),
+        **_form_catalogs(session),
     )
 
 
 @router.get("/policies/new/single", response_class=HTMLResponse)
 def new_single_policy_page(
     request: Request,
+    session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
 ) -> HTMLResponse:
     """Advanced: a lone single-concern policy, outside any profile."""
+    wired = [c for c in creator_catalog.CATALOG if c.wired]
     return _render(
         request,
         "policy_new.html",
         identity=identity,
-        policy_types=[registry.get(name).describe() for name in registry.names()],
+        wired_types=[
+            {
+                "policy_type": c.policy_type,
+                "label": c.label,
+                "grouped": form_schema.grouped_fields(c.policy_type),
+            }
+            for c in wired
+        ],
+        app_groups=_app_group_hints(session),
+        **_form_catalogs(session),
     )
 
 
@@ -429,13 +453,9 @@ def create_profile_form(
     form = _sync_form(request)
     sections: dict[str, dict] = {}
     for category in creator_catalog.wired_categories():
-        raw = (form.get(f"spec__{category.key}") or "").strip()
-        if not raw or raw == "{}":
-            continue
-        try:
-            sections[category.key] = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            return _redirect(f"/policies/new?error={_quote(f'{category.label}: {exc}')}")
+        parsed = form_parse.parse_form(category.policy_type, form)
+        if parsed:
+            sections[category.key] = parsed
 
     try:
         profile = profile_service.create_profile(
@@ -484,6 +504,7 @@ def profile_detail(
         profile=profile,
         catalog=_catalog_view(profile),
         app_groups=_app_group_hints(session),
+        **_form_catalogs(session),
         devices=list(session.scalars(select(Device).order_by(Device.serial_number))),
         groups=list(session.scalars(select(DeviceGroup).order_by(DeviceGroup.name))),
         tags=list(session.scalars(select(Tag).order_by(Tag.name))),
@@ -554,24 +575,32 @@ def set_profile_targets_form(
 def upsert_section_form(
     profile_id: uuid.UUID,
     category_key: str,
-    spec: str = Form(default="{}"),
+    request: Request,
     session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
 ) -> RedirectResponse:
     profile = profile_service.get_profile(session, profile_id)
     if profile is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
+    category = creator_catalog.get(category_key)
+    if category is None or not category.wired:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown or unwired category")
+
+    parsed = form_parse.parse_form(category.policy_type, _sync_form(request))
     try:
-        parsed = json.loads(spec or "{}")
-        profile_service.upsert_section(
-            session,
-            profile,
-            category_key,
-            parsed,
-            published_by=None if identity.is_anonymous else identity.username,
-        )
+        if parsed:
+            profile_service.upsert_section(
+                session,
+                profile,
+                category_key,
+                parsed,
+                published_by=None if identity.is_anonymous else identity.username,
+            )
+        else:
+            # An emptied form means "this policy no longer manages this category".
+            profile_service.remove_section(session, profile, category_key)
         session.commit()
-    except (json.JSONDecodeError, profile_service.ProfileError) as exc:
+    except profile_service.ProfileError as exc:
         return _redirect(f"/profiles/{profile_id}?error={_quote(str(exc))}#cat-{category_key}")
     return _redirect(f"/profiles/{profile_id}?saved={category_key}#cat-{category_key}")
 
@@ -621,19 +650,19 @@ def restore_profile_form(
 
 @router.post("/policies")
 def create_policy(
+    request: Request,
     name: str = Form(...),
     policy_type: str = Form(...),
     description: str = Form(default=""),
-    spec: str = Form(default="{}"),
     is_template: bool = Form(default=False),
     session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
 ) -> RedirectResponse:
     try:
-        parsed = json.loads(spec or "{}")
+        parsed = form_parse.parse_form(policy_type, _sync_form(request))
         validated = registry.validate_spec(policy_type, parsed)
-    except (json.JSONDecodeError, PolicyTypeError) as exc:
-        return _redirect(f"/policies/new?error={_quote(str(exc))}")
+    except PolicyTypeError as exc:
+        return _redirect(f"/policies/new/single?error={_quote(str(exc))}")
 
     policy = Policy(
         name=name,
@@ -740,7 +769,9 @@ def policy_detail(
         "policy_detail.html",
         identity=identity,
         policy=policy,
-        definition=registry.get(policy.policy_type).describe(),
+        grouped=form_schema.grouped_fields(policy.policy_type),
+        current_spec=policy.latest_version.spec if policy.latest_version else {},
+        **_form_catalogs(session),
         devices=list(session.scalars(select(Device).order_by(Device.serial_number))),
         groups=list(session.scalars(select(DeviceGroup).order_by(DeviceGroup.name))),
         tags=list(session.scalars(select(Tag).order_by(Tag.name))),
@@ -752,7 +783,7 @@ def policy_detail(
 @router.post("/policies/{policy_id}/versions")
 def publish_version(
     policy_id: uuid.UUID,
-    spec: str = Form(...),
+    request: Request,
     session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
 ) -> RedirectResponse:
@@ -761,8 +792,9 @@ def publish_version(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "policy not found")
 
     try:
-        validated = registry.validate_spec(policy.policy_type, json.loads(spec or "{}"))
-    except (json.JSONDecodeError, PolicyTypeError) as exc:
+        parsed = form_parse.parse_form(policy.policy_type, _sync_form(request))
+        validated = registry.validate_spec(policy.policy_type, parsed)
+    except PolicyTypeError as exc:
         return _redirect(f"/policies/{policy_id}?error={_quote(str(exc))}")
 
     latest = policy.latest_version

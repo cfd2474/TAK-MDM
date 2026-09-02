@@ -151,29 +151,55 @@
     });
   });
 
+  /* --- Repeatable rows (policy form list controls) --------------------------
+     <div data-rowset>
+       ...existing .rs-row blocks...
+       <template data-row-template><div class="rs-row">...</div></template>
+       <button data-add-row>Add</button>
+     </div>
+     A [data-remove-row] button inside a row deletes that row. */
+
+  document.addEventListener("click", function (e) {
+    var add = e.target.closest("[data-add-row]");
+    if (add) {
+      e.preventDefault();
+      var set = add.closest("[data-rowset]");
+      var tpl = set && set.querySelector("[data-row-template]");
+      if (tpl) add.insertAdjacentHTML("beforebegin", tpl.innerHTML.trim());
+      return;
+    }
+    var rm = e.target.closest("[data-remove-row]");
+    if (rm) {
+      e.preventDefault();
+      var row = rm.closest(".rs-row");
+      if (row) row.remove();
+    }
+  });
+
   /* --- Insert an app group's packages into a required_apps JSON textarea -------
      Used by the profile editor's App Management section. Merges by package name so
      pressing a button twice does not duplicate entries. */
 
-  window.atlasInsertAppGroup = function (textareaId, packageNames) {
-    var el = document.getElementById(textareaId);
-    if (!el) return;
-    var spec;
-    try {
-      spec = JSON.parse(el.value || "{}");
-    } catch (e) {
-      alert("The spec is not valid JSON — fix it before inserting an app group.");
-      return;
-    }
-    if (!Array.isArray(spec.required_apps)) spec.required_apps = [];
+  /* Append a row per package in an app group to the named row-set (e.g.
+     required_apps), skipping packages that already have a row. */
+  window.atlasAddAppGroup = function (fieldName, packageNames) {
+    var set = document.querySelector('[data-rowset="' + fieldName + '"]');
+    var tpl = set && set.querySelector("[data-row-template]");
+    var addBtn = set && set.querySelector("[data-add-row]");
+    if (!set || !tpl || !addBtn) return;
     var have = {};
-    spec.required_apps.forEach(function (a) {
-      if (a && a.package_name) have[a.package_name] = true;
+    set.querySelectorAll('[name="' + fieldName + '__package_name"]').forEach(function (s) {
+      if (s.value) have[s.value] = true;
     });
     (packageNames || []).forEach(function (name) {
-      if (!have[name]) spec.required_apps.push({ package_name: name });
+      if (have[name]) return;
+      addBtn.insertAdjacentHTML("beforebegin", tpl.innerHTML.trim());
+      var rows = set.querySelectorAll('[name="' + fieldName + '__package_name"]');
+      var select = rows[rows.length - 1];
+      if (select && [].some.call(select.options, function (o) { return o.value === name; })) {
+        select.value = name;
+      }
     });
-    el.value = JSON.stringify(spec, null, 2);
   };
 
   /* --- Confirm before submit --------------------------------------------------

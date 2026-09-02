@@ -16,9 +16,12 @@
 
 from __future__ import annotations
 
+import json as _json
 import re
 
 from fastapi.testclient import TestClient
+
+ADMIN = {"x-authentik-username": "a", "x-authentik-groups": "takmdm-admins"}
 
 
 def text_of(html: str) -> str:
@@ -27,13 +30,15 @@ def text_of(html: str) -> str:
 
 
 def create_policy(client: TestClient, name: str, policy_type: str, spec: str) -> str:
+    """Create a policy via the API — the console form is form-driven (W10), so
+    scripted tests use the machine surface."""
     response = client.post(
-        "/policies",
-        data={"name": name, "policy_type": policy_type, "spec": spec},
-        follow_redirects=True,
+        "/api/v1/policies",
+        json={"name": name, "policy_type": policy_type, "spec": _json.loads(spec)},
+        headers=ADMIN,
     )
-    assert response.status_code == 200, response.text
-    return response.url.path.rsplit("/", 1)[-1]
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
 
 
 # --------------------------------------------------------------------------- #
@@ -203,14 +208,14 @@ def test_app_group_api_rejects_unknown_package(client: TestClient):
     assert r.status_code == 422
 
 
-def test_profile_creator_offers_app_group_insert(client: TestClient):
+def test_profile_creator_offers_app_group_shortcut(client: TestClient):
     _upload_app(client, "com.atakmap.app.civ")
     pkg_id = client.get("/api/v1/packages", headers=ADMIN).json()[0]["id"]
     client.post("/app-groups", data={"name": "ATAK", "package_ids": [pkg_id]})
 
     body = client.get("/policies/new").text
-    assert "atlasInsertAppGroup" in body
-    assert "Insert an app group" in body
+    assert "atlasAddAppGroup" in body
+    assert "com.atakmap.app.civ" in body  # the group's package is offered
 
 
 # --------------------------------------------------------------------------- #
@@ -559,10 +564,11 @@ def test_create_policy_through_the_form(client: TestClient):
     assert "min_length" in body
 
 
-def test_invalid_spec_is_reported_not_swallowed(client: TestClient):
+def test_out_of_range_value_is_reported_not_swallowed(client: TestClient):
+    """The form submits raw values; the spec's own constraints still bind."""
     response = client.post(
         "/policies",
-        data={"name": "Bad", "policy_type": "PASSWORD", "spec": '{"min_length": 999}'},
+        data={"name": "Bad", "policy_type": "PASSWORD", "min_length": "999"},
         follow_redirects=True,
     )
 
@@ -570,27 +576,15 @@ def test_invalid_spec_is_reported_not_swallowed(client: TestClient):
     assert client.get("/policies").text.count("Bad") == 0
 
 
-def test_malformed_json_is_reported(client: TestClient):
-    response = client.post(
-        "/policies",
-        data={"name": "Bad JSON", "policy_type": "PASSWORD", "spec": "{not json"},
-        follow_redirects=True,
-    )
-
-    assert "error" in response.url.query.decode()
-
-
 def test_duplicate_name_is_reported(client: TestClient):
     create_policy(client, "Dupe", "PASSWORD", '{"min_length": 8}')
 
     response = client.post(
         "/policies",
-        data={"name": "Dupe", "policy_type": "PASSWORD", "spec": '{"min_length": 8}'},
+        data={"name": "Dupe", "policy_type": "PASSWORD", "min_length": "8"},
         follow_redirects=True,
     )
 
-    # Assert on the rendered page rather than the query string: that is what the
-    # operator actually reads, and it is not URL-encoded.
     assert "already exists" in text_of(response.text)
 
 
@@ -599,28 +593,111 @@ def test_publishing_a_version_keeps_the_previous_one(client: TestClient):
 
     client.post(
         f"/policies/{policy_id}/versions",
-        data={"spec": '{"min_length": 14}'},
+        data={"min_length": "14"},
         follow_redirects=True,
     )
 
     body = text_of(client.get(f"/policies/{policy_id}").text)
     assert "v2" in body and "v1" in body
+    latest = client.get(f"/api/v1/policies/{policy_id}", headers=ADMIN).json()["versions"][-1]
+    assert latest["spec"] == {"min_length": 14}
 
 
-def test_policy_page_shows_merge_strategies(client: TestClient):
-    """The reference an operator needs to predict how stacking will behave."""
+def test_policy_form_shows_merge_hints(client: TestClient):
+    """The form must keep stacking legible — D64's concern, answered per field."""
     policy_id = create_policy(client, "Apps", "APP_CATALOG", "{}")
 
-    body = client.get(f"/policies/{policy_id}").text
-    assert "merge_by_key" in body
-    assert "intersect" in body
+    body = text_of(client.get(f"/policies/{policy_id}").text)
+    assert "only entries present in every policy survive" in body  # INTERSECT
+    assert "combine by key" in body  # MERGE_BY_KEY
+
+
+# --------------------------------------------------------------------------- #
+# Form-driven policy editing (W10)
+# --------------------------------------------------------------------------- #
+
+
+def _stored_spec(client: TestClient, policy_id: str) -> dict:
+    return client.get(f"/api/v1/policies/{policy_id}", headers=ADMIN).json()["versions"][-1]["spec"]
+
+
+def _create_via_form(client: TestClient, name: str, policy_type: str, fields) -> str:
+    data: dict = {"name": name, "policy_type": policy_type}
+    for key, value in fields:
+        if key in data:
+            existing = data[key] if isinstance(data[key], list) else [data[key]]
+            data[key] = existing + [value]
+        else:
+            data[key] = value
+    r = client.post("/policies", data=data, follow_redirects=True)
+    assert r.status_code == 200, r.text
+    return r.url.path.rsplit("/", 1)[-1]
+
+
+def test_new_policy_page_renders_typed_controls_for_every_wired_type(client: TestClient):
+    body = client.get("/policies/new/single").text
+    assert 'name="min_length"' in body            # PASSWORD int
+    assert 'name="allow_camera"' in body          # RESTRICTIONS tri-state
+    assert 'name="blocked_packages"' in body      # APP_CATALOG list
+    assert 'data-rowset="required_apps"' in body  # APP_CATALOG object list
+    assert 'name="entries__file_id"' in body      # FILES object list
+    assert "Spec (JSON)" not in body
+
+
+def test_password_form_round_trip(client: TestClient):
+    pid = _create_via_form(
+        client, "PW form", "PASSWORD",
+        [("min_length", "12"), ("min_digits", "2"), ("expiration_days", "")],
+    )
+    # min_length and min_digits stored; expiration_days left blank -> omitted
+    assert _stored_spec(client, pid) == {"min_length": 12, "min_digits": 2}
+
+
+def test_restrictions_tri_state(client: TestClient):
+    pid = _create_via_form(
+        client, "Restr form", "RESTRICTIONS",
+        [("allow_camera", "false"), ("allow_bluetooth", "true"), ("allow_screen_capture", "")],
+    )
+    spec = _stored_spec(client, pid)
+    assert spec == {"allow_camera": False, "allow_bluetooth": True}
+    assert "allow_screen_capture" not in spec  # "Not managed" omits it
+
+
+def test_package_list_round_trip(client: TestClient):
+    pid = _create_via_form(
+        client, "Blocklist form", "APP_CATALOG",
+        [("blocked_packages", "com.foo"), ("blocked_packages", "com.bar"),
+         ("blocked_packages", ""), ("blocked_packages", "com.foo")],  # blank + dupe
+    )
+    assert _stored_spec(client, pid) == {"blocked_packages": ["com.foo", "com.bar"]}
+
+
+def test_file_list_round_trip(client: TestClient):
+    fid = _upload_file(client, b"payload", "map.xml")
+    pid = _create_via_form(
+        client, "Files form", "FILES",
+        [
+            ("entries__file_id", fid), ("entries__dest_path", "/sdcard/atak/imagery"),
+            ("entries__availability", "optional"), ("entries__persist", "no"),
+            ("entries__extract", ""), ("entries__extract_to", ""),
+            ("entries__overwrite", "always"),
+        ],
+    )
+    spec = _stored_spec(client, pid)
+    assert spec["entries"][0]["file_id"] == fid
+    assert spec["entries"][0]["dest_path"] == "/sdcard/atak/imagery"
+    assert spec["entries"][0]["availability"] == "optional"
+    assert spec["entries"][0]["persist"] is False
+
+
+def test_an_all_unmanaged_form_makes_an_empty_policy(client: TestClient):
+    pid = _create_via_form(client, "Empty form", "RESTRICTIONS", [("allow_camera", "")])
+    assert _stored_spec(client, pid) == {}
 
 
 # --------------------------------------------------------------------------- #
 # Policy list: tabs, templates, archive/restore (W3)
 # --------------------------------------------------------------------------- #
-
-ADMIN = {"x-authentik-username": "a", "x-authentik-groups": "takmdm-admins"}
 
 
 def test_policies_page_has_the_three_tabs_and_a_new_policy_button(client: TestClient):
@@ -630,9 +707,12 @@ def test_policies_page_has_the_three_tabs_and_a_new_policy_button(client: TestCl
     assert 'data-modal-open="new-policy"' in body
 
 
-def test_create_from_scratch_page_renders(client: TestClient):
-    assert client.get("/policies/new").status_code == 200
-    assert "Spec (JSON)" in client.get("/policies/new").text
+def test_create_from_scratch_page_renders_form_controls(client: TestClient):
+    body = client.get("/policies/new").text
+    assert "Not managed" in body        # the tri-state option
+    assert "Camera" in body             # a RESTRICTIONS field label
+    assert "Password quality" in body   # a PASSWORD field label
+    assert "Spec (JSON)" not in body    # no JSON typing (DW6)
 
 
 def test_save_as_template_makes_a_template(client: TestClient):
@@ -775,7 +855,7 @@ def test_editing_a_section_publishes_a_new_version(client: TestClient):
 
     client.post(
         f"/profiles/{pid}/sections/password",
-        data={"spec": '{"min_length": 14}'},
+        data={"min_length": "14"},
         follow_redirects=False,
     )
 
@@ -789,7 +869,7 @@ def test_adding_a_section_later(client: TestClient):
 
     client.post(
         f"/profiles/{pid}/sections/app_management",
-        data={"spec": '{"blocked_packages": ["com.foo.bar"]}'},
+        data={"blocked_packages": "com.foo.bar"},
         follow_redirects=False,
     )
 
