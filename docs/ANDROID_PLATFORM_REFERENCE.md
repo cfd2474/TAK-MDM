@@ -598,8 +598,12 @@ build, even though `addNetwork` works — so the network id handed back at add t
 is the only reliable handle for `removeNetwork` later. The agent stores it
 (`AgentConfig.wifiNetworkId`); a first version that looked the id up via
 `getConfiguredNetworks` logged a successful removal while the network stayed
-configured. **Removal by stored id is not yet re-verified on hardware** (the
-tablet dropped off `adb` before the re-test).
+configured.
+
+✅ **The full cycle is verified on `SM-X520`.** Assigning the policy:
+`wifi: configured ATLAS-Test (wpa_psk, id=2)`, network listed. Unassigning it:
+`wifi: removing ATLAS-Test (id=2, removed=true)`, network gone. The device's own
+Wi-Fi (`LeckliterFIOS`) was untouched throughout. `errors=0` on both syncs.
 
 **MAC randomization** (`WifiConfiguration.macRandomizationSetting`) is `@SystemApi`
 — not settable by a DO. The policy field is accepted and ignored; not a failure.

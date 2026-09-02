@@ -13,16 +13,16 @@ update after every completed step.
 closed. **Enrollment is now a single persistent token with 15-minute signed QR
 derivatives** (Chunk 14), verified live through real nginx — including that
 retiring the primary kills an already-issued, still-time-valid QR immediately.
-Agent **v27 (`0.7.1`)** running on `SM-X520`, compliant, correctly identified by
-its hardware serial `R5GL40MMHRN`.
+Agent **v29 (`0.8.1`)** running on `SM-X520`, compliant, correctly identified by
+its hardware serial `R5GL40MMHRN`. **Wi-Fi policy (W14) hardware-proven on it.**
 **✅ Web UI expansion (Chunks W1–W10, plus W4b) COMPLETE.** Eight-section ATLAS
 console — Enroll, Manage, Policies, Apps, Content, Reports, Admin, Guides — on
 server-rendered Jinja with no build step. **W10 replaced JSON-textarea policy
 editing with generated typed forms** (dropdowns, tri-state controls, repeatable
 rows; per-field merge hints). **W12 split each category's sub-topics into
 navigable sub-pages** with green-check completion markers. **W13 wired the
-Networks type; W14 built the agent Wi-Fi applier (add hardware-proven, VPN
-dropped).** 447 server tests + 36 agent tests.
+Networks type; W14's agent Wi-Fi applier is hardware-proven on `SM-X520` (add +
+remove), VPN dropped.** 447 server tests + 36 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -2485,7 +2485,7 @@ IPsec-Xauth-PSK), server, MPPE, username, password.
    agent does not apply Wi-Fi/VPN yet — builder + storage only, applier is a
    tracked follow-up.
 
-#### 🟡 W14 — Agent: apply the Networks (Wi-Fi) policy (Wi-Fi ADD hardware-proven; remove re-test pending)
+#### ✅ W14 — Agent: apply the Networks (Wi-Fi) policy (COMPLETE, hardware-proven)
 
 **447 server tests, 36 agent tests (was 30). Agent v29 (`0.8.1`).** Delivered:
 
@@ -2505,19 +2505,18 @@ IPsec-Xauth-PSK), server, MPPE, username, password.
 - `docs/ANDROID_PLATFORM_REFERENCE.md` §6d — the DO Wi-Fi contract, and the
   `getConfiguredNetworks` gotcha, recorded from hardware.
 
-**Hardware, `SM-X520`:**
+**Hardware-proven on `SM-X520`, full cycle:**
 
 ```
-✅ add:    PolicyApplier: wifi: configured ATLAS-Test (wpa_psk, id=1)
-           cmd wifi list-networks → ATLAS-Test listed;  sync errors=0
-⚠️ remove: v0.8.0 logged "removed" but the network stayed (it relied on
-           getConfiguredNetworks, empty for a DO). v0.8.1 removes by the stored
-           id — built and ready but not re-tested; the tablet dropped off adb.
+assign:    PolicyApplier: wifi: configured ATLAS-Test (wpa_psk, id=2)   errors=0
+           cmd wifi list-networks → ATLAS-Test listed
+unassign:  PolicyApplier: wifi: removing ATLAS-Test (id=2, removed=true) errors=0
+           cmd wifi list-networks → gone; the device's own LeckliterFIOS untouched
 ```
 
-**Next:** re-pair `SM-X520`, install v0.8.1, confirm unassigning the policy
-removes the network. Also clean up the stale `ATLAS-Test` (id 1) left by the v0.8.0
-test.
+`getConfiguredNetworks()` returns nothing for the DO on One UI 8, so a first
+version (v0.8.0) that looked the id up that way logged a successful removal while
+the network stayed. v0.8.1 stores the id `addNetwork` returns and removes by it.
 
 ##### Plan
 
@@ -2627,10 +2626,11 @@ document but the Kotlin agent ignores it. This chunk adds `applyNetworks` to
 - **2026-09-02** — **W14: agent applies Wi-Fi policy; VPN dropped.** 447 server
   tests, 36 agent tests, agent v29 (`0.8.1`). `PolicyApplier.applyNetworks`
   configures Wi-Fi networks from a `NETWORKS` policy via the deprecated-but-
-  DO-grandfathered `WifiManager.addNetwork`. **Add is hardware-proven on
-  `SM-X520`** (network appeared, `errors=0`); the removal path was fixed after
-  v0.8.0 relied on `getConfiguredNetworks` (empty for a DO on One UI 8) — v0.8.1
-  removes by stored id, re-test pending. VPN removed from `NETWORKS` entirely.
+  DO-grandfathered `WifiManager.addNetwork`. **Hardware-proven on `SM-X520`,
+  full cycle:** assigning the policy configured the network, unassigning removed
+  it, and the device's own Wi-Fi was untouched. `getConfiguredNetworks` returns
+  nothing for a DO on One UI 8, so the agent removes by the id `addNetwork`
+  handed back (v0.8.0 → v0.8.1 fix). VPN removed from `NETWORKS` entirely.
 - **2026-09-02** — **W13: Networks policy type (Wi-Fi + VPN).** 448 tests. New
   `NETWORKS` spec with `wifi_networks` / `vpn_profiles` lists (models with the
   fields from the reference UI, `MERGE_BY_KEY` on ssid / name), `wifi_list` /
