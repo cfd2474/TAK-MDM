@@ -3571,6 +3571,120 @@ and cannot reach the current device. v41 remains the deployed build.
 
 ---
 
+#### 🔻 W29 — TAK.gov plugin catalog (TPC Plugins)
+
+**Ask.** A *TPC Plugins* tab in Apps, listing the TAK.gov plugin catalog;
+authentication performed in Admin; the tab says so plainly when not linked.
+
+**Source of truth:** `tpc.md` in the repo root. "Link EUD" is not device magic —
+it is a stock **OAuth 2.0 Device Authorization Grant (RFC 8628)** against TAK.gov's
+Keycloak (realm `TPC` at `auth.tak.gov`, public client `tak-gov-eud`, no secret).
+A headless server can complete it and hold the credential indefinitely, because
+`offline_access` yields a refresh token that does not idle out.
+
+**Design decisions taken up front.**
+
+* **D35 — one link, not a tenant table.** ATLAS is one instance per operator, so
+  `tpc.md`'s per-tenant model collapses to a single row. Kept as a *table* rather
+  than settings, because it needs typed fields, timestamps and a state machine,
+  and because the refresh token must not sit in `app_setting`, which is plaintext.
+* **D36 — the refresh token is sealed in the `TokenVault`.** It is a durable
+  bearer credential to a named person's TAK.gov account and it never expires on
+  its own. That is the same danger class as an enrollment token, so it gets the
+  same treatment rather than a new one.
+* **D37 — rotation is the whole risk.** Keycloak issues a **new** refresh token on
+  every refresh and invalidates the old one. Crash between "received" and
+  "persisted", or refresh twice concurrently, and the link is dead until a human
+  re-enters a code at tak.gov. So: one lock around the whole refresh, persist
+  before use, and keep the previous token as a one-step fallback. `tpc.md` names
+  this the number one outage source and it is the part worth over-engineering.
+* **D38 — CIV by default, and the licence difference is shown, not buried.**
+  ATAK-CIV object code carries a distribution grant; **ATAK-MIL explicitly does
+  not**, and GOV/MIL plugins carry access and export controls. The console
+  defaults to `ATAK-CIV` and states this where the operator picks a product.
+* **D39 — `eud_api` is undocumented and unversioned**, so it goes behind a thin
+  adapter with contract tests, and every field is parsed defensively. A field
+  rename upstream should degrade a column to "—", not take down the Apps page.
+
+##### Plan (7 steps)
+
+1. **Model + migration.** `TakGovLink` (single row): status, `device_code`,
+   `user_code`, `verification_uri_complete`, sealed `refresh_token`, previous
+   sealed token, cached `access_token` + expiry, linked-account label, timestamps,
+   `last_error`.
+2. **Client adapter** `app/services/tak_gov.py`: `start_link`, `poll_once`
+   (RFC 8628 — handles `authorization_pending` and `slow_down` rather than
+   ignoring them, which is where OpenTAKServer's implementation stops),
+   rotation-safe `access_token()`, `list_plugins()`. Pure parsing split from I/O
+   so the contract is testable without a network.
+3. **Link lifecycle service** — start / poll / unlink, and the background poller.
+   The admin starts a link, leaves for tak.gov, and comes back; the console must
+   show progress without the operator holding the page open.
+4. **Admin console** → *TAK.gov* tab: not-linked state with a Link button, pending
+   state showing `user_code` + the verification URL (and a QR, which the console
+   can already render), linked state showing the account and an Unlink.
+5. **Apps console** → *TPC Plugins* tab: catalog table when linked; when not,
+   an explicit "not linked" panel pointing at Admin → TAK.gov.
+6. **Import** a catalog plugin into the local package library: download, verify
+   `apk_hash` **before** it touches storage, then hand it to the existing
+   `package_service` upload path so identity comes from the APK itself.
+7. **Tests.** Device-flow state machine, rotation safety (including the crash
+   window), defensive catalog parsing, both console surfaces. No live network.
+
+⚠️ **Natural split** if this runs long: 1–5 + 7 (auth and read-only catalog — the
+whole of the stated ask) as one checkpoint, then 6 (import) after.
+
+##### Status: steps 1–5 and 7 done (auth + read-only catalog). Step 6 (import) open.
+
+**Done.**
+
+* `TakGovLink` (single row) + migration `j0l2n4p6r8t0`, applied to the running
+  stack. Refresh token sealed in the `TokenVault`, never in `app_setting`.
+* `app/services/tak_gov.py` — protocol and catalog, network confined to two
+  helpers so every parser is testable offline.
+* `app/services/tak_gov_link.py` — start / poll / unlink, and rotation-safe
+  `access_token()`.
+* Admin → **TAK.gov** tab: not-linked / pending (with the code to type) / linked /
+  broken. Apps → **TPC Plugins** tab, which says plainly when nothing is linked
+  and points at Admin.
+* 45 tests, suite 487 → **532 green**. Both tabs smoke-tested against the live
+  stack, not only in tests.
+
+**Decisions taken during the build, worth knowing.**
+
+* **The `TokenVault` is injected, not imported.** Reaching for `get_token_vault()`
+  inside the service would bypass the test `dependency_overrides` — the same
+  mistake that cost eight failures in W23. Services take a `TokenVault` argument.
+* **Polling is a button, not a background task.** The device-code window is about
+  three minutes and the operator is standing in front of the console, so "I have
+  entered the code" is honest about what is happening and adds no long-lived task
+  to babysit. Pressing it early is harmless — `authorization_pending` leaves the
+  link untouched, and is deliberately *not* recorded as an error, or the normal
+  path would show a red banner.
+* **The catalog loads only when asked for** (`/apps?tab=tpc`). Fetching it on
+  every visit to Apps would put a third-party call *and* a token rotation in front
+  of unrelated work like uploading an APK.
+* **Unlink is local.** It does not revoke anything at tak.gov, and the panel says
+  so — an operator would otherwise reasonably assume it did.
+
+⚠️ **Untested against the real tak.gov.** Everything above is verified against
+`httpx.MockTransport` standing in for the shape `tpc.md` documents. `eud_api` is
+undocumented, so the first real link is also the first test of that contract.
+The adapter is built to degrade a column rather than the page, and
+`Plugin.unknown_fields` surfaces anything upstream grows.
+
+⚠️ **R16 — the refresh lock is process-local.** `threading.Lock` is correct for
+the single-worker deployment this ships as. Under multiple workers two processes
+could rotate concurrently and kill the link. Same constraint as the push
+doorbell; both belong to the multi-worker work in Chunk 11.
+
+**Not done: step 6 (import).** The tab lists the catalog; it cannot yet pull a
+plugin into the local package library. `tak_gov.download_apk()` exists and
+verifies the hash, so what remains is wiring it to the existing
+`package_service` upload path.
+
+---
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |

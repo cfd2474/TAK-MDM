@@ -908,3 +908,68 @@ class DeviceAttributeValue(Base):
     value: Mapped[str] = mapped_column(Text, default="")
 
     attribute: Mapped[CustomAttribute] = relationship(lazy="selectin")
+
+
+class TakGovLinkStatus(str, enum.Enum):
+    UNLINKED = "unlinked"
+    #: A device-authorization code has been issued and the operator has not yet
+    #: entered it at tak.gov, or has and we have not yet noticed.
+    PENDING = "pending"
+    LINKED = "linked"
+    #: The link was live and stopped working — most often a rotated refresh token
+    #: that was lost, which needs a human to re-enter a code.
+    BROKEN = "broken"
+
+
+class TakGovLink(Base):
+    """The single TAK.gov account this ATLAS instance pulls plugins as.
+
+    One row, id 1. ATLAS is one instance per operator, so the per-tenant model in
+    `tpc.md` collapses to a singleton — but it stays a table rather than settings
+    because it carries a state machine, timestamps, and a credential that must not
+    sit in `app_setting`, which is plaintext.
+
+    ⚠️ The refresh token is a **durable bearer credential to a named person's
+    TAK.gov account**, it inherits exactly that person's entitlements, and it does
+    not idle out. It is sealed with the same `TokenVault` as enrollment tokens.
+
+    ⚠️ Keycloak **rotates the refresh token on every refresh** and invalidates the
+    old one. `previous_refresh_token` exists solely so that losing the race —
+    crashing between "received" and "committed" — costs a retry rather than a trip
+    to tak.gov for a human to type a code.
+    """
+
+    __tablename__ = "tak_gov_link"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    status: Mapped[TakGovLinkStatus] = mapped_column(
+        Enum(TakGovLinkStatus, native_enum=False, length=16),
+        default=TakGovLinkStatus.UNLINKED,
+    )
+
+    # --- device-authorization flow, only meaningful while PENDING ---
+    device_code: Mapped[str | None] = mapped_column(Text, default=None)
+    user_code: Mapped[str | None] = mapped_column(String(64), default=None)
+    verification_uri: Mapped[str | None] = mapped_column(Text, default=None)
+    verification_uri_complete: Mapped[str | None] = mapped_column(Text, default=None)
+    #: Seconds between polls, raised when the server answers `slow_down`.
+    poll_interval_seconds: Mapped[int] = mapped_column(Integer, default=5)
+    code_expires_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+
+    # --- credentials ---
+    refresh_token_sealed: Mapped[str | None] = mapped_column(Text, default=None)
+    previous_refresh_token_sealed: Mapped[str | None] = mapped_column(Text, default=None)
+    access_token_sealed: Mapped[str | None] = mapped_column(Text, default=None)
+    access_expires_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+
+    # --- who linked, for the console ---
+    account_label: Mapped[str | None] = mapped_column(String(256), default=None)
+    linked_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+    linked_by: Mapped[str | None] = mapped_column(String(128), default=None)
+
+    #: Why the last operation failed, shown verbatim. An undocumented API fails in
+    #: undocumented ways, and paraphrasing them loses the only clue there is.
+    last_error: Mapped[str | None] = mapped_column(Text, default=None)
+    updated_at: Mapped[datetime] = mapped_column(
+        UtcDateTime, default=_utcnow, onupdate=_utcnow
+    )

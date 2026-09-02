@@ -79,11 +79,14 @@ from app.db.models import (
     PolicyVersion,
     ProfileAssignment,
     Tag,
+    TakGovLinkStatus,
 )
 from app.policies import creator_catalog
 from app.policies import form_parse, form_schema
 from app.policies.registry import PolicyTypeError, registry
 from app.services import agent_update as agent_update_service
+from app.services import tak_gov
+from app.services import tak_gov_link
 from app.services import app_groups as app_group_service
 from app.services import commands as command_service
 from app.services import content_admin
@@ -1199,6 +1202,7 @@ def _qr_svg(text: str) -> str:
 def apps_page(
     request: Request,
     session: Session = Depends(get_db),
+    vault: TokenVault = Depends(get_token_vault),
     identity: AdminIdentity = Depends(admin_required),
 ) -> HTMLResponse:
     packages = list(session.scalars(select(AppPackage).order_by(AppPackage.package_name)))
@@ -1209,7 +1213,44 @@ def apps_page(
         packages=packages,
         store_packages=[p for p in packages if p.store_listed],
         groups=app_group_service.list_groups(session),
+        tpc=_tpc_panel(request, session, vault),
     )
+
+
+def _tpc_panel(request: Request, session: Session, vault: TokenVault) -> dict:
+    """The TPC Plugins tab.
+
+    The catalog is only fetched when the tab is actually asked for. Loading it on
+    every visit to Apps would put a third-party network call — and a token
+    refresh — in the path of unrelated work like uploading an APK.
+    """
+    link = tak_gov_link.get(session)
+    linked = link.status is TakGovLinkStatus.LINKED
+    product = request.query_params.get("product") or tak_gov.DEFAULT_PRODUCT
+    if product not in tak_gov.PRODUCTS:
+        product = tak_gov.DEFAULT_PRODUCT
+    product_version = (request.query_params.get("product_version") or "5.8.0").strip()[:16]
+
+    panel = {
+        "linked": linked,
+        "status": link.status.value,
+        "account_label": link.account_label,
+        "products": tak_gov.PRODUCTS,
+        "product": product,
+        "product_version": product_version,
+        "plugins": [],
+        "error": None,
+        "loaded": False,
+    }
+    if linked and request.query_params.get("tab") == "tpc":
+        panel["loaded"] = True
+        plugins, error = tak_gov_link.catalog(
+            session, vault, product=product, product_version=product_version
+        )
+        session.commit()  # a refresh may have rotated the token
+        panel["plugins"] = plugins
+        panel["error"] = error
+    return panel
 
 
 @router.post("/apps/upload")
@@ -1520,8 +1561,63 @@ def admin_page(
         setting_groups=groups,
         env_settings=env_settings,
         agent=_agent_update_panel(session, settings),
+        takgov=_takgov_panel(session),
         attributes=attribute_service.list_attributes(session),
     )
+
+
+def _takgov_panel(session: Session) -> dict:
+    link = tak_gov_link.get(session)
+    session.commit()  # the row is created lazily on first view
+    remaining = None
+    if link.code_expires_at:
+        remaining = max(
+            0, int((link.code_expires_at - datetime.now(timezone.utc)).total_seconds())
+        )
+    return {"link": link, "expires_in_seconds": remaining}
+
+
+@router.post("/admin/takgov/start")
+def takgov_start_form(
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    try:
+        tak_gov_link.start(session)
+    except tak_gov.TakGovError as exc:
+        return _redirect(f"/admin?error={_quote(str(exc))}#tab-takgov")
+    session.commit()
+    return _redirect("/admin#tab-takgov")
+
+
+@router.post("/admin/takgov/poll")
+def takgov_poll_form(
+    session: Session = Depends(get_db),
+    vault: TokenVault = Depends(get_token_vault),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """One poll, driven by the operator saying they have entered the code.
+
+    Deliberately not a background loop. The device-code window is about three
+    minutes and the operator is standing right there, so a button is honest about
+    what is happening and adds no long-lived task to babysit. If they press it
+    early, `authorization_pending` leaves the link exactly as it was.
+    """
+    tak_gov_link.poll(
+        session, vault, linked_by=None if identity.is_anonymous else identity.username
+    )
+    session.commit()
+    return _redirect("/admin#tab-takgov")
+
+
+@router.post("/admin/takgov/unlink")
+def takgov_unlink_form(
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    tak_gov_link.unlink(session)
+    session.commit()
+    return _redirect("/admin#tab-takgov")
 
 
 def _agent_update_panel(session: Session, settings: Settings) -> dict:

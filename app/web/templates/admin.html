@@ -9,6 +9,7 @@
 {% set tab_items = [('certificates', 'Certificates')] %}
 {% for grp in setting_groups %}{% set _ = tab_items.append((grp.group.key, grp.group.title)) %}{% endfor %}
 {% set _ = tab_items.append(('agent', 'Agent updates')) %}
+{% set _ = tab_items.append(('takgov', 'TAK.gov')) %}
 {% set _ = tab_items.append(('attributes', 'Custom attributes')) %}
 {% set _ = tab_items.append(('integrations', 'Integrations')) %}
 {% set _ = tab_items.append(('environment', 'Environment')) %}
@@ -99,6 +100,93 @@
     </div>
   </div>
   {% endfor %}
+
+  <div class="tab-panel" data-tab-panel="takgov" hidden>
+    <div class="panel">
+      <h2>TAK.gov account</h2>
+      <p class="sub">
+        Links this server to a TAK.gov account so the
+        <a href="/apps">Apps</a> page can list the plugin catalog. This is the
+        same "Link EUD" flow ATAK itself uses — you enter a short code at
+        tak.gov, and the server keeps the credential afterwards.
+      </p>
+
+      {% if takgov.link.status.value == 'linked' %}
+        <p>
+          <span class="pill good">linked</span>
+          {% if takgov.link.account_label %}
+            as <span class="mono">{{ takgov.link.account_label }}</span>
+          {% endif %}
+          {% if takgov.link.linked_at %}
+            <span class="muted">since {{ takgov.link.linked_at.strftime('%Y-%m-%d %H:%M') }}</span>
+          {% endif %}
+        </p>
+        <div class="banner">
+          The catalog shows exactly what <strong>this account</strong> is entitled
+          to see — the credential is a person, not a service account. Unlinking
+          forgets it here; it does <strong>not</strong> revoke anything at
+          tak.gov, which you do from your TAK.gov account page.
+        </div>
+        <form method="post" action="/admin/takgov/unlink" style="margin-top:12px"
+              data-confirm="Forget the TAK.gov credential? The plugin catalog stops loading until someone links again.">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit" class="danger">Unlink</button>
+        </form>
+
+      {% elif takgov.link.status.value == 'pending' %}
+        <p><span class="pill warn">waiting for you at tak.gov</span></p>
+        <p>
+          Enter this code at
+          <a href="{{ takgov.link.verification_uri }}" target="_blank" rel="noopener">{{ takgov.link.verification_uri }}</a>
+          while signed in to TAK.gov:
+        </p>
+        <p class="mono" style="font-size:28px; letter-spacing:3px">{{ takgov.link.user_code }}</p>
+        {% if takgov.link.verification_uri_complete %}
+          <p>
+            Or open
+            <a href="{{ takgov.link.verification_uri_complete }}" target="_blank" rel="noopener">this link</a>,
+            which carries the code for you.
+          </p>
+        {% endif %}
+        {% if takgov.expires_in_seconds %}
+          <p class="muted">The code expires in about {{ takgov.expires_in_seconds // 60 }} min {{ takgov.expires_in_seconds % 60 }} s.</p>
+        {% endif %}
+        <form method="post" action="/admin/takgov/poll" class="toolbar">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit">I have entered the code</button>
+        </form>
+        <form method="post" action="/admin/takgov/unlink" style="margin-top:8px">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit" class="ghost">Cancel</button>
+        </form>
+
+      {% else %}
+        {% if takgov.link.status.value == 'broken' %}
+          <p><span class="pill bad">link broken</span></p>
+        {% else %}
+          <p><span class="pill">not linked</span> The Apps page cannot show the TAK.gov catalog.</p>
+        {% endif %}
+        <div class="banner">
+          Link with the TAK.gov account whose entitlements you want this server to
+          inherit. Its credential does not expire on its own, so treat it like a
+          password for that account — and note that
+          <strong>ATAK-CIV carries a distribution grant while ATAK-MIL does
+          not</strong>. Mirroring GOV/MIL plugins to devices is subject to access
+          and export controls, and is worth clearing in writing first.
+        </div>
+        <form method="post" action="/admin/takgov/start" style="margin-top:12px">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit">Link a TAK.gov account</button>
+        </form>
+      {% endif %}
+
+      {% if takgov.link.last_error %}
+        <div class="banner bad" style="margin-top:12px">
+          Last error from tak.gov: {{ takgov.link.last_error }}
+        </div>
+      {% endif %}
+    </div>
+  </div>
 
   <div class="tab-panel" data-tab-panel="agent" hidden>
     <div class="panel">

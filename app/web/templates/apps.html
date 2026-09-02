@@ -9,8 +9,9 @@
 {{ tabs([
   ('local', 'Local apps'),
   ('store', 'ATLAS store'),
+  ('tpc', 'TPC Plugins'),
   ('groups', 'App groups'),
-], active='local', scope='apps-tabs') }}
+], active=(request.query_params.get('tab') if request.query_params.get('tab') in ['local','store','tpc','groups'] else 'local'), scope='apps-tabs') }}
 
 <div id="apps-tabs">
   <div class="tab-panel" data-tab-panel="local">
@@ -27,8 +28,8 @@
         file. An XAPK is unpacked into base + splits + OBB server-side (D13).
         A package that carries an <span class="pill">OBB</span> expansion file is
         flagged below: a Device Owner cannot place OBB files on the device
-        (Android scoped storage), so the APK installs but the app may be missing
-        assets.
+        (Android scoped storage), so the APK installs <strong>without</strong> it
+        and the app will be missing the assets it expects.
       </p>
     </div>
 
@@ -114,6 +115,95 @@
         {% endfor %}
         </tbody>
       </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="tpc" hidden>
+    <div class="panel">
+      <h2>TAK.gov plugin catalog</h2>
+
+      {% if not tpc.linked %}
+        <p class="sub">
+          This server is <strong>not linked to a TAK.gov account</strong>, so
+          there is no catalog to show.
+        </p>
+        <p>
+          Link one under <a href="/admin#tab-takgov">Admin → TAK.gov</a>. It takes
+          entering a short code at tak.gov while signed in; the catalog then
+          reflects whatever that account is entitled to see.
+        </p>
+        {% if tpc.status == 'broken' %}
+          <div class="banner bad">
+            A link existed and stopped working. Re-link under Admin → TAK.gov.
+          </div>
+        {% endif %}
+
+      {% else %}
+        <p class="sub">
+          Plugins <span class="mono">{{ tpc.account_label or 'the linked account' }}</span>
+          is entitled to, for {{ tpc.product }} {{ tpc.product_version }}.
+          Listing only — nothing here is on a device until you assign it.
+        </p>
+        <form method="get" action="/apps" class="toolbar">
+          <input type="hidden" name="tab" value="tpc">
+          <label for="tpc-product" class="muted">Product</label>
+          <select id="tpc-product" name="product">
+            {% for p in tpc.products %}
+              <option value="{{ p }}" {{ 'selected' if p == tpc.product }}>{{ p }}</option>
+            {% endfor %}
+          </select>
+          <label for="tpc-version" class="muted">ATAK version</label>
+          <input id="tpc-version" type="text" name="product_version" value="{{ tpc.product_version }}" size="8">
+          <button type="submit">Show</button>
+        </form>
+        {% if tpc.product != 'ATAK-CIV' %}
+          <div class="banner">
+            <strong>{{ tpc.product }}.</strong> ATAK-CIV object code carries a
+            distribution grant; GOV and MIL do not, and their plugins carry access
+            and export controls. Mirroring these into a fleet is the kind of thing
+            worth clearing in writing before you rely on it.
+          </div>
+        {% endif %}
+
+        {% if tpc.error %}
+          <div class="banner bad">{{ tpc.error }}</div>
+        {% endif %}
+
+        {% if not tpc.loaded %}
+          <p class="muted">
+            Press <strong>Show</strong> to fetch the catalog. It is not loaded
+            automatically — that would put a call to tak.gov, and a token refresh,
+            in front of every visit to this page.
+          </p>
+        {% elif tpc.plugins %}
+        <table data-sortable>
+          <thead><tr>
+            <th data-sort>Plugin</th><th data-sort>Package</th><th data-sort>Version</th>
+            <th data-sort>Rev</th><th>Requires</th><th>Size</th>
+          </tr></thead>
+          <tbody>
+          {% for p in tpc.plugins %}
+            <tr>
+              <td>
+                {{ p.display_name or '—' }}
+                {% if p.description %}<div class="muted" style="font-size:12px">{{ p.description[:160] }}</div>{% endif %}
+              </td>
+              <td class="mono">{{ p.package_name }}</td>
+              <td class="mono">{{ p.version or '—' }}</td>
+              <td class="mono">{{ p.revision_code if p.revision_code is not none else '—' }}</td>
+              <td class="muted">
+                {% if p.tak_prerequisite %}ATAK {{ p.tak_prerequisite }}{% endif %}
+                {% if p.os_requirement %}<span class="pill">SDK {{ p.os_requirement }}</span>{% endif %}
+              </td>
+              <td class="muted mono">{{ (p.apk_size_bytes // 1024 // 1024) ~ ' MB' if p.apk_size_bytes else '—' }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% elif not tpc.error %}
+          {{ empty_state('The catalog returned no plugins for this product and version.') }}
+        {% endif %}
       {% endif %}
     </div>
   </div>
