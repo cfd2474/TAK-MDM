@@ -23,7 +23,12 @@ flags it. **W18 closed the policy→agent audit** — Wi-Fi
 `auto_join`/`mac_randomization` dropped (`@SystemApi`), password
 `min_letters`/`min_digits`/`min_symbols` implemented via the granular DPM family
 and proven on the tablet (`passwordQuality` 0x20000→0x60000→0x20000 across a
-publish/revert cycle, `errors=0`).
+publish/revert cycle, `errors=0`). **W20** added a forced screen-lock passcode
+to the PASSWORD policy (`resetPasswordWithToken`, re-asserted every sync),
+hardware-proven. **W21** made the composite the only kind of policy — a
+migration converted every standalone policy — and rebuilt the editor to show
+every category's fields with current values (no JSON), one save, and an
+unsaved-change guard.
 **✅ Web UI expansion (Chunks W1–W10, plus W4b) COMPLETE.** Eight-section ATLAS
 console — Enroll, Manage, Policies, Apps, Content, Reports, Admin, Guides — on
 server-rendered Jinja with no build step. **W10 replaced JSON-textarea policy
@@ -36,7 +41,8 @@ R2 (OBB placement) as not feasible, made loud; W18 closed the policy→agent aud
 (Wi-Fi `@SystemApi` fields dropped, password character-class minimums
 implemented and proven on the tablet). W19 rebuilt the DPC's on-device UI as the
 branded ATLAS MDM console; W20 added a forced screen-lock passcode to the
-PASSWORD policy, hardware-proven.** 452 server tests + 52 agent tests.
+PASSWORD policy, hardware-proven; W21 unified every policy into the composite
+kind with a values-in-fields editor.** 454 server tests + 52 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -3002,6 +3008,7 @@ follow-on that clears both when the passcode field goes away.
   0)`, reports a `false` return. Runs last in `applyPassword`; re-asserted every
   reconcile.
 - DPC console: `set_password` shows as "•••••• (enforced)" on the Policies tab.
+  (The admin web console shows it in the clear — W21.)
 - Docs: `ANDROID_PLATFORM_REFERENCE.md` §6c — the reset-password-token contract
   and the "no AOSP way to block a user change, re-assert only" finding.
 - Tests: `test_set_password_forces_an_exact_passcode`,
@@ -3012,6 +3019,79 @@ follow-on that clears both when the passcode field goes away.
 **Hardware carries a lock-out risk** (the tablet currently has no screen lock) —
 the test sets one, so it needs a known value and a clean-up step. Holding for a
 go-ahead.
+
+#### 🔻 W21 — the policy editor: one composite kind, values in fields, unsaved-change guard
+
+**Operator asks:** (a) don't value-mask the passcode on the admin console; (b) for
+any policy, show the set values in the builder's entry fields, not a JSON dump,
+and warn before navigating away from unsaved edits; (c) every policy should show
+**all** categories' fields when editing.
+
+**Reality found:** the dev DB has **8 single-concern policies and 0 composites** —
+the operator has only ever built single-concern policies, whose editor
+(`policy_detail.html`) shows one category. **Decision (operator, 2026-09-02):**
+composite is the only kind going forward; single-concern policies stay working
+until touched, and become a composite the moment a second category is filled.
+Keep the mask on the **on-device** console (a device user could read it there),
+drop it on the admin console.
+
+##### Plan (7 steps)
+
+1. **Unmask on the web console.** Remove the `spec_json` / `_redact_secrets`
+   filter; the admin console shows `set_password` in plain text. The DPC's
+   `SECRET_POLICY_FIELDS` masking stays.
+2. **Drop the JSON dumps.** Remove `resulting_spec()` from `profile_editor.html`
+   and `policy_detail.html`; render the "Versions" history as a readable
+   field: value list, not `<pre>` JSON. The edit form already populates fields.
+3. **Unsaved-change guard** (`atlas.js`). Track edits on a policy `<form>`; on
+   `beforeunload` and on an in-app nav click that leaves the page, warn. A
+   successful submit clears the flag.
+4. **"New Policy" is always composite.** Drop the "create a single-concern
+   policy instead" links; `/policies/new/single` → redirect to `/policies/new`.
+5. **Composite editor: every category, one save.** `profile_editor.html` edit
+   mode swaps the per-category `<form>`s + "Save Password"/"Save Restrictions"
+   buttons for one `<form>` → a new `POST /profiles/{id}` bulk upsert (parse
+   every wired category, upsert/remove sections in one transaction). One "Save
+   policy" button.
+6. **Single-concern detail → full-category editor, promote on save.**
+   `policy_detail.html` renders the composite editor's category rail with this
+   policy's type pre-filled. Save publishes this policy's own version; if any
+   *other* category has data, create a `PolicyProfile`, adopt this `Policy` as
+   its section, add the new sections, convert its `Assignment` rows →
+   `ProfileAssignment`, redirect to `/profiles/{id}`. Resolution is unchanged —
+   a section produces the same `AssignmentInput` as a standalone assignment.
+7. **Tests + regression.** New: bulk profile save, promote-on-save, guard
+   present, password unmasked. Fix tests referencing `resulting_spec` /
+   `/policies/new/single` / the W20 mask. Full suites; click-through on the
+   running console.
+
+##### Status: ✅ COMPLETE — 454 server tests; migration applied to the live DB; tablet unaffected.
+
+Delivered a little differently from the plan — cleaner:
+- **Unmasked on the web.** The `spec_json`/`_redact_secrets` filter is gone; a
+  new `spec_rows` filter renders a spec as a readable label/value list. The
+  `set_password` field is a plain `type="text"` input (was `password`), shown in
+  the clear. The DPC console keeps its `SECRET_POLICY_FIELDS` mask.
+- **No JSON in the editor.** `resulting_spec()` removed; the version history is
+  a `<dl class="kv">` list. The form fields carry the values.
+- **Unsaved-change guard** (`atlas.js`) — any `form[data-policy-form]` sets a
+  dirty flag on input; `beforeunload` and in-app link clicks warn; a submit
+  clears it. Marker on both the composite editor and the (template-only)
+  `policy_detail` edit form.
+- **One kind of policy.** Migration `h8j0l2n4p6r8` converts every standalone
+  policy to a one-section composite and moves its `Assignment`s to
+  `ProfileAssignment`s — **8 active + 4 archived converted, 0 standalone left,
+  the tablet's effective policy byte-identical** (`state=42`, `errors=0` on the
+  next sync). `GET /policies/{id}` for a section redirects to its composite.
+- **Every category, one save.** The composite editor is one `<form>` →
+  `POST /profiles/{id}` (bulk upsert: fill a category to add it, empty it to
+  drop it). The per-category "Save Password"/"Save Restrictions" buttons are
+  gone; "New Policy" only ever opens the composite creator
+  (`/policies/new/single` still exists but is unlinked).
+
+**Not done:** cloning a template still makes a standalone policy (there are 0
+templates; low priority). The single-concern create route (`POST /policies`)
+still works for the API and tests but has no UI entry point.
 
 ---
 
@@ -3057,6 +3137,14 @@ go-ahead.
 
 ## Changelog
 
+- **2026-09-02** — **W21: one kind of policy; values-in-fields editor.** 454
+  server tests. The console now has a single policy kind — the composite.
+  Migration `h8j0l2n4p6r8` converted the 12 standalone policies to one-section
+  composites and moved their assignments; the tablet's effective policy came out
+  byte-identical. The editor shows **every category** with the current values in
+  the form controls (no JSON dump anywhere), saves the whole policy in one
+  action, warns on navigating away from unsaved edits, and shows a
+  `set_password` in the clear (the mask stays only on the on-device app).
 - **2026-09-02** — **W20: PASSWORD policy can set an exact passcode.** 452 server
   tests, 52 agent tests, agent v36 (`0.9.6`). New `PASSWORD.set_password` forces
   a specific screen-lock passcode; the agent applies it via `resetPasswordWithToken`

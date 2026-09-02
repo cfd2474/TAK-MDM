@@ -262,4 +262,36 @@
     var msg = e.target.getAttribute && e.target.getAttribute("data-confirm");
     if (msg && !window.confirm(msg)) e.preventDefault();
   });
+
+  /* --- Unsaved-change guard --------------------------------------------------
+     <form data-policy-form>: warn before leaving the page with edits pending —
+     on tab close (beforeunload) and on any in-app link that would navigate away.
+     A submit of that form clears the flag so the redirect after save is silent. */
+
+  (function () {
+    var form = document.querySelector("form[data-policy-form]");
+    if (!form) return;
+    var dirty = false;
+    var WARNING = "You have unsaved changes to this policy. Leave without saving?";
+
+    form.addEventListener("input", function () { dirty = true; });
+    form.addEventListener("change", function () { dirty = true; });
+    form.addEventListener("submit", function () { dirty = false; });
+
+    window.addEventListener("beforeunload", function (e) {
+      if (!dirty) return;
+      e.preventDefault();
+      e.returnValue = WARNING;
+      return WARNING;
+    });
+
+    document.addEventListener("click", function (e) {
+      if (!dirty) return;
+      var a = e.target.closest && e.target.closest("a[href]");
+      if (!a) return;
+      var href = a.getAttribute("href");
+      if (!href || href.charAt(0) === "#" || a.target === "_blank") return;
+      if (!window.confirm(WARNING)) e.preventDefault();
+    });
+  })();
 })();

@@ -672,20 +672,16 @@ def test_password_form_round_trip(client: TestClient):
     assert _stored_spec(client, pid) == {"min_length": 12, "min_digits": 2}
 
 
-def test_set_password_round_trips_but_is_masked_in_the_spec_views(client: TestClient):
-    import re
-
+def test_set_password_round_trips_and_shows_in_the_admin_ui(client: TestClient):
     pid = _create_via_form(
         client, "Fixed PW", "PASSWORD",
         [("min_length", "6"), ("set_password", "atlas12")],
     )
-    # stored verbatim — the device needs it
     assert _stored_spec(client, pid) == {"min_length": 6, "set_password": "atlas12"}
-
+    # W21: the admin console shows the set passcode in plain text (it is masked
+    # only on the on-device app, where the device user could read it).
     body = client.get(f"/policies/{pid}").text
-    assert "••••••" in body  # masked in the resulting-spec / version-history views
-    # the raw value never appears in a rendered spec dump
-    assert not any("atlas12" in block for block in re.findall(r"<pre>.*?</pre>", body, re.S))
+    assert "atlas12" in body
 
 
 def test_restrictions_tri_state(client: TestClient):
@@ -823,8 +819,8 @@ def test_networks_reaches_the_effective_policy(client: TestClient, enrolled):
     assert values["NETWORKS"]["wifi_networks"][0]["ssid"] == "Ops"
 
 
-def test_all_subpages_of_a_category_share_one_form(client: TestClient):
-    """So saving while on one sub-page keeps the others' fields."""
+def test_the_whole_policy_is_one_form_across_every_category(client: TestClient):
+    """W21: one editor form covers all categories, so one save keeps everything."""
     pid = _make_profile(
         client,
         "Full restr",
@@ -832,22 +828,25 @@ def test_all_subpages_of_a_category_share_one_form(client: TestClient):
     )
     body = client.get(f"/profiles/{pid}").text
 
-    form_start = body.index('action="/profiles/' + pid + '/sections/restrictions"')
+    form_start = body.index('action="/profiles/' + pid + '"')
     form_end = body.index("</form>", form_start)
     section = body[form_start:form_end]
-    # both a Device-functionality control and the Display control are in the one form
-    assert 'name="allow_camera"' in section
+    # controls from more than one category live in the single form
+    assert 'name="allow_camera"' in section       # RESTRICTIONS
     assert 'name="screen_timeout_seconds"' in section
     assert 'value="120"' in section
+    assert 'name="min_length"' in section          # PASSWORD — a category not yet filled
 
-    # a real submit carrying both preserves both
+    # one submit carrying several categories writes them all
     client.post(
-        f"/profiles/{pid}/sections/restrictions",
-        data={"allow_camera": "true", "screen_timeout_seconds": "120"},
+        f"/profiles/{pid}",
+        data={"allow_camera": "true", "screen_timeout_seconds": "120", "min_length": "9"},
         follow_redirects=False,
     )
-    spec = client.get(f"/api/v1/profiles/{pid}", headers=ADMIN).json()["sections"][0]["versions"][-1]["spec"]
-    assert spec == {"allow_camera": True, "screen_timeout_seconds": 120}
+    sections = client.get(f"/api/v1/profiles/{pid}", headers=ADMIN).json()["sections"]
+    by_type = {s["policy_type"]: s["versions"][-1]["spec"] for s in sections}
+    assert by_type["RESTRICTIONS"] == {"allow_camera": True, "screen_timeout_seconds": 120}
+    assert by_type["PASSWORD"] == {"min_length": 9}
 
 
 # --------------------------------------------------------------------------- #
@@ -968,6 +967,34 @@ def test_profile_editor_page_renders_and_offers_archive(client: TestClient):
     body = client.get(f"/profiles/{pid}").text
     assert 'action="/profiles/' in body
     assert "Archive" in text_of(body)
+    assert "data-policy-form" in body  # W21: the unsaved-change guard hooks this
+
+
+def test_one_save_adds_a_category_and_emptying_one_removes_it(client: TestClient):
+    pid = _make_profile(client, "Evolving", {"password": {"min_length": 9}})
+
+    # add RESTRICTIONS, keep PASSWORD, in a single save
+    client.post(
+        f"/profiles/{pid}",
+        data={"min_length": "9", "allow_camera": "false"},
+        follow_redirects=False,
+    )
+    sections = client.get(f"/api/v1/profiles/{pid}", headers=ADMIN).json()["sections"]
+    assert {s["policy_type"] for s in sections} == {"PASSWORD", "RESTRICTIONS"}
+
+    # empty PASSWORD out -> the category is dropped
+    client.post(f"/profiles/{pid}", data={"allow_camera": "false"}, follow_redirects=False)
+    sections = client.get(f"/api/v1/profiles/{pid}", headers=ADMIN).json()["sections"]
+    assert {s["policy_type"] for s in sections} == {"RESTRICTIONS"}
+
+
+def test_a_section_policy_redirects_to_its_composite(client: TestClient):
+    pid = _make_profile(client, "Composite", {"password": {"min_length": 9}})
+    child_id = client.get(f"/api/v1/profiles/{pid}", headers=ADMIN).json()["sections"][0]["id"]
+
+    r = client.get(f"/policies/{child_id}", follow_redirects=False)
+    assert r.status_code in (302, 303, 307)
+    assert r.headers["location"] == f"/profiles/{pid}"
 
 
 def _make_profile(client: TestClient, name: str, sections: dict) -> str:

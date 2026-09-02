@@ -113,26 +113,34 @@ router = APIRouter(tags=["admin-ui"], include_in_schema=False)
 _TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 _TEMPLATES.env.filters["pretty_json"] = lambda value: json.dumps(value, indent=2, sort_keys=True)
 
-# Keys whose values are credentials the device needs but a console reader does not
-# (W20): the forced screen-lock passcode, Wi-Fi pre-shared keys.
-_SECRET_KEYS = {"set_password", "password"}
+
+def _spec_rows(spec: Any) -> list[dict[str, str]]:
+    """A policy spec as flat label/value rows for a readable, no-JSON summary."""
+    rows: list[dict[str, str]] = []
+
+    def render(value: Any) -> str:
+        if isinstance(value, bool):
+            return "yes" if value else "no"
+        if isinstance(value, list):
+            if not value:
+                return "(none)"
+            if all(not isinstance(v, (dict, list)) for v in value):
+                return ", ".join(str(v) for v in value)
+            return "; ".join(
+                ", ".join(f"{k}={render(v2)}" for k, v2 in v.items())
+                if isinstance(v, dict) else render(v)
+                for v in value
+            )
+        if isinstance(value, dict):
+            return ", ".join(f"{k}={render(v)}" for k, v in value.items())
+        return str(value)
+
+    for key, value in (spec or {}).items():
+        rows.append({"label": key.replace("_", " "), "value": render(value)})
+    return rows
 
 
-def _redact_secrets(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            k: ("••••••" if k in _SECRET_KEYS and v not in (None, "")
-                else _redact_secrets(v))
-            for k, v in value.items()
-        }
-    if isinstance(value, list):
-        return [_redact_secrets(v) for v in value]
-    return value
-
-
-_TEMPLATES.env.filters["spec_json"] = lambda value: json.dumps(
-    _redact_secrets(value), indent=2, sort_keys=True, ensure_ascii=False
-)
+_TEMPLATES.env.filters["spec_rows"] = _spec_rows
 
 
 def _render(
@@ -602,6 +610,37 @@ def set_profile_targets_form(
     return _redirect(f"/profiles/{profile_id}?assigned={len(requested)}")
 
 
+@router.post("/profiles/{profile_id}")
+def save_profile_form(
+    profile_id: uuid.UUID,
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """One save for the whole composite editor (W21): every wired category is on
+    the page, so parse them all — upsert the ones with data, drop the ones the
+    operator emptied — in a single transaction."""
+    profile = profile_service.get_profile(session, profile_id)
+    if profile is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
+
+    form = _sync_form(request)
+    who = None if identity.is_anonymous else identity.username
+    try:
+        for category in creator_catalog.wired_categories():
+            parsed = form_parse.parse_form(category.policy_type, form)
+            if parsed:
+                profile_service.upsert_section(session, profile, category.key, parsed, published_by=who)
+            else:
+                profile_service.remove_section(session, profile, category.key)
+        eff.invalidate_for_profile(session, profile.id)
+        session.commit()
+    except profile_service.ProfileError as exc:
+        session.rollback()
+        return _redirect(f"/profiles/{profile_id}?error={_quote(str(exc))}")
+    return _redirect(f"/profiles/{profile_id}?saved=policy")
+
+
 @router.post("/profiles/{profile_id}/sections/{category_key}")
 def upsert_section_form(
     profile_id: uuid.UUID,
@@ -775,16 +814,20 @@ def clone_policy_form(
     return _redirect(f"/policies/{policy.id}")
 
 
-@router.get("/policies/{policy_id}", response_class=HTMLResponse)
+@router.get("/policies/{policy_id}", response_class=HTMLResponse, response_model=None)
 def policy_detail(
     policy_id: uuid.UUID,
     request: Request,
     session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
-) -> HTMLResponse:
+) -> HTMLResponse | RedirectResponse:
     policy = session.get(Policy, policy_id)
     if policy is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "policy not found")
+
+    # A section of a composite is managed only through that composite (W21).
+    if policy.profile_id is not None:
+        return _redirect(f"/profiles/{policy.profile_id}")
 
     assignments = list(
         session.scalars(select(Assignment).where(Assignment.policy_id == policy.id))

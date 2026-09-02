@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import csrf_field %}
-{% from "_policy_form.html" import policy_subform, resulting_spec %}
+{% from "_policy_form.html" import policy_subform %}
 {% set nav = 'policies' %}
 {% block main_class %}wide{% endblock %}
 {% block title %}{{ policy.name }} — ATLAS{% endblock %}
@@ -106,7 +106,14 @@
       <tr>
         <td class="mono">v{{ v.version }}</td>
         <td class="muted">{{ v.published_at.strftime('%Y-%m-%d %H:%M') }}</td>
-        <td><pre>{{ v.spec | spec_json }}</pre></td>
+        <td>
+          {% set rows = v.spec | spec_rows %}
+          {% if rows %}
+            <dl class="kv">
+              {% for r in rows %}<dt>{{ r.label }}</dt><dd>{{ r.value }}</dd>{% endfor %}
+            </dl>
+          {% else %}<span class="muted">empty</span>{% endif %}
+        </td>
       </tr>
     {% endfor %}
     </tbody>
@@ -118,7 +125,7 @@
   Editing publishes a new immutable version. Each control shows how its field
   merges when this policy stacks with another.
 </p>
-<form method="post" action="/policies/{{ policy.id }}/versions">
+<form method="post" action="/policies/{{ policy.id }}/versions" data-policy-form>
   {{ csrf_field(csrf_token) }}
   <div class="railed">
     {% if pages | length > 1 %}
@@ -144,7 +151,6 @@
       </section>
       {% endfor %}
       <div class="panel">
-        {{ resulting_spec(current_spec) }}
         <button type="submit" style="margin-top:6px">Publish</button>
       </div>
     </div>

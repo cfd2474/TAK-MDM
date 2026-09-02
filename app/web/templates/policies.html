@@ -4,7 +4,7 @@
 {% block title %}Policies — ATLAS{% endblock %}
 
 {% block content %}
-{{ page_header('Policies', 'Single-concern and stackable. Build a password policy once and apply it wherever it belongs, rather than rebuilding it inside every profile.') }}
+{{ page_header('Policies', 'A policy bundles the settings for as many categories as you need. Build it once, then assign it — several policies still stack per-field where they overlap.') }}
 
 <div class="toolbar">
   <button type="button" data-modal-open="new-policy">New Policy</button>
@@ -46,9 +46,6 @@
         {% endfor %}
         </tbody>
       </table>
-      <p class="muted" style="font-size:12px; margin-top:8px">
-        A <span class="pill accent">policy</span> is a composite built in the creator; a bare type badge is a single-concern policy.
-      </p>
       {% endif %}
     </div>
   </div>
@@ -122,7 +119,7 @@
   <div class="choice-grid">
     <a href="/policies/new">
       <strong>Create from scratch</strong>
-      Pick a type and define its spec.
+      Fill in the categories this policy should manage.
     </a>
     <a href="#tab-templates" data-modal-close>
       <strong>Use a template</strong>
