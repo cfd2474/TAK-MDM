@@ -670,7 +670,20 @@ reconcile** — since the user can change it, setting it back each sync is the
 enforcement. Flags `0`: a kiosk device in use is not kicked to the lock screen
 when the agent re-applies an unchanged passcode.
 
-📖→⏳ **Not yet verified on hardware.**
+✅ **Verified on `SM-X520` (agent v36), full cycle:**
+* Fresh device (no passcode) + `set_password: atlas1234` → `PolicyApplier: passcode
+  set from policy (9 chars)`, `sync … errors=0`, `locksettings verify --old
+  atlas1234` → *"Lock credential verified successfully"*. The token activated
+  immediately (no existing passcode), as documented.
+* User changed the passcode (`locksettings set-password`) → the next sync
+  re-asserted it: `atlas1234` verified again, the user's value rejected.
+* `set_password` removed from the policy → the agent stopped re-asserting and
+  **did not clear** the passcode (scalars are not reverted — W15). Clearing a
+  forced passcode still needs the constraints relaxed first; noted as a gap.
+
+⚠️ The internal `resetPasswordWithToken` call logs a full stack trace under
+`ActivityManager E` / `LsLogVerify W` — this is the platform's own audit logging
+of the reset, **not** an agent error.
 
 ### ✅ Verified on `SM-X520` (agent v34), both directions:
 

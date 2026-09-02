@@ -13,11 +13,11 @@ update after every completed step.
 closed. **Enrollment is now a single persistent token with 15-minute signed QR
 derivatives** (Chunk 14), verified live through real nginx — including that
 retiring the primary kills an already-issued, still-time-valid QR immediately.
-Agent **v35 (`0.9.5`)** running on `SM-X520` (compliant, serial `R5GL40MMHRN`).
-**W14 Wi-Fi, W15 quick wins, W16 allowlist enforcement and W18's granular
-password path all hardware-proven. W19 rebuilt the on-device UI as the branded
-ATLAS MDM console (five sections + manual sync), hardware-proven. W17 closed
-R2** — a DO cannot place XAPK OBB
+Agent **v36 (`0.9.6`)** running on `SM-X520` (compliant, serial `R5GL40MMHRN`).
+**W14 Wi-Fi, W15 quick wins, W16 allowlist, W18's granular password path and
+W20's forced passcode all hardware-proven. W19 rebuilt the on-device UI as the
+branded ATLAS MDM console (five sections + manual sync), hardware-proven. W17
+closed R2** — a DO cannot place XAPK OBB
 files (EACCES probed on hardware); the agent says so loudly and the Apps page
 flags it. **W18 closed the policy→agent audit** — Wi-Fi
 `auto_join`/`mac_randomization` dropped (`@SystemApi`), password
@@ -35,7 +35,8 @@ and W18's granular password path are all hardware-proven on `SM-X520`. W17 close
 R2 (OBB placement) as not feasible, made loud; W18 closed the policy→agent audit
 (Wi-Fi `@SystemApi` fields dropped, password character-class minimums
 implemented and proven on the tablet). W19 rebuilt the DPC's on-device UI as the
-branded ATLAS MDM console.** 449 server tests + 52 agent tests.
+branded ATLAS MDM console; W20 added a forced screen-lock passcode to the
+PASSWORD policy, hardware-proven.** 452 server tests + 52 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -2971,7 +2972,23 @@ This is exactly the desired-state model everything else uses.
    screen adopts it; change it as the user; sync; confirm it reverts. Clear the
    passcode afterwards. **Stop for approval.**
 
-##### Status: steps 1–6 ✅ COMPLETE — 452 server tests, 52 agent tests, agent v36 (`0.9.6`). Step 7 (hardware) awaiting go-ahead.
+##### Status: ✅ COMPLETE and hardware-proven — 452 server tests, 52 agent tests, agent v36 (`0.9.6`) on `SM-X520`.
+
+**Hardware (`SM-X520`, 2026-09-02), full cycle:**
+* Fresh device (no passcode) + `set_password: atlas1234` → `PolicyApplier: passcode
+  set from policy (9 chars)`, `sync … errors=0`; `locksettings verify --old
+  atlas1234` succeeded — the reset token activated immediately (no existing
+  passcode).
+* User changed the passcode → next sync re-asserted it: `atlas1234` verified
+  again, the user's value rejected.
+* `set_password` removed → the agent stopped re-asserting; the passcode was **not**
+  cleared (W15 scalar behaviour). A known 14-char value was set for the bench
+  device afterwards to keep it compliant with the restored `min_length: 13`.
+
+**Known gap:** clearing a forced passcode needs the length/quality constraints
+relaxed first, which the agent has no path for (W15). Undoing a `set_password`
+today means also publishing a permissive `min_length`/`quality` — worth a small
+follow-on that clears both when the passcode field goes away.
 
 - Spec: `PasswordSpec.set_password` (`HIGHEST_RANK`, 4–16 chars, `password`
   control, `ui_secret`) + a validator (must be ≥ this policy's own `min_length`).
@@ -3040,6 +3057,14 @@ go-ahead.
 
 ## Changelog
 
+- **2026-09-02** — **W20: PASSWORD policy can set an exact passcode.** 452 server
+  tests, 52 agent tests, agent v36 (`0.9.6`). New `PASSWORD.set_password` forces
+  a specific screen-lock passcode; the agent applies it via `resetPasswordWithToken`
+  (32-byte token in private prefs) and **re-asserts every reconcile** — AOSP has
+  no way to stop the user changing it. **Hardware-proven on `SM-X520`:** the
+  passcode was set on a fresh device, a user change was reverted on the next
+  sync, `errors=0`. The value is masked (`••••••`) everywhere the console and
+  DPC display a spec. Android reference §6c documents the token contract.
 - **2026-09-02** — **W19b: web console banner logo.** The admin console header
   now uses the supplied `ATLAS.png` lockup (mark + "ATLAS MDM" + tagline) as a
   single `atlas-logo.png` image, with a matching `favicon.png` (the emblem) and a
