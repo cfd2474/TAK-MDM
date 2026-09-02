@@ -13,7 +13,9 @@ update after every completed step.
 closed. **Enrollment is now a single persistent token with 15-minute signed QR
 derivatives** (Chunk 14), verified live through real nginx — including that
 retiring the primary kills an already-issued, still-time-valid QR immediately.
-Agent **v36 (`0.9.6`)** running on `SM-X520` (compliant, serial `R5GL40MMHRN`).
+Agent **v37 (`0.9.7`)** running on `SM-X520` (compliant, serial `R5GL40MMHRN`).
+**No hardware verification is outstanding** — W17, W23 and W24 all cleared
+2026-09-02 (W25).
 **W14 Wi-Fi, W15 quick wins, W16 allowlist, W18's granular password path and
 W20's forced passcode all hardware-proven. W19 rebuilt the on-device UI as the
 branded ATLAS MDM console (five sections + manual sync), hardware-proven. W17
@@ -2831,9 +2833,25 @@ The policy→agent audit's last item. Research (official DPM reference, 2026-09-
 `PasswordPlan.effectiveQuality` (NUMERIC for a length floor, COMPLEX for a
 character-class minimum) confirmed, and the quality field reverts.
 
-**W17's OBB apply_error** ships in v34 but is **verified by inspection only** —
-no XAPK with an OBB payload is uploaded to test against, and the underlying fact
-(EACCES) is already hardware-proven. Fold a real OBB-XAPK apply into R5 work.
+**W17's OBB apply_error** — ✅ **hardware-verified 2026-09-02 (W25).** A synthetic
+XAPK carrying an OBB (`tests/apk_fixtures.build_xapk(..., with_obb=True)`) was
+uploaded and assigned to `SM-X520`. The agent raised exactly:
+
+```
+com.example.obbproof: needs an OBB expansion file, which a Device Owner cannot
+place on this device (Android blocks writing another app's Android/obb). The APK
+installs but the app may be missing assets.
+```
+
+`sync: state=47 applied=47 errors=2`, device went **DEGRADED**, and the message
+surfaced in `compliance_detail` — the operator sees it, which was the whole point
+of W17. (The second error was `INSTALL_PARSE_FAILED_NO_CERTIFICATES` — the test
+fixture's APK is not validly signed for a real install. An artifact of the
+fixture, not the product; the OBB error fired independently of it.)
+
+⚠️ Wording nit found by the test: the message says "The APK installs but…", which
+was not true here because the fixture APK failed to install. Correct for the real
+case; consider softening to "the APK may install without its assets".
 
 #### 🔻 W19 — DPC app UI: ATLAS MDM branding + a real status console
 
@@ -3188,7 +3206,14 @@ no managed Google Play, and the doorbell already gives ~1 s latency.
    push already exists (F3) and how the button uses it; click it against
    `SM-X520` and watch the sync fire.
 
-##### Status: ✅ COMPLETE (server) — 461 server tests. Live re-confirm pending — the bench tablet went off-network mid-session.
+##### Status: ✅ COMPLETE and hardware-proven — 461 server tests.
+
+✅ **Live-confirmed 2026-09-02 (W25).** With `SM-X520` parked on its long-poll,
+`POST /api/v1/devices/{id}/checkin` returned `{"woken": true}` and the device's
+`last_checkin_at` moved **702 ms** later. (A `docker compose exec` reading of
+`bus.waiter_count` shows 0 — that spawns a *separate* Python process and cannot
+see the serving process's in-memory bus. The `woken` flag from the API itself is
+the authoritative reading; the 702 ms check-in confirms it.)
 
 **Answer to the ask:** policy changes **already push.** The agent parks a
 long-poll (`GET /api/v1/device/wait`); the server rings it the instant any write
@@ -3260,7 +3285,13 @@ achievable** by any path currently in scope. See [docs/KNOX.md](docs/KNOX.md) §
 6. **Tests + hardware.** `policy_names` in the check-in response; the inline
    rename round-trips; the DPC tab shows names on `SM-X520`.
 
-##### Status: ✅ COMPLETE (server + agent) — 464 server tests, 52 agent tests, agent v37 (`0.9.7`). DPC on-device verify pending (tablet not adb-reachable this session).
+##### Status: ✅ COMPLETE and hardware-proven — 464 server tests, 52 agent tests, agent v37 (`0.9.7`) on `SM-X520`.
+
+✅ **DPC verified on-device 2026-09-02 (W25).** With v37 installed and synced, the
+Policies tab lists exactly three rows — *ATAK Imagery*, *Install Proof*, *Tablet
+Live Test* — under "Applied policy", with the "Policy version 46 (applied 46)"
+footer and **no field contents**. Screenshot in the session scratchpad
+(`w25_policies.png`).
 
 - Server: `fleet.policy_names_for_device`; `CheckinResponse.policy_names`. Test
   `test_checkin_lists_the_policy_names_reaching_the_device`.
@@ -3375,6 +3406,14 @@ the `knox` flavour is build-it-yourself.
 
 ## Changelog
 
+- **2026-09-02** — **W25: cleared every outstanding hardware verification.** No
+  code; agent v37 installed on `SM-X520`. **W24** — the DPC Policies tab lists
+  three policy *names* and no field contents. **W23** — the "Check in now" button
+  returned `woken: true` and the device checked in **702 ms** later. **W17** — a
+  synthetic OBB-carrying XAPK made the agent raise the OBB apply_error and the
+  device go DEGRADED with it in `compliance_detail`. Test artifacts removed;
+  tablet back to `state 48 acked 48 compliant`. Android reference §6 promoted the
+  OBB apply_error path to ✅ verified. **Nothing is now built-but-unproven.**
 - **2026-09-02** — **Knox assessed; scope changed to a published self-hosted
   repo.** No code. New [docs/KNOX.md](docs/KNOX.md) records the Knox research:
   the **SDK path is Play-free** (KSP is not, so it is out), **KPE Premium is free

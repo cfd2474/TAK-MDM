@@ -445,9 +445,15 @@ which a normally-installed Device Owner has.
 but the agent can only place the APK parts. It installs, then the app fails at
 runtime with its expansion assets missing. `Reconciler.reconcileApps` raises an
 apply_error naming the package rather than skipping the OBB silently, and the Apps
-page flags a package that carries one. Re-run `probe_obb` on the Qualcomm
-(`SM-G736U1`) and MediaTek (`SM-X828U`) devices before assuming it holds there
-(R5).
+page flags a package that carries one.
+
+✅ **The apply_error path is verified on `SM-X520`** (2026-09-02): an XAPK carrying
+an OBB was assigned, the agent logged `errors=2` and raised *"…needs an OBB
+expansion file, which a Device Owner cannot place on this device…"*, and the
+device went **DEGRADED** with that text in `compliance_detail`.
+
+Re-run `probe_obb` on the Qualcomm (`SM-G736U1`) and MediaTek (`SM-X828U`) devices
+before assuming the underlying EACCES holds there (R5).
 
 ---
 
