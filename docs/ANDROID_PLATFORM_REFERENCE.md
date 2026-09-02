@@ -556,6 +556,8 @@ compiled**.
 | `clearApplicationUserData(ComponentName, String, Executor, listener)` | **31** | Asynchronous — await the callback. Returns `false` for a package that is not installed, which is exactly the case an operator is checking. |
 | `WIPE_EXTERNAL_STORAGE` | 14 | Separate act on Samsung devices with a card. |
 | `WIPE_RESET_PROTECTION_DATA` | 26 | Also clears factory reset protection. |
+| `setPasswordHistoryLength(admin, n)` | 8 | ⚠️ **Not deprecated** with the `setPasswordMinimum*` family at API 31 — history length has no complexity-bucket equivalent, so it still applies directly. ✅ Verified on `SM-X520`: policy `history_length: 6` → `dumpsys device_policy` shows `passwordHistoryLength=6`. |
+| `setSystemSetting(admin, key, value)` | 28 | Device Owner only. **Exactly three keys** allowed: `Settings.System.SCREEN_BRIGHTNESS`, `SCREEN_BRIGHTNESS_MODE`, `SCREEN_OFF_TIMEOUT` — anything else throws. Value is a string; `SCREEN_OFF_TIMEOUT` is milliseconds. Applies even under `DISALLOW_CONFIG_SCREEN_TIMEOUT`. ✅ Verified on `SM-X520`: policy `screen_timeout_seconds: 45` → `settings get system screen_off_timeout` returns `45000`. |
 
 All of the above except `lockNow` require **device owner**, and the failure without
 it is a `SecurityException` whose message does not mention device ownership.

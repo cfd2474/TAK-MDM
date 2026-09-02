@@ -40,6 +40,7 @@ import org.takmdm.agent.install.AppInstaller
 import org.takmdm.agent.net.ApiClient
 import org.takmdm.agent.net.DeviceIdentity
 import org.takmdm.agent.permissions.PermissionRequirement
+import org.takmdm.agent.policy.AppUpdatePlan
 import org.takmdm.agent.policy.PolicyApplier
 
 /** Outcome of one reconciliation pass. */
@@ -476,22 +477,27 @@ class Reconciler(private val context: Context) {
 
             val desiredVersion = app.optLong("version_code", -1)
             val installed = installer.installedVersionCode(packageName)
-            if (installed != null && installed >= desiredVersion) {
-                AgentLog.d(
-                    TAG,
-                    "$packageName already at versionCode $installed (want $desiredVersion); skipping"
-                )
-                continue
-            }
 
-            // Said out loud because "installed" and "skipped, already present" are
-            // indistinguishable otherwise, and the whole point of the collectable
-            // log is to explain what the reconciler did on a device nobody can see.
-            AgentLog.i(
-                TAG,
-                if (installed == null) "installing $packageName versionCode $desiredVersion"
-                else "upgrading $packageName from versionCode $installed to $desiredVersion"
-            )
+            // Said out loud because "installed", "upgraded" and "skipped, already
+            // present" are indistinguishable otherwise, and the collectable log
+            // exists to explain what the reconciler did on a device nobody can see.
+            when (AppUpdatePlan.decide(installed, desiredVersion, app.optBoolean("auto_update", true))) {
+                AppUpdatePlan.Action.SKIP_UP_TO_DATE -> {
+                    AgentLog.d(TAG, "$packageName already at versionCode $installed (want $desiredVersion); skipping")
+                    continue
+                }
+                AppUpdatePlan.Action.SKIP_PINNED -> {
+                    AgentLog.i(
+                        TAG,
+                        "$packageName at $installed, newer ($desiredVersion) available but auto_update is off; leaving it"
+                    )
+                    continue
+                }
+                AppUpdatePlan.Action.INSTALL ->
+                    AgentLog.i(TAG, "installing $packageName versionCode $desiredVersion")
+                AppUpdatePlan.Action.UPGRADE ->
+                    AgentLog.i(TAG, "upgrading $packageName from versionCode $installed to $desiredVersion")
+            }
 
             val files = app.optJSONArray("files") ?: continue
             val parts = mutableListOf<File>()

@@ -13,16 +13,18 @@ update after every completed step.
 closed. **Enrollment is now a single persistent token with 15-minute signed QR
 derivatives** (Chunk 14), verified live through real nginx — including that
 retiring the primary kills an already-issued, still-time-valid QR immediately.
-Agent **v29 (`0.8.1`)** running on `SM-X520`, compliant, correctly identified by
-its hardware serial `R5GL40MMHRN`. **Wi-Fi policy (W14) hardware-proven on it.**
+Agent **v30 (`0.9.0`)** running on `SM-X520`, compliant, correctly identified by
+its hardware serial `R5GL40MMHRN`. **Wi-Fi policy (W14) and the W15 agent quick
+wins (password history, screen timeout, app auto_update) hardware-proven on it.**
 **✅ Web UI expansion (Chunks W1–W10, plus W4b) COMPLETE.** Eight-section ATLAS
 console — Enroll, Manage, Policies, Apps, Content, Reports, Admin, Guides — on
 server-rendered Jinja with no build step. **W10 replaced JSON-textarea policy
 editing with generated typed forms** (dropdowns, tri-state controls, repeatable
 rows; per-field merge hints). **W12 split each category's sub-topics into
 navigable sub-pages** with green-check completion markers. **W13 wired the
-Networks type; W14's agent Wi-Fi applier is hardware-proven on `SM-X520` (add +
-remove), VPN dropped.** 447 server tests + 36 agent tests.
+Networks type; W14's agent Wi-Fi applier and W15's agent quick wins (password
+history, screen timeout, app auto_update) are hardware-proven on `SM-X520`.**
+447 server tests + 40 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -2579,6 +2581,39 @@ document but the Kotlin agent ignores it. This chunk adds `applyNetworks` to
 7. Prove on `SM-X520`: push a Wi-Fi network by policy, confirm it appears and the
    device can use it.
 
+#### ✅ W15 — Agent policy-application quick wins (COMPLETE, hardware-proven)
+
+**447 server tests, 40 agent tests (was 36). Agent v30 (`0.9.0`).** Three fields
+that reached the device but the agent ignored, now applied — all verified on
+`SM-X520`:
+
+| Field | Agent | Hardware |
+|---|---|---|
+| `PASSWORD.history_length` | `dpm.setPasswordHistoryLength` (not deprecated at API 31 — checked) | `history_length: 6` → `dumpsys` shows `passwordHistoryLength=6` |
+| `RESTRICTIONS.screen_timeout_seconds` | `dpm.setSystemSetting(SCREEN_OFF_TIMEOUT, ms)` (one of 3 DO-writable keys) | `screen_timeout_seconds: 45` → `settings get system screen_off_timeout` = `45000` |
+| `APP_CATALOG.required_apps[].auto_update` | new pure `AppUpdatePlan.decide(installed, desired, autoUpdate)` — `false` means install-once, never chase a newer build | 4 unit tests (truth table); reconciler path exercised on hardware historically |
+
+`AppUpdatePlan.kt` follows the `WifiPlan.kt` pattern — the decision is pure and
+unit-tested, the framework calls are not. Platform contracts recorded in the
+Android reference §6c.
+
+**Consistent limitation, not new:** scalar settings (`history_length`,
+`screen_timeout_seconds`, `expiration_days`, `lock_timeout_seconds`,
+`max_failed_attempts_before_wipe`, password complexity) are applied when present
+but **not reverted** when the field is dropped from the policy — only the boolean
+`allow_*` restrictions revert, because the spec expresses both states. The escape
+is to set the field to a permissive value (`history_length: 0`, a large timeout),
+which the agent does apply.
+
+**Still unresolved after W15** (from the policy→agent audit):
+* `APP_CATALOG.allowed_packages` — the allowlist is merged, shipped, and **not
+  enforced** at all. Biggest remaining gap.
+* XAPK **OBB** placement (R2) — `role == "obb"` parts are skipped.
+* `PASSWORD.min_letters` / `min_digits` / `min_symbols` — no modern DPM API;
+  spec fields are dead. Candidates for removal.
+* `NETWORKS.wifi_networks[].auto_join` / `mac_randomization` — no public DO API.
+  Candidates for removal.
+
 ---
 
 ### Later chunks (sketch — to be detailed at approval time)
@@ -2623,6 +2658,15 @@ document but the Kotlin agent ignores it. This chunk adds `applyNetworks` to
 
 ## Changelog
 
+- **2026-09-02** — **W15: agent quick wins.** 447 server tests, 40 agent tests,
+  agent v30 (`0.9.0`). Three fields the agent had been ignoring now apply, all
+  hardware-proven on `SM-X520`: `PASSWORD.history_length` (`setPasswordHistoryLength`
+  — checked, not deprecated at 31), `RESTRICTIONS.screen_timeout_seconds`
+  (`setSystemSetting(SCREEN_OFF_TIMEOUT)` — one of three DO-writable keys), and
+  `required_apps[].auto_update` (new pure `AppUpdatePlan` — false means
+  install-once). Still open: `allowed_packages` enforcement, OBB placement (R2),
+  and the dead `min_letters`/`min_digits`/`min_symbols` + Wi-Fi
+  `auto_join`/`mac_randomization` fields.
 - **2026-09-02** — **W14: agent applies Wi-Fi policy; VPN dropped.** 447 server
   tests, 36 agent tests, agent v29 (`0.8.1`). `PolicyApplier.applyNetworks`
   configures Wi-Fi networks from a `NETWORKS` policy via the deprecated-but-

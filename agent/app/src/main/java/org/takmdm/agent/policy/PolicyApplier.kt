@@ -25,6 +25,7 @@ import android.content.pm.PackageManager
 import android.net.wifi.WifiConfiguration
 import android.net.wifi.WifiManager
 import android.os.UserManager
+import android.provider.Settings
 import androidx.core.content.ContextCompat
 import org.takmdm.agent.core.AgentConfig
 import org.takmdm.agent.diag.AgentLog
@@ -111,6 +112,14 @@ class PolicyApplier(private val context: Context) {
             }.onFailure { failures += "password expiry: ${it.message}" }
         }
 
+        // Not deprecated with the setPasswordMinimum* family at API 31 — history
+        // length has no complexity-bucket equivalent and still applies directly.
+        if (spec.has("history_length")) {
+            runCatching {
+                dpm.setPasswordHistoryLength(admin, spec.getInt("history_length"))
+            }.onFailure { failures += "password history: ${it.message}" }
+        }
+
         return failures
     }
 
@@ -156,6 +165,19 @@ class PolicyApplier(private val context: Context) {
             runCatching {
                 dpm.setScreenCaptureDisabled(admin, !spec.getBoolean("allow_screen_capture"))
             }.onFailure { failures += "screen capture: ${it.message}" }
+        }
+
+        // SCREEN_OFF_TIMEOUT is one of the three system settings a Device Owner may
+        // write via setSystemSetting (API 28). Milliseconds, as a string. Applies
+        // even when DISALLOW_CONFIG_SCREEN_TIMEOUT is set.
+        if (spec.has("screen_timeout_seconds")) {
+            runCatching {
+                dpm.setSystemSetting(
+                    admin,
+                    Settings.System.SCREEN_OFF_TIMEOUT,
+                    (spec.getInt("screen_timeout_seconds") * 1000).toString(),
+                )
+            }.onFailure { failures += "screen timeout: ${it.message}" }
         }
 
         failures += oem.applyRestrictions(context, spec)
