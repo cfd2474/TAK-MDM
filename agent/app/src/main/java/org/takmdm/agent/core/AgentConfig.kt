@@ -118,6 +118,28 @@ class AgentConfig(context: Context) {
         get() = prefs.getStringSet(KEY_HIDDEN_BY_POLICY, emptySet()) ?: emptySet()
         set(value) = prefs.edit { putStringSet(KEY_HIDDEN_BY_POLICY, value) }
 
+    /**
+     * SSIDs of Wi-Fi networks this agent configured from policy, so it can remove
+     * them when the policy stops listing them. Same reasoning as [hiddenByPolicy]:
+     * never touch a network the user or another app set up.
+     */
+    var wifiByPolicy: Set<String>
+        get() = prefs.getStringSet(KEY_WIFI_BY_POLICY, emptySet()) ?: emptySet()
+        set(value) = prefs.edit { putStringSet(KEY_WIFI_BY_POLICY, value) }
+
+    // The network id WifiManager.addNetwork returned for an SSID. Stored because
+    // getConfiguredNetworks() returns nothing for a normally-installed Device
+    // Owner on One UI 8 even though addNetwork works — so the id we were handed at
+    // add time is the only reliable handle for removeNetwork later.
+    fun wifiNetworkId(ssid: String): Int =
+        prefs.getInt("$KEY_WIFI_ID_PREFIX$ssid", -1)
+
+    fun recordWifiNetworkId(ssid: String, id: Int) =
+        prefs.edit { putInt("$KEY_WIFI_ID_PREFIX$ssid", id) }
+
+    fun forgetWifiNetworkId(ssid: String) =
+        prefs.edit { remove("$KEY_WIFI_ID_PREFIX$ssid") }
+
     /** Optional file ids the user chose in the marketplace (F4). */
     var selectedOptionalFiles: Set<String>
         get() = prefs.getStringSet(KEY_SELECTED_FILES, emptySet()) ?: emptySet()
@@ -161,6 +183,8 @@ class AgentConfig(context: Context) {
         private const val KEY_APPLY_ERRORS = "last_apply_errors"
         private const val KEY_COMMAND_RESULTS = "pending_command_results"
         private const val KEY_HIDDEN_BY_POLICY = "hidden_by_policy"
+        private const val KEY_WIFI_BY_POLICY = "wifi_by_policy"
+        private const val KEY_WIFI_ID_PREFIX = "wifi_id:"
 
         // Keys inside PROVISIONING_ADMIN_EXTRAS_BUNDLE, matching the server's
         // provisioning payload generator.

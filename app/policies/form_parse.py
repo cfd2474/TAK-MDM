@@ -145,32 +145,6 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
             if rows:
                 spec[name] = rows
 
-        elif field.control == "vpn_list":
-            names = form.getlist(f"{name}__name")
-            conn = form.getlist(f"{name}__connection_type")
-            servers = form.getlist(f"{name}__server")
-            usernames = form.getlist(f"{name}__username")
-            passwords = form.getlist(f"{name}__password")
-            mppe = form.getlist(f"{name}__mppe")
-            rows = []
-            for i, profile in enumerate(names):
-                profile = (profile or "").strip()
-                server = (servers[i] if i < len(servers) else "").strip()
-                if not profile or not server:
-                    continue
-                row = {"name": profile, "server": server}
-                _put(row, "connection_type", conn, i)
-                row["mppe"] = _yes(mppe, i, default=True)
-                user = (usernames[i] if i < len(usernames) else "").strip()
-                if user:
-                    row["username"] = user
-                pw = (passwords[i] if i < len(passwords) else "").strip()
-                if pw:
-                    row["password"] = pw
-                rows.append(row)
-            if rows:
-                spec[name] = rows
-
     return spec
 
 

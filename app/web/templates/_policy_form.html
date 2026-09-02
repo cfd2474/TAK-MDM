@@ -165,35 +165,6 @@
   </div>
 {% endmacro %}
 
-{% macro _vpn_list(f, items, name) %}
-  <div class="rowset" data-rowset>
-    {% for e in items or [] %}{{ _vpn_row(name, e) }}{% endfor %}
-    <template data-row-template>{{ _vpn_row(name, none) }}</template>
-    <button type="button" class="ghost" data-add-row>Add VPN profile</button>
-  </div>
-{% endmacro %}
-
-{% macro _vpn_row(name, e) %}
-  <div class="rs-row" style="flex-wrap:wrap; align-items:flex-end">
-    <div><label>Profile name</label>
-      <input type="text" name="{{ name }}__name" value="{{ e.name if e else '' }}" style="min-width:150px"></div>
-    <div><label>Connection type</label>
-      <select name="{{ name }}__connection_type">
-        {% for v, lbl in [('pptp','PPTP'),('l2tp_ipsec_psk','L2TP/IPsec PSK'),('ipsec_xauth_psk','IPsec Xauth PSK')] %}
-          <option value="{{ v }}" {{ 'selected' if (e.connection_type if e else 'l2tp_ipsec_psk') == v }}>{{ lbl }}</option>
-        {% endfor %}
-      </select></div>
-    <div><label>Server</label>
-      <input type="text" name="{{ name }}__server" value="{{ e.server if e else '' }}" placeholder="vpn.example.org" style="min-width:180px"></div>
-    <div><label>MPPE</label>{{ _yesno(name ~ '__mppe', (e.mppe if e else true)) }}</div>
-    <div><label>Username</label>
-      <input type="text" name="{{ name }}__username" value="{{ e.username if e and e.username else '' }}" style="width:150px"></div>
-    <div><label>Password</label>
-      <input type="password" name="{{ name }}__password" value="{{ e.password if e and e.password else '' }}" style="width:130px"></div>
-    <button type="button" class="ghost" data-remove-row>Remove</button>
-  </div>
-{% endmacro %}
-
 {% macro _control(f, spec, name, app_packages, managed_files) %}
   {% set value = spec.get(f.name) %}
   {% if f.control == 'bool' %}{{ _bool(f, value, name) }}
@@ -204,7 +175,6 @@
   {% elif f.control == 'app_list' %}{{ _app_list(f, value, name, app_packages) }}
   {% elif f.control == 'file_list' %}{{ _file_list(f, value, name, managed_files) }}
   {% elif f.control == 'wifi_list' %}{{ _wifi_list(f, value, name) }}
-  {% elif f.control == 'vpn_list' %}{{ _vpn_list(f, value, name) }}
   {% endif %}
 {% endmacro %}
 

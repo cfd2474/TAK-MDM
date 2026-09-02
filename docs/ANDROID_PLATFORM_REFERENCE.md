@@ -569,6 +569,47 @@ a remote command on an unattended device. The agent registers a handler that
 unregistered type is retried until the queue expires and reads as a device fault
 (D89).
 
+## 6d. Wi-Fi configuration by a Device Owner
+
+📖 `WifiManager.addNetwork(WifiConfiguration)` and the sibling config methods
+(`updateNetwork`, `removeNetwork`, `enableNetwork`, `getConfiguredNetworks`) are
+**deprecated at API 29** for ordinary apps — a normal app gets `-1` back from
+`addNetwork` and an empty list from `getConfiguredNetworks`. The deprecation note
+carves out an exception: **"except for Device Owner (DO), Profile Owner (PO) and
+system apps"**, which retain access and may modify or remove only the networks
+they themselves created.
+
+**What the agent does (W14):** `PolicyApplier.applyNetworks` builds one
+`WifiConfiguration` per `wifi_networks` entry, security mapped from the policy
+enum (`NONE` / `WEP` / `WPA_PSK` / `SAE`), calls `addNetwork` then
+`enableNetwork(id, false)`. SSIDs it added and the policy later dropped are
+`removeNetwork`'d — a network the user set up by hand is never touched.
+
+✅ **`addNetwork` works for the Device Owner on `SM-X520` (One UI 8 / Android 16).**
+A `NETWORKS` policy pushed a `wpa_psk` network and the agent logged
+`wifi: configured ATLAS-Test (wpa_psk, id=1)`; `cmd wifi list-networks` then
+listed it. So the deprecation carve-out is real on this Samsung build — no need
+for the weaker `addNetworkSuggestions` fallback. A `-1` return is still reported
+(`wifi <ssid>: addNetwork returned -1 …`) rather than swallowed, in case another
+OEM behaves differently (R5).
+
+⚠️ **`getConfiguredNetworks()` returns nothing for the Device Owner** on this
+build, even though `addNetwork` works — so the network id handed back at add time
+is the only reliable handle for `removeNetwork` later. The agent stores it
+(`AgentConfig.wifiNetworkId`); a first version that looked the id up via
+`getConfiguredNetworks` logged a successful removal while the network stayed
+configured. **Removal by stored id is not yet re-verified on hardware** (the
+tablet dropped off `adb` before the re-test).
+
+**MAC randomization** (`WifiConfiguration.macRandomizationSetting`) is `@SystemApi`
+— not settable by a DO. The policy field is accepted and ignored; not a failure.
+
+**VPN** is deliberately absent. Android's built-in VPN profile
+(`com.android.internal.net.VpnProfile` + `IVpnManager`) is private and
+unavailable to a DO, and PPTP was removed from Android in Android 12. The only
+DO-supported VPN is `setAlwaysOnVpnPackage(admin, vpnAppPackage, lockdown)` —
+pointing at an installed VPN client app. Deferred until one is in the deployment.
+
 ## 7. Kiosk and lock task
 
 📖 `setLockTaskPackages(admin, packages)` then `startLockTask()`. Available to a
@@ -676,6 +717,8 @@ AndroidDownloadManager/16 (Linux; U; Android 16; SM-X520 Build/BP4A.251205.006)
 * [Build a DPC](https://developer.android.com/work/dpc/build-dpc)
 * [DevicePolicyManager reference](https://developer.android.com/reference/android/app/admin/DevicePolicyManager)
 * [Manage all files on a storage device](https://developer.android.com/training/data-storage/manage-all-files)
+* [WifiManager.addNetwork — deprecation note](https://developer.android.com/reference/android/net/wifi/WifiManager#addNetwork(android.net.wifi.WifiConfiguration)) — the DO/PO/system-app carve-out
+* [DevicePolicyManager.setAlwaysOnVpnPackage](https://developer.android.com/reference/android/app/admin/DevicePolicyManager#setAlwaysOnVpnPackage(android.content.ComponentName,%20java.lang.String,%20boolean))
 * [Android minimum targetSdk matrix — Jason Bayton](https://bayton.org/android/android-minimum-targetsdk-matrix/)
 * [Advanced Protection Mode](https://developer.android.com/privacy-and-security/advanced-protection-mode)
 * [Knox SDK deprecation policy](https://docs.samsungknox.com/dev/knox-sdk/faq/general/)

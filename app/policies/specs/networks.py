@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NETWORKS policy spec — Wi-Fi networks and VPN profiles.
+"""NETWORKS policy spec — Wi-Fi networks.
 
-⚠️ Wi-Fi and VPN passwords are stored **in the policy spec in cleartext**. The
-device genuinely needs them to connect, and a policy config is persistent by
-nature (unlike the one-shot enrolment Wi-Fi credential, D75). This widens the
-`pki/` + database exposure envelope (R8/R12) but does not change what already had
-to be protected.
+VPN was dropped (W14): Android's built-in VPN profile API is private and
+unavailable to a Device Owner, and there is no VPN client app in the deployment
+to point always-on VPN at. It returns if a concrete VPN client is deployed.
+
+⚠️ Wi-Fi passwords are stored **in the policy spec in cleartext** and travel in
+the signed bundle. The device genuinely needs them to connect, and a policy Wi-Fi
+config is persistent by nature (unlike the one-shot enrolment credential, D75).
+This widens the `pki/` + database exposure envelope (R8/R12) but does not change
+what already had to be protected.
 """
 
 from __future__ import annotations
@@ -45,12 +49,6 @@ class MacRandomization(str, enum.Enum):
     NONE = "none"
 
 
-class VpnConnectionType(str, enum.Enum):
-    PPTP = "pptp"
-    L2TP_IPSEC_PSK = "l2tp_ipsec_psk"
-    IPSEC_XAUTH_PSK = "ipsec_xauth_psk"
-
-
 class WifiNetwork(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -72,17 +70,6 @@ class WifiNetwork(BaseModel):
         return self
 
 
-class VpnProfile(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1, max_length=64)
-    connection_type: VpnConnectionType = VpnConnectionType.L2TP_IPSEC_PSK
-    server: str = Field(min_length=1, max_length=255)
-    username: str | None = Field(default=None, max_length=128)
-    password: str | None = Field(default=None, max_length=128)
-    mppe: bool = True
-
-
 class NetworksSpec(PolicySpec):
     wifi_networks: Annotated[
         list[WifiNetwork] | None,
@@ -97,20 +84,4 @@ class NetworksSpec(PolicySpec):
         title="Wi-Fi networks",
         description="Networks pushed to the device.",
         json_schema_extra={"ui_group": "Wi-Fi", "ui_control": "wifi_list"},
-    )
-
-    vpn_profiles: Annotated[
-        list[VpnProfile] | None,
-        Merge(
-            MergeStrategy.MERGE_BY_KEY,
-            key="name",
-            note="Stacked policies union VPN profiles by name; the highest-ranked "
-            "entry wins a clash on the same name.",
-        ),
-    ] = Field(
-        default=None,
-        title="VPN profiles",
-        description="Built-in VPN profiles. A per-app VPN client is configured "
-        "through App Management instead.",
-        json_schema_extra={"ui_group": "VPN", "ui_control": "vpn_list"},
     )

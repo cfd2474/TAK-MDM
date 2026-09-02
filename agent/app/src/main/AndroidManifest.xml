@@ -22,6 +22,13 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!--
+      Configuring Wi-Fi networks from a NETWORKS policy. Both are `normal`
+      permissions (auto-granted). The deprecated WifiManager config API
+      (addNetwork/removeNetwork) is grandfathered for a Device Owner.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <!--
       Build.getSerial() needs this. Without it the agent falls back to ANDROID_ID,
       which changes on factory reset — so a wiped device enrols as a NEW record
       instead of re-adopting its own, breaking D24. Demonstrated: two SM-X520

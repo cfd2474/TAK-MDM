@@ -21,7 +21,8 @@ server-rendered Jinja with no build step. **W10 replaced JSON-textarea policy
 editing with generated typed forms** (dropdowns, tri-state controls, repeatable
 rows; per-field merge hints). **W12 split each category's sub-topics into
 navigable sub-pages** with green-check completion markers. **W13 wired the
-Networks type (Wi-Fi + VPN).** 448 server tests + 30 agent tests.
+Networks type; W14 built the agent Wi-Fi applier (add hardware-proven, VPN
+dropped).** 447 server tests + 36 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -2484,6 +2485,101 @@ IPsec-Xauth-PSK), server, MPPE, username, password.
    agent does not apply Wi-Fi/VPN yet — builder + storage only, applier is a
    tracked follow-up.
 
+#### 🟡 W14 — Agent: apply the Networks (Wi-Fi) policy (Wi-Fi ADD hardware-proven; remove re-test pending)
+
+**447 server tests, 36 agent tests (was 30). Agent v29 (`0.8.1`).** Delivered:
+
+- **VPN dropped** — `NetworksSpec.vpn_profiles`, the `_vpn_list` macro and control,
+  and the VPN tests are gone. `NETWORKS` = `wifi_networks` only. (Android's
+  built-in VPN profile API is private / unavailable to a DO; no VPN client app to
+  point always-on at.)
+- **`WifiPlan.kt`** (agent, pure) — parses `wifi_networks`, computes the removal
+  set. Six unit tests.
+- **`PolicyApplier.applyNetworks`** — one `WifiConfiguration` per entry
+  (`NONE`/`WEP`/`WPA_PSK`/`SAE`), `addNetwork` → `enableNetwork`. Removes SSIDs it
+  added that the policy dropped, by the **stored network id** (`getConfiguredNetworks`
+  returns nothing for a DO on One UI 8 — see the reference).
+  `AgentConfig.wifiByPolicy` + `wifiNetworkId(ssid)` track what the agent owns,
+  mirroring `hiddenByPolicy`.
+- Manifest: `ACCESS_WIFI_STATE` + `CHANGE_WIFI_STATE`.
+- `docs/ANDROID_PLATFORM_REFERENCE.md` §6d — the DO Wi-Fi contract, and the
+  `getConfiguredNetworks` gotcha, recorded from hardware.
+
+**Hardware, `SM-X520`:**
+
+```
+✅ add:    PolicyApplier: wifi: configured ATLAS-Test (wpa_psk, id=1)
+           cmd wifi list-networks → ATLAS-Test listed;  sync errors=0
+⚠️ remove: v0.8.0 logged "removed" but the network stayed (it relied on
+           getConfiguredNetworks, empty for a DO). v0.8.1 removes by the stored
+           id — built and ready but not re-tested; the tablet dropped off adb.
+```
+
+**Next:** re-pair `SM-X520`, install v0.8.1, confirm unassigning the policy
+removes the network. Also clean up the stale `ATLAS-Test` (id 1) left by the v0.8.0
+test.
+
+##### Plan
+
+**Decided with the operator:** **VPN is dropped** — Android's built-in VPN
+profile API is private and unavailable to a Device Owner, and there is no VPN
+client app in the deployment to point always-on VPN at. `NETWORKS` becomes Wi-Fi
+only; VPN returns if/when a concrete VPN client is deployed. **Wi-Fi is built
+now and hardware-proven this session** (`SM-X520` paired for the test).
+
+1. **Drop VPN** — `NetworksSpec.vpn_profiles`, the `_vpn_list` macro, the
+   `vpn_list` control, and the VPN tests go. `NETWORKS` = `wifi_networks` only.
+2. **`PolicyApplier.applyNetworks(spec)`** (agent) — `WifiManager.addNetwork(
+   WifiConfiguration)` per entry (the deprecated config API is grandfathered for a
+   Device Owner), security mapped from the enum, `allowAutojoin` for auto-join,
+   failures collected not thrown. SSIDs the agent added and the policy no longer
+   lists are `removeNetwork`'d — tracked in `AgentConfig.wifiByPolicy`, mirroring
+   `hiddenByPolicy`.
+3. Pure `WifiPlan` helper (spec JSON → desired SSIDs + removals) so the diff logic
+   is unit-tested even though the `WifiManager` calls are not.
+4. Manifest: `CHANGE_WIFI_STATE` + `ACCESS_WIFI_STATE` (both `normal`).
+5. Wire into `PolicyApplier.apply`; record the contract in
+   `docs/ANDROID_PLATFORM_REFERENCE.md`.
+6. Agent unit tests for `WifiPlan`; adjust server tests (VPN removed).
+7. Build the APK, push to `SM-X520`, prove a policy-pushed Wi-Fi network appears
+   and connects.
+
+##### Original plan (Wi-Fi + VPN)
+
+The server-side `NETWORKS` type (W13) reaches the device in the desired-state
+document but the Kotlin agent ignores it. This chunk adds `applyNetworks` to
+`PolicyApplier`.
+
+**Platform reality, checked against the DPM reference (CLAUDE.md §6):**
+
+* **Wi-Fi** — a Device Owner adds networks with `WifiManager.addNetwork(WifiConfiguration)`.
+  The API is deprecated (API 29) but grandfathered for DO/PO — a normal app gets
+  `-1` back, a DO gets a real network id. This is the path Headwind and the
+  commercial MDMs use. **Needs verification on `SM-X520`** — if it returns `-1`
+  there, the fallback is `addNetworkSuggestions`, which the user can decline
+  (weaker, reported as such).
+* **VPN** — the built-in VPN profile (PPTP / L2TP-IPsec / IPsec-Xauth — the
+  "Settings → VPN → +" kind) is `com.android.internal.net.VpnProfile` +
+  `IVpnManager`, **not public and not available to a Device Owner**. PPTP was
+  removed from Android entirely in Android 12. The only DO-supported VPN is
+  `DevicePolicyManager.setAlwaysOnVpnPackage(admin, vpnAppPackage, lockdown)` —
+  pointing at an installed VPN *client app*. **So the W13 VPN model (server /
+  username / password / connection type) cannot be applied and must be reworked**
+  — see the open question below.
+
+1. `applyNetworks(spec)` in `PolicyApplier` — Wi-Fi via `addNetwork`, one
+   `WifiConfiguration` per entry, security mapped from the enum, failures
+   collected (never thrown). Networks the agent added but the policy no longer
+   lists are removed (`removeNetwork`), tracked the same way blocklist hiding is.
+2. Wire it into `PolicyApplier.apply` and the reconciler.
+3. **Rework the VPN spec** per the open question.
+4. VPN applier: `setAlwaysOnVpnPackage` when a package is configured.
+5. Record the Wi-Fi contract in `docs/ANDROID_PLATFORM_REFERENCE.md` (📖 for the
+   API, then ✅/❌ once tested on hardware).
+6. Agent unit tests; server tests for the reworked VPN spec.
+7. Prove on `SM-X520`: push a Wi-Fi network by policy, confirm it appears and the
+   device can use it.
+
 ---
 
 ### Later chunks (sketch — to be detailed at approval time)
@@ -2528,6 +2624,13 @@ IPsec-Xauth-PSK), server, MPPE, username, password.
 
 ## Changelog
 
+- **2026-09-02** — **W14: agent applies Wi-Fi policy; VPN dropped.** 447 server
+  tests, 36 agent tests, agent v29 (`0.8.1`). `PolicyApplier.applyNetworks`
+  configures Wi-Fi networks from a `NETWORKS` policy via the deprecated-but-
+  DO-grandfathered `WifiManager.addNetwork`. **Add is hardware-proven on
+  `SM-X520`** (network appeared, `errors=0`); the removal path was fixed after
+  v0.8.0 relied on `getConfiguredNetworks` (empty for a DO on One UI 8) — v0.8.1
+  removes by stored id, re-test pending. VPN removed from `NETWORKS` entirely.
 - **2026-09-02** — **W13: Networks policy type (Wi-Fi + VPN).** 448 tests. New
   `NETWORKS` spec with `wifi_networks` / `vpn_profiles` lists (models with the
   fields from the reference UI, `MERGE_BY_KEY` on ssid / name), `wifi_list` /

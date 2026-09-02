@@ -731,12 +731,11 @@ def test_a_pristine_subpage_has_no_check(client: TestClient):
     assert "rail-check" not in link[: link.index("</a>")]
 
 
-def test_networks_wifi_and_vpn_subpages(client: TestClient):
+def test_networks_wifi_subpage(client: TestClient):
     body = client.get("/policies/new").text
     assert 'data-page="networks:wi-fi"' in body
-    assert 'data-page="networks:vpn"' in body
     assert 'name="wifi_networks__ssid"' in body
-    assert 'name="vpn_profiles__server"' in body
+    assert "vpn_profiles" not in body  # VPN dropped (W14)
 
 
 def test_wifi_form_round_trip(client: TestClient):
@@ -771,25 +770,6 @@ def test_wifi_short_password_is_rejected(client: TestClient):
         follow_redirects=True,
     )
     assert "error" in r.url.query.decode()
-
-
-def test_vpn_form_round_trip(client: TestClient):
-    pid = _create_via_form(
-        client, "VPN policy", "NETWORKS",
-        [
-            ("vpn_profiles__name", "HQ"),
-            ("vpn_profiles__connection_type", "l2tp_ipsec_psk"),
-            ("vpn_profiles__server", "vpn.tak-solutions.com"),
-            ("vpn_profiles__username", "mike"),
-            ("vpn_profiles__password", "s3cret"),
-            ("vpn_profiles__mppe", "no"),
-        ],
-    )
-    entry = _stored_spec(client, pid)["vpn_profiles"][0]
-    assert entry["name"] == "HQ"
-    assert entry["server"] == "vpn.tak-solutions.com"
-    assert entry["username"] == "mike"
-    assert entry["mppe"] is False
 
 
 def test_networks_reaches_the_effective_policy(client: TestClient, enrolled):

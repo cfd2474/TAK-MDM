@@ -64,8 +64,7 @@ CATALOG: tuple[Category, ...] = (
     ),
     Category(
         "networks", "Networks", "NETWORKS",
-        subtopics=("wifi", "vpn"),
-        blurb="Wi-Fi networks and built-in VPN profiles.",
+        blurb="Wi-Fi networks. (VPN needs a per-app VPN client — deferred.)",
     ),
     Category(
         "security", "Security", None,

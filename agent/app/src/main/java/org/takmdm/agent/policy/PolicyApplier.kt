@@ -22,8 +22,11 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.Context
 import android.content.pm.PackageManager
+import android.net.wifi.WifiConfiguration
+import android.net.wifi.WifiManager
 import android.os.UserManager
 import androidx.core.content.ContextCompat
+import org.takmdm.agent.core.AgentConfig
 import org.takmdm.agent.diag.AgentLog
 import org.json.JSONObject
 import org.takmdm.agent.admin.MdmDeviceAdminReceiver
@@ -57,6 +60,9 @@ class PolicyApplier(private val context: Context) {
         policy.optJSONObject("PASSWORD")?.let { failures += applyPassword(it) }
         policy.optJSONObject("RESTRICTIONS")?.let { failures += applyRestrictions(it) }
         policy.optJSONObject("APP_CATALOG")?.let { failures += applyAppCatalog(it) }
+        // NETWORKS runs even when absent: an emptied policy must remove the Wi-Fi
+        // networks the agent previously added.
+        failures += applyNetworks(policy.optJSONObject("NETWORKS") ?: JSONObject())
         return failures
     }
 
@@ -172,6 +178,87 @@ class PolicyApplier(private val context: Context) {
         failures += applyKiosk(spec.optString("kiosk_package").takeIf { it.isNotBlank() })
 
         return failures
+    }
+
+    // ----------------------------------------------------------------------- //
+    // Networks: Wi-Fi
+    //
+    // WifiManager.addNetwork(WifiConfiguration) is deprecated (API 29) but
+    // grandfathered for a Device Owner: a normal app gets -1 back, a DO gets a
+    // real network id. If -1 comes back here on real hardware, that assumption is
+    // wrong for this OEM and the failure says so.
+    // ----------------------------------------------------------------------- //
+
+    @Suppress("DEPRECATION")
+    private fun applyNetworks(spec: JSONObject): List<String> {
+        val failures = mutableListOf<String>()
+        val desired = WifiPlan.desired(spec)
+        val config = AgentConfig(context)
+
+        if (desired.isEmpty() && config.wifiByPolicy.isEmpty()) return failures
+
+        val wifi = context.getSystemService(WifiManager::class.java)
+            ?: return listOf("networks: WifiManager unavailable")
+
+        val managed = config.wifiByPolicy.toMutableSet()
+
+        for (ssid in WifiPlan.toRemove(config.wifiByPolicy, desired)) {
+            runCatching {
+                val id = config.wifiNetworkId(ssid)
+                val gone = id >= 0 && wifi.removeNetwork(id)
+                config.forgetWifiNetworkId(ssid)
+                AgentLog.i(TAG, "wifi: removing $ssid (id=$id, removed=$gone)")
+            }.onFailure { failures += "wifi remove $ssid: ${it.message}" }
+            managed.remove(ssid)
+        }
+
+        for (n in desired) {
+            runCatching {
+                // Replace any config we previously added for this SSID.
+                config.wifiNetworkId(n.ssid).takeIf { it >= 0 }?.let { wifi.removeNetwork(it) }
+                val id = wifi.addNetwork(buildWifiConfig(n))
+                if (id < 0) {
+                    failures += "wifi ${n.ssid}: addNetwork returned -1 " +
+                        "(the Device Owner Wi-Fi config path is not available on this device)"
+                    return@runCatching
+                }
+                // enableNetwork makes it a connection candidate; a configured
+                // network auto-joins by default. There is no public per-network
+                // auto-join toggle for a DO, so `auto_join: false` is accepted and
+                // recorded on the server but not enforced here.
+                wifi.enableNetwork(id, false)
+                config.recordWifiNetworkId(n.ssid, id)
+                managed.add(n.ssid)
+                AgentLog.i(TAG, "wifi: configured ${n.ssid} (${n.security}, id=$id)")
+            }.onFailure { failures += "wifi ${n.ssid}: ${it.message}" }
+        }
+
+        config.wifiByPolicy = managed
+        return failures
+    }
+
+    @Suppress("DEPRECATION")
+    private fun buildWifiConfig(n: DesiredWifi): WifiConfiguration = WifiConfiguration().apply {
+        SSID = "\"${n.ssid}\""
+        hiddenSSID = n.hidden
+        when (n.security) {
+            "open" -> allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE)
+            "wep" -> {
+                allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE)
+                allowedAuthAlgorithms.set(WifiConfiguration.AuthAlgorithm.OPEN)
+                allowedAuthAlgorithms.set(WifiConfiguration.AuthAlgorithm.SHARED)
+                wepKeys[0] = "\"${n.password.orEmpty()}\""
+                wepTxKeyIndex = 0
+            }
+            "wpa3_sae" -> {
+                allowedKeyManagement.set(WifiConfiguration.KeyMgmt.SAE)
+                preSharedKey = "\"${n.password.orEmpty()}\""
+            }
+            else -> { // wpa_psk
+                allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA_PSK)
+                preSharedKey = "\"${n.password.orEmpty()}\""
+            }
+        }
     }
 
     // ----------------------------------------------------------------------- //
