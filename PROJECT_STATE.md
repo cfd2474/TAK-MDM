@@ -3408,16 +3408,25 @@ agent builds are already `AppPackageVersion` rows for `org.takmdm.agent`, which
 is where the upload history and the content-addressed artifact already live. All
 that is missing is which version is aimed at whom.
 
-* Two settings: `agent.current_version_code` (the fleet) and
-  `agent.candidate_version_code` (canaries only). Promotion is
-  `current := candidate`; withdrawal clears one.
-* One device flag: `Device.is_agent_canary`.
+* One setting: `agent.current_version_code`, the build published to the fleet.
+  Unset means the channel is inert.
 * One device fact: `Device.agent_version_code`, reported at check-in — the gate
   needs the code, and today only the display `agent_version` string is reported.
 
-**Eligibility, per device, evaluated server-side at check-in.** Offer the highest
-version the device is entitled to (candidate if canary, else current), and only
-when **all** hold:
+**D33 — no canary tier; staging is a separate instance.** The first cut had a
+`candidate` pointer and a `Device.is_agent_canary` flag, so a build could reach a
+few devices before the fleet. Removed at the operator's direction: builds are
+proven on a development ATLAS instance and only a build that has already been
+through it is ever uploaded to production. Fleet segmentation would have been a
+second, weaker copy of a control that already exists upstream — and it put an
+"unproven build" concept into the production server, which has no business
+holding one. A production server that has a build has been told to run it.
+
+The per-device gates stay, because they are about the *device's* condition
+rather than the build's, and nothing upstream can know them.
+
+**Eligibility, per device, evaluated server-side at check-in.** Offer the
+published build, and only when **all** hold:
 1. it is newer than the device's reported `agent_version_code`;
 2. the device is **not** `degraded`/`failed` — never stack an agent swap on a
    device that is already failing to apply things;
@@ -3440,22 +3449,19 @@ when **all** hold:
    immediately before commit — that line is the last thing the dying process
    will ever write.
 5. **Console.** Admin → *Agent updates*: the `org.takmdm.agent` version history,
-   which version is current vs candidate, how many canaries are healthy on the
-   candidate, and Promote / Withdraw. A canary toggle per device.
-6. **Tests.** Eligibility truth table (newer/older, canary/not, degraded, settle),
-   the check-in contract, the console page.
-7. **Hardware on `SM-X520`.** Flag it canary, publish a candidate, watch only the
-   canary take it, promote, confirm. Agent v40.
+   which build is published, how the fleet has actually landed on it, and
+   Publish / Unpublish.
+6. **Tests.** Eligibility truth table (newer/older, degraded, settle), the
+   check-in contract, the console page.
+7. **Hardware on `SM-X520`.** Bootstrap v40 by ADB, then deliver v41 over the
+   air and watch it land.
 
-⚠️ **Large chunk.** If it runs long the natural split is 1–4 + 6 (the mechanism,
-drivable by API) as one checkpoint, then 5 + 7 (console and hardware).
-
-##### Status: steps 1–4 and 6 done (the mechanism). Steps 5 and 7 open.
+##### Status: steps 1–6 done. Step 7 blocked — no device connected.
 
 **Done.**
 
-* `Device.agent_version_code` / `Device.is_agent_canary`, migration
-  `i9k1m3o5q7s9`, applied to the running stack (head confirmed).
+* `Device.agent_version_code`, migration `i9k1m3o5q7s9`, applied to the running
+  stack (head confirmed, single column).
 * `app/services/agent_update.py`. The gate is a pure `decide()` returning
   `Decision(offer, reason)` — every refusal names itself, because on this one
   feature a silent no-op and a silent disaster look identical from outside.
@@ -3464,10 +3470,15 @@ drivable by API) as one checkpoint, then 5 + 7 (console and hardware).
   *this* check-in reported rather than the previous one's.
 * Agent: `Reconciler.selfUpdate()`, called last in `applyDesiredState` and only
   when `errors.isEmpty()`. Logs the replacement immediately before commit.
-* 19 tests (`tests/test_agent_update.py`), suite 464 → **483 green**. Mutation-
+* Console: Admin → *Agent updates*. Lists every uploaded agent build, publishes
+  one, and reports the rollout as five separate numbers rather than a percentage
+  — on the build / behind / never reported / **not healthy** / enrolled. The
+  unhealthy count is the one that matters: a build that installs and then fails
+  to apply policy reads as a completed rollout on any count of installs alone.
+* 23 tests (`tests/test_agent_update.py`), suite 464 → **487 green**. Mutation-
   checked: neutering either the settle gate or the compliance gate fails 5.
 
-**Two decisions worth knowing about.**
+**Three decisions worth knowing about.**
 
 * *Settled* is computed as "the device reported the same `agent_version_code` it
   reported last time", evaluated **before** the column is overwritten. So the
@@ -3475,14 +3486,33 @@ drivable by API) as one checkpoint, then 5 + 7 (console and hardware).
   managing one check-in per launch therefore never gets offered a second update
   — it stays put and stays visible, which is the failure mode we can actually
   fix from the console.
-* Targeting a canary returns `max(current, candidate)`, not simply the candidate.
-  Withdrawing a bad candidate by pointing it at an older build must not turn into
-  an offer to downgrade the canary that already took the newer one — Android
-  would refuse it forever and the device would retry on every check-in.
+* Publishing a build that is not in the library is **refused at the form**, and
+  a published build that is later deleted is called out on the page. Either
+  would otherwise make every check-in drop the offer in silence, which looks
+  exactly like a fleet that is merely slow to come back.
+* A corrupt `agent.current_version_code` makes the channel inert rather than
+  raising. A hand-edited setting must not take every check-in in the fleet down
+  with it.
 
-**Not done: steps 5 (console) and 7 (hardware).** Until the console page exists
-the two settings can only be moved by hand, so nothing is aimed at the fleet yet
-and the channel is inert in production. `SM-X520` is still on v39.
+##### Step 7 — what it will take, and why it is not one step
+
+`SM-X520` runs **v39, which predates this protocol**: it neither reports
+`agent_version_code` nor consumes `agent_update`. The gate correctly refuses it
+("device has not reported an agent versionCode"), so it can never reach a
+protocol-speaking build over the air. That is the bootstrap case the code
+documents, and it is real here:
+
+1. Build **v40** and install it by ADB — the last manual install.
+2. Confirm it reports its versionCode (console → Agent updates → *Reported
+   agent versions*).
+3. Build **v41**, upload it, publish it, and watch v40 replace itself. Only this
+   third step actually exercises `selfUpdate()`.
+
+⚠️ Also noticed while smoke-testing the live console: the package library holds
+agent builds **38, 4, 3** — the device is *ahead* of everything uploaded,
+because v39 was built and sideloaded without ever passing through the server.
+Publishing 38 would be a no-op (the gate refuses a downgrade), but the library
+is not a record of what is deployed and should not be read as one.
 
 ---
 

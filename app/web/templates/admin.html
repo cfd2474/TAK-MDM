@@ -8,6 +8,7 @@
 
 {% set tab_items = [('certificates', 'Certificates')] %}
 {% for grp in setting_groups %}{% set _ = tab_items.append((grp.group.key, grp.group.title)) %}{% endfor %}
+{% set _ = tab_items.append(('agent', 'Agent updates')) %}
 {% set _ = tab_items.append(('attributes', 'Custom attributes')) %}
 {% set _ = tab_items.append(('integrations', 'Integrations')) %}
 {% set _ = tab_items.append(('environment', 'Environment')) %}
@@ -98,6 +99,118 @@
     </div>
   </div>
   {% endfor %}
+
+  <div class="tab-panel" data-tab-panel="agent" hidden>
+    <div class="panel">
+      <h2>Agent updates</h2>
+      <p class="sub">
+        Publishing a build tells every enrolled device to replace its own agent
+        with it, at its next check-in. Devices that are failing to apply policy
+        are skipped until they recover, and a device is left alone until it has
+        checked in cleanly once on the build it is already running.
+      </p>
+      <div class="banner">
+        <strong>There is no rollback.</strong> Android refuses to install an
+        older <span class="mono">versionCode</span> over a newer one, so a build
+        that will not start cannot be recalled from here — the only cure is
+        another build with a higher code, delivered by hand to every device that
+        took the bad one. Publish builds you have already run on a test instance.
+      </div>
+
+      {% if agent.rollout.published %}
+      <p>
+        Published: <span class="pill good">{{ agent.rollout.published }}</span>
+        {% if agent.published_name %}<span class="mono">{{ agent.published_name }}</span>{% endif %}
+        {% if not agent.published_uploaded %}
+          <span class="pill bad">this build is no longer uploaded — nothing is being offered</span>
+        {% endif %}
+      </p>
+      <table>
+        <thead><tr><th>On this build</th><th>Behind</th><th>Never reported</th><th>Not healthy</th><th>Enrolled</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>{{ agent.rollout.on_published }}</td>
+            <td>{{ agent.rollout.behind }}</td>
+            <td>{{ agent.rollout.unreported }}</td>
+            <td>{{ agent.rollout.unhealthy or '—' }}</td>
+            <td>{{ agent.rollout.total }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="muted">
+        "Not healthy" counts devices failing to apply policy for any reason, not
+        only an agent fault — but a count that climbs right after publishing is
+        the signal to stop and look. A device that installs the build and then
+        cannot apply anything would otherwise read as a completed rollout.
+      </p>
+      <form method="post" action="/admin/agent/publish" style="margin-top:12px"
+            data-confirm="Stop offering an agent update to the fleet? Devices already on {{ agent.rollout.published }} keep it.">
+        {{ csrf_field(csrf_token) }}
+        <input type="hidden" name="version_code" value="">
+        <button type="submit" class="danger">Unpublish</button>
+      </form>
+      {% else %}
+      <p><span class="pill warn">nothing published</span> No device is being offered an agent update.</p>
+      {% endif %}
+    </div>
+
+    <div class="panel">
+      <h2>Uploaded builds</h2>
+      <p class="sub">
+        Every <span class="mono">{{ agent.package_name }}</span> build in the
+        library. Upload new ones on the <a href="/apps">Apps</a> page.
+      </p>
+      {% if agent.versions %}
+      <table>
+        <thead><tr><th>versionCode</th><th>Version</th><th>Uploaded</th><th></th></tr></thead>
+        <tbody>
+        {% for v in agent.versions %}
+          <tr>
+            <td class="mono">{{ v.version_code }}</td>
+            <td>{{ v.version_name or '—' }}</td>
+            <td class="muted">{{ v.uploaded_at.strftime('%Y-%m-%d %H:%M') if v.uploaded_at else '—' }}</td>
+            <td>
+              {% if v.version_code == agent.rollout.published %}
+                <span class="pill good">published</span>
+              {% else %}
+                <form method="post" action="/admin/agent/publish" style="margin:0"
+                      data-confirm="Publish {{ v.version_code }} to every enrolled device? This cannot be undone for a device that takes it.">
+                  {{ csrf_field(csrf_token) }}
+                  <input type="hidden" name="version_code" value="{{ v.version_code }}">
+                  <button type="submit">Publish</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}{{ empty_state('No agent builds uploaded yet.') }}{% endif %}
+    </div>
+
+    <div class="panel">
+      <h2>Reported agent versions</h2>
+      {% if agent.devices %}
+      <table>
+        <thead><tr><th>Device</th><th>versionCode</th><th>Compliance</th><th>Last check-in</th></tr></thead>
+        <tbody>
+        {% for d in agent.devices %}
+          <tr>
+            <td><a href="/devices/{{ d.id }}">{{ d.name or d.serial_number }}</a></td>
+            <td class="mono">
+              {% if d.agent_version_code is none %}<span class="pill warn">not reported</span>
+              {% elif d.agent_version_code == agent.rollout.published %}{{ d.agent_version_code }}
+              {% else %}<span class="pill">{{ d.agent_version_code }}</span>{% endif %}
+            </td>
+            <td>{{ d.compliance_status.value }}</td>
+            <td class="muted">{{ d.last_checkin_at.strftime('%Y-%m-%d %H:%M') if d.last_checkin_at else 'never' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}{{ empty_state('No enrolled devices.') }}{% endif %}
+    </div>
+  </div>
 
   <div class="tab-panel" data-tab-panel="attributes" hidden>
     <div class="panel">

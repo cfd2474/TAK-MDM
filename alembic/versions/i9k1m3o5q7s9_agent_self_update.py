@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""agent self-update: canary flag and reported versionCode (W27)
+"""agent self-update: the agent's reported versionCode (W27)
 
 Which agent build a device is entitled to is decided server-side at check-in, so
-the server needs two facts it did not have: the agent's numeric versionCode (the
-display versionName cannot be compared) and whether this device takes candidate
-builds ahead of the fleet.
+the server needs a fact it did not have: the agent's numeric versionCode. The
+display versionName is free text and cannot be compared, and versionCode is also
+the only thing Android's own upgrade rule looks at.
 
 Revision ID: i9k1m3o5q7s9
 Revises: h8j0l2n4p6r8
@@ -38,17 +38,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.add_column("device", sa.Column("agent_version_code", sa.Integer(), nullable=True))
-    op.add_column(
-        "device",
-        sa.Column(
-            "is_agent_canary",
-            sa.Boolean(),
-            nullable=False,
-            server_default=sa.false(),
-        ),
-    )
 
 
 def downgrade() -> None:
-    op.drop_column("device", "is_agent_canary")
     op.drop_column("device", "agent_version_code")

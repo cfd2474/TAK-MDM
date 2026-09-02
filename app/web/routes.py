@@ -83,6 +83,7 @@ from app.db.models import (
 from app.policies import creator_catalog
 from app.policies import form_parse, form_schema
 from app.policies.registry import PolicyTypeError, registry
+from app.services import agent_update as agent_update_service
 from app.services import app_groups as app_group_service
 from app.services import commands as command_service
 from app.services import content_admin
@@ -1518,8 +1519,74 @@ def admin_page(
         },
         setting_groups=groups,
         env_settings=env_settings,
+        agent=_agent_update_panel(session, settings),
         attributes=attribute_service.list_attributes(session),
     )
+
+
+def _agent_update_panel(session: Session, settings: Settings) -> dict:
+    """Everything the Agent updates tab shows.
+
+    ``published_uploaded`` is reported rather than assumed: deleting the build a
+    setting points at silently stops every offer, and that is exactly the kind of
+    quiet nothing this feature must never do without saying so.
+    """
+    package_name = settings.agent_package_name
+    builds = agent_update_service.versions(session, package_name)
+    status = agent_update_service.rollout(session)
+    published = next((v for v in builds if v.version_code == status.published), None)
+    devices = list(
+        session.scalars(
+            select(Device)
+            .where(Device.enrollment_state == EnrollmentState.ENROLLED)
+            .order_by(Device.agent_version_code.is_(None).desc(), Device.agent_version_code)
+        )
+    )
+    return {
+        "package_name": package_name,
+        "versions": builds,
+        "rollout": status,
+        "published_name": published.version_name if published else None,
+        "published_uploaded": published is not None,
+        "devices": devices,
+    }
+
+
+@router.post("/admin/agent/publish")
+def publish_agent_build_form(
+    version_code: str = Form(default=""),
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Aim the fleet at an agent build, or (with a blank code) at nothing."""
+    raw = version_code.strip()
+    if not raw:
+        agent_update_service.publish(
+            session, None, updated_by=None if identity.is_anonymous else identity.username
+        )
+        session.commit()
+        return _redirect("/admin?saved=agent#tab-agent")
+
+    try:
+        wanted = int(raw)
+    except ValueError:
+        return _redirect(f"/admin?error={_quote('agent versionCode must be a number')}#tab-agent")
+
+    # Refuse to publish a build that is not in the library. The offer would be
+    # dropped silently at every check-in, which looks identical to a fleet that
+    # is simply slow to come back.
+    if not any(v.version_code == wanted for v in agent_update_service.versions(
+        session, settings.agent_package_name
+    )):
+        detail = f"no {settings.agent_package_name} build {wanted} has been uploaded"
+        return _redirect(f"/admin?error={_quote(detail)}#tab-agent")
+
+    agent_update_service.publish(
+        session, wanted, updated_by=None if identity.is_anonymous else identity.username
+    )
+    session.commit()
+    return _redirect("/admin?saved=agent#tab-agent")
 
 
 @router.post("/admin/settings/{group_key}")

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The agent self-update channel: who is offered which build, and when not.
+"""The agent self-update channel: who is offered the published build, and when not.
 
 Weighted towards the refusals. An offer that fails to arrive costs a delayed
 update; an offer that arrives at the wrong moment can strand a device with no
@@ -20,6 +20,8 @@ remote management and no rollback, because Android will not install a downgrade.
 """
 
 from __future__ import annotations
+
+import re
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -52,7 +54,7 @@ def test_a_newer_build_is_offered_to_a_healthy_settled_device():
     assert gate().offer is True
 
 
-def test_nothing_is_offered_when_no_build_is_aimed_at_the_fleet():
+def test_nothing_is_offered_when_no_build_has_been_published():
     assert gate(target_version_code=None).offer is False
 
 
@@ -97,7 +99,7 @@ def test_every_refusal_names_itself():
 
 
 # --------------------------------------------------------------------------- #
-# Targeting: candidate vs current
+# Publishing, and what the operator sees afterwards
 # --------------------------------------------------------------------------- #
 
 
@@ -121,83 +123,72 @@ def device_of(db, serial: str = "R5CN00TAK01") -> Device:
     return db.scalar(select(Device).where(Device.serial_number == serial))
 
 
-def test_a_candidate_reaches_only_canaries(client: TestClient, db, enrolled):
-    enrolled()
-    certificate = make_signing_certificate()
-    upload_agent(client, 40, certificate)
-    upload_agent(client, 41, certificate)
+def test_publishing_aims_the_fleet_at_a_build(db):
+    assert agent_update.current(db) is None  # inert until an operator says otherwise
 
-    agent_update.set_candidate(db, 41)
-    agent_update._store(db, agent_update.KEY_CURRENT, 40)
+    agent_update.publish(db, 41)
     db.commit()
-
-    device = device_of(db)
-    device.agent_version_code = 39
-    assert agent_update.target_version_code(db, device) == 40
-
-    device.is_agent_canary = True
-    assert agent_update.target_version_code(db, device) == 41
-
-
-def test_a_canary_is_never_dragged_backwards_by_an_older_candidate(client: TestClient, db, enrolled):
-    """Withdrawing a bad candidate by pointing it at an older build must not
-    become an offer to downgrade the canary that already took the newer one."""
-    enrolled()
-    agent_update._store(db, agent_update.KEY_CURRENT, 41)
-    agent_update.set_candidate(db, 40)
-    db.commit()
-
-    device = device_of(db)
-    device.is_agent_canary = True
-    assert agent_update.target_version_code(db, device) == 41
-
-
-def test_promotion_moves_the_candidate_to_the_fleet(db):
-    agent_update.set_candidate(db, 41)
-    db.commit()
-
-    assert agent_update.promote(db) == 41
     assert agent_update.current(db) == 41
-    assert agent_update.candidate(db) is None
 
 
-def test_promoting_nothing_is_a_no_op(db):
-    assert agent_update.promote(db) is None
+def test_publishing_nothing_makes_the_channel_inert_again(db):
+    agent_update.publish(db, 41)
+    agent_update.publish(db, None)
+    db.commit()
+
     assert agent_update.current(db) is None
 
 
-def test_withdrawing_a_candidate_leaves_the_fleet_build_alone(db):
-    agent_update._store(db, agent_update.KEY_CURRENT, 40)
-    agent_update.set_candidate(db, 41)
+def test_a_corrupt_setting_stops_the_channel_rather_than_the_fleet(db):
+    """A hand-edited value must not make every check-in in the fleet raise."""
+    from app.services import settings_store
+
+    settings_store.put(db, agent_update.KEY_CURRENT, "v41")
     db.commit()
 
-    agent_update.withdraw_candidate(db)
-    assert agent_update.candidate(db) is None
-    assert agent_update.current(db) == 40
+    assert agent_update.current(db) is None
 
 
-def test_canary_health_counts_only_healthy_canaries_on_the_candidate(client, db, enrolled):
-    enrolled(serial="CANARY-A")
-    enrolled(serial="CANARY-B")
-    enrolled(serial="FLEET-C")
+def test_rollout_separates_installed_from_healthy(client, db, enrolled):
+    """The number that matters is not "how many took it" but "how many are well
+    on it" — a build that installs and then fails policy reads as 100% done on
+    any count of installs alone."""
+    enrolled(serial="DEV-A")
+    enrolled(serial="DEV-B")
+    enrolled(serial="DEV-C")
+    enrolled(serial="DEV-D")
+    agent_update.publish(db, 41)
 
-    good = device_of(db, "CANARY-A")
-    good.is_agent_canary = True
-    good.agent_version_code = 41
-    good.compliance_status = ComplianceStatus.COMPLIANT
+    done = device_of(db, "DEV-A")
+    done.agent_version_code = 41
 
-    bad = device_of(db, "CANARY-B")
-    bad.is_agent_canary = True
-    bad.agent_version_code = 41
-    bad.compliance_status = ComplianceStatus.DEGRADED  # installed, then broke
+    broke = device_of(db, "DEV-B")
+    broke.agent_version_code = 41
+    broke.compliance_status = ComplianceStatus.DEGRADED
+
+    behind = device_of(db, "DEV-C")
+    behind.agent_version_code = 39
+    db.commit()  # DEV-D has never reported a versionCode
+
+    status = agent_update.rollout(db)
+    assert (status.published, status.total) == (41, 4)
+    assert (status.on_published, status.behind, status.unreported) == (2, 1, 1)
+    assert status.unhealthy == 1
+
+
+def test_rollout_reports_an_unpublished_channel_without_guessing(client, db, enrolled):
+    enrolled()
+    device_of(db).agent_version_code = 39
     db.commit()
 
-    assert agent_update.canary_health(db, 41) == (1, 2)
+    status = agent_update.rollout(db)
+    assert status.published is None
+    assert (status.on_published, status.behind) == (0, 0)
 
 
 def test_an_offer_aimed_at_a_build_that_was_never_uploaded_is_dropped(client, db, enrolled):
     enrolled()
-    agent_update._store(db, agent_update.KEY_CURRENT, 99)
+    agent_update.publish(db, 99)
     db.commit()
 
     device = device_of(db)
@@ -223,7 +214,7 @@ def test_the_first_checkin_on_a_build_settles_and_the_second_is_offered(
     session = enrolled()
     headers = mtls_headers(session["certificate_pem"])
     upload_agent(client, 40, make_signing_certificate())
-    agent_update._store(db, agent_update.KEY_CURRENT, 40)
+    agent_update.publish(db, 40)
     db.commit()
 
     first = checkin(client, headers, state_version=0, agent_version_code=39)
@@ -243,7 +234,7 @@ def test_a_device_reporting_apply_errors_is_not_offered_an_update(
     session = enrolled()
     headers = mtls_headers(session["certificate_pem"])
     upload_agent(client, 40, make_signing_certificate())
-    agent_update._store(db, agent_update.KEY_CURRENT, 40)
+    agent_update.publish(db, 40)
     db.commit()
 
     checkin(client, headers, state_version=0, agent_version_code=39)
@@ -265,7 +256,7 @@ def test_arriving_on_the_new_build_ends_the_offers(
     session = enrolled()
     headers = mtls_headers(session["certificate_pem"])
     upload_agent(client, 40, make_signing_certificate())
-    agent_update._store(db, agent_update.KEY_CURRENT, 40)
+    agent_update.publish(db, 40)
     db.commit()
 
     checkin(client, headers, state_version=0, agent_version_code=39)
@@ -287,3 +278,86 @@ def test_a_checkin_without_a_version_code_leaves_the_record_untouched(
 
     db.expire_all()
     assert device_of(db).agent_version_code == 39
+
+
+# --------------------------------------------------------------------------- #
+# The console page an operator publishes from
+# --------------------------------------------------------------------------- #
+
+
+def text_of(html: str) -> str:
+    """Strip tags so assertions test what an operator reads, not the markup."""
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html))
+
+
+def test_the_admin_page_lists_uploaded_builds_and_warns_about_the_one_way_door(
+    client: TestClient, db
+):
+    certificate = make_signing_certificate()
+    upload_agent(client, 40, certificate)
+    upload_agent(client, 41, certificate)
+
+    page = client.get("/admin", headers=ADMIN_HEADERS)
+    assert page.status_code == 200
+    body = text_of(page.text)
+
+    assert "Agent updates" in body
+    assert "There is no rollback" in body  # the fact that shapes the whole feature
+    assert "nothing published" in body
+    for code in ("40", "41"):
+        assert code in page.text
+
+
+def test_publishing_from_the_console_aims_the_fleet(client: TestClient, db):
+    upload_agent(client, 40, make_signing_certificate())
+
+    response = client.post(
+        "/admin/agent/publish",
+        data={"version_code": "40"},
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303), response.text
+
+    db.expire_all()
+    assert agent_update.current(db) == 40
+    assert "published" in text_of(client.get("/admin", headers=ADMIN_HEADERS).text)
+
+
+def test_unpublishing_makes_the_channel_inert(client: TestClient, db):
+    upload_agent(client, 40, make_signing_certificate())
+    client.post("/admin/agent/publish", data={"version_code": "40"},
+                headers=ADMIN_HEADERS, follow_redirects=False)
+
+    client.post("/admin/agent/publish", data={"version_code": ""},
+                headers=ADMIN_HEADERS, follow_redirects=False)
+
+    db.expire_all()
+    assert agent_update.current(db) is None
+
+
+def test_publishing_a_build_that_was_never_uploaded_is_refused_out_loud(
+    client: TestClient, db
+):
+    """Accepting it would make every check-in drop the offer silently, which is
+    indistinguishable from a fleet that is merely slow to come back."""
+    response = client.post(
+        "/admin/agent/publish",
+        data={"version_code": "99"},
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+
+    assert "error=" in response.headers["location"]
+    assert "99" in response.headers["location"]
+    db.expire_all()
+    assert agent_update.current(db) is None
+
+
+def test_a_published_build_that_is_later_deleted_says_so(client: TestClient, db):
+    """The setting outlives the upload; the page must not imply a live rollout."""
+    agent_update.publish(db, 41)
+    db.commit()
+
+    body = text_of(client.get("/admin", headers=ADMIN_HEADERS).text)
+    assert "no longer uploaded" in body
