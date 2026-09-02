@@ -13,7 +13,9 @@ update after every completed step.
 closed. **Enrollment is now a single persistent token with 15-minute signed QR
 derivatives** (Chunk 14), verified live through real nginx — including that
 retiring the primary kills an already-issued, still-time-valid QR immediately.
-Agent **v39 (`0.9.9`)** running on `SM-X520` (compliant, serial `R5GL40MMHRN`).
+Agent **v41 (`0.10.1`)** running on `SM-X520` (compliant, serial `R5GL40MMHRN`),
+delivered over the air by the agent-update channel — the first build on this
+device that no one sideloaded.
 **No hardware verification is outstanding** — W17, W23 and W24 all cleared
 2026-09-02 (W25).
 **W14 Wi-Fi, W15 quick wins, W16 allowlist, W18's granular password path and
@@ -3456,7 +3458,7 @@ published build, and only when **all** hold:
 7. **Hardware on `SM-X520`.** Bootstrap v40 by ADB, then deliver v41 over the
    air and watch it land.
 
-##### Status: steps 1–6 done. Step 7 blocked — no device connected.
+##### Status: ✅ complete. All 7 steps, verified on hardware.
 
 **Done.**
 
@@ -3494,25 +3496,43 @@ published build, and only when **all** hold:
   raising. A hand-edited setting must not take every check-in in the fleet down
   with it.
 
-##### Step 7 — what it will take, and why it is not one step
+##### Step 7 — hardware, `SM-X520`, 2026-09-02
 
-`SM-X520` runs **v39, which predates this protocol**: it neither reports
-`agent_version_code` nor consumes `agent_update`. The gate correctly refuses it
-("device has not reported an agent versionCode"), so it can never reach a
-protocol-speaking build over the air. That is the bootstrap case the code
-documents, and it is real here:
+`SM-X520` was on **v39, which predates this protocol**: it neither reports
+`agent_version_code` nor consumes `agent_update`, so the gate correctly refused
+it and it could never reach a protocol-speaking build over the air. Verification
+was therefore three stages, not one:
 
-1. Build **v40** and install it by ADB — the last manual install.
-2. Confirm it reports its versionCode (console → Agent updates → *Reported
-   agent versions*).
-3. Build **v41**, upload it, publish it, and watch v40 replace itself. Only this
-   third step actually exercises `selfUpdate()`.
+1. **v40 (`0.10.0`) installed by ADB** — the last manual install. Reported
+   `agent_version_code=40`, COMPLIANT, within seconds.
+2. **v41 (`0.10.1`) uploaded and published** through the console form.
+3. **The device replaced itself.** 3.6 s of management outage, one check-in
+   later it reported 41 and COMPLIANT with no `compliance_detail`. Exactly one
+   `agent update: replacing` line in the buffer — **no update loop**, and the
+   offer stopped on its own once the new code was reported. No acknowledgement
+   protocol was needed.
 
-⚠️ Also noticed while smoke-testing the live console: the package library holds
-agent builds **38, 4, 3** — the device is *ahead* of everything uploaded,
-because v39 was built and sideloaded without ever passing through the server.
-Publishing 38 would be a no-op (the gate refuses a downgrade), but the library
-is not a record of what is deployed and should not be read as one.
+Console after the fact reads: published **41 / 0.10.1**, on this build **1**,
+behind **0**, never reported **2**, not healthy **—**, enrolled **3**. The two
+"never reported" are the stale `R5CN00TAK0x` test rows, and they demonstrate the
+intended refusal rather than a bug.
+
+Full log sequence and two traps are in the Android reference:
+`VerificationCheck … Result: Fail(reason=DEVELOPER_FAULT)` appears mid-install
+and means nothing (Play Protect allows it two seconds later), and a device on a
+pre-`agent_update` build costs exactly one manual install to reach the channel.
+
+⚠️ **The package library is not a record of what is deployed.** Before this it
+held builds 38, 4, 3 while the device ran 39 — v39 was built and sideloaded
+without ever passing through the server. Publishing 38 would have been a silent
+no-op (the gate refuses a downgrade).
+
+⚠️ **`assembleRelease` produces an *unsigned* APK.** Everything so far is
+`assembleDebug`, signed with the debug keystore, and an update must carry the
+same signature as the installed build. Before distribution the agent needs a real
+signing config, and the first release-signed build cannot be delivered over this
+channel to any device already running a debug-signed one — signatures differ, so
+Android will refuse it. That is a one-time re-enrol, and it belongs in Chunk 11.
 
 ---
 

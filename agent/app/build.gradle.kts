@@ -31,8 +31,8 @@ android {
         targetSdk = 36
         // Bump on every build you intend to upload: the server refuses a duplicate
         // versionCode, and Android refuses to install a downgrade.
-        versionCode = 39
-        versionName = "0.9.9"
+        versionCode = 41
+        versionName = "0.10.1"
     }
 
     buildTypes {

@@ -290,8 +290,40 @@ Four facts worth keeping:
 ⚠️ **There is no rollback.** Android refuses a downgrade, so a bad agent build
 cannot be reverted by re-pushing the old version — only by shipping a *new* build
 with a higher `versionCode` containing the old code. And a build that crashes on
-start takes remote management with it. Any self-update mechanism needs a canary
-gate before it is pointed at a fleet.
+start takes remote management with it. Nothing in the platform will stop this;
+the gate has to be operational.
+
+### ✅ The same sequence through the dedicated agent-update channel
+
+Re-verified on `SM-X520` (2026-09-02) with W27's `agent_update` offer rather than
+a policy's `required_apps`. v40 → v41, no ADB:
+
+```
+14:31:19.564  Reconciler: agent update: replacing 40 with 41 (0.10.1);
+                          this process is about to be killed        ← pid 18431
+14:31:19.570  AppInstaller: session 124265146 opened (1 part)
+14:31:20.057  VerificationCheck: Verification finished for org.takmdm.agent.
+                          Result: Fail(reason=DEVELOPER_FAULT)      ← see below
+14:31:22.783  Finsky VerifyApps: chooseScanResult returning verdict 0
+14:31:23.149  ActivityManager: Start proc 19100 … BootReceiver      ← new PID, +3.6 s
+14:31:23.556  ActivityManager: Background started FGS … code:DEVICE_OWNER
+```
+
+Server side: the device reported `agent_version_code=41`, `COMPLIANT`, with no
+`compliance_detail`. Exactly **one** `agent update: replacing` line exists in the
+buffer — the offer stopped on its own once the device reported the new code, with
+no acknowledgement protocol.
+
+⚠️ **`VerificationCheck … Result: Fail(reason=DEVELOPER_FAULT)` is a red herring.**
+It appears mid-install and the install proceeds anyway; Play Protect's own verdict
+two seconds later is `0` (allow). It reflects the debug signing key on a sideloaded
+build, not a rejection. Do not treat this line as a failure — the only evidence
+that matters is the `versionCode` on the next check-in.
+
+⚠️ **A device on a pre-`agent_update` build can never be updated over the air.**
+It reports no `agent_version_code`, so the gate refuses it by design. Reaching the
+channel costs exactly one manual install per device, which is a one-time
+migration cost and not a recurring one.
 
 ---
 
