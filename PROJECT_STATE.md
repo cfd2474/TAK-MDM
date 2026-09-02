@@ -19,7 +19,9 @@ its hardware serial `R5GL40MMHRN`.
 console — Enroll, Manage, Policies, Apps, Content, Reports, Admin, Guides — on
 server-rendered Jinja with no build step. **W10 replaced JSON-textarea policy
 editing with generated typed forms** (dropdowns, tri-state controls, repeatable
-rows; per-field merge hints). 439 server tests + 30 agent tests.
+rows; per-field merge hints). **W12 split each category's sub-topics into
+navigable sub-pages** with green-check completion markers. 443 server tests +
+30 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -2360,6 +2362,69 @@ W10.
    default, so "foreground" is the current behaviour regardless. Enforcing
    "background" is an agent change, tracked separately.
 
+#### ✅ W12 — Sub-paged policy categories (COMPLETE)
+
+**443 server tests (was 439).** A category's sub-topics are **separate sub-pages**
+in the left rail now, each opening its own set of controls; a **green check** marks
+a sub-page that has data and bubbles up to its parent category. Matches the
+reference UI. Delivered:
+
+- **A sub-page is a field `ui_group`** — the data model is unchanged (one section,
+  one spec dict per category). `APP_CATALOG` regrouped so every field is its own
+  sub-page (Required apps / Blocklist / Allowlist / Must-not-be-installed /
+  Kiosk); `PASSWORD` → Strength / Lockout & expiry; `RESTRICTIONS` → its three
+  groups; `FILES` stays one.
+- **`form_schema.py`** — `sub_pages(type)` → `[SubPage(slug, label, fields)]`;
+  `managed_group_slugs(type, spec)` → which sub-pages have a set field;
+  `group_slug()`.
+- **`_policy_form.html`** — `policy_subform(fields, spec, …)` renders one group;
+  `resulting_spec(spec)` the read-only preview.
+- **`_catalog_view`** — each wired category carries its sub-pages, a per-sub-page
+  `has_data`, and a category `has_data`.
+- **`profile_editor.html` / `policy_new.html` / `policy_detail.html`** — two-level
+  rail (category header with check + disclosure triangle → sub-page links with
+  checks). In edit mode **all of a category's sub-pages live in one `<form>`**, so
+  saving from any sub-page keeps the rest (a hidden page's inputs are still
+  submitted).
+- **`atlas.js`** — a `[data-rail]` navigator: click a sub-page to show its panel,
+  mark it and its category active, expand the category, address it in the URL
+  hash (`#page-<cat>:<slug>`). A leaf category (1 group or placeholder) is a
+  direct page link.
+- **`atlas.css`** — nested rail, disclosure triangles, the circular green check.
+
+Verified live: `restrictions.allow_camera` sets a check on the Device
+functionality sub-page and on the Restrictions header; the Display sub-page (which
+`screen_timeout_seconds` would fill) stays unchecked; both controls render in the
+one Restrictions form.
+
+**Design: a sub-page is a field `ui_group`.** The data model is unchanged — one
+profile section (one child `Policy`) per category, one spec dict. The rail just
+splits that spec's fields across pages by their declared `ui_group`, and a check
+means "at least one field on this page is managed". A category with a single
+group is a leaf (click it, get the form); 2+ groups expand to sub-pages.
+
+##### Original plan
+
+1. **Field metadata** — regroup `APP_CATALOG` so each field is its own sub-page
+   ("Required apps", "Blocklist", "Allowlist", "Must-not-be-installed", "Kiosk"),
+   matching the screenshot's granularity. `PASSWORD` keeps "Strength" / "Lockout
+   & expiry"; `RESTRICTIONS` keeps its three groups; `FILES` stays one.
+2. **`form_schema.py`** — `sub_pages(policy_type)` → `[(slug, label, [FormField])]`;
+   `managed_groups(policy_type, spec)` → the set of group slugs with a set field.
+3. **`_policy_form.html`** — render one group at a time (`policy_subform`); keep a
+   read-only "resulting spec" on the category, not per page.
+4. **`_catalog_view` (routes)** — each wired category carries its sub-pages, a
+   per-sub-page `has_data` flag, and a category `has_data` flag.
+5. **`profile_editor.html` / `policy_new.html` / `policy_detail.html`** — the rail
+   becomes two-level: category header (with check + expand) → sub-page links (with
+   checks). All sub-pages of a category live in one `<form>`, so saving from any
+   sub-page preserves the others' fields.
+6. **`atlas.js` + CSS** — nested rail navigation (expand/collapse, active on both
+   levels, hash-addressable `#page-<cat>:<group>`), and the check marker.
+7. **Tests** — sub-pages render, the check appears when a group's field is set and
+   bubbles to the category, editing one sub-page and saving leaves the others
+   intact.
+
 ---
 
 ### Later chunks (sketch — to be detailed at approval time)
@@ -2404,6 +2469,13 @@ W10.
 
 ## Changelog
 
+- **2026-09-02** — **W12: sub-paged policy categories.** 443 tests. A policy
+  category's sub-topics are now separate sub-pages in the left rail (a sub-page =
+  a field `ui_group`), each with its own controls, and a green check marks a
+  sub-page / category that has data — matching the reference UI. `APP_CATALOG`
+  regrouped so every field is its own sub-page. Data model unchanged; all of a
+  category's sub-pages share one `<form>` so saving from any of them keeps the
+  rest. New `[data-rail]` navigator in `atlas.js`.
 - **2026-09-02** — **W11 built then removed.** A `PERIODIC_SYNC` policy type
   (foreground/background dropdown) was added, then reverted the same day: the
   agent always runs a foreground service and "background" was never going to be

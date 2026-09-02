@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import csrf_field %}
-{% from "_policy_form.html" import policy_form %}
+{% from "_policy_form.html" import policy_subform, resulting_spec %}
 {% set nav = 'policies' %}
 {% block main_class %}wide{% endblock %}
 {% block title %}{{ policy.name }} — ATLAS{% endblock %}
@@ -114,17 +114,42 @@
 </div>
 
 <h2>Publish a new version</h2>
-<div class="panel">
-  <p class="sub">
-    Editing publishes a new immutable version. Each control shows how its field
-    merges when this policy stacks with another.
-  </p>
-  <form method="post" action="/policies/{{ policy.id }}/versions">
-    {{ csrf_field(csrf_token) }}
-    {{ policy_form(grouped, current_spec, app_packages, managed_files) }}
-    <button type="submit" style="margin-top:12px">Publish</button>
-  </form>
-</div>
+<p class="sub">
+  Editing publishes a new immutable version. Each control shows how its field
+  merges when this policy stacks with another.
+</p>
+<form method="post" action="/policies/{{ policy.id }}/versions">
+  {{ csrf_field(csrf_token) }}
+  <div class="railed">
+    {% if pages | length > 1 %}
+    <nav class="rail" data-rail data-rail-panels="pub-panels">
+      <ul>
+        {% for pg in pages %}
+        <li class="rail-cat" data-cat-group="{{ pg.slug }}">
+          <a class="rail-cat-head" data-page="{{ pg.slug }}:{{ pg.slug }}">
+            {{ pg.label }}{% if pg.slug in managed_pages %}<span class="rail-check">✓</span>{% endif %}
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+    </nav>
+    {% endif %}
+    <div class="rail-body" id="pub-panels">
+      {% for pg in pages %}
+      <section class="tab-panel" data-page-panel="{{ pg.slug }}:{{ pg.slug }}" hidden>
+        <div class="panel">
+          {% if pages | length > 1 %}<h2>{{ pg.label }}</h2>{% endif %}
+          {{ policy_subform(pg.fields, current_spec, app_packages, managed_files) }}
+        </div>
+      </section>
+      {% endfor %}
+      <div class="panel">
+        {{ resulting_spec(current_spec) }}
+        <button type="submit" style="margin-top:6px">Publish</button>
+      </div>
+    </div>
+  </div>
+</form>
 
 <h2>Manage</h2>
 <div class="panel">

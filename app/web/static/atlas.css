@@ -480,25 +480,58 @@ label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 12.5
   overflow-y: auto;
 }
 .rail ul { list-style: none; margin: 0; padding: 0; }
-.rail > ul > li > a {
-  display: block;
-  padding: 6px 10px;
-  border-radius: 6px;
+.rail a {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   text-decoration: none;
-  color: var(--ink);
-  font-weight: 550;
-}
-.rail ul ul a {
-  display: block;
-  padding: 4px 10px 4px 22px;
   border-radius: 6px;
-  text-decoration: none;
-  color: var(--muted);
-  font-size: 13px;
 }
 .rail a:hover { background: var(--panel-2); }
 .rail a.on { background: var(--accent); color: #fff; }
-.rail .placeholder::after {
+.rail a.on .rail-check { color: #fff; border-color: rgba(255,255,255,.6); }
+
+/* Category header */
+.rail-cat-head {
+  padding: 7px 10px;
+  color: var(--ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+.rail-cat-head.active-cat { color: var(--accent); }
+.rail-cat-head::before {
+  content: "▸";
+  font-size: 10px;
+  color: var(--muted);
+  transition: transform .12s;
+}
+.rail-cat.open > .rail-cat-head::before { transform: rotate(90deg); }
+/* a leaf category (its head is itself a page link) needs no disclosure triangle */
+.rail-cat-head[data-page]::before { content: ""; }
+
+/* Sub-pages */
+.rail-sub { display: none; margin: 2px 0 6px !important; }
+.rail-cat.open > .rail-sub { display: block; }
+.rail-sub a {
+  padding: 4px 10px 4px 26px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Green check when a page / category has data */
+.rail-check {
+  margin-left: auto;
+  width: 15px; height: 15px;
+  border: 1px solid var(--good);
+  border-radius: 50%;
+  color: var(--good);
+  font-size: 10px;
+  line-height: 13px;
+  text-align: center;
+  flex: none;
+}
+
+.rail .placeholder .rail-cat-head::after {
   content: "soon";
   font-size: 10px;
   border: 1px solid var(--line);

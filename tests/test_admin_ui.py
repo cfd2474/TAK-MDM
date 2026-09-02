@@ -696,6 +696,69 @@ def test_an_all_unmanaged_form_makes_an_empty_policy(client: TestClient):
 
 
 # --------------------------------------------------------------------------- #
+# Sub-paged policy categories (W12)
+# --------------------------------------------------------------------------- #
+
+
+def test_creator_rail_shows_subpages(client: TestClient):
+    body = client.get("/policies/new").text
+    # App Management splits into a sub-page per field
+    assert 'data-page="app_management:required-apps"' in body
+    assert 'data-page="app_management:blocklist"' in body
+    assert 'data-page="app_management:kiosk"' in body
+    # Restrictions splits by group
+    assert 'data-page="restrictions:device-functionality"' in body
+
+
+def test_subpage_and_category_show_a_check_when_a_field_is_set(client: TestClient):
+    # allow_camera lives on the "Device functionality" sub-page of Restrictions
+    pid = _make_profile(client, "Locked", {"restrictions": {"allow_camera": False}})
+
+    body = client.get(f"/profiles/{pid}").text
+    # the sub-page link carries the check
+    link = body[body.index('data-page="restrictions:device-functionality"'):]
+    assert "rail-check" in link[: link.index("</a>")]
+    # and the category header does too
+    head = body[body.index('data-cat-group="restrictions"'):]
+    assert "rail-check" in head[: head.index("</a>")]
+
+
+def test_a_pristine_subpage_has_no_check(client: TestClient):
+    pid = _make_profile(client, "Partly", {"restrictions": {"allow_camera": False}})
+    body = client.get(f"/profiles/{pid}").text
+    # "Display" (screen_timeout_seconds) was not set
+    link = body[body.index('data-page="restrictions:display"'):]
+    assert "rail-check" not in link[: link.index("</a>")]
+
+
+def test_all_subpages_of_a_category_share_one_form(client: TestClient):
+    """So saving while on one sub-page keeps the others' fields."""
+    pid = _make_profile(
+        client,
+        "Full restr",
+        {"restrictions": {"allow_camera": False, "screen_timeout_seconds": 120}},
+    )
+    body = client.get(f"/profiles/{pid}").text
+
+    form_start = body.index('action="/profiles/' + pid + '/sections/restrictions"')
+    form_end = body.index("</form>", form_start)
+    section = body[form_start:form_end]
+    # both a Device-functionality control and the Display control are in the one form
+    assert 'name="allow_camera"' in section
+    assert 'name="screen_timeout_seconds"' in section
+    assert 'value="120"' in section
+
+    # a real submit carrying both preserves both
+    client.post(
+        f"/profiles/{pid}/sections/restrictions",
+        data={"allow_camera": "true", "screen_timeout_seconds": "120"},
+        follow_redirects=False,
+    )
+    spec = client.get(f"/api/v1/profiles/{pid}", headers=ADMIN).json()["sections"][0]["versions"][-1]["spec"]
+    assert spec == {"allow_camera": True, "screen_timeout_seconds": 120}
+
+
+# --------------------------------------------------------------------------- #
 # Policy list: tabs, templates, archive/restore (W3)
 # --------------------------------------------------------------------------- #
 

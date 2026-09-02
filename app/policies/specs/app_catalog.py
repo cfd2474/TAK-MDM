@@ -48,7 +48,7 @@ class AppCatalogSpec(PolicySpec):
         default=None,
         title="Required apps",
         description="Apps the device must have installed. Pick from uploaded packages.",
-        json_schema_extra={"ui_group": "Apps", "ui_control": "app_list"},
+        json_schema_extra={"ui_group": "Required apps", "ui_control": "app_list"},
     )
 
     # The blacklist: make these packages unusable by whatever means each one allows.
@@ -68,7 +68,7 @@ class AppCatalogSpec(PolicySpec):
         title="Blocklist (hide / uninstall)",
         description="Made unusable: an ordinary app is uninstalled, a preinstalled "
         "one is hidden. Reversible.",
-        json_schema_extra={"ui_group": "Apps", "ui_control": "package_list"},
+        json_schema_extra={"ui_group": "Blocklist", "ui_control": "package_list"},
     )
 
     # Packages that must **not be installed** — the strict form of the blacklist.
@@ -93,7 +93,7 @@ class AppCatalogSpec(PolicySpec):
         title="Must-not-be-installed (uninstall, verified)",
         description="Uninstalled outright and checked afterwards. Not reversible. "
         "Use the blocklist for preinstalled apps.",
-        json_schema_extra={"ui_group": "Apps", "ui_control": "package_list"},
+        json_schema_extra={"ui_group": "Must-not-be-installed", "ui_control": "package_list"},
     )
 
     # INTERSECT is the correct "most restrictive" reading of an allowlist but it
@@ -109,7 +109,7 @@ class AppCatalogSpec(PolicySpec):
         default=None,
         title="Allowlist (only these may run)",
         description="If set, only these packages are permitted.",
-        json_schema_extra={"ui_group": "Apps", "ui_control": "package_list"},
+        json_schema_extra={"ui_group": "Allowlist", "ui_control": "package_list"},
     )
 
     # No natural ordering between two kiosk apps — someone has to lose, loudly.

@@ -24,11 +24,17 @@ it to ``registry.validate_spec`` (see ``form_parse``).
 from __future__ import annotations
 
 import enum as _enum
+import re
 import typing
 from dataclasses import dataclass, field
 
 from app.policies.registry import registry
 from app.policies.strategies import MergeStrategy
+
+
+def group_slug(label: str) -> str:
+    """Stable URL-safe id for a ui_group label."""
+    return re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
 
 _STRATEGY_HINT = {
     MergeStrategy.MOST_RESTRICTIVE: "When policies stack, any one that blocks this wins.",
@@ -159,3 +165,27 @@ def grouped_fields(policy_type: str) -> list[tuple[str, list[FormField]]]:
             order.append(f.group)
         buckets[f.group].append(f)
     return [(g, buckets[g]) for g in order]
+
+
+@dataclass(frozen=True)
+class SubPage:
+    slug: str
+    label: str
+    fields: list[FormField]
+
+
+def sub_pages(policy_type: str) -> list[SubPage]:
+    """A wired category's sub-pages — one per ``ui_group`` (W12)."""
+    return [
+        SubPage(group_slug(label), label, fields)
+        for label, fields in grouped_fields(policy_type)
+    ]
+
+
+def managed_group_slugs(policy_type: str, spec: dict) -> set[str]:
+    """Slugs of the sub-pages that have at least one field set in ``spec``."""
+    return {
+        page.slug
+        for page in sub_pages(policy_type)
+        if any(f.name in spec for f in page.fields)
+    }

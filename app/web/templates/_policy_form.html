@@ -1,16 +1,13 @@
 {#
   Copyright 2026 TAK-Solutions LLC — Apache 2.0.
 
-  Form-driven policy editor (W10). Renders grouped, typed controls for one policy
-  type. No JSON typing (DW6). Import:
-    {% from "_policy_form.html" import policy_form %}
-  and call:
-    {{ policy_form(grouped, spec, app_packages, managed_files) }}
-  `grouped` is app.policies.form_schema.grouped_fields(type); `spec` is the
-  current stored spec dict (or {}). Field names are globally unique across the
-  four wired policy types, so the profile creator can render several policy_form
-  blocks in one <form> and parse_form(type, whole_form) picks out each type's
-  own fields.
+  Form-driven policy editor (W10), sub-paged (W12). No JSON typing (DW6). Import:
+    {% from "_policy_form.html" import policy_subform, resulting_spec, app_group_buttons %}
+  `policy_subform(page.fields, spec, app_packages, managed_files)` renders one
+  ui_group's controls; the caller places each sub-page in a rail. All sub-pages of
+  a category share one <form>, so `parse_form(type, whole_form)` reads every field
+  whether or not its page is on screen. Field names are globally unique across the
+  wired types, so the profile creator can carry several in one <form>.
 #}
 
 {% macro _bool(f, value, name) %}
@@ -155,25 +152,27 @@
   {% endif %}
 {% endmacro %}
 
-{% macro policy_form(grouped, spec, app_packages, managed_files) %}
-  {% for group, fields in grouped %}
-  <fieldset class="pf-group">
-    <legend>{{ group }}</legend>
-    {% for f in fields %}
-    <div class="pf-field">
-      <div class="pf-label">
-        <label>{{ f.label }}</label>
-        {% if f.help %}<div class="muted" style="font-size:12px">{{ f.help }}</div>{% endif %}
-        {% if f.merge_hint %}<div class="muted" style="font-size:11px">↳ {{ f.merge_hint }}</div>{% endif %}
-      </div>
-      <div class="pf-control">
-        {{ _control(f, spec, f.name, app_packages, managed_files) }}
-      </div>
+{#
+  One sub-page's worth of controls (W12) — the fields of a single ui_group.
+  `fields` is a SubPage.fields list; `spec` is the whole section spec dict (only
+  this page's names are read, but hidden pages' inputs stay in the same <form>).
+#}
+{% macro policy_subform(fields, spec, app_packages, managed_files) %}
+  {% for f in fields %}
+  <div class="pf-field">
+    <div class="pf-label">
+      <label>{{ f.label }}</label>
+      {% if f.help %}<div class="muted" style="font-size:12px">{{ f.help }}</div>{% endif %}
+      {% if f.merge_hint %}<div class="muted" style="font-size:11px">↳ {{ f.merge_hint }}</div>{% endif %}
     </div>
-    {% endfor %}
-  </fieldset>
+    <div class="pf-control">
+      {{ _control(f, spec, f.name, app_packages, managed_files) }}
+    </div>
+  </div>
   {% endfor %}
+{% endmacro %}
 
+{% macro resulting_spec(spec) %}
   <details class="pf-preview">
     <summary class="muted">Resulting spec (read-only)</summary>
     <pre>{{ spec | pretty_json }}</pre>

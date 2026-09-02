@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import page_header, csrf_field %}
-{% from "_policy_form.html" import policy_form, app_group_buttons %}
+{% from "_policy_form.html" import policy_subform, app_group_buttons %}
 {% set nav = 'policies' %}
 {% block title %}New single-concern policy — ATLAS{% endblock %}
 {% block main_class %}wide{% endblock %}
@@ -39,9 +39,11 @@
 
     {% for t in wired_types %}
       <div data-type-form="{{ t.policy_type }}" {{ 'hidden' if not loop.first }}>
-        <h2>{{ t.label }}</h2>
-        {% if t.policy_type == 'APP_CATALOG' %}{{ app_group_buttons(app_groups) }}{% endif %}
-        {{ policy_form(t.grouped, {}, app_packages, managed_files) }}
+        {% for pg in t.pages %}
+          <h2>{{ t.label }}{% if t.pages | length > 1 %} <span class="muted">· {{ pg.label }}</span>{% endif %}</h2>
+          {% if t.policy_type == 'APP_CATALOG' and pg.slug == 'required-apps' %}{{ app_group_buttons(app_groups) }}{% endif %}
+          {{ policy_subform(pg.fields, {}, app_packages, managed_files) }}
+        {% endfor %}
       </div>
     {% endfor %}
 

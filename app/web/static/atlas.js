@@ -102,6 +102,59 @@
     });
   });
 
+  /* --- Two-level rail navigation (policy sub-pages, W12) ---------------------
+     <nav class="rail" data-rail data-rail-panels="cat-panels">
+       <li class="rail-cat" data-cat-group="restrictions">
+         <a class="rail-cat-head" data-cat-toggle>Restrictions</a>   (N>1 sub-pages)
+         <ul class="rail-sub">
+           <li><a data-page="restrictions:basic">Basic</a></li> ...
+       ...
+       <li class="rail-cat" data-cat-group="files">
+         <a class="rail-cat-head" data-page="files:files">Files</a>  (leaf)
+     Panels: <section data-page-panel="restrictions:basic" hidden>...</section> */
+
+  document.querySelectorAll("[data-rail]").forEach(function (rail) {
+    var panelsRoot = document.getElementById(rail.getAttribute("data-rail-panels")) || document;
+
+    function showPage(key) {
+      panelsRoot.querySelectorAll("[data-page-panel]").forEach(function (p) {
+        p.hidden = p.getAttribute("data-page-panel") !== key;
+      });
+      rail.querySelectorAll("[data-page]").forEach(function (a) {
+        a.classList.toggle("on", a.getAttribute("data-page") === key);
+      });
+      var cat = key.split(":")[0];
+      rail.querySelectorAll(".rail-cat").forEach(function (li) {
+        var mine = li.getAttribute("data-cat-group") === cat;
+        li.classList.toggle("open", mine);
+        var head = li.querySelector(".rail-cat-head");
+        if (head) head.classList.toggle("active-cat", mine);
+      });
+      history.replaceState(null, "", "#page-" + key);
+    }
+
+    rail.addEventListener("click", function (e) {
+      var page = e.target.closest("[data-page]");
+      if (page) {
+        e.preventDefault();
+        showPage(page.getAttribute("data-page"));
+        return;
+      }
+      var toggle = e.target.closest("[data-cat-toggle]");
+      if (toggle) {
+        e.preventDefault();
+        toggle.closest(".rail-cat").classList.toggle("open");
+      }
+    });
+
+    var fromHash = (location.hash || "").replace(/^#page-/, "");
+    var first = panelsRoot.querySelector("[data-page-panel]");
+    var start =
+      (fromHash && panelsRoot.querySelector('[data-page-panel="' + CSS.escape(fromHash) + '"]') && fromHash) ||
+      (first && first.getAttribute("data-page-panel"));
+    if (start) showPage(start);
+  });
+
   /* --- Table filter --------------------------------------------------------
      <input type="search" data-filter="#device-table">
      Rows whose text does not contain the query are hidden. Case-insensitive. */

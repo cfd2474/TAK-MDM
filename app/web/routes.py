@@ -353,8 +353,9 @@ def list_policies(
 
 
 def _catalog_view(profile=None) -> list[dict[str, Any]]:
-    """The creator/editor category rail: each wired category with its generated
-    form fields (W10) and, in edit mode, the section's current spec."""
+    """The creator/editor category rail (W12): each wired category with its
+    sub-pages (one per ui_group), a per-sub-page 'has data' flag, and the
+    section's current spec."""
     view: list[dict[str, Any]] = []
     for category in creator_catalog.CATALOG:
         section = (
@@ -365,14 +366,23 @@ def _catalog_view(profile=None) -> list[dict[str, Any]]:
             if section and section.latest_version
             else {}
         )
+        pages = (
+            form_schema.sub_pages(category.policy_type) if category.wired else []
+        )
+        managed = (
+            form_schema.managed_group_slugs(category.policy_type, spec)
+            if category.wired
+            else set()
+        )
         view.append(
             {
                 "category": category,
-                "grouped": form_schema.grouped_fields(category.policy_type)
-                if category.wired
-                else [],
+                "pages": [
+                    {"page": p, "has_data": p.slug in managed} for p in pages
+                ],
                 "section": section,
                 "spec": spec,
+                "has_data": bool(spec),
             }
         )
     return view
@@ -433,7 +443,7 @@ def new_single_policy_page(
             {
                 "policy_type": c.policy_type,
                 "label": c.label,
-                "grouped": form_schema.grouped_fields(c.policy_type),
+                "pages": form_schema.sub_pages(c.policy_type),
             }
             for c in wired
         ],
@@ -764,13 +774,15 @@ def policy_detail(
         "tag": {a.tag_id for a in assignments if a.scope is AssignmentScope.TAG},
     }
 
+    current_spec = policy.latest_version.spec if policy.latest_version else {}
     return _render(
         request,
         "policy_detail.html",
         identity=identity,
         policy=policy,
-        grouped=form_schema.grouped_fields(policy.policy_type),
-        current_spec=policy.latest_version.spec if policy.latest_version else {},
+        pages=form_schema.sub_pages(policy.policy_type),
+        current_spec=current_spec,
+        managed_pages=form_schema.managed_group_slugs(policy.policy_type, current_spec),
         **_form_catalogs(session),
         devices=list(session.scalars(select(Device).order_by(Device.serial_number))),
         groups=list(session.scalars(select(DeviceGroup).order_by(DeviceGroup.name))),

@@ -1,9 +1,41 @@
 {% extends "base.html" %}
 {% from "_macros.html" import page_header, csrf_field, empty_state %}
-{% from "_policy_form.html" import policy_form, app_group_buttons %}
+{% from "_policy_form.html" import policy_subform, resulting_spec, app_group_buttons %}
 {% set nav = 'policies' %}
 {% block title %}{{ (profile.name if profile else 'New policy') }} — ATLAS{% endblock %}
 {% block main_class %}wide{% endblock %}
+
+{% macro rail_item(row) %}
+  {% set cat = row.category %}
+  {% set leaf = (not cat.wired) or (row.pages | length <= 1) %}
+  {% set leaf_key = cat.key ~ ':' ~ (row.pages[0].page.slug if row.pages else '_') %}
+  <li class="rail-cat {{ 'placeholder' if not cat.wired }}" data-cat-group="{{ cat.key }}">
+    {% if leaf %}
+      <a class="rail-cat-head" data-page="{{ leaf_key }}">
+        {{ cat.label }}{% if row.has_data %}<span class="rail-check">✓</span>{% endif %}
+      </a>
+    {% else %}
+      <a class="rail-cat-head" data-cat-toggle>
+        {{ cat.label }}{% if row.has_data %}<span class="rail-check">✓</span>{% endif %}
+      </a>
+      <ul class="rail-sub">
+        {% for pg in row.pages %}
+          <li><a data-page="{{ cat.key }}:{{ pg.page.slug }}">
+            {{ pg.page.label }}{% if pg.has_data %}<span class="rail-check">✓</span>{% endif %}
+          </a></li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </li>
+{% endmacro %}
+
+{% macro page_body(row, pg) %}
+  <h2>{{ row.category.label }}{% if row.pages | length > 1 %} <span class="muted">· {{ pg.page.label }}</span>{% endif %}</h2>
+  {% if row.category.key == 'app_management' and pg.page.slug == 'required-apps' %}
+    {{ app_group_buttons(app_groups) }}
+  {% endif %}
+  {{ policy_subform(pg.page.fields, row.spec, app_packages, managed_files) }}
+{% endmacro %}
 
 {% block content %}
 {% if mode == 'new' %}
@@ -38,65 +70,56 @@
 {% endif %}
 
 <div class="railed">
-  <nav class="rail">
-    <ul data-tabs data-tabs-scope="cat-panels">
-      {% for row in catalog %}
-        <li>
-          <a href="#cat-{{ row.category.key }}" data-tab="{{ row.category.key }}"
-             class="{{ 'on' if loop.first }}{{ ' placeholder' if not row.category.wired }}">
-            {{ row.category.label }}
-            {% if mode == 'edit' and row.section %} ●{% endif %}
-          </a>
-        </li>
-      {% endfor %}
+  <nav class="rail" data-rail data-rail-panels="cat-panels">
+    <ul>
+      {% for row in catalog %}{{ rail_item(row) }}{% endfor %}
     </ul>
   </nav>
 
   <div class="rail-body" id="cat-panels">
     {% for row in catalog %}
-    <section class="tab-panel" data-tab-panel="{{ row.category.key }}" id="cat-{{ row.category.key }}" {{ 'hidden' if not loop.first }}>
-      <h2>{{ row.category.label }}</h2>
-      {% if row.category.subtopics %}
-        <p class="sub">Covers: {{ row.category.subtopics | join(' · ') }}</p>
-      {% endif %}
-
       {% if not row.category.wired %}
-        <div class="panel stub">
-          <div class="big">Not available yet.</div>
-          <div>
-            {{ row.category.blurb or 'This category needs backend support (spec, merge rule, agent applier) before it can be configured.' }}
-            It will light up here when that lands.
+        <section class="tab-panel" data-page-panel="{{ row.category.key }}:_" hidden>
+          <h2>{{ row.category.label }}</h2>
+          <div class="panel stub">
+            <div class="big">Not available yet.</div>
+            <div>
+              {{ row.category.blurb or 'This category needs backend support before it can be configured.' }}
+              {% if row.category.subtopics %}<br>Will cover: {{ row.category.subtopics | join(' · ') }}.{% endif %}
+            </div>
           </div>
-        </div>
+        </section>
 
       {% elif mode == 'new' %}
-        <div class="panel">
-          <p class="sub">
-            Leave every control at <em>Not managed</em> to skip this category — it
-            is only part of the policy once you set something.
-          </p>
-          {% if row.category.key == 'app_management' %}{{ app_group_buttons(app_groups) }}{% endif %}
-          {{ policy_form(row.grouped, row.spec, app_packages, managed_files) }}
-        </div>
+        {% for pg in row.pages %}
+        <section class="tab-panel" data-page-panel="{{ row.category.key }}:{{ pg.page.slug }}" hidden>
+          <div class="panel">
+            <p class="sub">Leave controls at <em>Not managed</em> to skip them.</p>
+            {{ page_body(row, pg) }}
+          </div>
+        </section>
+        {% endfor %}
 
       {% else %}
-        <div class="panel">
-          <form method="post" action="/profiles/{{ profile.id }}/sections/{{ row.category.key }}">
-            {{ csrf_field(csrf_token) }}
-            {% if row.category.key == 'app_management' %}{{ app_group_buttons(app_groups) }}{% endif %}
-            {{ policy_form(row.grouped, row.spec, app_packages, managed_files) }}
-            <div class="toolbar" style="margin-top:12px">
-              <button type="submit">Save {{ row.category.label }}</button>
-              {% if row.section %}
-                <span class="muted">v{{ row.section.latest_version.version if row.section.latest_version else 0 }} · set everything to “Not managed” and save to remove this section</span>
-              {% else %}
-                <span class="muted">not configured</span>
-              {% endif %}
+        <form method="post" action="/profiles/{{ profile.id }}/sections/{{ row.category.key }}">
+          {{ csrf_field(csrf_token) }}
+          {% for pg in row.pages %}
+          <section class="tab-panel" data-page-panel="{{ row.category.key }}:{{ pg.page.slug }}" hidden>
+            <div class="panel">
+              {{ page_body(row, pg) }}
+              {{ resulting_spec(row.spec) }}
+              <div class="toolbar" style="margin-top:12px">
+                <button type="submit">Save {{ row.category.label }}</button>
+                <span class="muted">
+                  v{{ row.section.latest_version.version if row.section and row.section.latest_version else 0 }}
+                  · saving from any sub-page saves the whole category; set all to “Not managed” to remove it
+                </span>
+              </div>
             </div>
-          </form>
-        </div>
+          </section>
+          {% endfor %}
+        </form>
       {% endif %}
-    </section>
     {% endfor %}
   </div>
 </div>
