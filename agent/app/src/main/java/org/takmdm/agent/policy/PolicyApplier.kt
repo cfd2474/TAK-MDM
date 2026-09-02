@@ -522,6 +522,25 @@ class PolicyApplier(private val context: Context) {
         dpm.isApplicationHidden(admin, packageName)
     }.getOrDefault(false)
 
+    /**
+     * Suspend or un-suspend a set of packages (`allowed_packages` enforcement).
+     * `setPackagesSuspended` returns the packages it *refused* — the DPC, the
+     * active launcher, the package installer, the default dialer and the
+     * permission controller are all protected regardless of what we ask.
+     *
+     * Returns those refusals as error strings; an empty list means every package
+     * took effect.
+     */
+    fun setSuspended(packages: Set<String>, suspended: Boolean): List<String> {
+        if (packages.isEmpty()) return emptyList()
+        if (!isDeviceOwner) return listOf("not device owner")
+        val verb = if (suspended) "suspend" else "un-suspend"
+        return runCatching {
+            dpm.setPackagesSuspended(admin, packages.toTypedArray(), suspended)
+                .map { "$it: platform refused to $verb it" }
+        }.getOrElse { listOf("$verb: ${it.message ?: it.javaClass.simpleName}") }
+    }
+
     private fun isDangerous(permission: String): Boolean = runCatching {
         val info = context.packageManager.getPermissionInfo(permission, 0)
         (info.protection and android.content.pm.PermissionInfo.PROTECTION_DANGEROUS) != 0

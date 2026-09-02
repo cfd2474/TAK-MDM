@@ -241,6 +241,23 @@ class AppInstaller(private val context: Context) {
         context.packageManager.getPackageInfo(packageName, 0).longVersionCode
     }.getOrNull()
 
+    /**
+     * Package names of non-system, currently-enabled user apps, excluding the
+     * agent. This is the universe the `allowed_packages` allowlist acts on —
+     * system apps (launcher, dialer, settings) are deliberately out of scope.
+     */
+    fun userInstalledPackages(): Set<String> = runCatching {
+        context.packageManager.getInstalledApplications(0)
+            .asSequence()
+            .filter {
+                it.flags and ApplicationInfo.FLAG_SYSTEM == 0 &&
+                    it.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP == 0
+            }
+            .map { it.packageName }
+            .filter { it != context.packageName }
+            .toHashSet()
+    }.getOrDefault(emptySet())
+
     companion object {
         private const val TAG = "AppInstaller"
         private const val ACTION_INSTALL_RESULT = "org.takmdm.agent.INSTALL_RESULT"

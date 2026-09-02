@@ -13,9 +13,9 @@ update after every completed step.
 closed. **Enrollment is now a single persistent token with 15-minute signed QR
 derivatives** (Chunk 14), verified live through real nginx — including that
 retiring the primary kills an already-issued, still-time-valid QR immediately.
-Agent **v30 (`0.9.0`)** running on `SM-X520`, compliant, correctly identified by
-its hardware serial `R5GL40MMHRN`. **Wi-Fi policy (W14) and the W15 agent quick
-wins (password history, screen timeout, app auto_update) hardware-proven on it.**
+Agent **v32 (`0.9.2`)** running on `SM-X520`, compliant, correctly identified by
+its hardware serial `R5GL40MMHRN`. **W14 Wi-Fi, W15 quick wins and W16 allowlist
+enforcement all hardware-proven on it.**
 **✅ Web UI expansion (Chunks W1–W10, plus W4b) COMPLETE.** Eight-section ATLAS
 console — Enroll, Manage, Policies, Apps, Content, Reports, Admin, Guides — on
 server-rendered Jinja with no build step. **W10 replaced JSON-textarea policy
@@ -23,8 +23,8 @@ editing with generated typed forms** (dropdowns, tri-state controls, repeatable
 rows; per-field merge hints). **W12 split each category's sub-topics into
 navigable sub-pages** with green-check completion markers. **W13 wired the
 Networks type; W14's agent Wi-Fi applier and W15's agent quick wins (password
-history, screen timeout, app auto_update) are hardware-proven on `SM-X520`.**
-447 server tests + 40 agent tests.
+history, screen timeout, app auto_update) and W16's allowlist enforcement are
+hardware-proven on `SM-X520`.** 447 server tests + 46 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -2605,14 +2605,64 @@ but **not reverted** when the field is dropped from the policy — only the bool
 is to set the field to a permissive value (`history_length: 0`, a large timeout),
 which the agent does apply.
 
-**Still unresolved after W15** (from the policy→agent audit):
-* `APP_CATALOG.allowed_packages` — the allowlist is merged, shipped, and **not
-  enforced** at all. Biggest remaining gap.
+**Still unresolved after W16** (from the policy→agent audit):
 * XAPK **OBB** placement (R2) — `role == "obb"` parts are skipped.
 * `PASSWORD.min_letters` / `min_digits` / `min_symbols` — no modern DPM API;
   spec fields are dead. Candidates for removal.
 * `NETWORKS.wifi_networks[].auto_join` / `mac_randomization` — no public DO API.
   Candidates for removal.
+
+#### ✅ W16 — Agent: enforce `APP_CATALOG.allowed_packages` (COMPLETE, hardware-proven)
+
+**447 server tests, 46 agent tests (was 40). Agent v32 (`0.9.2`).** The allowlist
+("only these apps may run") now suspends every non-system user app not on it.
+
+- **`AllowlistPlan.kt`** (agent, pure) — `(user apps, allowlist, required set,
+  previously suspended) → (toSuspend, toUnsuspend, emptyAndIgnored)`. 6 unit
+  tests including the empty-list and required-implicitly-allowed cases.
+- **`AppInstaller.userInstalledPackages()`** — non-system, non-agent installed
+  packages.
+- **`PolicyApplier.setSuspended(packages, suspended)`** — wraps
+  `setPackagesSuspended`, surfaces the packages the platform refused.
+- **`Reconciler.enforceAllowlist`** — runs after `suppressUnwantedApps`. Inert
+  unless a non-empty `allowed_packages` is present. Tracks
+  `AgentConfig.suspendedByPolicy`; releases everything it suspended when the
+  allowlist goes away.
+- Empty resolved allowlist (R4) → logged + reported as an apply note, **not
+  enforced** (operator decision).
+
+**Hardware-proven on `SM-X520`, full cycle:** an allowlist excluding
+`org.takmdm.testapp` suspended it; the agent, ATAK, GoodNotes, the launcher and
+Android's own `clouddpc` were untouched; removing the allowlist un-suspended it.
+`errors=0` throughout. Also confirmed: a **required** app is never suspended by
+the allowlist.
+
+##### Plan
+
+**Decided with the operator:**
+* An **empty** resolved allowlist (`[]` — two stacked lists that don't overlap,
+  R4) is **treated as no allowlist**: suspend nothing, log it, and report an
+  apply note. The publish preview already flags an empty INTERSECT.
+* Scope: **non-system user apps** only. System apps (launcher, dialer, settings)
+  are never touched — use the blocklist for those. `setPackagesSuspended` also
+  protects the DPC, the active launcher, the package installer/uninstaller, the
+  default dialer and the permission controller regardless.
+* Suspend only (`setPackagesSuspended`), not hide — a "paused" dialog, reversible.
+
+1. **`AllowlistPlan.kt`** (agent, pure) — `(installed user apps, allowlist,
+   required set, previously suspended) -> (toSuspend, toUnsuspend)`. Unit-tested.
+2. **`AppInstaller.userInstalledPackages()`** — non-system installed packages,
+   excluding the agent.
+3. **`PolicyApplier.setSuspended(packages, suspended)`** — wraps
+   `dpm.setPackagesSuspended`, returns the packages it could not suspend.
+4. **`Reconciler.enforceAllowlist`** — runs after `suppressUnwantedApps`. Inert
+   unless `allowed_packages` is present and non-empty. Diffs, suspends/unsuspends,
+   tracks `AgentConfig.suspendedByPolicy` (mirrors `hiddenByPolicy`). Unsuspends
+   everything it suspended when the allowlist goes away.
+5. Platform reference §5a — the `setPackagesSuspended` contract.
+6. Agent unit tests for `AllowlistPlan`.
+7. Hardware: allowlist that excludes `org.takmdm.testapp` → it suspends; remove
+   the allowlist → it un-suspends. `org.takmdm.agent` and the launcher untouched.
 
 ---
 
@@ -2658,6 +2708,15 @@ which the agent does apply.
 
 ## Changelog
 
+- **2026-09-02** — **W16: agent enforces `allowed_packages`.** 447 server tests,
+  46 agent tests, agent v32 (`0.9.2`). The app allowlist now suspends every
+  non-system user app not on it (via `setPackagesSuspended`); required apps and
+  the agent are implicitly allowed, system apps are out of scope, and an empty
+  INTERSECT is reported-and-ignored. New pure `AllowlistPlan` (6 tests).
+  **Hardware-proven on `SM-X520`:** an allowlist excluding `org.takmdm.testapp`
+  suspended it, left the agent / ATAK / launcher / clouddpc alone, and removing
+  the allowlist un-suspended it. Only OBB placement (R2) now remains from the
+  policy→agent audit.
 - **2026-09-02** — **W15: agent quick wins.** 447 server tests, 40 agent tests,
   agent v30 (`0.9.0`). Three fields the agent had been ignoring now apply, all
   hardware-proven on `SM-X520`: `PASSWORD.history_length` (`setPasswordHistoryLength`

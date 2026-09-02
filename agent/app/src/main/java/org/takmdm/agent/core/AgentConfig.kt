@@ -127,6 +127,15 @@ class AgentConfig(context: Context) {
         get() = prefs.getStringSet(KEY_WIFI_BY_POLICY, emptySet()) ?: emptySet()
         set(value) = prefs.edit { putStringSet(KEY_WIFI_BY_POLICY, value) }
 
+    /**
+     * User apps this agent suspended to enforce `allowed_packages`. Recorded, not
+     * inferred from "everything currently suspended" — same reasoning as
+     * [hiddenByPolicy]: another app may suspend a package for its own reasons.
+     */
+    var suspendedByPolicy: Set<String>
+        get() = prefs.getStringSet(KEY_SUSPENDED_BY_POLICY, emptySet()) ?: emptySet()
+        set(value) = prefs.edit { putStringSet(KEY_SUSPENDED_BY_POLICY, value) }
+
     // The network id WifiManager.addNetwork returned for an SSID. Stored because
     // getConfiguredNetworks() returns nothing for a normally-installed Device
     // Owner on One UI 8 even though addNetwork works — so the id we were handed at
@@ -183,6 +192,7 @@ class AgentConfig(context: Context) {
         private const val KEY_APPLY_ERRORS = "last_apply_errors"
         private const val KEY_COMMAND_RESULTS = "pending_command_results"
         private const val KEY_HIDDEN_BY_POLICY = "hidden_by_policy"
+        private const val KEY_SUSPENDED_BY_POLICY = "suspended_by_policy"
         private const val KEY_WIFI_BY_POLICY = "wifi_by_policy"
         private const val KEY_WIFI_ID_PREFIX = "wifi_id:"
 

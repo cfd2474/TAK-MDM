@@ -40,6 +40,7 @@ import org.takmdm.agent.install.AppInstaller
 import org.takmdm.agent.net.ApiClient
 import org.takmdm.agent.net.DeviceIdentity
 import org.takmdm.agent.permissions.PermissionRequirement
+import org.takmdm.agent.policy.AllowlistPlan
 import org.takmdm.agent.policy.AppUpdatePlan
 import org.takmdm.agent.policy.PolicyApplier
 
@@ -392,6 +393,10 @@ class Reconciler(private val context: Context) {
             policy.optJSONObject("APP_CATALOG") ?: JSONObject(),
             desired.optJSONArray("apps") ?: JSONArray()
         )
+        errors += enforceAllowlist(
+            policy.optJSONObject("APP_CATALOG") ?: JSONObject(),
+            desired.optJSONArray("apps") ?: JSONArray()
+        )
         errors += reconcileFiles(desired.optJSONObject("files") ?: JSONObject())
         return errors
     }
@@ -658,6 +663,62 @@ class Reconciler(private val context: Context) {
         }
 
         config.hiddenByPolicy = stillHidden
+        return errors
+    }
+
+    /**
+     * `allowed_packages` — only these apps may run. Suspends every non-system user
+     * app not on the list (required apps and the agent are implicitly allowed).
+     *
+     * Inert unless a non-empty allowlist is present: `allowed_packages` absent
+     * means no restriction, and an *empty* list (an INTERSECT of two policies that
+     * do not overlap, R4) is a stacking accident, not "suspend everything" — it is
+     * reported and ignored. When the allowlist goes away, everything the agent
+     * suspended is released.
+     */
+    private fun enforceAllowlist(catalog: JSONObject, apps: JSONArray): List<String> {
+        val errors = mutableListOf<String>()
+
+        val allowed: List<String>? =
+            if (catalog.has("allowed_packages")) catalog.stringList("allowed_packages") else null
+        val required = (0 until apps.length())
+            .mapNotNull { apps.optJSONObject(it)?.optString("package_name") }
+            .filter { it.isNotBlank() }
+            .toSet()
+
+        val userApps = installer.userInstalledPackages()
+        val decision = AllowlistPlan.decide(
+            userApps = userApps,
+            allowed = allowed,
+            required = required,
+            agentPackage = context.packageName,
+            previouslySuspended = config.suspendedByPolicy,
+        )
+
+        if (allowed != null) {
+            AgentLog.i(
+                TAG,
+                "allowlist: ${userApps.size} user app(s), ${allowed.size} allowed, " +
+                    "suspend ${decision.toSuspend.size}, release ${decision.toUnsuspend.size}"
+            )
+        }
+
+        if (decision.emptyAndIgnored) {
+            AgentLog.w(TAG, "allowlist resolved empty (stacked policies do not overlap); not enforcing")
+            errors += "allowed_packages resolved to an empty list; allowlist not enforced"
+        }
+
+        if (decision.toUnsuspend.isNotEmpty()) {
+            AgentLog.i(TAG, "allowlist: un-suspending ${decision.toUnsuspend.joinToString()}")
+            errors += policyApplier.setSuspended(decision.toUnsuspend, suspended = false)
+        }
+        if (decision.toSuspend.isNotEmpty()) {
+            AgentLog.i(TAG, "allowlist: suspending ${decision.toSuspend.joinToString()}")
+            errors += policyApplier.setSuspended(decision.toSuspend, suspended = true)
+        }
+
+        val now = (config.suspendedByPolicy - decision.toUnsuspend) + decision.toSuspend
+        config.suspendedByPolicy = now
         return errors
     }
 

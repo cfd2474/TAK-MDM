@@ -309,6 +309,36 @@ must pass **`MATCH_UNINSTALLED_PACKAGES`**, or the agent cannot see the app it h
 Observed: Gmail stayed hidden after being taken off the blocklist, with nothing
 logged, because the loop that would have unhidden it could not find it.
 
+### ✅ `setPackagesSuspended` enforces the allowlist (`allowed_packages`)
+
+📖 `DevicePolicyManager.setPackagesSuspended(admin, String[], boolean)` (API 24)
+suspends packages for the user — a suspended app shows a "paused" dialog on tap,
+its notifications are hidden, and it cannot run. Reversible. It returns the
+package names it **refused**: the DPC itself, the active launcher, the package
+installer / uninstaller / verifier, the default dialer and the permission
+controller are all protected regardless of what is asked.
+
+**What the agent does (W16):** `allowed_packages` ("only these may run") suspends
+every **non-system user app** not on the list. System apps (launcher, dialer,
+settings) are out of scope — the blocklist is for those. Required apps and the
+agent are implicitly allowed. Suspensions are tracked in
+`AgentConfig.suspendedByPolicy` (mirrors `hiddenByPolicy`) and released when the
+allowlist changes or goes away. An **empty** resolved allowlist (an INTERSECT of
+two policies that do not overlap, R4) is reported and **ignored** — not read as
+"suspend everything".
+
+✅ **Verified on `SM-X520`, full cycle:**
+```
+allowlist excludes org.takmdm.testapp
+  → Reconciler: allowlist: suspending / dumpsys → testapp suspended=true
+  → agent, ATAK, GoodNotes, the launcher and clouddpc all suspended=false
+allowlist removed
+  → Reconciler: allowlist: un-suspending org.takmdm.testapp / testapp suspended=false
+```
+Also confirmed incidentally: a **required** app is not suspended even when absent
+from `allowed_packages` — `testapp` stayed usable until it was dropped from
+`required_apps`, then the allowlist caught it.
+
 ---
 
 ## 6. Permissions
