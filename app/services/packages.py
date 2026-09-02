@@ -213,6 +213,38 @@ def delete_version(
     return removed
 
 
+def delete_package(
+    session: Session, storage: ArtifactStorage, package: AppPackage
+) -> int:
+    """Delete a package and every version, freeing blobs nothing else references."""
+    digests = {
+        file.artifact_sha256
+        for version in package.versions
+        for file in version.files
+    }
+
+    # One cascade removes every version and file; looping delete_version() here
+    # would delete the same rows twice (the ORM cascade also fires) and warn.
+    session.delete(package)
+    session.flush()
+
+    removed = 0
+    for digest in digests:
+        still_used = session.scalar(
+            select(AppPackageFile).where(AppPackageFile.artifact_sha256 == digest).limit(1)
+        )
+        if still_used is not None:
+            continue
+        artifact = session.get(Artifact, digest)
+        if artifact is not None:
+            session.delete(artifact)
+        if storage.delete(digest):
+            removed += 1
+
+    session.flush()
+    return removed
+
+
 def resolve_for_policy(
     session: Session, package_name: str, *, min_version_code: int | None = None
 ) -> AppPackageVersion | None:

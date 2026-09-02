@@ -15,7 +15,9 @@ derivatives** (Chunk 14), verified live through real nginx — including that
 retiring the primary kills an already-issued, still-time-valid QR immediately.
 Agent **v27 (`0.7.1`)** running on `SM-X520`, compliant, correctly identified by
 its hardware serial `R5GL40MMHRN`.
-370 server tests + 30 agent tests.
+**✅ Web UI expansion (Chunks W1–W9, plus W4b) COMPLETE.** Eight-section ATLAS
+console — Enroll, Manage, Policies, Apps, Content, Reports, Admin, Guides — on
+server-rendered Jinja with no build step. 434 server tests + 30 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -1696,6 +1698,546 @@ re-investigated):
   downloaded and never placed. **Confirmed by reading, not a surprise:** this is R2
   still open, so ATAK will install without its OBB in step 6.
 
+### 🔜 Web UI expansion — Chunks W1–W9 (PLANNED, 2026-09-01)
+
+Operator request: build out the full console into eight top-level sections —
+**Enroll, Manage, Policies, Apps, Content, Reports, Admin, Guides** — themed to the
+ATLAS banner logo (dark navy ground, chrome-silver wordmark, electric-blue accent).
+
+**Decisions taken with the operator before planning:**
+
+| # | Decision | Rationale |
+|---|---|---|
+| DW1 | **Stay server-rendered Jinja + vanilla JS.** No Node, no build step (D61 upheld). Modals/tabs/filtering done with a small hand-written `atlas.js`. | The console must keep shipping with `docker compose up` and stay readable by anyone who can read the Python. The interactions the spec needs (modal, tab bar, client-side table filter) are a few hundred lines of vanilla JS, not a framework. |
+| DW2 | **Policy creator is a UI shell now.** Full category navigation is built; the four implemented policy types (`PASSWORD`, `RESTRICTIONS`, `APP_CATALOG`, `FILES`) get working forms, every other category renders a visible "not yet available" placeholder. | Wiring Knox / VPN / SCEP / OS-updates / geofencing each needs a spec, merge strategy, resolver support, an agent applier and tests — that is many chunks of backend work, not a web-UI task. The nav is designed so a category lights up when its backend lands. |
+| DW5 | **The creator builds one composite "policy" (a *profile*) with the categories as tabs**, not several loose policies. Internally a `PolicyProfile` owns one single-concern child `Policy` per configured category; the UI tabs edit those children, and the profile is assigned to devices as a unit. Decided with the operator, 2026-09-02, overriding the earlier "multiple policies + shared tag" proposal. | The operator's model — matching the commercial MDMs they run — is one named profile that bundles password + restrictions + apps + … , picked through an organised tabbed layout. Keeping the single-concern typed `Policy` + merge registry *underneath* means the resolver, stacking view, provenance and per-field merge all keep working unchanged; the profile is a bulk editor and bulk-assignment wrapper over them, not a replacement. Cost: a `PolicyProfile` table, a `ProfileAssignment` table, and resolver expansion — spread over W4 (model + creator + editor) and W4b (assignment + resolution). |
+| DW3 | **New 8-section nav replaces the current one** (Devices / Policies / Enrollment). Existing pages move under the new sections and are restyled to the new shell; old routes 301/302-redirect to their new homes. | One console, not two. Reuse the working device/policy/enrollment/QR/log code rather than reimplement it. |
+| DW4 | Shared CSS and JS move to `app/web/static/` served by `StaticFiles`; markup reuse via a `_macros.html` include. | The single inline `<style>` in `base.html` will not scale to eight sections. One stylesheet, one macro library, mounted once. |
+
+**Resolved (DW5, 2026-09-02):** the creator builds one composite **profile**
+(`PolicyProfile`) whose tabs are single-concern child `Policy` rows — see DW5
+above. W4 covers the model, creator page and tabbed editor; W4b covers profile
+assignment and resolver expansion.
+
+**Cross-cutting rules for every W chunk:** all existing tests stay green (the
+console suite in `tests/test_admin_ui.py` asserts on rendered text and nav labels —
+update those assertions as pages move); every new route registered under the
+`_admin` guard list in `app.main` (DW-inherits D70); every form carries
+`csrf_field()`; SOLID — a page's data-gathering is a service function, the template
+only renders (CLAUDE.md §5).
+
+---
+
+#### ✅ W1 — Console shell & ATLAS design system (COMPLETE)
+
+**375 server tests (was 370).** Delivered:
+
+- `app/web/static/atlas.css` — one stylesheet for the whole console. Light-default
+  palette with a `prefers-color-scheme: dark` override, colours from the banner
+  (navy `#0a1420` ground, silver `#c9d4e0` wordmark, electric-blue `#2f7fe0`
+  accent, cyan `#3fc8f0` highlight). **Every legacy class name from the old inline
+  `<style>` is preserved** (`.panel`, `.pill`, `.stat`, `.checks`, `.row`,
+  `.banner`, `.mono`, `.sub`, `.logdump`) so the existing device/policy/enrollment
+  templates render unchanged; new primitives added for tabs, modal, toolbar,
+  left-rail layout, section stub.
+- `app/web/static/atlas.js` — hand-written, zero dependencies (DW1). Opt-in via
+  `data-` attributes: `data-modal-open`/`data-modal-close`, `data-tabs` +
+  `data-tab-panel` (active tab persisted to the URL hash), `data-filter` table
+  search, `data-sortable` column sort, `data-confirm` submit guard.
+- `app/web/static/atlas-mark.svg` — the ATLAS delta mark, referenced with `<img>`
+  not inline, so `"<svg"` in a response still unambiguously means "a QR rendered"
+  (two enrollment tests depend on that).
+- `app/web/templates/_macros.html` — `csrf_field`, `page_header`, `empty_state`,
+  `stub`, `tabs`, `modal`.
+- `base.html` rewritten: ATLAS brand bar, **eight-section nav** (Enroll, Manage,
+  Policies, Apps, Content, Reports, Admin, Guides) with active-state, `StaticFiles`
+  linked. Auth-disabled banner and `?error=` banner preserved verbatim.
+- `StaticFiles` mounted at `/static` in `app.main` — a mount, so outside the
+  `_admin` guard (CSS/JS are not sensitive) and outside the OpenAPI schema. Not
+  reachable on the device port (nginx default-deny already covers it).
+- Five new section routes (`/apps`, `/content`, `/reports`, `/admin`, `/guides`)
+  render `section_stub.html`, each naming the W-chunk that will deliver it.
+  Registered on `web_routes.router`, so they inherit the `_admin` auth+CSRF guard.
+- Existing pages moved under the new nav: `devices.html`/`device_detail.html`/
+  `device_log.html` → `manage`; `enrollment.html`/`token_qr.html` → `enroll`.
+  Paths are unchanged (`/`, `/policies`, `/enrollment`) — a deviation from the
+  plan's "redirect `/enrollment` → `/enroll`", taken to avoid churning ~20 passing
+  enrollment tests for a cosmetic URL; revisit if the operator wants the tidy URL.
+
+New tests (`tests/test_admin_ui.py`): all eight sections reachable, nav marks
+exactly the active section, a pending section names its chunk, `atlas.css` /
+`atlas.js` served.
+
+⚠️ **Docker:** `app/` is `COPY`'d into the image (no bind mount), so seeing this
+in the running stack needs `docker compose up -d --build` per the operational
+notes.
+
+##### Original plan
+
+1. `app/web/static/atlas.css` — colour tokens from the logo (navy `#0a1522` ground,
+   panel `#111f30`, silver ink, electric-blue `#1f6fd6` accent, cyan `#33c6f4`
+   highlight; light-mode palette too), typography, panel/table/button/pill/tab
+   primitives migrated out of `base.html`. Mount `StaticFiles` at `/static`.
+2. `app/web/static/atlas.js` — `modal(id)`, tab-bar behaviour, `tableFilter(input,
+   table)`, `confirmSubmit`. No dependencies.
+3. Save the banner logo to `app/web/static/atlas-banner.png`; header uses it.
+4. `app/web/templates/_macros.html` — `page_header`, `panel`, `stat_row`, `tabs`,
+   `data_table`, `modal`, `empty_state`, `csrf_field`.
+5. Rewrite `base.html`: ATLAS branding, eight-section top nav with active-state,
+   identity/auth banner preserved, links to `atlas.css` / `atlas.js`.
+6. Route map + redirects in `routes.py`: `/` → **Manage**, keep `/policies`,
+   `/enrollment` → `/enroll` (302), add stub routes for `/apps`, `/content`,
+   `/reports`, `/admin`, `/guides` rendering an empty section shell.
+7. Update `tests/test_admin_ui.py` chassis assertions (brand string, nav labels);
+   add tests that every section route returns 200 and the nav marks the right tab.
+
+#### ✅ W2 — Enroll & Manage (COMPLETE)
+
+**381 server tests (was 375).** Delivered:
+
+- **`Device.name`** — nullable friendly name (migration `a1c3e5f7b9d2`, up/down
+  verified on SQLite). `PATCH /api/v1/devices/{id}` (new, `DeviceUpdate` schema)
+  and a console rename form (`POST /devices/{id}/rename`, blank clears it). The
+  console falls back to the serial everywhere the name is unset.
+- **`app/services/fleet.py`** — `fleet_rows(session)` returns one `FleetRow`
+  (device + sorted names of every policy reaching it) per device, from two
+  queries, excluding archived policies and disabled assignments to match what the
+  resolver applies. The list view deliberately does not resolve the effective
+  policy per device — it answers "which policies apply", not "what value won".
+- **`manage.html`** (replaces `devices.html`) — the fleet table with the columns
+  the operator asked for: **Name** (name, with serial as a mono sub-line when a
+  name is set), **Serial**, **Model**, **OS / Agent**, **Policies** (count pill +
+  names), **Convergence** (acked/target, D28), **Compliance**, **Last check-in**.
+  Client-side search (`data-filter`) and column sort (`data-sortable`) from
+  `atlas.js`.
+- **`enroll.html`** (replaces `enrollment.html`) — restyled to the shell; the QR
+  generator now carries the **Wi-Fi SSID / password / security fields inline**, so
+  one action from the landing page produces the QR-with-Wi-Fi (still rendered by
+  `token_qr.html`, unchanged). Retire / replace moved into a panel with
+  `data-confirm`.
+- `device_detail.html` — shows the friendly name as the heading (serial demoted to
+  a sub-line), rename form at the top; everything else (stacking view, conflicts,
+  apps, files, lifecycle, identity, logs) unchanged.
+
+New tests: policy names appear in the fleet row, filter/sort markup present,
+rename round-trips and clears, the PATCH endpoint, Wi-Fi fields on the enroll QR
+form.
+
+##### Original plan
+
+1. **Enroll** (`enroll.html`, from `enrollment.html`): QR is the centrepiece —
+   large panel, Wi-Fi SSID/password/security inline on the same page, primary-token
+   status and retire/replace beneath. Restyle to the new shell.
+2. **Manage** (`manage.html`, from `devices.html`): device table with the columns
+   the operator asked for — **name** (model + serial, serial as the mono sub-line),
+   **serial**, **model**, **policies** (count + names of policies reaching the
+   device, from the effective-policy `considered` list), **OS / agent version**,
+   plus state / convergence / compliance / last check-in already present.
+3. Client-side search/filter box over the table (`atlas.js#tableFilter`), and
+   column sort.
+4. `app/services/fleet.py` — a `fleet_rows(session)` service that assembles the
+   table (device + reaching-policy names) so the route stays thin.
+5. **Device detail** (`device_detail.html`): restyle to the shell; keep stacking
+   view, identifiers, logs, retire/delete exactly as they behave now.
+6. Tests: new columns render, policy names show for an assigned device, filter box
+   present, enroll page shows QR + Wi-Fi fields.
+
+#### ✅ W3 — Policies list & New Policy modal (COMPLETE)
+
+**387 server tests (was 381).** Delivered:
+
+- **`Policy.is_template`** — bool, `NOT NULL DEFAULT false` (migration
+  `b2d4f6a8c1e3`, explicit `server_default` per D35; up/down verified on SQLite).
+  A template is a blueprint: the resolver (`gather_assignments`) and the fleet
+  table both skip it, and both assignment endpoints + `create_assignment` now
+  return **409** if handed one (`_reject_template`).
+- **`app/services/policy_admin.py`** — `list_tab` (device / templates / archived),
+  `clone` (copies type + description + latest spec into a fresh v1 — "save as
+  template" and "use template" are the *same* operation, so editing one never
+  changes the other), `archive`, `restore` (both invalidate caches).
+- **API**: `POST /api/v1/policies/{id}/restore`, `POST /api/v1/policies/{id}/clone`
+  (`PolicyClone` schema), `is_template` on `PolicyCreate`/`PolicyRead`. `archive`
+  now delegates to the service.
+- **`policies.html`** — three tabs (`data-tabs`), a **New Policy** button opening a
+  modal with two choices: "Create from scratch" → `/policies/new`, "Use a
+  template" → jumps to the Templates tab (new `hashchange` handler in `atlas.js`
+  makes `href="#tab-templates"` switch the tab bar with no reload). Templates tab
+  has a per-row "create a policy from this template" form; Archived tab has
+  per-row Restore.
+- **`policy_new.html`** — the create-from-scratch form (moved off the list page;
+  W4 replaces it with the guided creator) with a "save as template" checkbox.
+- **`policy_detail.html`** — template/archived badges; a template shows a
+  "create a policy from this template" form instead of the assign panel; new
+  **Manage** section with Archive/Restore and "Save as template".
+- Console routes: `/policies/new`, `/policies/{id}/archive`, `/{id}/restore`,
+  `/policies/clone` (takes `source_id` as a form field so the modal dropdown and
+  the detail-page button share one endpoint).
+
+New tests: three tabs + button present, create-from-scratch page renders, save-as-
+template produces a flagged template, using a template yields an independent
+policy with the copied spec, a template is refused for assignment (409), archive
+removes a policy from the stack and restore brings it back.
+
+##### Original plan
+
+1. `policies.html`: three tabs — **Device policies**, **Templates**, **Archived**.
+2. Model: `Policy.is_template: bool` + migration (archived already exists as
+   `archived_at`). Templates are excluded from the effective-policy resolver.
+3. **New Policy** button → `modal`: "Create from scratch" (→ W4 creator) or
+   "Use a template" (pick a template → clones its latest spec into a new policy).
+4. Archived tab: list archived policies, **Restore** action (clears `archived_at`);
+   **Archive** action on the detail page (D20 — never delete).
+5. Templates tab: list, "Save as template" action on a policy, "Use" action.
+6. `app/services/policy_admin.py` — clone-from-template, archive, restore, list-by-tab.
+7. Tests: tab switching, template clone produces an independent policy, archive/restore
+   round-trip, archived policy stops reaching devices.
+
+#### ✅ W4 — Composite policies (profiles): model, creator, editor (COMPLETE)
+
+**398 server tests (was 387).** Delivered per DW5:
+
+- **Model** — `PolicyProfile` (name unique, description, created_by, archived_at)
+  + `Policy.profile_id` (nullable FK, `ON DELETE CASCADE`) + `Policy.profile_section`
+  (the catalog category key). Migration `c3e5g7i9k1m3` uses `batch_alter_table` so
+  the new FK on the existing `policy` table applies on SQLite too; up/down verified.
+- **`app/policies/creator_catalog.py`** — the operator's full category tree (16
+  categories, subtopics as display hints). Four wired to real types (`password`,
+  `restrictions`, `app_management`, `file_management`); the rest carry
+  `policy_type=None` and render as placeholders. Adding/lighting a category is a
+  one-line change here (OCP).
+- **`app/services/profiles.py`** — `create_profile` (one child `Policy` per
+  non-empty wired section, named `"<profile> · <label>"`), `upsert_section`
+  (publishes a new child version, no-ops if unchanged), `remove_section`,
+  `archive`/`restore` (invalidate every section's caches).
+- **API** — `app/api/routers/profiles.py`: `GET/POST /api/v1/profiles`,
+  `GET /api/v1/profiles/{id}`, `PUT/DELETE …/sections/{key}`,
+  `…/archive`, `…/restore`. `GET /api/v1/policies` now hides profile sections by
+  default (`include_sections=true` to see them).
+- **Console** — `/policies/new` is the guided creator (`profile_editor.html`,
+  `mode="new"`): a left rail of categories (reusing the `data-tabs` machinery),
+  one JSON spec box + live merge reference per wired category, placeholders for
+  the rest, one "Create policy" submit. `/profiles/{id}` is the same template in
+  `mode="edit"` — each category is its own save form (publish a section version),
+  with per-section remove and profile archive/restore. `/policies/new/single`
+  keeps the old single-concern form for advanced use.
+- **Guards** — a profile section cannot be assigned directly (`_reject_template`
+  now also covers `profile_id`, 409) and is excluded from the standalone policy
+  list (`policy_admin.list_tab`, the API, and `effective_policy.gather_assignments`).
+- **`policies.html`** — the Device policies tab lists profiles (badge
+  `policy`) above single-concern policies, each linking to its editor.
+
+New tests: creator lists every category, placeholder says "not available yet",
+create-via-API and create-via-console-form, children made only for filled
+sections, profile shown / children hidden on the list + API, edit publishes a
+version, add-section-later, remove-section, section refused for direct assignment,
+editor page renders with archive.
+
+**W4b (profile assignment + resolver expansion) is the next chunk** — a profile
+currently reaches no device because nothing assigns it yet.
+
+##### Original plan
+
+Per **DW5**: a "policy" the operator creates is a `PolicyProfile` bundling
+single-concern child `Policy` rows, one per configured category, edited through a
+tabbed layout. This chunk builds everything except assignment (that is W4b).
+
+1. **Model + migration** — `PolicyProfile` (id, name unique, description,
+   archived_at, created_at, created_by) and `Policy.profile_id` (nullable FK,
+   `ON DELETE CASCADE`). A `Policy` with `profile_id` set is a *section* of a
+   profile: hidden from the standalone policy list, managed only through the
+   profile. `profile_id IS NULL` is today's standalone policy, unchanged.
+2. `app/policies/creator_catalog.py` — declarative category/sub-topic tree exactly
+   as the operator listed it (Password; Restrictions basic/advanced; Knox
+   *placeholder*; Periodic sync; App Management → required apps,
+   blocklist/allowlist, app catalog, app configs, app permissions, app
+   notifications; Networks → wifi, vpn; Security → certificates, scep, global http
+   proxy, web content filtering, os updates; Accounts → email, exchange
+   activesync; Configurations → fonts, wallpaper, boot/shutdown animation;
+   Customizations → support message, lock screen; Network data-use mgmt; App usage
+   mgmt; File management; Tracking & fencing → location tracking, geofencing;
+   Android Enterprise compliance *placeholder*; Troubleshooting → app logs, remote
+   access). Each node maps to a real policy type (`PASSWORD`, `RESTRICTIONS`,
+   `APP_CATALOG`, `FILES`) or is flagged `placeholder`.
+3. `app/services/profiles.py` — `create_profile(name, sections)`,
+   `upsert_section(profile, category, spec)` (publishes a new child-policy
+   version), `list_profiles`, `archive`/`restore` (cascade to children).
+4. `profile_creator.html` — full-page: left-rail category nav, main pane renders
+   the registry-driven form for a wired category (fields + live merge-strategy
+   reference, as `policy_detail.html` does) or the placeholder panel. Name field
+   at the top. Save → `create_profile`.
+5. `profile_detail.html` — the same left-rail/tabs, each tab editing its child
+   policy (publish new version), an "Advanced (JSON)" escape hatch per section
+   (D64), and Archive/Restore. The Assign panel is added in W4b.
+6. Console + API: `/policies/new` → the profile creator; `/profiles/{id}` →
+   editor; profiles listed in the Policies "Device policies" tab alongside
+   standalone policies with a **Profile** badge. `GET/POST /api/v1/profiles`.
+7. Tests: catalog renders every category, creating a profile makes the child
+   policies for wired sections only, a placeholder section cannot be submitted,
+   editing a section publishes a version, child policies are hidden from the
+   standalone list, archive cascades.
+
+#### ✅ W4b — Profile assignment & resolution (COMPLETE)
+
+**406 server tests (was 398).** Delivered:
+
+- **`ProfileAssignment`** model + migration `d4f6h8j0l2n4` (mirrors `Assignment`:
+  scope, one of device/group/tag, rank, enabled; `ON DELETE CASCADE` on all four
+  FKs; single-target check constraint). Up/down verified on SQLite.
+- **Resolver** — `gather_assignments` now also calls `_gather_profile_assignments`,
+  which expands each `ProfileAssignment` reaching the device into one
+  `AssignmentInput` per non-archived section, all at the profile assignment's rank
+  and scope. Assignment id `profile:{pa}:{section}` keeps each section a distinct
+  contributor. Archived profile / archived section drop out.
+- **Invalidation** — `devices_targeted_by_profile_assignment`,
+  `devices_affected_by_profile`, `invalidate_for_profile`;
+  `devices_affected_by_policy` now also follows a section up to its profile's
+  assignments, so `profiles.upsert_section` / `remove_section` wake the right
+  devices. All routed through the existing `after_commit` doorbell (F3).
+- **Bulk assignment (F2)** — `PUT /api/v1/profiles/{id}/targets` (reuses
+  `PolicyTargets` / `PolicyTargetsResult`, replace semantics) and a console form
+  on `profile_editor.html` (edit mode) with device/group/tag checkboxes + rank.
+- **Fleet table** — `fleet.py` adds the **profile name** (not each section) to a
+  device's "Policies" column when a profile assignment reaches it.
+- **Stacking view** — no code change needed: a section's snapshot name is already
+  `"<profile> · <section label>"`, so `device_detail.html`'s "Policies reaching
+  this device" and per-field provenance read e.g. `Kiosk Profile · Password`
+  with the profile assignment's scope and rank.
+
+New tests: a profile assignment resolves every section; a profile out-ranks a
+standalone policy on a `HIGHEST_RANK` field; unassign clears the sections;
+archiving an assigned profile stops it; removing a section stops that section;
+editing a section bumps the assigned device's `state_version`; profile name in the
+fleet table; the console assign form works.
+
+##### Original plan
+
+1. **`ProfileAssignment` model + migration** — (id, profile_id, scope, device_id/
+   group_id/tag_id, rank, enabled, created_at), mirroring `Assignment`.
+2. **Resolver** — `gather_assignments` also collects `ProfileAssignment` rows
+   reaching the device and expands each into one `AssignmentInput` per
+   non-archived child policy, at the profile assignment's rank/scope. Provenance
+   carries the profile name.
+3. **Invalidation** — `invalidate_for_profile`, `devices_targeted_by` extended for
+   profile assignments, wired through the existing `after_commit` wake (F3) so a
+   profile edit propagates immediately.
+4. **Bulk assignment UI** (F2) on `profile_detail.html` — pick devices / groups /
+   tags, replace semantics, one action. `PUT /api/v1/profiles/{id}/targets`.
+5. **Stacking view** (`device_detail.html`) — values contributed via a profile are
+   labelled "via profile ‹name› → ‹section›" so provenance stays legible.
+6. Tests: a profile assigned to a device resolves all its sections; rank ordering
+   against standalone policies; unassign removes them; a profile edit wakes the
+   parked long-poll; archived profile / archived section drop out.
+
+#### ✅ W5 — Apps (COMPLETE)
+
+**413 server tests (was 406).** Delivered:
+
+- **`AppPackage.store_listed`** (`NOT NULL DEFAULT false`) + **`AppGroup`** /
+  `app_group_member` (ordered many-to-many to `AppPackage`). Migration
+  `e5g7i9k1m3o5`, up/down verified on SQLite.
+- **`app/services/app_groups.py`** — list / get / create / rename / `set_members`
+  (order-preserving, de-duped, unknown ids rejected) / delete.
+- **`app/services/packages.py`** — `delete_package` (gathers digests, one cascade,
+  then frees unreferenced blobs — looping `delete_version` double-deleted and
+  warned).
+- **API** — `PATCH /api/v1/packages/{id}` (`label`, `store_listed`),
+  `DELETE /api/v1/packages/{id}`, and `app/api/routers/app_groups.py`
+  (`GET/POST /api/v1/app-groups`, `GET/PATCH/DELETE /{id}`, `PUT /{id}/members`).
+  `store_listed` added to `PackageRead`.
+- **`apps.html`** — three tabs. **Local apps**: upload form (multipart, reuses
+  `package_service.ingest`), table with package / label / latest version / parts /
+  signing hash, per-row add-to-store and delete. **ATLAS store**: the
+  `store_listed` subset, remove button. **App groups**: create form with package
+  checkboxes, per-group member editor and delete. `/apps` is now a real route
+  (removed from the pending-section stubs).
+- **App-group → policy wiring (light)** — the profile editor's **App Management**
+  section shows an "Insert an app group into `required_apps`" control; each button
+  calls `atlasInsertAppGroup` (new in `atlas.js`), which merges the group's
+  package names into the section's JSON spec, de-duping by package name. A
+  convenience over the JSON editor (D64), not a spec change.
+
+New tests: three tabs, upload lists a package, add-to-store shows it in the store
+tab, delete removes it, app-group create/members/delete round-trip, the API
+rejects an unknown package id, the profile creator offers the app-group insert.
+
+##### Original plan
+
+1. `apps.html`: tabs — **Local apps**, **ATLAS store**, **App groups**.
+2. Local apps: list `AppPackage` + versions (version code/name, size, signing
+   hash, split parts), upload form (reuses `packages` service), delete.
+3. `AppPackage.store_listed: bool` (+ migration) — the ATLAS store tab lists the
+   apps shipped with the deployment; toggle from the local-apps list.
+4. `AppGroup` model (name, description, ordered `AppPackage` members) + migration
+   + `app/services/app_groups.py` CRUD.
+5. App groups tab: create/edit a group, add/remove packages.
+6. Wire app-group selection into the W4 App Management category (assign a group
+   rather than listing packages one by one).
+7. Tests: upload lists a package, store toggle, app-group CRUD, group usable in a policy.
+
+#### ✅ W6 — Content (COMPLETE)
+
+**418 server tests (was 413).** Delivered:
+
+- **`ManagedFile` deployment defaults** — `default_dest_path`, `default_persist`,
+  `default_extract`, `default_extract_to`, `default_overwrite` (all nullable,
+  migration `f6h8j0l2n4p6`). These are *suggestions* the policy editor will
+  pre-fill; the authoritative destination/persist/extract for a placement still
+  live on the FILES policy's `FileEntry` (that is where the data model puts them).
+- **`app/services/content_admin.py`** — `content_rows` reads every non-archived
+  FILES policy's latest-version `entries` back and, per managed file, lists every
+  deployment it is part of (policy name + link, dest_path, tier, persist, extract,
+  overwrite). `references(file_id)` powers the delete guard.
+- **API** — `PATCH /api/v1/files/{id}` (name / description / the five defaults);
+  defaults added to `ManagedFileRead`.
+- **`content.html`** — upload form; one panel per file with its metadata, a
+  "Deployed by" table linking each referencing policy/profile, and a collapsible
+  edit form for the name and deployment defaults.
+- **Delete guard (console only)** — `POST /content/{id}/delete` refuses and names
+  the policies when any live FILES policy still binds the file. The **API**
+  `DELETE` stays permissive on purpose: `test_deleted_file_is_reported_not_dropped`
+  depends on a dangling reference being surfaced, not fatal — the console is the
+  safety layer, the API the escape hatch.
+
+New tests: content page lists files, shows the deploying policy + destination,
+console delete refused while referenced / allowed when not, edit defaults
+round-trips.
+
+##### Original plan
+
+1. `content.html`: table of `ManagedFile` — name, original filename, size,
+   destination path, **persistent** flag, **zip-expand** flag + `extract_to`,
+   overwrite rule, and which policies reference it.
+2. Upload form (reuses `files` service).
+3. Edit destination / persist / extraction settings (new small form → `files`
+   service update path).
+4. Delete (reference-checked — refuse if a live policy still binds it, name the policy).
+5. `app/services/content_admin.py` — rows with referencing-policy names.
+6. Tests: upload lists a file, edit persists the flags, delete refused while referenced.
+
+#### ✅ W7 — Reports (COMPLETE)
+
+**423 server tests (was 418).** Delivered:
+
+- **`app/services/reports.py`** — a `REPORTS` registry of six report builders,
+  each `(session) -> (columns, rows)`: **Fleet inventory**, **Convergence &
+  compliance**, **Policy deployment** (policies + profiles, target counts),
+  **Command history**, **App inventory**, **Marketplace selections**. `to_csv`
+  serialises any of them. Adding a report is one registry entry (OCP).
+- **Console** — `/reports` (catalogue) and `/reports/{key}` (generic `report.html`
+  with client-side filter + sort, or `?format=csv` → a `text/csv` attachment).
+  No new model or migration.
+- **Physical telemetry** (battery / storage / signal) is deliberately absent and
+  the page says so — the agent does not report those fields, so it is an agent +
+  schema change, not a reporting one. Fleet inventory covers what devices send.
+
+New tests: catalogue lists the reports, a report renders a table, CSV export has
+the right content-type / disposition / header row, command history reflects a
+queued command, unknown report 404s. (The W1 "pending section" test moved from
+`/reports` to `/guides`.)
+
+##### Original plan
+
+1. `reports.html` — report catalog: **Fleet inventory**, **Policy deployment /
+   convergence**, **Compliance**, **Command history**, **App inventory**,
+   **File deployment / user selections**.
+2. Each report = a service function in `app/services/reports.py` returning rows +
+   columns; one generic `report.html` renders any of them.
+3. CSV export per report (`?format=csv`).
+4. Physical-stats report: render the inventory fields that exist today (model, OS,
+   agent version, last check-in); **note in the UI** that battery/storage/network
+   telemetry needs new agent-reported fields (out of scope — flag as a follow-up).
+5. Tests: each report renders, CSV export returns text/csv with a header row.
+
+#### ✅ W8 — Admin (COMPLETE)
+
+**429 server tests (was 423).** Delivered:
+
+- **Models** — `AppSetting` (key/value store for operator-editable config),
+  `CustomAttribute` (name / type / description), `DeviceAttributeValue`
+  (per-device). Migration `g7i9k1m3o5q7`, up/down verified.
+- **`app/services/settings_store.py`** — a declarative `GROUPS` map (EULA, SMTP,
+  Active Directory, SMS, geofencing defaults) with per-field kinds. `save_group`
+  leaves a **blank secret field untouched** so a stored password need not be
+  retyped; secrets are never rendered back into a form. ⚠️ Secrets are stored
+  **plaintext** in `app_setting` — noted in the module and folded into R8.
+- **`app/services/custom_attributes.py`** — attribute CRUD, `values_for_device`,
+  `set_value` (blank deletes the row).
+- **API** — `app/api/routers/admin_settings.py`: `/api/v1/custom-attributes` CRUD,
+  `GET/PUT /api/v1/devices/{id}/attributes`.
+- **`admin.html`** — tabs: **Certificates** (CA summary + the `DeviceCertificate`
+  list with per-cert revoke), one tab per settings group (form-generated from the
+  `GROUPS` spec), **Custom attributes** (define + delete), **Integrations** (Knox
+  / Android Enterprise placeholders), **Environment** (env-backed settings shown
+  read-only with their variable names).
+- `device_detail.html` — a Custom attributes section: one save form per defined
+  attribute. `/admin` is a real route now.
+
+New tests: admin sections present, a certificate is listed and revocable, SMTP
+settings save without echoing the password, a blank password keeps the stored
+one, custom-attribute define → set on device → read back → delete, the API
+rejects a bad attribute type.
+
+**Jinja gotcha fixed:** a context dict keyed `"values"` — `grp.values` in a
+template resolves to `dict.values` (the method), not the key. Renamed to
+`current`.
+
+##### Original plan
+
+1. `admin.html` — sub-sections: **Enrollment tokens** (link to Enroll),
+   **Certificates** (CA subject/validity, device-certificate list with revoke),
+   **Knox settings** *(placeholder)*, **Android Enterprise** *(placeholder)*,
+   **EULA**, **Email / SMTP**, **Active Directory**, **SMS**, **Geofencing
+   defaults**, **Custom attributes**.
+2. `AppSetting` key-value model (+ migration) + `app/services/settings_store.py`
+   for the DB-backed settings (EULA text, SMTP, AD, SMS, geofencing defaults).
+   Env-backed settings shown read-only with their variable name.
+3. `CustomAttribute` model (name, type, description) + per-device values
+   (`DeviceAttributeValue`), + migration; surfaced on the device detail page.
+4. Certificate view reuses `revoke_device_certificates`; lists
+   `DeviceCertificate` rows with serial, issued/expiry, revoked state.
+5. Forms for each editable settings group, one service, one template partial each.
+6. Tests: setting round-trips, custom attribute CRUD + shows on device page,
+   certificate list renders, revoke works.
+
+#### ✅ W9 — Guides (COMPLETE)
+
+**434 server tests (was 429).** Delivered:
+
+- **`app/web/markdown_lite.py`** — a ~120-line Markdown renderer (headings, fenced
+  and inline code, bold/italic, links, ordered/unordered lists, blockquotes,
+  rules, paragraphs). HTML-escapes first, so a stray `<` in a guide renders as
+  text. No new dependency and no Docker rebuild — same call as the hand-written
+  AXML and canonical-JSON parsers.
+- **`app/services/guides.py`** — reads `app/web/guides/{howto,faq}/*.md`; a file's
+  title is its first `# ` heading, its slug the filename minus a leading sort
+  number. `release_notes_html()` renders `guides/release-notes.md`.
+- **Content** — six how-to articles (enrol, build a policy, stacking, upload an
+  app, deploy content, kiosk), two FAQ files (general, troubleshooting), and
+  release notes covering the W1–W9 console overhaul.
+- **Console** — `/guides` (tabs: How-to, FAQ, Release notes) and
+  `/guides/{category}/{slug}`. `.prose` styles for rendered Markdown. The W1
+  placeholder-shell machinery (`section_stub.html`, `_PENDING_SECTIONS`) is
+  removed — every nav entry now leads to a real page.
+
+New tests: guides page lists how-to + FAQ, a guide renders its Markdown (heading +
+list), release notes render, unknown guide/category 404, `markdown_lite` escapes
+HTML.
+
+##### Original plan
+
+1. `guides.html` — three tabs: **How-to**, **FAQ**, **Release notes**.
+2. Content as Markdown files under `app/web/guides/{howto,faq}/*.md`, rendered with
+   `markdown` (add to `requirements.txt`) through a safe renderer; an index built
+   from front-matter titles.
+3. Release notes: a curated `app/web/guides/release-notes.md` (seeded from the
+   `PROJECT_STATE.md` changelog), newest first.
+4. Seed a starter set: enrollment how-to, policy-stacking explainer, app upload,
+   content deployment, kiosk, troubleshooting FAQ.
+5. Tests: guide index lists articles, an article renders its Markdown, release
+   notes page renders.
+
+---
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |
@@ -1738,6 +2280,84 @@ re-investigated):
 
 ## Changelog
 
+- **2026-09-02** — **W9: Guides. Web UI expansion (W1–W9 + W4b) complete.**
+  434 tests. Hand-written `markdown_lite.py` (no new dependency), `guides.py`
+  reading `app/web/guides/**/*.md`, six how-to articles + two FAQ files + release
+  notes, and a `/guides` section with How-to / FAQ / Release notes tabs. Removed
+  the W1 placeholder-shell machinery — all eight nav sections are now real pages.
+- **2026-09-02** — **W8: Admin.** 429 tests. New `AppSetting` key/value store,
+  `CustomAttribute` + `DeviceAttributeValue` (migration `g7i9k1m3o5q7`).
+  `settings_store.py` drives form-generated tabs for EULA / SMTP / AD / SMS /
+  geofencing (blank secret keeps the stored one; secrets never rendered back —
+  plaintext at rest, folded into R8). `custom_attributes.py` + API. `admin.html`
+  adds a certificate list with per-cert revoke, an env-settings read-only view,
+  and Knox / Android Enterprise placeholders; device pages get a custom-attribute
+  editor.
+- **2026-09-02** — **W7: Reports.** 423 tests. `app/services/reports.py` — a
+  six-report registry (fleet inventory, convergence & compliance, policy
+  deployment, command history, app inventory, marketplace selections), each a
+  `(session) -> (columns, rows)` function, rendered by one generic template or
+  served as CSV via `?format=csv`. No schema change. Physical telemetry is
+  explicitly out of scope (agent doesn't report it).
+- **2026-09-02** — **W6: Content.** 418 tests. `ManagedFile` gains nullable
+  deployment-default fields (migration `f6h8j0l2n4p6`); `content_admin.py` reads
+  every FILES policy's entries back so `content.html` shows, per file, which
+  policies place it and where. `PATCH /api/v1/files/{id}` for name/description/
+  defaults. Console delete refuses (and names the policies) while a file is
+  referenced; the API delete stays permissive by design.
+- **2026-09-02** — **W5: Apps.** 413 tests. `AppPackage.store_listed` + `AppGroup`
+  (migration `e5g7i9k1m3o5`), `app/services/app_groups.py`, `packages.delete_package`,
+  `PATCH`/`DELETE /api/v1/packages/{id}`, `/api/v1/app-groups` CRUD. `apps.html`
+  with Local apps / ATLAS store / App groups tabs and an upload form. The profile
+  editor's App Management section gets an "insert app group into required_apps"
+  helper (`atlasInsertAppGroup`).
+- **2026-09-02** — **W4b: profile assignment & resolution.** 406 tests. New
+  `ProfileAssignment` (migration `d4f6h8j0l2n4`); the resolver expands a profile
+  assignment into one input per section at that rank, so a profile stacks against
+  standalone policies exactly as its sections would. `invalidate_for_profile` +
+  `devices_affected_by_policy` following a section up to its profile keep the F3
+  doorbell correct. `PUT /api/v1/profiles/{id}/targets` and a console bulk-assign
+  form. Fleet table shows the profile name; the stacking view reads
+  `‹profile› · ‹section›` for free from the child naming.
+- **2026-09-02** — **W4: composite policies (profiles).** 398 tests. Per DW5 a
+  "policy" the operator builds in the creator is a `PolicyProfile` bundling
+  single-concern child `Policy` rows (one per category tab) — the resolver, merge
+  registry and stacking view are untouched underneath. New `PolicyProfile` +
+  `Policy.profile_id`/`profile_section` (migration `c3e5g7i9k1m3`, batch mode for
+  SQLite), `app/policies/creator_catalog.py` (16 categories, 4 wired),
+  `app/services/profiles.py`, `app/api/routers/profiles.py`, and a guided
+  `profile_editor.html` used for both create (`/policies/new`) and edit
+  (`/profiles/{id}`). Sections cannot be assigned or listed standalone.
+  Assignment + resolution is W4b.
+- **2026-09-02** — **W3: Policies list & New Policy modal.** 387 tests. Added
+  `Policy.is_template` (migration `b2d4f6a8c1e3`) — a blueprint the resolver and
+  fleet table skip and assignment endpoints refuse (409). New
+  `app/services/policy_admin.py` (list-by-tab, clone, archive, restore); "save as
+  template" and "use template" are the same clone operation, so the two never
+  drift. `policies.html` gets three tabs (Device / Templates / Archived) and a
+  New Policy modal; the from-scratch form moved to `/policies/new`. API gains
+  `/policies/{id}/restore` and `/policies/{id}/clone`.
+- **2026-09-02** — **W2: Enroll & Manage.** 381 tests. Added `Device.name` (a
+  nullable operator-assigned friendly name; migration `a1c3e5f7b9d2`, `PATCH
+  /api/v1/devices/{id}` + a console rename form). New `app/services/fleet.py`
+  assembles the Manage table — every device plus the names of the policies
+  reaching it — in two queries, without resolving the full stack per device.
+  `manage.html` (was `devices.html`) has the operator's columns (name / serial /
+  model / OS+agent / policies / convergence / compliance / last check-in) with
+  client-side filter and sort. `enroll.html` (was `enrollment.html`) puts the
+  Wi-Fi SSID/password/security fields directly on the QR generator so one action
+  produces the QR-with-Wi-Fi.
+- **2026-09-02** — **W1: ATLAS console shell.** 375 tests. Web UI expansion
+  begins (Chunks W1–W9, plan in the chunk section above). Migrated the console's
+  single inline `<style>` to `app/web/static/atlas.css` served via `StaticFiles`,
+  added a dependency-free `atlas.js` (modal / tabs / table filter / sort /
+  confirm), a `_macros.html` library, and rebuilt `base.html` with the ATLAS
+  brand bar and the eight-section nav (Enroll, Manage, Policies, Apps, Content,
+  Reports, Admin, Guides). The five not-yet-built sections have routes that name
+  the chunk delivering them. Every legacy CSS class preserved, so existing pages
+  render unchanged; the logo is an `<img>` not inline SVG so `"<svg"` still means
+  "a QR rendered" for two enrollment tests. Stayed on Jinja + vanilla JS, no
+  build step (DW1).
 - **2026-09-02** — **Chunk 14: single persistent enrollment token, 15-minute
   signed QR.** 370 server tests. Replaced the free-for-all multi-token console
   with the operator's model: one standing enrollment credential, retired and

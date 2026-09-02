@@ -1,93 +1,133 @@
 {% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf_field, tabs, modal, empty_state %}
 {% set nav = 'policies' %}
-{% block title %}Policies — TAK MDM{% endblock %}
+{% block title %}Policies — ATLAS{% endblock %}
 
 {% block content %}
-<h1>Policies</h1>
-<p class="sub">
-  Single-concern and stackable. Build a password policy once and apply it wherever
-  it belongs, rather than rebuilding it inside every profile.
-</p>
+{{ page_header('Policies', 'Single-concern and stackable. Build a password policy once and apply it wherever it belongs, rather than rebuilding it inside every profile.') }}
 
-<div class="panel">
-  {% if not policies %}
-    <p class="muted">None yet.</p>
-  {% else %}
-  <table>
-    <thead><tr><th>Name</th><th>Type</th><th>Versions</th><th>Description</th></tr></thead>
-    <tbody>
-    {% for p in policies %}
-      <tr>
-        <td><a href="/policies/{{ p.id }}">{{ p.name }}</a></td>
-        <td><span class="pill">{{ p.policy_type }}</span></td>
-        <td class="mono">v{{ p.latest_version.version if p.latest_version else 0 }}</td>
-        <td class="muted">{{ p.description or '—' }}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
+<div class="toolbar">
+  <button type="button" data-modal-open="new-policy">New Policy</button>
 </div>
 
-<h2>New policy</h2>
-<div class="panel">
-  <form method="post" action="/policies">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="row">
-      <div>
-        <label for="name">Name</label>
-        <input id="name" name="name" required style="width:100%" placeholder="Baseline Password">
+{{ tabs([
+  ('device', 'Device policies'),
+  ('templates', 'Templates'),
+  ('archived', 'Archived'),
+], active='device', scope='policy-tabs') }}
 
-        <label for="policy_type">Type</label>
-        <select id="policy_type" name="policy_type" style="width:100%" onchange="showRef(this.value)">
-          {% for t in policy_types %}
-            <option value="{{ t.name }}">{{ t.name }} — {{ t.description }}</option>
-          {% endfor %}
-        </select>
-
-        <label for="description">Description</label>
-        <input id="description" name="description" style="width:100%">
-
-        <label for="spec">Spec (JSON)</label>
-        <textarea id="spec" name="spec" rows="10">{}</textarea>
-        <p class="muted" style="font-size:12px">
-          Only the fields you set are stored, so a narrow policy stacks on a broad
-          one without blanking it.
-        </p>
-        <button type="submit">Create</button>
-      </div>
-
-      <div>
-        <label>Fields and how they merge when stacked</label>
-        {% for t in policy_types %}
-        <div class="checks" id="ref-{{ t.name }}" style="display:none; max-height:420px">
-          <table>
-            <thead><tr><th>Field</th><th>Strategy</th></tr></thead>
-            <tbody>
-            {% for field, rule in t.merge_rules.items() %}
-              <tr>
-                <td class="mono">{{ field }}</td>
-                <td>
-                  <span class="pill">{{ rule.strategy }}</span>
-                  {% if rule.note %}<br><small class="muted">{{ rule.note }}</small>{% endif %}
-                </td>
-              </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-        </div>
+<div id="policy-tabs">
+  <div class="tab-panel" data-tab-panel="device">
+    <div class="panel">
+      {% if not profiles and not device_policies %}
+        {{ empty_state('No policies yet. Use "New Policy" to create one.') }}
+      {% else %}
+      <table data-sortable>
+        <thead><tr><th data-sort>Name</th><th data-sort>Kind</th><th data-sort>Contents</th><th>Description</th></tr></thead>
+        <tbody>
+        {% for pr in profiles %}
+          <tr>
+            <td><a href="/profiles/{{ pr.id }}">{{ pr.name }}</a></td>
+            <td><span class="pill accent">policy</span></td>
+            <td class="muted">
+              {% set names = pr.sections | map(attribute='profile_section') | reject('none') | list %}
+              {{ names | join(', ') if names else 'no sections yet' }}
+            </td>
+            <td class="muted">{{ pr.description or '—' }}</td>
+          </tr>
         {% endfor %}
-      </div>
+        {% for p in device_policies %}
+          <tr>
+            <td><a href="/policies/{{ p.id }}">{{ p.name }}</a></td>
+            <td><span class="pill">{{ p.policy_type }}</span></td>
+            <td class="mono">v{{ p.latest_version.version if p.latest_version else 0 }}</td>
+            <td class="muted">{{ p.description or '—' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted" style="font-size:12px; margin-top:8px">
+        A <span class="pill accent">policy</span> is a composite built in the creator; a bare type badge is a single-concern policy.
+      </p>
+      {% endif %}
     </div>
-  </form>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="templates" hidden>
+    <div class="panel">
+      <p class="sub">
+        Blueprints. A template is never assigned and never reaches a device — it is
+        cloned into a real policy, which is then edited and assigned on its own.
+      </p>
+      {% if not templates %}
+        {{ empty_state('No templates. Save any policy as a template from its detail page.') }}
+      {% else %}
+      <table>
+        <thead><tr><th>Name</th><th>Type</th><th>Create a policy from this template</th></tr></thead>
+        <tbody>
+        {% for p in templates %}
+          <tr>
+            <td><a href="/policies/{{ p.id }}">{{ p.name }}</a></td>
+            <td><span class="pill">{{ p.policy_type }}</span></td>
+            <td>
+              <form method="post" action="/policies/clone" class="toolbar" style="margin:0">
+                {{ csrf_field(csrf_token) }}
+                <input type="hidden" name="source_id" value="{{ p.id }}">
+                <input type="text" name="name" required placeholder="New policy name">
+                <button type="submit" class="ghost">Create</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="archived" hidden>
+    <div class="panel">
+      <p class="sub">
+        Archived policies stop applying but are never deleted, so what a device
+        once had stays answerable (D20). Restoring one can change devices immediately.
+      </p>
+      {% if not archived %}
+        {{ empty_state('Nothing archived.') }}
+      {% else %}
+      <table>
+        <thead><tr><th>Name</th><th>Type</th><th>Archived</th><th>Restore</th></tr></thead>
+        <tbody>
+        {% for p in archived %}
+          <tr>
+            <td><a href="/policies/{{ p.id }}">{{ p.name }}</a>{% if p.is_template %} <span class="pill">template</span>{% endif %}</td>
+            <td><span class="pill">{{ p.policy_type }}</span></td>
+            <td class="muted">{{ p.archived_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td>
+              <form method="post" action="/policies/{{ p.id }}/restore" style="margin:0">
+                {{ csrf_field(csrf_token) }}
+                <button type="submit" class="ghost">Restore</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
 </div>
 
-<script>
-  function showRef(name) {
-    document.querySelectorAll('[id^="ref-"]').forEach(el => el.style.display = 'none');
-    const target = document.getElementById('ref-' + name);
-    if (target) target.style.display = 'block';
-  }
-  showRef(document.getElementById('policy_type').value);
-</script>
+{% call modal('new-policy', 'New Policy') %}
+  <p class="sub">Start from nothing, or copy an existing template.</p>
+  <div class="choice-grid">
+    <a href="/policies/new">
+      <strong>Create from scratch</strong>
+      Pick a type and define its spec.
+    </a>
+    <a href="#tab-templates" data-modal-close>
+      <strong>Use a template</strong>
+      {{ templates|length }} available in the Templates tab.
+    </a>
+  </div>
+{% endcall %}
 {% endblock %}

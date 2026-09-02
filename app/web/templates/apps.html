@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf_field, tabs, empty_state %}
+{% set nav = 'apps' %}
+{% block title %}Apps — ATLAS{% endblock %}
+
+{% block content %}
+{{ page_header('Apps', 'Application packages on the server: what has been uploaded, what the ATLAS store offers, and app groups for assigning several at once.') }}
+
+{{ tabs([
+  ('local', 'Local apps'),
+  ('store', 'ATLAS store'),
+  ('groups', 'App groups'),
+], active='local', scope='apps-tabs') }}
+
+<div id="apps-tabs">
+  <div class="tab-panel" data-tab-panel="local">
+    <div class="panel">
+      <h2>Upload a package</h2>
+      <form method="post" action="/apps/upload" enctype="multipart/form-data" class="toolbar">
+        {{ csrf_field(csrf_token) }}
+        <input type="file" name="file" accept=".apk,.xapk,.apks,.apkm" required>
+        <input type="text" name="label" placeholder="Label (optional)">
+        <button type="submit">Upload</button>
+      </form>
+      <p class="muted" style="font-size:12px">
+        The server reads the package name, version, and signing certificate from the
+        file. An XAPK is unpacked into base + splits + OBB server-side (D13).
+      </p>
+    </div>
+
+    <div class="panel">
+      {% if not packages %}
+        {{ empty_state('No packages uploaded yet.') }}
+      {% else %}
+      <table data-sortable>
+        <thead><tr>
+          <th data-sort>Package</th><th data-sort>Label</th><th data-sort>Latest version</th>
+          <th data-sort>Parts</th><th>Signature</th><th>Store</th><th></th>
+        </tr></thead>
+        <tbody>
+        {% for p in packages %}
+          <tr>
+            <td class="mono">{{ p.package_name }}</td>
+            <td>{{ p.label or '—' }}</td>
+            <td class="mono">
+              {% if p.latest_version %}
+                {{ p.latest_version.version_code }}{% if p.latest_version.version_name %} ({{ p.latest_version.version_name }}){% endif %}
+              {% else %}—{% endif %}
+            </td>
+            <td class="muted">{{ (p.latest_version.files | length) if p.latest_version else 0 }}</td>
+            <td class="mono muted" title="{{ p.signature_sha256 or '' }}">
+              {{ (p.signature_sha256[:12] ~ '…') if p.signature_sha256 else '—' }}
+              {% if p.signature_scheme %}<span class="pill">v{{ p.signature_scheme }}</span>{% endif %}
+            </td>
+            <td>
+              <form method="post" action="/apps/{{ p.id }}/store" style="margin:0">
+                {{ csrf_field(csrf_token) }}
+                <input type="hidden" name="listed" value="{{ 'false' if p.store_listed else 'true' }}">
+                <button type="submit" class="ghost">
+                  {{ 'In store — remove' if p.store_listed else 'Add to store' }}
+                </button>
+              </form>
+            </td>
+            <td>
+              <form method="post" action="/apps/{{ p.id }}/delete" style="margin:0"
+                    data-confirm="Delete {{ p.package_name }} and all its versions?">
+                {{ csrf_field(csrf_token) }}
+                <button type="submit" class="danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="store" hidden>
+    <div class="panel">
+      <p class="sub">
+        The curated set that ships with a deployment. Being in the store is a hint
+        to operators that a package is ready to assign — it does not install
+        anything on its own.
+      </p>
+      {% if not store_packages %}
+        {{ empty_state('Nothing in the store. Add a package from the Local apps tab.') }}
+      {% else %}
+      <table>
+        <thead><tr><th>Package</th><th>Label</th><th>Latest version</th><th></th></tr></thead>
+        <tbody>
+        {% for p in store_packages %}
+          <tr>
+            <td class="mono">{{ p.package_name }}</td>
+            <td>{{ p.label or '—' }}</td>
+            <td class="mono">{{ p.latest_version.version_code if p.latest_version else '—' }}</td>
+            <td>
+              <form method="post" action="/apps/{{ p.id }}/store" style="margin:0">
+                {{ csrf_field(csrf_token) }}
+                <input type="hidden" name="listed" value="false">
+                <button type="submit" class="ghost">Remove from store</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="groups" hidden>
+    <div class="panel">
+      <h2>New app group</h2>
+      <form method="post" action="/app-groups">
+        {{ csrf_field(csrf_token) }}
+        <div class="row">
+          <div>
+            <label for="group_name">Name</label>
+            <input id="group_name" name="name" required class="field-full" placeholder="ATAK bundle">
+            <label for="group_desc">Description</label>
+            <input id="group_desc" name="description" class="field-full">
+          </div>
+          <div>
+            <label>Packages</label>
+            <div class="checks">
+              {% for p in packages %}
+                <label><input type="checkbox" name="package_ids" value="{{ p.id }}"> <span class="mono">{{ p.package_name }}</span></label>
+              {% else %}<p class="muted">Upload a package first.</p>{% endfor %}
+            </div>
+          </div>
+        </div>
+        <button type="submit" style="margin-top:12px">Create group</button>
+      </form>
+    </div>
+
+    {% for g in groups %}
+    <div class="panel">
+      <div class="toolbar">
+        <strong>{{ g.name }}</strong>
+        <span class="muted">{{ g.description or '' }}</span>
+        <span class="spacer"></span>
+        <form method="post" action="/app-groups/{{ g.id }}/delete" style="margin:0"
+              data-confirm="Delete the app group {{ g.name }}?">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit" class="danger">Delete</button>
+        </form>
+      </div>
+      <form method="post" action="/app-groups/{{ g.id }}/members">
+        {{ csrf_field(csrf_token) }}
+        {% set member_ids = g.packages | map(attribute='id') | list %}
+        <div class="checks">
+          {% for p in packages %}
+            <label>
+              <input type="checkbox" name="package_ids" value="{{ p.id }}"
+                     {% if p.id in member_ids %}checked{% endif %}>
+              <span class="mono">{{ p.package_name }}</span>
+            </label>
+          {% else %}<p class="muted">No packages to add.</p>{% endfor %}
+        </div>
+        <button type="submit" class="ghost" style="margin-top:8px">Save members</button>
+      </form>
+    </div>
+    {% else %}
+    <div class="panel">{{ empty_state('No app groups yet.') }}</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

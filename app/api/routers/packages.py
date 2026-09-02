@@ -23,7 +23,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import fetch_or_404, get_db, get_storage
-from app.api.schemas import PackageRead, PackageUploadResult, PackageVersionRead
+from app.api.schemas import (
+    PackageRead,
+    PackageUpdate,
+    PackageUploadResult,
+    PackageVersionRead,
+)
 from app.artifacts.storage import ArtifactStorage
 from app.config import Settings, get_settings
 from app.db.models import AppPackage, AppPackageVersion
@@ -82,6 +87,42 @@ def list_packages(session: Session = Depends(get_db)) -> list[AppPackage]:
 @router.get("/{package_id}", response_model=PackageRead)
 def get_package(package_id: uuid.UUID, session: Session = Depends(get_db)) -> AppPackage:
     return fetch_or_404(session, AppPackage, package_id, "package")
+
+
+@router.patch("/{package_id}", response_model=PackageRead)
+def update_package(
+    package_id: uuid.UUID,
+    payload: PackageUpdate,
+    session: Session = Depends(get_db),
+) -> AppPackage:
+    """Edit operator-owned package fields: its label and whether the ATLAS store
+    lists it. Identity and signing details are read from the file, not set here."""
+    package: AppPackage = fetch_or_404(session, AppPackage, package_id, "package")
+    fields = payload.model_dump(exclude_unset=True)
+    if "label" in fields:
+        package.label = (fields["label"] or "").strip() or None
+    if "store_listed" in fields and fields["store_listed"] is not None:
+        package.store_listed = fields["store_listed"]
+    session.commit()
+    return package
+
+
+@router.delete(
+    "/{package_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+    response_class=Response,
+)
+def delete_package(
+    package_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+) -> None:
+    """Remove a package and all its versions."""
+    package: AppPackage = fetch_or_404(session, AppPackage, package_id, "package")
+    package_service.delete_package(session, storage, package)
+    eff.invalidate_all(session)
+    session.commit()
 
 
 @router.delete(

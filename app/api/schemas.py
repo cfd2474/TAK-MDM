@@ -43,14 +43,22 @@ class ORMModel(BaseModel):
 
 class DeviceCreate(BaseModel):
     serial_number: str = Field(min_length=1, max_length=64)
+    name: str | None = Field(default=None, max_length=128)
     model: str | None = None
     imei: str | None = None
     os_version: str | None = None
 
 
+class DeviceUpdate(BaseModel):
+    """Operator-editable device fields. Only `name` for now."""
+
+    name: str | None = Field(default=None, max_length=128)
+
+
 class DeviceRead(ORMModel):
     id: uuid.UUID
     serial_number: str
+    name: str | None
     model: str | None
     imei: str | None
     os_version: str | None
@@ -108,6 +116,14 @@ class PolicyCreate(BaseModel):
     description: str | None = None
     spec: dict[str, Any] = Field(default_factory=dict)
     notes: str | None = None
+    is_template: bool = False
+
+
+class PolicyClone(BaseModel):
+    """Copy a policy (or template) into a new one."""
+
+    name: str = Field(min_length=1, max_length=128)
+    as_template: bool = False
 
 
 class PolicyVersionCreate(BaseModel):
@@ -124,7 +140,45 @@ class PolicyRead(ORMModel):
     description: str | None
     created_at: datetime
     archived_at: datetime | None
+    is_template: bool
+    profile_id: uuid.UUID | None = None
+    profile_section: str | None = None
     versions: list[PolicyVersionRead]
+
+
+# --------------------------------------------------------------------------- #
+# Profiles (composite policies)
+# --------------------------------------------------------------------------- #
+
+
+class ProfileCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = None
+    #: catalog category key -> raw spec. Empty specs are skipped.
+    sections: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
+class ProfileSectionUpsert(BaseModel):
+    spec: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProfileSectionRead(ORMModel):
+    id: uuid.UUID
+    profile_section: str | None
+    policy_type: str
+    name: str
+    archived_at: datetime | None
+    versions: list[PolicyVersionRead]
+
+
+class ProfileRead(ORMModel):
+    id: uuid.UUID
+    name: str
+    description: str | None
+    created_at: datetime
+    created_by: str | None
+    archived_at: datetime | None
+    sections: list[ProfileSectionRead]
 
 
 # --------------------------------------------------------------------------- #
@@ -335,8 +389,43 @@ class PackageRead(ORMModel):
     label: str | None
     signature_sha256: str | None
     signature_scheme: str | None
+    store_listed: bool
     created_at: datetime
     versions: list[PackageVersionRead]
+
+
+class PackageUpdate(BaseModel):
+    label: str | None = None
+    store_listed: bool | None = None
+
+
+class AppGroupCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = None
+    package_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class AppGroupUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=128)
+    description: str | None = None
+
+
+class AppGroupMembers(BaseModel):
+    package_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class AppGroupPackageRead(ORMModel):
+    id: uuid.UUID
+    package_name: str
+    label: str | None
+
+
+class AppGroupRead(ORMModel):
+    id: uuid.UUID
+    name: str
+    description: str | None
+    created_at: datetime
+    packages: list[AppGroupPackageRead]
 
 
 class PackageUploadResult(BaseModel):
@@ -362,12 +451,58 @@ class ManagedFileRead(ORMModel):
     is_archive: bool
     artifact_sha256: str
     created_at: datetime
+    default_dest_path: str | None = None
+    default_persist: bool | None = None
+    default_extract: bool | None = None
+    default_extract_to: str | None = None
+    default_overwrite: str | None = None
+
+
+class ManagedFileUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    default_dest_path: str | None = Field(default=None, max_length=512)
+    default_persist: bool | None = None
+    default_extract: bool | None = None
+    default_extract_to: str | None = Field(default=None, max_length=512)
+    default_overwrite: Literal["always", "if_newer", "if_absent", None] = None
 
 
 class FileSelectionRead(BaseModel):
     file_id: uuid.UUID
     name: str
     applied_at: datetime
+
+
+# --------------------------------------------------------------------------- #
+# Admin: custom attributes
+# --------------------------------------------------------------------------- #
+
+
+class CustomAttributeCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    attr_type: Literal["string", "number", "boolean", "date"] = "string"
+    description: str | None = None
+
+
+class CustomAttributeRead(ORMModel):
+    id: uuid.UUID
+    name: str
+    attr_type: str
+    description: str | None
+    created_at: datetime
+
+
+class DeviceAttributeSet(BaseModel):
+    attribute_id: uuid.UUID
+    value: str = ""
+
+
+class DeviceAttributeRead(BaseModel):
+    attribute_id: uuid.UUID
+    name: str
+    attr_type: str
+    value: str
 
 
 # --------------------------------------------------------------------------- #

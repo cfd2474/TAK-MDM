@@ -72,6 +72,481 @@ def test_dashboard_lists_an_enrolled_device(client: TestClient, enrolled):
 
 
 # --------------------------------------------------------------------------- #
+# Eight-section shell (W1)
+# --------------------------------------------------------------------------- #
+
+SECTIONS = {
+    "/enrollment": "Enroll",
+    "/": "Manage",
+    "/policies": "Policies",
+    "/apps": "Apps",
+    "/content": "Content",
+    "/reports": "Reports",
+    "/admin": "Admin",
+    "/guides": "Guides",
+}
+
+
+def test_every_section_is_reachable(client: TestClient):
+    for path in SECTIONS:
+        assert client.get(path).status_code == 200, path
+
+
+def test_nav_marks_the_active_section(client: TestClient):
+    """The nav link for the page you are on carries the `on` class, and only it."""
+    for path, label in SECTIONS.items():
+        body = client.get(path).text
+        # The active link renders as: <a href="..." class="on">Label</a>
+        active = re.findall(r'<a href="[^"]*" class="on">([^<]+)</a>', body)
+        assert active == [label], (path, active)
+
+
+def test_no_section_is_a_stub_any_more(client: TestClient):
+    """Every nav entry now leads to a real page — W1's placeholder shells are gone."""
+    for path in SECTIONS:
+        assert "coming in a later chunk" not in client.get(path).text
+
+
+def test_console_stylesheet_is_served(client: TestClient):
+    response = client.get("/static/atlas.css")
+    assert response.status_code == 200
+    assert "text/css" in response.headers["content-type"]
+    assert "--accent" in response.text
+
+
+def test_console_script_is_served(client: TestClient):
+    assert client.get("/static/atlas.js").status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# Apps — local packages, ATLAS store, app groups (W5)
+# --------------------------------------------------------------------------- #
+
+
+def _upload_app(client: TestClient, package: str, code: int = 1, label: str = "") -> None:
+    from tests.apk_fixtures import build_apk
+
+    response = client.post(
+        "/apps/upload",
+        data={"label": label},
+        files={"file": ("app.apk", build_apk(package, code), "application/octet-stream")},
+        follow_redirects=False,
+    )
+    assert response.status_code in (303, 200), response.text
+
+
+def test_apps_page_has_three_tabs(client: TestClient):
+    body = client.get("/apps").text
+    for label in ("Local apps", "ATLAS store", "App groups"):
+        assert label in body
+
+
+def test_upload_lists_a_package(client: TestClient):
+    _upload_app(client, "com.example.tool", 5, label="Tool")
+
+    body = client.get("/apps").text
+    assert "com.example.tool" in body
+    assert "Tool" in body
+
+
+def test_add_to_store_and_it_shows_in_the_store_tab(client: TestClient):
+    _upload_app(client, "com.example.store")
+    pkg_id = client.get("/api/v1/packages", headers=ADMIN).json()[0]["id"]
+
+    client.post(f"/apps/{pkg_id}/store", data={"listed": "true"}, follow_redirects=False)
+
+    assert client.get("/api/v1/packages", headers=ADMIN).json()[0]["store_listed"] is True
+    assert "com.example.store" in client.get("/apps").text
+
+
+def test_delete_package(client: TestClient):
+    _upload_app(client, "com.example.gone")
+    pkg_id = client.get("/api/v1/packages", headers=ADMIN).json()[0]["id"]
+
+    client.post(f"/apps/{pkg_id}/delete", follow_redirects=False)
+
+    assert client.get("/api/v1/packages", headers=ADMIN).json() == []
+
+
+def test_app_group_create_members_and_delete(client: TestClient):
+    _upload_app(client, "com.a")
+    _upload_app(client, "com.b")
+    packages = client.get("/api/v1/packages", headers=ADMIN).json()
+    ids = [p["id"] for p in packages]
+
+    client.post(
+        "/app-groups",
+        data={"name": "Bundle", "package_ids": ids},
+        follow_redirects=False,
+    )
+
+    groups = client.get("/api/v1/app-groups", headers=ADMIN).json()
+    assert len(groups) == 1
+    assert {p["package_name"] for p in groups[0]["packages"]} == {"com.a", "com.b"}
+
+    gid = groups[0]["id"]
+    client.post(
+        f"/app-groups/{gid}/members", data={"package_ids": [ids[0]]}, follow_redirects=False
+    )
+    assert len(client.get(f"/api/v1/app-groups/{gid}", headers=ADMIN).json()["packages"]) == 1
+
+    client.post(f"/app-groups/{gid}/delete", follow_redirects=False)
+    assert client.get("/api/v1/app-groups", headers=ADMIN).json() == []
+
+
+def test_app_group_api_rejects_unknown_package(client: TestClient):
+    r = client.post(
+        "/api/v1/app-groups",
+        json={"name": "X", "package_ids": ["00000000-0000-0000-0000-000000000000"]},
+        headers=ADMIN,
+    )
+    assert r.status_code == 422
+
+
+def test_profile_creator_offers_app_group_insert(client: TestClient):
+    _upload_app(client, "com.atakmap.app.civ")
+    pkg_id = client.get("/api/v1/packages", headers=ADMIN).json()[0]["id"]
+    client.post("/app-groups", data={"name": "ATAK", "package_ids": [pkg_id]})
+
+    body = client.get("/policies/new").text
+    assert "atlasInsertAppGroup" in body
+    assert "Insert an app group" in body
+
+
+# --------------------------------------------------------------------------- #
+# Content — managed files & deployment references (W6)
+# --------------------------------------------------------------------------- #
+
+
+def _upload_file(client: TestClient, content: bytes, name: str = "map.xml") -> str:
+    client.post(
+        "/content/upload",
+        data={"name": name},
+        files={"file": (name, content, "text/xml")},
+        follow_redirects=False,
+    )
+    return client.get("/api/v1/files", headers=ADMIN).json()[-1]["id"]
+
+
+def _files_policy(client: TestClient, name: str, file_id: str, dest: str = "/sdcard/atak") -> str:
+    r = client.post(
+        "/api/v1/policies",
+        json={
+            "name": name,
+            "policy_type": "FILES",
+            "spec": {"entries": [{"file_id": file_id, "dest_path": dest}]},
+        },
+        headers=ADMIN,
+    )
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def test_content_page_lists_uploaded_files(client: TestClient):
+    _upload_file(client, b"<xml/>", "source.xml")
+    body = client.get("/content").text
+    assert "source.xml" in body
+
+
+def test_content_shows_which_policy_deploys_a_file(client: TestClient):
+    fid = _upload_file(client, b"payload")
+    _files_policy(client, "Map push", fid, dest="/sdcard/atak/imagery")
+
+    body = text_of(client.get("/content").text)
+    assert "Map push" in body
+    assert "/sdcard/atak/imagery" in body
+
+
+def test_delete_is_refused_while_a_policy_references_the_file(client: TestClient):
+    fid = _upload_file(client, b"payload")
+    _files_policy(client, "Holder", fid)
+
+    response = client.post(f"/content/{fid}/delete", follow_redirects=True)
+    assert "Holder" in text_of(response.text)
+    # Still there
+    assert any(f["id"] == fid for f in client.get("/api/v1/files", headers=ADMIN).json())
+
+
+def test_delete_works_when_unreferenced(client: TestClient):
+    fid = _upload_file(client, b"payload")
+
+    client.post(f"/content/{fid}/delete", follow_redirects=False)
+
+    assert client.get("/api/v1/files", headers=ADMIN).json() == []
+
+
+def test_edit_deployment_defaults(client: TestClient):
+    fid = _upload_file(client, b"payload")
+
+    client.post(
+        f"/content/{fid}/edit",
+        data={
+            "name": "Renamed",
+            "default_dest_path": "/sdcard/atak/cfg",
+            "default_persist": "yes",
+            "default_overwrite": "always",
+        },
+        follow_redirects=False,
+    )
+
+    got = client.get(f"/api/v1/files/{fid}", headers=ADMIN).json()
+    assert got["name"] == "Renamed"
+    assert got["default_dest_path"] == "/sdcard/atak/cfg"
+    assert got["default_persist"] is True
+    assert got["default_overwrite"] == "always"
+
+
+# --------------------------------------------------------------------------- #
+# Reports (W7)
+# --------------------------------------------------------------------------- #
+
+
+def test_reports_page_lists_the_catalogue(client: TestClient):
+    body = client.get("/reports").text
+    for title in ("Fleet inventory", "Convergence", "Command history", "App inventory"):
+        assert title in body
+
+
+def test_a_report_renders_a_table(client: TestClient, enrolled):
+    enrolled(serial="W7-INV")
+    body = text_of(client.get("/reports/fleet-inventory").text)
+    assert "W7-INV" in body
+
+
+def test_report_csv_export(client: TestClient, enrolled):
+    enrolled(serial="W7-CSV")
+
+    response = client.get("/reports/fleet-inventory?format=csv")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "attachment" in response.headers["content-disposition"]
+    lines = response.text.splitlines()
+    assert lines[0].startswith("Name,Serial,Model")
+    assert any("W7-CSV" in line for line in lines[1:])
+
+
+def test_command_history_report_shows_a_queued_command(client: TestClient, enrolled):
+    device = enrolled(serial="W7-CMD")
+    client.post(f"/devices/{device['device_id']}/collect-logs", follow_redirects=False)
+
+    body = text_of(client.get("/reports/command-history").text)
+    assert "W7-CMD" in body and "collect_logs" in body
+
+
+def test_unknown_report_is_404(client: TestClient):
+    assert client.get("/reports/nope").status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Admin — certificates, settings, custom attributes (W8)
+# --------------------------------------------------------------------------- #
+
+
+def test_admin_page_has_its_sections(client: TestClient):
+    body = client.get("/admin").text
+    for label in (
+        "Certificates", "End-user licence agreement", "Email (SMTP)",
+        "Custom attributes", "Environment",
+    ):
+        assert label in body
+
+
+def test_certificate_is_listed_and_can_be_revoked(client: TestClient, enrolled, db):
+    from sqlalchemy import select as _select
+    from app.db.models import DeviceCertificate
+
+    enrolled(serial="W8-CERT")
+    cert = db.scalars(_select(DeviceCertificate)).first()
+    assert cert is not None
+    assert cert.serial_hex[:16] in client.get("/admin").text
+
+    client.post(f"/admin/certs/{cert.id}/revoke", follow_redirects=False)
+
+    db.expire_all()
+    assert db.get(DeviceCertificate, cert.id).revoked_at is not None
+    assert "revoked" in text_of(client.get("/admin").text)
+
+
+def test_smtp_settings_save_and_password_is_not_echoed(client: TestClient):
+    client.post(
+        "/admin/settings/smtp",
+        data={
+            "smtp.host": "mail.example.org",
+            "smtp.port": "587",
+            "smtp.username": "alerts",
+            "smtp.password": "s3cret",
+            "smtp.from_address": "atlas@example.org",
+            "smtp.use_tls": "true",
+        },
+        follow_redirects=False,
+    )
+
+    body = client.get("/admin").text
+    assert "mail.example.org" in body
+    assert "s3cret" not in body  # a stored password is never rendered back
+
+
+def test_blank_password_keeps_the_stored_one(client: TestClient, db):
+    from sqlalchemy import select as _select
+    from app.db.models import AppSetting
+
+    client.post("/admin/settings/sms", data={"sms.api_key": "KEY123", "sms.provider": "twilio"})
+    client.post("/admin/settings/sms", data={"sms.api_key": "", "sms.provider": "twilio"})
+
+    db.expire_all()
+    stored = {s.key: s.value for s in db.scalars(_select(AppSetting))}
+    assert stored["sms.api_key"] == "KEY123"
+
+
+def test_custom_attribute_lifecycle(client: TestClient, enrolled):
+    client.post(
+        "/admin/attributes",
+        data={"name": "Owning unit", "attr_type": "string"},
+        follow_redirects=False,
+    )
+    attrs = client.get("/api/v1/custom-attributes", headers=ADMIN).json()
+    assert [a["name"] for a in attrs] == ["Owning unit"]
+    attr_id = attrs[0]["id"]
+
+    device = enrolled(serial="W8-ATTR")
+    body = client.get(f"/devices/{device['device_id']}").text
+    assert "Owning unit" in body
+
+    client.post(
+        f"/devices/{device['device_id']}/attributes",
+        data={"attribute_id": attr_id, "value": "2nd Recon"},
+        follow_redirects=False,
+    )
+    got = client.get(
+        f"/api/v1/devices/{device['device_id']}/attributes", headers=ADMIN
+    ).json()
+    assert got[0]["value"] == "2nd Recon"
+
+    client.post(f"/admin/attributes/{attr_id}/delete", follow_redirects=False)
+    assert client.get("/api/v1/custom-attributes", headers=ADMIN).json() == []
+
+
+def test_custom_attribute_api_rejects_bad_type(client: TestClient):
+    r = client.post(
+        "/api/v1/custom-attributes",
+        json={"name": "X", "attr_type": "wizardry"},
+        headers=ADMIN,
+    )
+    assert r.status_code == 422
+
+
+# --------------------------------------------------------------------------- #
+# Guides (W9)
+# --------------------------------------------------------------------------- #
+
+
+def test_guides_page_lists_howto_and_faq(client: TestClient):
+    body = client.get("/guides").text
+    assert "Enrol a device" in body
+    assert "FAQ" in body
+    assert "Release notes" in body
+
+
+def test_a_guide_renders_its_markdown(client: TestClient):
+    body = client.get("/guides/howto/enrolment").text
+    # markdown_lite turned '## Steps' into a heading and '- ' into a list
+    assert "<h2>Steps</h2>" in body
+    assert "<li>" in body
+
+
+def test_release_notes_render(client: TestClient):
+    body = text_of(client.get("/guides").text)
+    assert "Eight-section console" in body
+
+
+def test_unknown_guide_is_404(client: TestClient):
+    assert client.get("/guides/howto/nope").status_code == 404
+    assert client.get("/guides/bogus/x").status_code == 404
+
+
+def test_markdown_lite_escapes_html():
+    from app.web.markdown_lite import render
+
+    out = render("Hello <b>world</b> and `<script>`")
+    assert "<b>world</b>" not in out
+    assert "&lt;b&gt;" in out
+    assert "<code>&lt;script&gt;</code>" in out
+
+
+# --------------------------------------------------------------------------- #
+# Manage — fleet table (W2)
+# --------------------------------------------------------------------------- #
+
+
+def test_manage_table_names_the_policies_reaching_a_device(
+    client: TestClient, enrolled, assign
+):
+    device = enrolled(serial="W2-POL")
+    policy_id = create_policy(client, "Baseline PW", "PASSWORD", '{"min_length": 8}')
+    assign(policy_id, device["device_id"], rank=10)
+
+    body = text_of(client.get("/").text)
+    assert "Baseline PW" in body
+
+
+def test_manage_table_has_a_filter_and_is_sortable(client: TestClient, enrolled):
+    enrolled(serial="W2-FILTER")
+    body = client.get("/").text
+    assert 'data-filter="#fleet-table"' in body
+    assert "data-sortable" in body
+
+
+def test_a_device_can_be_named_and_the_name_is_shown(client: TestClient, enrolled):
+    device = enrolled(serial="W2-NAME")
+
+    client.post(
+        f"/devices/{device['device_id']}/rename",
+        data={"name": "Command Post 1"},
+        follow_redirects=False,
+    )
+
+    assert "Command Post 1" in text_of(client.get("/").text)
+    assert "Command Post 1" in text_of(client.get(f"/devices/{device['device_id']}").text)
+
+
+def test_a_blank_name_clears_it(client: TestClient, enrolled):
+    device = enrolled(serial="W2-CLEAR")
+    client.post(f"/devices/{device['device_id']}/rename", data={"name": "Temp"})
+
+    client.post(f"/devices/{device['device_id']}/rename", data={"name": "   "})
+
+    assert client.get(f"/api/v1/devices/{device['device_id']}").json()["name"] is None
+
+
+def test_device_name_patch_endpoint(client: TestClient, enrolled):
+    device = enrolled(serial="W2-PATCH")
+
+    response = client.patch(
+        f"/api/v1/devices/{device['device_id']}",
+        json={"name": "Recon-7"},
+        headers={"x-authentik-username": "a", "x-authentik-groups": "takmdm-admins"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Recon-7"
+
+
+# --------------------------------------------------------------------------- #
+# Enroll — QR + Wi-Fi on one page (W2)
+# --------------------------------------------------------------------------- #
+
+
+def test_enroll_page_carries_wifi_fields_on_the_qr_form(client: TestClient):
+    client.post("/enrollment/primary", data={"name": "Fleet"})
+
+    body = client.get("/enrollment").text
+    assert 'name="wifi_ssid"' in body
+    assert 'name="wifi_password"' in body
+    assert 'action="/enrollment/qr"' in body
+
+
+# --------------------------------------------------------------------------- #
 # Policy editor
 # --------------------------------------------------------------------------- #
 
@@ -139,6 +614,393 @@ def test_policy_page_shows_merge_strategies(client: TestClient):
     body = client.get(f"/policies/{policy_id}").text
     assert "merge_by_key" in body
     assert "intersect" in body
+
+
+# --------------------------------------------------------------------------- #
+# Policy list: tabs, templates, archive/restore (W3)
+# --------------------------------------------------------------------------- #
+
+ADMIN = {"x-authentik-username": "a", "x-authentik-groups": "takmdm-admins"}
+
+
+def test_policies_page_has_the_three_tabs_and_a_new_policy_button(client: TestClient):
+    body = client.get("/policies").text
+    for label in ("Device policies", "Templates", "Archived"):
+        assert label in body
+    assert 'data-modal-open="new-policy"' in body
+
+
+def test_create_from_scratch_page_renders(client: TestClient):
+    assert client.get("/policies/new").status_code == 200
+    assert "Spec (JSON)" in client.get("/policies/new").text
+
+
+def test_save_as_template_makes_a_template(client: TestClient):
+    policy_id = create_policy(client, "PW Base", "PASSWORD", '{"min_length": 10}')
+
+    client.post(
+        "/policies/clone",
+        data={"source_id": policy_id, "name": "PW Base (template)", "as_template": "true"},
+        follow_redirects=False,
+    )
+
+    templates_body = client.get("/policies").text
+    assert "PW Base (template)" in templates_body
+    # And it is flagged as a template, not assignable
+    tid = client.get("/api/v1/policies", params={"include_archived": True}, headers=ADMIN)
+    made = [p for p in tid.json() if p["name"] == "PW Base (template)"][0]
+    assert made["is_template"] is True
+
+
+def test_using_a_template_creates_an_independent_policy(client: TestClient, enrolled):
+    template_id = create_policy(client, "Kiosk src", "PASSWORD", '{"min_length": 12}')
+    client.post(
+        "/policies/clone",
+        data={"source_id": template_id, "name": "Kiosk tmpl", "as_template": "true"},
+    )
+    tmpl = client.get("/api/v1/policies", params={"include_archived": True}, headers=ADMIN).json()
+    tmpl_id = [p for p in tmpl if p["is_template"]][0]["id"]
+
+    resp = client.post(
+        "/policies/clone",
+        data={"source_id": tmpl_id, "name": "Kiosk North"},
+        follow_redirects=True,
+    )
+
+    assert resp.status_code == 200
+    new = client.get("/api/v1/policies", headers=ADMIN).json()
+    clone = [p for p in new if p["name"] == "Kiosk North"][0]
+    assert clone["is_template"] is False
+    assert clone["versions"][0]["spec"] == {"min_length": 12}
+
+
+def test_a_template_cannot_be_assigned(client: TestClient, enrolled):
+    device = enrolled(serial="W3-TMPL")
+    policy_id = create_policy(client, "T", "PASSWORD", '{"min_length": 9}')
+    client.post("/policies/clone", data={"source_id": policy_id, "name": "T copy", "as_template": "true"})
+    tmpl_id = [
+        p for p in client.get("/api/v1/policies", params={"include_archived": True}, headers=ADMIN).json()
+        if p["is_template"]
+    ][0]["id"]
+
+    response = client.post(
+        "/api/v1/assignments",
+        json={"policy_id": tmpl_id, "scope": "device", "target_id": device["device_id"]},
+        headers=ADMIN,
+    )
+    assert response.status_code == 409
+    assert "template" in response.json()["detail"]
+
+
+# --------------------------------------------------------------------------- #
+# Composite policies / profiles (W4)
+# --------------------------------------------------------------------------- #
+
+
+def test_profile_creator_lists_every_category(client: TestClient):
+    from app.policies.creator_catalog import CATALOG
+
+    body = client.get("/policies/new").text
+    for category in CATALOG:
+        assert category.label in body
+
+
+def test_placeholder_category_says_not_available(client: TestClient):
+    body = text_of(client.get("/policies/new").text)
+    assert "Not available yet" in body  # e.g. Knox, VPN, geofencing
+
+
+def test_create_profile_through_the_console_form(client: TestClient):
+    response = client.post(
+        "/profiles",
+        data={
+            "name": "Console Profile",
+            "description": "made via the form",
+            "spec__password": '{"min_length": 10}',
+            "spec__restrictions": "{}",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    body = text_of(response.text)
+    assert "Console Profile" in body
+    # The editor page shows each category in the rail
+    assert "Password" in body and "Restrictions" in body
+
+
+def test_profile_editor_page_renders_and_offers_archive(client: TestClient):
+    pid = _make_profile(client, "Editable", {"password": {"min_length": 9}})
+    body = client.get(f"/profiles/{pid}").text
+    assert 'action="/profiles/' in body
+    assert "Archive" in text_of(body)
+
+
+def _make_profile(client: TestClient, name: str, sections: dict) -> str:
+    r = client.post("/api/v1/profiles", json={"name": name, "sections": sections}, headers=ADMIN)
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def test_create_profile_makes_children_only_for_filled_sections(client: TestClient):
+    pid = _make_profile(
+        client,
+        "Field Baseline",
+        {"password": {"min_length": 10}, "restrictions": {}},
+    )
+
+    profile = client.get(f"/api/v1/profiles/{pid}", headers=ADMIN).json()
+    keys = {s["profile_section"] for s in profile["sections"]}
+    assert keys == {"password"}
+    assert profile["sections"][0]["versions"][0]["spec"] == {"min_length": 10}
+
+
+def test_profile_shows_on_the_device_policies_tab_and_children_do_not(client: TestClient):
+    _make_profile(client, "Kiosk Profile", {"password": {"min_length": 12}})
+
+    body = client.get("/policies").text
+    assert "Kiosk Profile" in body
+    # The child policy is named "Kiosk Profile · Password" — it must not be listed
+    assert "Kiosk Profile · Password" not in body
+
+
+def test_child_policies_are_absent_from_the_standalone_policy_api(client: TestClient):
+    _make_profile(client, "P", {"password": {"min_length": 9}})
+
+    standalone = client.get("/api/v1/policies", headers=ADMIN).json()
+    assert all(p["profile_id"] is None for p in standalone)
+
+
+def test_editing_a_section_publishes_a_new_version(client: TestClient):
+    pid = _make_profile(client, "Evolving", {"password": {"min_length": 8}})
+
+    client.post(
+        f"/profiles/{pid}/sections/password",
+        data={"spec": '{"min_length": 14}'},
+        follow_redirects=False,
+    )
+
+    section = client.get(f"/api/v1/profiles/{pid}", headers=ADMIN).json()["sections"][0]
+    assert [v["version"] for v in section["versions"]] == [1, 2]
+    assert section["versions"][-1]["spec"] == {"min_length": 14}
+
+
+def test_adding_a_section_later(client: TestClient):
+    pid = _make_profile(client, "Growing", {"password": {"min_length": 8}})
+
+    client.post(
+        f"/profiles/{pid}/sections/app_management",
+        data={"spec": '{"blocked_packages": ["com.foo.bar"]}'},
+        follow_redirects=False,
+    )
+
+    keys = {s["profile_section"] for s in client.get(f"/api/v1/profiles/{pid}", headers=ADMIN).json()["sections"]}
+    assert keys == {"password", "app_management"}
+
+
+def test_removing_a_section(client: TestClient):
+    pid = _make_profile(
+        client, "Shrinking", {"password": {"min_length": 8}, "restrictions": {"allow_camera": False}}
+    )
+
+    client.post(f"/profiles/{pid}/sections/restrictions/remove", follow_redirects=False)
+
+    keys = {s["profile_section"] for s in client.get(f"/api/v1/profiles/{pid}", headers=ADMIN).json()["sections"]}
+    assert keys == {"password"}
+
+
+def test_a_profile_section_cannot_be_assigned_directly(client: TestClient, enrolled):
+    device = enrolled(serial="W4-SEC")
+    pid = _make_profile(client, "PP", {"password": {"min_length": 11}})
+    child_id = client.get(f"/api/v1/profiles/{pid}", headers=ADMIN).json()["sections"][0]["id"]
+
+    resp = client.post(
+        "/api/v1/assignments",
+        json={"policy_id": child_id, "scope": "device", "target_id": device["device_id"]},
+        headers=ADMIN,
+    )
+    assert resp.status_code == 409
+    assert "profile" in resp.json()["detail"]
+
+
+# --------------------------------------------------------------------------- #
+# Profile assignment & resolution (W4b)
+# --------------------------------------------------------------------------- #
+
+
+def _effective(client: TestClient, device_id: str) -> dict:
+    return client.get(f"/api/v1/devices/{device_id}/effective-policy").json()
+
+
+def test_assigning_a_profile_resolves_all_its_sections(client: TestClient, enrolled):
+    device = enrolled(serial="W4B-ALL")
+    pid = _make_profile(
+        client,
+        "Full Profile",
+        {
+            "password": {"min_length": 12},
+            "app_management": {"blocked_packages": ["com.bad.app"]},
+        },
+    )
+
+    result = client.put(
+        f"/api/v1/profiles/{pid}/targets",
+        json={"device_ids": [device["device_id"]], "rank": 10},
+        headers=ADMIN,
+    )
+    assert result.status_code == 200, result.text
+
+    values = _effective(client, device["device_id"])["values"]
+    assert values["PASSWORD"]["min_length"] == 12
+    assert values["APP_CATALOG"]["blocked_packages"] == ["com.bad.app"]
+
+
+def test_profile_stacks_against_a_standalone_policy_by_rank(
+    client: TestClient, enrolled, assign
+):
+    device = enrolled(serial="W4B-RANK")
+    standalone = create_policy(
+        client, "Loose kiosk", "APP_CATALOG", '{"kiosk_package": "com.standalone"}'
+    )
+    assign(standalone, device["device_id"], rank=1)
+    pid = _make_profile(
+        client, "Tight kiosk", {"app_management": {"kiosk_package": "com.profile"}}
+    )
+    client.put(
+        f"/api/v1/profiles/{pid}/targets",
+        json={"device_ids": [device["device_id"]], "rank": 99},
+        headers=ADMIN,
+    )
+
+    # Profile at rank 99 wins the HIGHEST_RANK field.
+    assert _effective(client, device["device_id"])["values"]["APP_CATALOG"][
+        "kiosk_package"
+    ] == "com.profile"
+
+
+def test_unassigning_a_profile_clears_its_sections(client: TestClient, enrolled):
+    device = enrolled(serial="W4B-UNASSIGN")
+    pid = _make_profile(client, "Temp Profile", {"password": {"min_length": 13}})
+    client.put(
+        f"/api/v1/profiles/{pid}/targets",
+        json={"device_ids": [device["device_id"]]},
+        headers=ADMIN,
+    )
+    assert _effective(client, device["device_id"])["values"] != {}
+
+    client.put(
+        f"/api/v1/profiles/{pid}/targets", json={"device_ids": []}, headers=ADMIN
+    )
+
+    assert _effective(client, device["device_id"])["values"] == {}
+
+
+def test_archiving_an_assigned_profile_stops_it_applying(client: TestClient, enrolled):
+    device = enrolled(serial="W4B-ARCH")
+    pid = _make_profile(client, "Doomed Profile", {"password": {"min_length": 14}})
+    client.put(
+        f"/api/v1/profiles/{pid}/targets",
+        json={"device_ids": [device["device_id"]]},
+        headers=ADMIN,
+    )
+    assert _effective(client, device["device_id"])["values"] != {}
+
+    client.post(f"/api/v1/profiles/{pid}/archive", headers=ADMIN)
+
+    assert _effective(client, device["device_id"])["values"] == {}
+
+
+def test_removing_a_section_stops_it_applying(client: TestClient, enrolled):
+    device = enrolled(serial="W4B-RMSEC")
+    pid = _make_profile(
+        client,
+        "Two Section",
+        {"password": {"min_length": 11}, "app_management": {"kiosk_package": "com.k"}},
+    )
+    client.put(
+        f"/api/v1/profiles/{pid}/targets",
+        json={"device_ids": [device["device_id"]]},
+        headers=ADMIN,
+    )
+
+    client.delete(f"/api/v1/profiles/{pid}/sections/app_management", headers=ADMIN)
+
+    values = _effective(client, device["device_id"])["values"]
+    assert "PASSWORD" in values
+    assert "APP_CATALOG" not in values
+
+
+def test_editing_a_section_bumps_the_device_state_version(client: TestClient, enrolled):
+    device = enrolled(serial="W4B-WAKE")
+    pid = _make_profile(client, "Living Profile", {"password": {"min_length": 8}})
+    client.put(
+        f"/api/v1/profiles/{pid}/targets",
+        json={"device_ids": [device["device_id"]]},
+        headers=ADMIN,
+    )
+    _effective(client, device["device_id"])  # materialise the cache
+    before = client.get(f"/api/v1/devices/{device['device_id']}", headers=ADMIN).json()[
+        "state_version"
+    ]
+
+    client.put(
+        f"/api/v1/profiles/{pid}/sections/password",
+        json={"spec": {"min_length": 15}},
+        headers=ADMIN,
+    )
+    _effective(client, device["device_id"])
+
+    after = client.get(f"/api/v1/devices/{device['device_id']}", headers=ADMIN).json()[
+        "state_version"
+    ]
+    assert after > before
+
+
+def test_profile_editor_assign_form_assigns(client: TestClient, enrolled):
+    device = enrolled(serial="W4B-FORM")
+    pid = _make_profile(client, "Form Profile", {"password": {"min_length": 10}})
+
+    body = client.get(f"/profiles/{pid}").text
+    assert 'action="/profiles/' in body and "Assign to devices" in text_of(body)
+
+    client.post(
+        f"/profiles/{pid}/targets",
+        data={"rank": "20", "device_ids": [device["device_id"]]},
+        follow_redirects=False,
+    )
+
+    assert _effective(client, device["device_id"])["values"]["PASSWORD"]["min_length"] == 10
+
+
+def test_profile_name_shows_in_the_fleet_table(client: TestClient, enrolled):
+    device = enrolled(serial="W4B-FLEET")
+    pid = _make_profile(client, "Fleet Profile", {"password": {"min_length": 9}})
+    client.put(
+        f"/api/v1/profiles/{pid}/targets",
+        json={"device_ids": [device["device_id"]]},
+        headers=ADMIN,
+    )
+
+    assert "Fleet Profile" in text_of(client.get("/").text)
+
+
+def test_archive_then_restore_round_trip(client: TestClient, enrolled, assign):
+    device = enrolled(serial="W3-ARCH")
+    policy_id = create_policy(client, "Retire me", "PASSWORD", '{"min_length": 11}')
+    assign(policy_id, device["device_id"], rank=5)
+
+    client.post(f"/policies/{policy_id}/archive", follow_redirects=False)
+
+    # Gone from the device tab, present in archived, no longer applied
+    assert "Retire me" not in text_of(client.get("/policies").text).split("Archived")[0]
+    assert client.get(
+        f"/api/v1/devices/{device['device_id']}/effective-policy"
+    ).json()["values"] == {}
+
+    client.post(f"/policies/{policy_id}/restore", follow_redirects=False)
+
+    assert client.get(
+        f"/api/v1/devices/{device['device_id']}/effective-policy"
+    ).json()["values"]["PASSWORD"]["min_length"] == 11
 
 
 # --------------------------------------------------------------------------- #

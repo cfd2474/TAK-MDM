@@ -21,7 +21,6 @@ Versions are append-only. There is deliberately no endpoint that mutates an exis
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -29,11 +28,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import fetch_or_404, get_db
-from app.api.schemas import PolicyCreate, PolicyRead, PolicyVersionCreate, PolicyVersionRead
+from app.api.schemas import (
+    PolicyClone,
+    PolicyCreate,
+    PolicyRead,
+    PolicyVersionCreate,
+    PolicyVersionRead,
+)
 from app.db.models import Policy, PolicyVersion
 from app.policies.registry import PolicyTypeError, registry
 from app.security.admin_auth import AdminIdentity, admin_required
 from app.services import effective_policy as eff
+from app.services import policy_admin
 
 router = APIRouter(prefix="/api/v1/policies", tags=["policies"])
 
@@ -53,6 +59,7 @@ def create_policy(payload: PolicyCreate, session: Session = Depends(get_db)) -> 
         name=payload.name,
         policy_type=payload.policy_type,
         description=payload.description,
+        is_template=payload.is_template,
     )
     policy.versions.append(PolicyVersion(version=1, spec=spec, notes=payload.notes))
     session.add(policy)
@@ -70,6 +77,7 @@ def create_policy(payload: PolicyCreate, session: Session = Depends(get_db)) -> 
 def list_policies(
     policy_type: str | None = None,
     include_archived: bool = False,
+    include_sections: bool = False,
     session: Session = Depends(get_db),
 ) -> list[Policy]:
     stmt = select(Policy).order_by(Policy.name)
@@ -77,6 +85,9 @@ def list_policies(
         stmt = stmt.where(Policy.policy_type == policy_type)
     if not include_archived:
         stmt = stmt.where(Policy.archived_at.is_(None))
+    if not include_sections:
+        # Sections of a profile are managed through the profile.
+        stmt = stmt.where(Policy.profile_id.is_(None))
     return list(session.scalars(stmt))
 
 
@@ -120,9 +131,54 @@ def publish_version(
 @router.post("/{policy_id}/archive", response_model=PolicyRead)
 def archive_policy(policy_id: uuid.UUID, session: Session = Depends(get_db)) -> Policy:
     """Stop a policy applying without destroying the history of what it once set."""
-    policy: Policy = fetch_or_404(session, Policy, policy_id, "policy")
-    if policy.archived_at is None:
-        policy.archived_at = datetime.now(timezone.utc)
-        eff.invalidate_for_policy(session, policy.id)
+    fetch_or_404(session, Policy, policy_id, "policy")
+    policy = policy_admin.archive(session, policy_id)
+    session.commit()
+    return policy
+
+
+@router.post("/{policy_id}/restore", response_model=PolicyRead)
+def restore_policy(policy_id: uuid.UUID, session: Session = Depends(get_db)) -> Policy:
+    """Un-archive a policy. It may reach devices again immediately (D20)."""
+    fetch_or_404(session, Policy, policy_id, "policy")
+    policy = policy_admin.restore(session, policy_id)
+    session.commit()
+    return policy
+
+
+@router.post(
+    "/{policy_id}/clone",
+    response_model=PolicyRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def clone_policy(
+    policy_id: uuid.UUID,
+    payload: PolicyClone,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> Policy:
+    """Copy a policy or template into a new, independent policy.
+
+    Both "save as template" (`as_template=true`) and "use template"
+    (`as_template=false`) are this one operation.
+    """
+    fetch_or_404(session, Policy, policy_id, "policy")
+    try:
+        policy = policy_admin.clone(
+            session,
+            policy_id,
+            name=payload.name,
+            as_template=payload.as_template,
+            published_by=None if identity.is_anonymous else identity.username,
+        )
+    except policy_admin.PolicyAdminError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+    try:
         session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"a policy named {payload.name!r} already exists"
+        ) from exc
     return policy

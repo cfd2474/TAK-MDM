@@ -1,11 +1,14 @@
 {% extends "base.html" %}
+{% from "_macros.html" import csrf_field %}
 {% set nav = 'policies' %}
-{% block title %}{{ policy.name }} — TAK MDM{% endblock %}
+{% block title %}{{ policy.name }} — ATLAS{% endblock %}
 
 {% block content %}
 <h1>{{ policy.name }}</h1>
 <p class="sub">
   <span class="pill">{{ policy.policy_type }}</span>
+  {% if policy.is_template %}<span class="pill accent">template</span>{% endif %}
+  {% if policy.archived_at %}<span class="pill bad">archived</span>{% endif %}
   {{ policy.description or '' }}
 </p>
 
@@ -18,6 +21,21 @@
   <div class="banner">Targets updated: {{ request.query_params.get('assigned') }} assignment(s).</div>
 {% endif %}
 
+{% if policy.is_template %}
+<h2>Create a policy from this template</h2>
+<div class="panel">
+  <p class="sub">
+    A template is a blueprint — it is never assigned. Clone it into a policy, then
+    edit and assign that.
+  </p>
+  <form method="post" action="/policies/clone" class="toolbar">
+    {{ csrf_field(csrf_token) }}
+    <input type="hidden" name="source_id" value="{{ policy.id }}">
+    <input type="text" name="name" required placeholder="New policy name" style="min-width:280px">
+    <button type="submit">Create policy</button>
+  </form>
+</div>
+{% else %}
 <h2>Assign to devices</h2>
 <div class="panel">
   <p class="sub">
@@ -71,6 +89,7 @@
     <button type="submit" style="margin-top:14px">Apply</button>
   </form>
 </div>
+{% endif %}
 
 <h2>Versions</h2>
 <div class="panel">
@@ -123,5 +142,35 @@
       </div>
     </div>
   </div>
+</div>
+
+<h2>Manage</h2>
+<div class="panel">
+  <div class="toolbar">
+    {% if policy.archived_at %}
+      <form method="post" action="/policies/{{ policy.id }}/restore" style="margin:0">
+        {{ csrf_field(csrf_token) }}
+        <button type="submit">Restore</button>
+      </form>
+      <span class="muted">Un-archive. It may reach devices again immediately.</span>
+    {% else %}
+      <form method="post" action="/policies/{{ policy.id }}/archive" style="margin:0"
+            data-confirm="Archive {{ policy.name }}? It stops applying to every device but its history is kept.">
+        {{ csrf_field(csrf_token) }}
+        <button type="submit" class="danger">Archive</button>
+      </form>
+      <span class="muted">Stops applying everywhere; never deleted (D20).</span>
+    {% endif %}
+  </div>
+
+  {% if not policy.is_template %}
+  <form method="post" action="/policies/clone" class="toolbar" style="margin-top:8px">
+    {{ csrf_field(csrf_token) }}
+    <input type="hidden" name="source_id" value="{{ policy.id }}">
+    <input type="hidden" name="as_template" value="true">
+    <input type="text" name="name" required value="{{ policy.name }} (template)" style="min-width:280px">
+    <button type="submit" class="ghost">Save as template</button>
+  </form>
+  {% endif %}
 </div>
 {% endblock %}

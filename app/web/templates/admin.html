@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf_field, tabs, empty_state %}
+{% set nav = 'admin' %}
+{% block title %}Admin — ATLAS{% endblock %}
+
+{% block content %}
+{{ page_header('Admin', 'Certificates, integration settings, and operator-defined device attributes.') }}
+
+{% set tab_items = [('certificates', 'Certificates')] %}
+{% for grp in setting_groups %}{% set _ = tab_items.append((grp.group.key, grp.group.title)) %}{% endfor %}
+{% set _ = tab_items.append(('attributes', 'Custom attributes')) %}
+{% set _ = tab_items.append(('integrations', 'Integrations')) %}
+{% set _ = tab_items.append(('environment', 'Environment')) %}
+{{ tabs(tab_items, active='certificates', scope='admin-tabs') }}
+
+{% if request.query_params.get('saved') %}
+  <div class="banner good">Saved {{ request.query_params.get('saved') }} settings.</div>
+{% endif %}
+
+<div id="admin-tabs">
+  <div class="tab-panel" data-tab-panel="certificates">
+    <div class="panel">
+      <h2>Device certificate authority</h2>
+      <p class="sub">
+        <span class="mono">{{ ca.common_name }}</span> ·
+        CA valid {{ ca.ca_validity_days }} days ·
+        device certificates valid {{ ca.device_cert_validity_days }} days.
+        Revocation is a database check during auth (D25), not a CRL.
+      </p>
+      <p class="muted" style="font-size:12px">
+        The CA private key lives at <code>pki/ca.key</code> on the server (R8).
+        Enrollment tokens are managed on the <a href="/enrollment">Enroll</a> page.
+      </p>
+    </div>
+    <div class="panel">
+      <h3>Issued device certificates</h3>
+      {% if not certs %}
+        {{ empty_state('No certificates issued yet.') }}
+      {% else %}
+      <table data-sortable>
+        <thead><tr><th data-sort>Device</th><th data-sort>Serial (hex)</th><th data-sort>Issued</th><th data-sort>Expires</th><th data-sort>State</th><th></th></tr></thead>
+        <tbody>
+        {% for cert, serial in certs %}
+          <tr>
+            <td><a href="/devices/{{ cert.device_id }}" class="mono">{{ serial }}</a></td>
+            <td class="mono muted">{{ cert.serial_hex[:16] }}…</td>
+            <td class="muted">{{ cert.issued_at.strftime('%Y-%m-%d') }}</td>
+            <td class="muted">{{ cert.not_valid_after.strftime('%Y-%m-%d') }}</td>
+            <td>
+              {% if cert.revoked_at %}
+                <span class="pill bad">revoked</span>
+                <span class="muted">{{ cert.revoked_reason or '' }}</span>
+              {% else %}<span class="pill good">valid</span>{% endif %}
+            </td>
+            <td>
+              {% if not cert.revoked_at %}
+              <form method="post" action="/admin/certs/{{ cert.id }}/revoke" style="margin:0"
+                    data-confirm="Revoke this certificate? The device can no longer authenticate until it re-enrols.">
+                {{ csrf_field(csrf_token) }}
+                <button type="submit" class="danger">Revoke</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  {% for grp in setting_groups %}
+  <div class="tab-panel" data-tab-panel="{{ grp.group.key }}" hidden>
+    <div class="panel">
+      <h2>{{ grp.group.title }}</h2>
+      <p class="sub">{{ grp.group.description }}</p>
+      <form method="post" action="/admin/settings/{{ grp.group.key }}">
+        {{ csrf_field(csrf_token) }}
+        {% for field in grp.group.fields %}
+          {% set val = grp.current[field.key] %}
+          <label for="{{ field.key }}">{{ field.label }}{% if field.help %} <span class="muted">— {{ field.help }}</span>{% endif %}</label>
+          {% if field.kind == 'textarea' %}
+            <textarea id="{{ field.key }}" name="{{ field.key }}" rows="8">{{ val }}</textarea>
+          {% elif field.kind == 'bool' %}
+            <label class="muted" style="display:flex; gap:8px; align-items:center">
+              <input type="checkbox" name="{{ field.key }}" value="true" style="width:auto" {{ 'checked' if val == 'true' }}> enabled
+            </label>
+          {% elif field.kind == 'password' %}
+            <input id="{{ field.key }}" name="{{ field.key }}" type="password" class="field-full"
+                   placeholder="{{ '•••••••• (set — leave blank to keep)' if val else 'not set' }}">
+          {% else %}
+            <input id="{{ field.key }}" name="{{ field.key }}" type="{{ 'number' if field.kind == 'number' else 'text' }}"
+                   class="field-full" value="{{ val }}">
+          {% endif %}
+        {% endfor %}
+        <button type="submit" style="margin-top:12px">Save</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+
+  <div class="tab-panel" data-tab-panel="attributes" hidden>
+    <div class="panel">
+      <h2>Custom attributes</h2>
+      <p class="sub">
+        Operator-defined fields on devices — asset tag, owning unit, deployment
+        date. Not interpreted by the MDM; set each device's value on its page.
+      </p>
+      <form method="post" action="/admin/attributes" class="toolbar">
+        {{ csrf_field(csrf_token) }}
+        <input type="text" name="name" required placeholder="Attribute name">
+        <select name="attr_type">
+          {% for t in ['string', 'number', 'boolean', 'date'] %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+        </select>
+        <input type="text" name="description" placeholder="Description (optional)">
+        <button type="submit">Add</button>
+      </form>
+      {% if attributes %}
+      <table>
+        <thead><tr><th>Name</th><th>Type</th><th>Description</th><th></th></tr></thead>
+        <tbody>
+        {% for a in attributes %}
+          <tr>
+            <td>{{ a.name }}</td>
+            <td><span class="pill">{{ a.attr_type }}</span></td>
+            <td class="muted">{{ a.description or '—' }}</td>
+            <td>
+              <form method="post" action="/admin/attributes/{{ a.id }}/delete" style="margin:0"
+                    data-confirm="Delete the attribute {{ a.name }} and every device value for it?">
+                {{ csrf_field(csrf_token) }}
+                <button type="submit" class="danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}{{ empty_state('No custom attributes defined.') }}{% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="integrations" hidden>
+    <div class="panel">
+      <h2>Samsung Knox</h2>
+      <p class="muted">
+        Placeholder. KME and KPE licensing are gated on the pending Knox partner
+        application (R3). The AOSP path works without Knox; Knox is additive.
+      </p>
+    </div>
+    <div class="panel">
+      <h2>Android Enterprise</h2>
+      <p class="muted">
+        Placeholder. This deployment is Device Owner via sideload, with no managed
+        Google Play — Android Enterprise enrolment settings land here if that changes.
+      </p>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="environment" hidden>
+    <div class="panel">
+      <h2>Environment settings</h2>
+      <p class="sub">
+        Set in the deployment environment, not here — they are load-bearing for
+        provisioning and the trust model.
+      </p>
+      <table>
+        <thead><tr><th>Variable</th><th>Value</th></tr></thead>
+        <tbody>
+        {% for name, value in env_settings.items() %}
+          <tr><td class="mono">{{ name }}</td><td class="mono">{{ value }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -29,6 +29,7 @@ from app.api.schemas import (
     DeviceCreate,
     DeviceIdentifierRead,
     DeviceRead,
+    DeviceUpdate,
     GroupRead,
     MembershipUpdate,
     NamedCreate,
@@ -73,6 +74,21 @@ def list_devices(session: Session = Depends(get_db)) -> list[Device]:
 
 @router.get("/devices/{device_id}", response_model=DeviceRead)
 def get_device(device: Device = Depends(require_device)) -> Device:
+    return device
+
+
+@router.patch("/devices/{device_id}", response_model=DeviceRead)
+def update_device(
+    payload: DeviceUpdate,
+    device: Device = Depends(require_device),
+    session: Session = Depends(get_db),
+) -> Device:
+    """Edit operator-owned device fields. Identity and reported attributes are not
+    editable here — only the friendly name."""
+    fields = payload.model_dump(exclude_unset=True)
+    if "name" in fields:
+        device.name = (fields["name"] or "").strip() or None
+    session.commit()
     return device
 
 

@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf_field, empty_state %}
+{% set nav = 'content' %}
+{% block title %}Content — ATLAS{% endblock %}
+
+{% block content %}
+{{ page_header('Content', 'Files published for deployment. A file’s destination, persistence and zip-expansion live on the FILES policy that places it — shown here per file, with editable defaults the policy editor pre-fills.') }}
+
+<div class="panel">
+  <h2>Upload a file</h2>
+  <form method="post" action="/content/upload" enctype="multipart/form-data" class="toolbar">
+    {{ csrf_field(csrf_token) }}
+    <input type="file" name="file" required>
+    <input type="text" name="name" placeholder="Name (defaults to filename)">
+    <input type="text" name="description" placeholder="Description (optional)">
+    <button type="submit">Upload</button>
+  </form>
+  <p class="muted" style="font-size:12px">
+    Any file — a zip, a <code>.pref</code>, a certificate, an ATAK map source. Zips
+    are detected at upload so a policy can mark them for extraction (F5).
+  </p>
+</div>
+
+{% if not rows %}
+  <div class="panel">{{ empty_state('No files uploaded yet.') }}</div>
+{% endif %}
+
+{% for row in rows %}
+{% set f = row.file %}
+<div class="panel">
+  <div class="toolbar">
+    <strong>{{ f.name }}</strong>
+    {% if f.is_archive %}<span class="pill accent">archive</span>{% endif %}
+    <span class="muted">{{ f.original_filename }} · {{ row.size_bytes | filesizeformat }} · {{ f.media_type }}</span>
+    <span class="spacer"></span>
+    <form method="post" action="/content/{{ f.id }}/delete" style="margin:0"
+          data-confirm="Delete {{ f.name }}?">
+      {{ csrf_field(csrf_token) }}
+      <button type="submit" class="danger">Delete</button>
+    </form>
+  </div>
+  {% if f.description %}<p class="sub">{{ f.description }}</p>{% endif %}
+
+  <h3>Deployed by</h3>
+  {% if not row.references %}
+    <p class="muted">No policy places this file yet.</p>
+  {% else %}
+  <table>
+    <thead><tr><th>Policy</th><th>Destination</th><th>Tier</th><th>Persist</th><th>Extract</th><th>Overwrite</th></tr></thead>
+    <tbody>
+    {% for r in row.references %}
+      <tr>
+        <td><a href="{{ ('/profiles/' if r.is_profile_section else '/policies/') ~ r.policy_id }}">{{ r.policy_name }}</a></td>
+        <td class="mono">{{ r.dest_path }}</td>
+        <td><span class="pill {{ 'warn' if r.availability == 'optional' }}">{{ r.availability }}</span></td>
+        <td>{{ {none: '—', true: 'yes', false: 'no'}[r.persist] }}</td>
+        <td class="mono">{{ r.extract_to if r.extract else '—' }}</td>
+        <td class="muted">{{ r.overwrite }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <details style="margin-top:10px">
+    <summary class="muted">Metadata &amp; suggested deployment defaults</summary>
+    <form method="post" action="/content/{{ f.id }}/edit" style="margin-top:10px">
+      {{ csrf_field(csrf_token) }}
+      <div class="row">
+        <div>
+          <label>Name</label>
+          <input name="name" value="{{ f.name }}" class="field-full">
+          <label>Description</label>
+          <input name="description" value="{{ f.description or '' }}" class="field-full">
+        </div>
+        <div>
+          <label>Default destination</label>
+          <input name="default_dest_path" value="{{ f.default_dest_path or '' }}" class="field-full" placeholder="/sdcard/atak/imagery">
+          <label>Default persist</label>
+          <select name="default_persist" class="field-full">
+            <option value="inherit" {{ 'selected' if f.default_persist == none }}>inherit from tier</option>
+            <option value="yes" {{ 'selected' if f.default_persist == true }}>yes — keep it present</option>
+            <option value="no" {{ 'selected' if f.default_persist == false }}>no — place once</option>
+          </select>
+        </div>
+        <div>
+          <label>Default extraction</label>
+          <label class="muted" style="display:flex; gap:8px; align-items:center">
+            <input type="checkbox" name="default_extract" value="true" style="width:auto"
+                   {{ 'checked' if f.default_extract }}>
+            expand this archive on the device
+          </label>
+          <label>Default extract-to</label>
+          <input name="default_extract_to" value="{{ f.default_extract_to or '' }}" class="field-full">
+          <label>Default overwrite</label>
+          <select name="default_overwrite" class="field-full">
+            <option value="" {{ 'selected' if not f.default_overwrite }}>—</option>
+            {% for o in ['always', 'if_newer', 'if_absent'] %}
+              <option value="{{ o }}" {{ 'selected' if f.default_overwrite == o }}>{{ o }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <button type="submit" style="margin-top:10px">Save</button>
+    </form>
+  </details>
+</div>
+{% endfor %}
+{% endblock %}

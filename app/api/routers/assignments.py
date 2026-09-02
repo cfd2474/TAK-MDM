@@ -42,6 +42,20 @@ _TARGET_MODELS = {
 }
 
 
+def _reject_template(policy: Policy) -> None:
+    """A template or a profile section is not directly assignable."""
+    if policy.is_template:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"{policy.name!r} is a template; clone it into a policy before assigning",
+        )
+    if policy.profile_id is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"{policy.name!r} is a section of a profile; assign the profile instead",
+        )
+
+
 def _to_read(assignment: Assignment) -> AssignmentRead:
     target_id = assignment.device_id or assignment.group_id or assignment.tag_id
     return AssignmentRead(
@@ -64,6 +78,7 @@ def create_assignment(
     payload: AssignmentCreate, session: Session = Depends(get_db)
 ) -> AssignmentRead:
     policy: Policy = fetch_or_404(session, Policy, payload.policy_id, "policy")
+    _reject_template(policy)
 
     scope = AssignmentScope(payload.scope)
     target_model, label, target_column = _TARGET_MODELS[scope]
@@ -116,6 +131,7 @@ def set_policy_targets(
     the two could drift.
     """
     policy: Policy = fetch_or_404(session, Policy, policy_id, "policy")
+    _reject_template(policy)
 
     pinned = None
     if payload.pinned_version is not None:

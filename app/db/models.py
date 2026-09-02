@@ -42,6 +42,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    false as sa_false,
 )
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -134,6 +135,10 @@ class Device(Base):
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     serial_number: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # An operator-assigned friendly name. Optional: a freshly enrolled device has
+    # only the identity it reported. The console falls back to the serial for
+    # display when this is unset.
+    name: Mapped[str | None] = mapped_column(String(128), default=None)
     model: Mapped[str | None] = mapped_column(String(64), default=None)
     imei: Mapped[str | None] = mapped_column(String(32), default=None)
     os_version: Mapped[str | None] = mapped_column(String(32), default=None)
@@ -193,6 +198,32 @@ class Tag(Base):
 # --------------------------------------------------------------------------- #
 
 
+class PolicyProfile(Base):
+    """A named bundle of single-concern policies, edited as tabs and assigned as a
+    unit.
+
+    A profile does not hold policy content itself — each of its tabs is a real
+    ``Policy`` row (``Policy.profile_id`` set), so the resolver, the merge registry
+    and the stacking view keep working unchanged. The profile is a bulk editor and
+    a bulk-assignment target over those children (DW5).
+    """
+
+    __tablename__ = "policy_profile"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+    created_by: Mapped[str | None] = mapped_column(String(128), default=None)
+    archived_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+
+    sections: Mapped[list[Policy]] = relationship(
+        back_populates="profile",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
 class Policy(Base):
     """A named, single-concern policy. Its content lives in immutable versions."""
 
@@ -206,6 +237,20 @@ class Policy(Base):
     description: Mapped[str | None] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
     archived_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+    # A template is a reusable blueprint: it is never assigned and never reaches a
+    # device (the resolver skips it), it only gets cloned into a real policy.
+    is_template: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=sa_false()
+    )
+    # Set when this policy is a section of a profile: it is then managed only
+    # through that profile and hidden from the standalone policy list. NULL is an
+    # ordinary standalone policy.
+    profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("policy_profile.id", ondelete="CASCADE"), default=None, index=True
+    )
+    # Which creator-catalog category this section fills (e.g. "password"). NULL for
+    # standalone policies.
+    profile_section: Mapped[str | None] = mapped_column(String(64), default=None)
 
     versions: Mapped[list[PolicyVersion]] = relationship(
         back_populates="policy",
@@ -213,6 +258,7 @@ class Policy(Base):
         order_by="PolicyVersion.version",
         lazy="selectin",
     )
+    profile: Mapped[PolicyProfile | None] = relationship(back_populates="sections")
 
     @property
     def latest_version(self) -> PolicyVersion | None:
@@ -286,6 +332,47 @@ class Assignment(Base):
 
     policy: Mapped[Policy] = relationship(lazy="selectin")
     pinned_version: Mapped[PolicyVersion | None] = relationship(lazy="selectin")
+
+
+class ProfileAssignment(Base):
+    """Binds a whole profile to a device, group, or tag at a given rank.
+
+    The resolver expands one of these into an assignment of every section the
+    profile owns, so a profile stacks against standalone policies exactly as its
+    sections would individually — at this one rank.
+    """
+
+    __tablename__ = "profile_assignment"
+    __table_args__ = (
+        CheckConstraint(
+            "(CASE WHEN device_id IS NOT NULL THEN 1 ELSE 0 END) "
+            "+ (CASE WHEN group_id IS NOT NULL THEN 1 ELSE 0 END) "
+            "+ (CASE WHEN tag_id IS NOT NULL THEN 1 ELSE 0 END) = 1",
+            name="ck_profile_assignment_single_target",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    profile_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("policy_profile.id", ondelete="CASCADE"), index=True
+    )
+    scope: Mapped[AssignmentScope] = mapped_column(
+        Enum(AssignmentScope, native_enum=False, length=16)
+    )
+    device_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("device.id", ondelete="CASCADE"), default=None, index=True
+    )
+    group_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("device_group.id", ondelete="CASCADE"), default=None, index=True
+    )
+    tag_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("tag.id", ondelete="CASCADE"), default=None, index=True
+    )
+    rank: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+    profile: Mapped[PolicyProfile] = relationship(lazy="selectin")
 
 
 # --------------------------------------------------------------------------- #
@@ -593,6 +680,11 @@ class AppPackage(Base):
     label: Mapped[str | None] = mapped_column(String(255), default=None)
     signature_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
     signature_scheme: Mapped[str | None] = mapped_column(String(8), default=None)
+    # Offered in the ATLAS store — the curated set that ships with a deployment and
+    # is presented to operators as ready-to-assign.
+    store_listed: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=sa_false()
+    )
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
 
     versions: Mapped[list[AppPackageVersion]] = relationship(
@@ -605,6 +697,33 @@ class AppPackage(Base):
     @property
     def latest_version(self) -> AppPackageVersion | None:
         return self.versions[-1] if self.versions else None
+
+
+app_group_member = Table(
+    "app_group_member",
+    Base.metadata,
+    Column("group_id", Uuid, ForeignKey("app_group.id", ondelete="CASCADE"), primary_key=True),
+    Column("package_id", Uuid, ForeignKey("app_package.id", ondelete="CASCADE"), primary_key=True),
+    Column("position", Integer, nullable=False, default=0),
+)
+
+
+class AppGroup(Base):
+    """A named set of app packages, so a policy can reference the group rather than
+    listing every package by hand."""
+
+    __tablename__ = "app_group"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+    packages: Mapped[list[AppPackage]] = relationship(
+        secondary=app_group_member,
+        order_by=app_group_member.c.position,
+        lazy="selectin",
+    )
 
 
 class AppPackageVersion(Base):
@@ -672,6 +791,15 @@ class ManagedFile(Base):
     )
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
 
+    # Suggested deployment, set on the Content page. These are *defaults* the
+    # policy editor pre-fills — the authoritative destination/persist/extract for a
+    # given placement still live on the FILES policy entry that places the file.
+    default_dest_path: Mapped[str | None] = mapped_column(String(512), default=None)
+    default_persist: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    default_extract: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    default_extract_to: Mapped[str | None] = mapped_column(String(512), default=None)
+    default_overwrite: Mapped[str | None] = mapped_column(String(16), default=None)
+
     artifact: Mapped[Artifact] = relationship(lazy="selectin")
 
 
@@ -718,3 +846,50 @@ class EffectivePolicyCache(Base):
     payload: Mapped[dict] = mapped_column(JsonDict)
     stale: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     computed_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+
+# --------------------------------------------------------------------------- #
+# Admin: settings store and custom attributes
+# --------------------------------------------------------------------------- #
+
+
+class AppSetting(Base):
+    """A key/value the operator edits through the Admin console — EULA text, SMTP,
+    directory and SMS credentials, geofencing defaults. Environment-backed settings
+    are not stored here; they are shown read-only with their variable name."""
+
+    __tablename__ = "app_setting"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow, onupdate=_utcnow)
+    updated_by: Mapped[str | None] = mapped_column(String(128), default=None)
+
+
+class CustomAttribute(Base):
+    """An operator-defined field attached to devices — asset tag, owning unit,
+    deployment date. Not interpreted by the MDM; it is for the operator's own
+    inventory."""
+
+    __tablename__ = "custom_attribute"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    # string | number | boolean | date — validated in the schema, not a DB enum.
+    attr_type: Mapped[str] = mapped_column(String(16), default="string")
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+
+class DeviceAttributeValue(Base):
+    __tablename__ = "device_attribute_value"
+
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("device.id", ondelete="CASCADE"), primary_key=True
+    )
+    attribute_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("custom_attribute.id", ondelete="CASCADE"), primary_key=True
+    )
+    value: Mapped[str] = mapped_column(Text, default="")
+
+    attribute: Mapped[CustomAttribute] = relationship(lazy="selectin")

@@ -1,14 +1,22 @@
 {% extends "base.html" %}
-{% set nav = 'devices' %}
-{% block title %}{{ device.serial_number }} — TAK MDM{% endblock %}
+{% set nav = 'manage' %}
+{% block title %}{{ device.name or device.serial_number }} — ATLAS{% endblock %}
 
 {% block content %}
-<h1 class="mono">{{ device.serial_number }}</h1>
+<h1{% if not device.name %} class="mono"{% endif %}>{{ device.name or device.serial_number }}</h1>
 <p class="sub">
+  {% if device.name %}<span class="mono">{{ device.serial_number }}</span> · {% endif %}
   {{ device.model or 'unknown model' }} · Android {{ device.os_version or '?' }} ·
   agent {{ device.agent_version or '—' }} ·
   server has v{{ device.state_version }}, device applied v{{ device.acked_state_version }}
 </p>
+
+<form method="post" action="/devices/{{ device.id }}/rename" class="toolbar">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="text" name="name" value="{{ device.name or '' }}"
+         placeholder="Friendly name (blank to clear)" maxlength="128" style="min-width:280px">
+  <button type="submit" class="ghost">Save name</button>
+</form>
 
 {% if device.compliance_detail %}
   <div class="banner">Last reported problem: {{ device.compliance_detail }}</div>
@@ -210,6 +218,26 @@
   </p>
   {% else %}
     <p class="muted">No identifiers recorded — this device enrolled before they were tracked.</p>
+  {% endif %}
+</div>
+
+<h2 id="attributes">Custom attributes</h2>
+<div class="panel">
+  {% if not attributes %}
+    <p class="muted">
+      No custom attributes defined. Add them on the
+      <a href="/admin#tab-attributes">Admin</a> page.
+    </p>
+  {% else %}
+    {% for attr, value in attributes %}
+      <form method="post" action="/devices/{{ device.id }}/attributes" class="toolbar" style="margin:4px 0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="attribute_id" value="{{ attr.id }}">
+        <label style="margin:0; min-width:160px">{{ attr.name }} <span class="muted">({{ attr.attr_type }})</span></label>
+        <input type="text" name="value" value="{{ value }}" style="min-width:220px">
+        <button type="submit" class="ghost">Save</button>
+      </form>
+    {% endfor %}
   {% endif %}
 </div>
 

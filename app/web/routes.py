@@ -39,7 +39,17 @@ from typing import Any
 
 import qrcode
 import qrcode.image.svg
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
@@ -61,17 +71,32 @@ from app.db.models import (
     Device,
     DeviceGroup,
     EnrollmentState,
+    AppGroup,
+    CustomAttribute,
+    DeviceCertificate,
     ManagedFile,
     Policy,
     PolicyVersion,
+    ProfileAssignment,
     Tag,
 )
+from app.policies import creator_catalog
 from app.policies.registry import PolicyTypeError, registry
+from app.services import app_groups as app_group_service
 from app.services import commands as command_service
+from app.services import content_admin
+from app.services import custom_attributes as attribute_service
+from app.services import files as file_service
+from app.services import guides as guide_service
+from app.services import reports as report_service
+from app.services import settings_store
 from app.services import device_identity
 from app.services import device_logs as log_service
 from app.services import effective_policy as eff
+from app.services import fleet as fleet_service
 from app.services import packages as package_service
+from app.services import policy_admin
+from app.services import profiles as profile_service
 from app.services import provisioning
 from app.services.enrollment import (
     EnrollmentError,
@@ -134,18 +159,14 @@ def dashboard(
     session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
 ) -> HTMLResponse:
-    devices = list(session.scalars(select(Device).order_by(Device.serial_number)))
+    rows = fleet_service.fleet_rows(session)
     return _render(
         request,
-        "devices.html",
+        "manage.html",
         identity=identity,
-        devices=devices,
-        policy_count=session.scalar(
-            select(Policy).where(Policy.archived_at.is_(None)).limit(1)
-        )
-        is not None,
+        rows=rows,
         counts={
-            "devices": len(devices),
+            "devices": len(rows),
             "policies": len(list(session.scalars(select(Policy).where(Policy.archived_at.is_(None))))),
             "packages": len(list(session.scalars(select(AppPackage)))),
             "files": len(list(session.scalars(select(ManagedFile)))),
@@ -186,6 +207,7 @@ def device_detail(
         log_bundles=log_service.list_for_device(session, device_id),
         pending_log_request=_has_open_log_request(session, device_id),
         identifiers=device_identity.for_device(session, device_id),
+        attributes=attribute_service.values_for_device(session, device_id),
     )
 
 
@@ -220,6 +242,23 @@ def request_logs(
     command_service.enqueue(session, device, command_type=CommandType.COLLECT_LOGS)
     session.commit()
     return _redirect(f"/devices/{device_id}#logs")
+
+
+@router.post("/devices/{device_id}/rename")
+def rename_device_form(
+    device_id: uuid.UUID,
+    name: str = Form(default=""),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Set or clear a device's friendly name."""
+    device = session.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
+
+    device.name = name.strip() or None
+    session.commit()
+    return _redirect(f"/devices/{device_id}")
 
 
 @router.post("/devices/{device_id}/retire")
@@ -301,16 +340,283 @@ def list_policies(
     session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
 ) -> HTMLResponse:
-    policies = list(
-        session.scalars(select(Policy).where(Policy.archived_at.is_(None)).order_by(Policy.name))
-    )
     return _render(
         request,
         "policies.html",
         identity=identity,
-        policies=policies,
+        profiles=profile_service.list_profiles(session),
+        device_policies=policy_admin.list_tab(session, "device"),
+        templates=policy_admin.list_tab(session, "templates"),
+        archived=policy_admin.list_tab(session, "archived"),
+    )
+
+
+def _catalog_view(profile=None) -> list[dict[str, Any]]:
+    """The creator/editor category rail: each category with its merge reference and
+    (in edit mode) the current section spec."""
+    view: list[dict[str, Any]] = []
+    for category in creator_catalog.CATALOG:
+        definition = (
+            registry.get(category.policy_type).describe() if category.wired else None
+        )
+        section = (
+            profile_service.section_for(profile, category.key) if profile else None
+        )
+        spec = (
+            section.latest_version.spec
+            if section and section.latest_version
+            else {}
+        )
+        view.append(
+            {
+                "category": category,
+                "definition": definition,
+                "section": section,
+                "spec_json": json.dumps(spec, indent=2, sort_keys=True) if spec else "{}",
+            }
+        )
+    return view
+
+
+def _app_group_hints(session: Session) -> list[dict[str, Any]]:
+    """App groups as plain data for the App Management section's "insert" helper."""
+    return [
+        {"name": g.name, "packages": [p.package_name for p in g.packages]}
+        for g in app_group_service.list_groups(session)
+    ]
+
+
+@router.get("/policies/new", response_class=HTMLResponse)
+def new_policy_page(
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
+    """The guided profile creator: pick categories, fill the wired ones (DW5)."""
+    return _render(
+        request,
+        "profile_editor.html",
+        identity=identity,
+        mode="new",
+        profile=None,
+        catalog=_catalog_view(),
+        app_groups=_app_group_hints(session),
+    )
+
+
+@router.get("/policies/new/single", response_class=HTMLResponse)
+def new_single_policy_page(
+    request: Request,
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
+    """Advanced: a lone single-concern policy, outside any profile."""
+    return _render(
+        request,
+        "policy_new.html",
+        identity=identity,
         policy_types=[registry.get(name).describe() for name in registry.names()],
     )
+
+
+@router.post("/profiles")
+def create_profile_form(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(default=""),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    form = _sync_form(request)
+    sections: dict[str, dict] = {}
+    for category in creator_catalog.wired_categories():
+        raw = (form.get(f"spec__{category.key}") or "").strip()
+        if not raw or raw == "{}":
+            continue
+        try:
+            sections[category.key] = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            return _redirect(f"/policies/new?error={_quote(f'{category.label}: {exc}')}")
+
+    try:
+        profile = profile_service.create_profile(
+            session,
+            name=name,
+            description=description or None,
+            sections=sections,
+            created_by=None if identity.is_anonymous else identity.username,
+        )
+        session.commit()
+    except profile_service.ProfileError as exc:
+        return _redirect(f"/policies/new?error={_quote(str(exc))}")
+    except Exception:
+        session.rollback()
+        return _redirect(f"/policies/new?error={_quote(f'a profile named {name!r} already exists')}")
+
+    return _redirect(f"/profiles/{profile.id}")
+
+
+@router.get("/profiles/{profile_id}", response_class=HTMLResponse)
+def profile_detail(
+    profile_id: uuid.UUID,
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
+    profile = profile_service.get_profile(session, profile_id)
+    if profile is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
+
+    pas = list(
+        session.scalars(
+            select(ProfileAssignment).where(ProfileAssignment.profile_id == profile.id)
+        )
+    )
+    assigned = {
+        "device": {a.device_id for a in pas if a.scope is AssignmentScope.DEVICE},
+        "group": {a.group_id for a in pas if a.scope is AssignmentScope.GROUP},
+        "tag": {a.tag_id for a in pas if a.scope is AssignmentScope.TAG},
+    }
+    return _render(
+        request,
+        "profile_editor.html",
+        identity=identity,
+        mode="edit",
+        profile=profile,
+        catalog=_catalog_view(profile),
+        app_groups=_app_group_hints(session),
+        devices=list(session.scalars(select(Device).order_by(Device.serial_number))),
+        groups=list(session.scalars(select(DeviceGroup).order_by(DeviceGroup.name))),
+        tags=list(session.scalars(select(Tag).order_by(Tag.name))),
+        assigned=assigned,
+        current_rank=pas[0].rank if pas else 0,
+    )
+
+
+@router.post("/profiles/{profile_id}/targets")
+def set_profile_targets_form(
+    profile_id: uuid.UUID,
+    request: Request,
+    rank: int = Form(default=0),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Bulk assignment (F2): one profile, many targets, replace semantics."""
+    profile = profile_service.get_profile(session, profile_id)
+    if profile is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
+
+    form = _sync_form(request)
+    selected = {
+        AssignmentScope.DEVICE: _uuids(form.getlist("device_ids")),
+        AssignmentScope.GROUP: _uuids(form.getlist("group_ids")),
+        AssignmentScope.TAG: _uuids(form.getlist("tag_ids")),
+    }
+    existing = {
+        (a.scope, a.device_id or a.group_id or a.tag_id): a
+        for a in session.scalars(
+            select(ProfileAssignment).where(ProfileAssignment.profile_id == profile.id)
+        )
+    }
+    requested = {(scope, t) for scope, ids in selected.items() for t in ids}
+    affected: set[uuid.UUID] = set()
+
+    for key, assignment in existing.items():
+        if key not in requested:
+            affected |= eff.devices_targeted_by_profile_assignment(session, assignment)
+            session.delete(assignment)
+
+    column = {
+        AssignmentScope.DEVICE: "device_id",
+        AssignmentScope.GROUP: "group_id",
+        AssignmentScope.TAG: "tag_id",
+    }
+    for scope, target_id in requested:
+        if (scope, target_id) in existing:
+            existing[(scope, target_id)].rank = rank
+            affected |= eff.devices_targeted_by_profile_assignment(
+                session, existing[(scope, target_id)]
+            )
+            continue
+        assignment = ProfileAssignment(
+            profile_id=profile.id, scope=scope, rank=rank, **{column[scope]: target_id}
+        )
+        session.add(assignment)
+        session.flush()
+        affected |= eff.devices_targeted_by_profile_assignment(session, assignment)
+
+    session.flush()
+    eff.invalidate(session, affected)
+    session.commit()
+    return _redirect(f"/profiles/{profile_id}?assigned={len(requested)}")
+
+
+@router.post("/profiles/{profile_id}/sections/{category_key}")
+def upsert_section_form(
+    profile_id: uuid.UUID,
+    category_key: str,
+    spec: str = Form(default="{}"),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    profile = profile_service.get_profile(session, profile_id)
+    if profile is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
+    try:
+        parsed = json.loads(spec or "{}")
+        profile_service.upsert_section(
+            session,
+            profile,
+            category_key,
+            parsed,
+            published_by=None if identity.is_anonymous else identity.username,
+        )
+        session.commit()
+    except (json.JSONDecodeError, profile_service.ProfileError) as exc:
+        return _redirect(f"/profiles/{profile_id}?error={_quote(str(exc))}#cat-{category_key}")
+    return _redirect(f"/profiles/{profile_id}?saved={category_key}#cat-{category_key}")
+
+
+@router.post("/profiles/{profile_id}/sections/{category_key}/remove")
+def remove_section_form(
+    profile_id: uuid.UUID,
+    category_key: str,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    profile = profile_service.get_profile(session, profile_id)
+    if profile is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
+    profile_service.remove_section(session, profile, category_key)
+    session.commit()
+    return _redirect(f"/profiles/{profile_id}#cat-{category_key}")
+
+
+@router.post("/profiles/{profile_id}/archive")
+def archive_profile_form(
+    profile_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    profile = profile_service.get_profile(session, profile_id)
+    if profile is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
+    profile_service.archive(session, profile)
+    session.commit()
+    return _redirect("/policies")
+
+
+@router.post("/profiles/{profile_id}/restore")
+def restore_profile_form(
+    profile_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    profile = profile_service.get_profile(session, profile_id)
+    if profile is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
+    profile_service.restore(session, profile)
+    session.commit()
+    return _redirect(f"/profiles/{profile_id}")
 
 
 @router.post("/policies")
@@ -319,6 +625,7 @@ def create_policy(
     policy_type: str = Form(...),
     description: str = Form(default=""),
     spec: str = Form(default="{}"),
+    is_template: bool = Form(default=False),
     session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
 ) -> RedirectResponse:
@@ -326,9 +633,14 @@ def create_policy(
         parsed = json.loads(spec or "{}")
         validated = registry.validate_spec(policy_type, parsed)
     except (json.JSONDecodeError, PolicyTypeError) as exc:
-        return _redirect(f"/policies?error={_quote(str(exc))}")
+        return _redirect(f"/policies/new?error={_quote(str(exc))}")
 
-    policy = Policy(name=name, policy_type=policy_type, description=description or None)
+    policy = Policy(
+        name=name,
+        policy_type=policy_type,
+        description=description or None,
+        is_template=is_template,
+    )
     policy.versions.append(
         PolicyVersion(
             version=1,
@@ -341,8 +653,65 @@ def create_policy(
         session.commit()
     except Exception:
         session.rollback()
-        return _redirect(f"/policies?error={_quote(f'a policy named {name!r} already exists')}")
+        return _redirect(
+            f"/policies/new?error={_quote(f'a policy named {name!r} already exists')}"
+        )
 
+    return _redirect(f"/policies/{policy.id}")
+
+
+@router.post("/policies/{policy_id}/archive")
+def archive_policy_form(
+    policy_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    try:
+        policy_admin.archive(session, policy_id)
+    except policy_admin.PolicyAdminError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    session.commit()
+    return _redirect("/policies#tab-archived")
+
+
+@router.post("/policies/{policy_id}/restore")
+def restore_policy_form(
+    policy_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    try:
+        policy_admin.restore(session, policy_id)
+    except policy_admin.PolicyAdminError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    session.commit()
+    return _redirect(f"/policies/{policy_id}")
+
+
+@router.post("/policies/clone")
+def clone_policy_form(
+    source_id: uuid.UUID = Form(...),
+    name: str = Form(...),
+    as_template: bool = Form(default=False),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Clone a policy or template. Used by the "use a template" picker in the New
+    Policy modal and by "save as template" on the detail page."""
+    try:
+        policy = policy_admin.clone(
+            session,
+            source_id,
+            name=name,
+            as_template=as_template,
+            published_by=None if identity.is_anonymous else identity.username,
+        )
+        session.commit()
+    except policy_admin.PolicyAdminError as exc:
+        return _redirect(f"/policies?error={_quote(str(exc))}")
+    except Exception:
+        session.rollback()
+        return _redirect(f"/policies?error={_quote(f'a policy named {name!r} already exists')}")
     return _redirect(f"/policies/{policy.id}")
 
 
@@ -490,7 +859,7 @@ def enrollment_page(
     """
     return _render(
         request,
-        "enrollment.html",
+        "enroll.html",
         identity=identity,
         primary=get_primary_token(session),
         groups=list(session.scalars(select(DeviceGroup).order_by(DeviceGroup.name))),
@@ -651,6 +1020,466 @@ def _qr_svg(text: str) -> str:
     buffer = io.BytesIO()
     code.make_image().save(buffer)
     return buffer.getvalue().decode()
+
+
+# --------------------------------------------------------------------------- #
+# Apps — local packages, the ATLAS store, app groups (W5)
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/apps", response_class=HTMLResponse)
+def apps_page(
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
+    packages = list(session.scalars(select(AppPackage).order_by(AppPackage.package_name)))
+    return _render(
+        request,
+        "apps.html",
+        identity=identity,
+        packages=packages,
+        store_packages=[p for p in packages if p.store_listed],
+        groups=app_group_service.list_groups(session),
+    )
+
+
+@router.post("/apps/upload")
+def upload_app_form(
+    label: str = Form(default=""),
+    file: UploadFile = File(...),
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+    settings: Settings = Depends(get_settings),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    data = file.file.read()
+    if not data:
+        return _redirect("/apps?error=the+uploaded+file+is+empty")
+    if len(data) > settings.max_upload_bytes:
+        return _redirect(f"/apps?error={_quote(f'upload exceeds {settings.max_upload_bytes} bytes')}")
+    try:
+        package_service.ingest(session, storage, data, label=label.strip() or None)
+    except package_service.PackageError as exc:
+        return _redirect(f"/apps?error={_quote(str(exc))}")
+    eff.invalidate_all(session)
+    session.commit()
+    return _redirect("/apps")
+
+
+@router.post("/apps/{package_id}/store")
+def toggle_store_form(
+    package_id: uuid.UUID,
+    listed: str = Form(default=""),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    package = session.get(AppPackage, package_id)
+    if package is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "package not found")
+    package.store_listed = listed == "true"
+    session.commit()
+    return _redirect("/apps#tab-" + ("store" if package.store_listed else "local"))
+
+
+@router.post("/apps/{package_id}/delete")
+def delete_app_form(
+    package_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    package = session.get(AppPackage, package_id)
+    if package is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "package not found")
+    package_service.delete_package(session, storage, package)
+    eff.invalidate_all(session)
+    session.commit()
+    return _redirect("/apps")
+
+
+@router.post("/app-groups")
+def create_app_group_form(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(default=""),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    form = _sync_form(request)
+    try:
+        group = app_group_service.create(
+            session, name=name, description=description or None
+        )
+        app_group_service.set_members(session, group, _uuids(form.getlist("package_ids")))
+        session.commit()
+    except app_group_service.AppGroupError as exc:
+        return _redirect(f"/apps?error={_quote(str(exc))}#tab-groups")
+    except Exception:
+        session.rollback()
+        return _redirect(f"/apps?error={_quote(f'an app group named {name!r} already exists')}#tab-groups")
+    return _redirect("/apps#tab-groups")
+
+
+@router.post("/app-groups/{group_id}/members")
+def set_app_group_members_form(
+    group_id: uuid.UUID,
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    group = app_group_service.get(session, group_id)
+    if group is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "app group not found")
+    form = _sync_form(request)
+    try:
+        app_group_service.set_members(session, group, _uuids(form.getlist("package_ids")))
+        session.commit()
+    except app_group_service.AppGroupError as exc:
+        return _redirect(f"/apps?error={_quote(str(exc))}#tab-groups")
+    return _redirect("/apps#tab-groups")
+
+
+@router.post("/app-groups/{group_id}/delete")
+def delete_app_group_form(
+    group_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    group = app_group_service.get(session, group_id)
+    if group is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "app group not found")
+    app_group_service.delete(session, group)
+    session.commit()
+    return _redirect("/apps#tab-groups")
+
+
+# --------------------------------------------------------------------------- #
+# Content — managed files and where policies place them (W6)
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/content", response_class=HTMLResponse)
+def content_page(
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
+    return _render(
+        request,
+        "content.html",
+        identity=identity,
+        rows=content_admin.content_rows(session),
+    )
+
+
+@router.post("/content/upload")
+def upload_content_form(
+    name: str = Form(default=""),
+    description: str = Form(default=""),
+    file: UploadFile = File(...),
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+    settings: Settings = Depends(get_settings),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    data = file.file.read()
+    if not data:
+        return _redirect("/content?error=the+uploaded+file+is+empty")
+    if len(data) > settings.max_upload_bytes:
+        return _redirect(f"/content?error={_quote(f'upload exceeds {settings.max_upload_bytes} bytes')}")
+    try:
+        file_service.ingest_file(
+            session,
+            storage,
+            data,
+            name=name.strip() or file.filename or "unnamed",
+            original_filename=file.filename or "unnamed",
+            description=description or None,
+            media_type=file.content_type or "application/octet-stream",
+        )
+        session.commit()
+    except file_service.FileError as exc:
+        return _redirect(f"/content?error={_quote(str(exc))}")
+    return _redirect("/content")
+
+
+@router.post("/content/{file_id}/edit")
+def edit_content_form(
+    file_id: uuid.UUID,
+    name: str = Form(default=""),
+    description: str = Form(default=""),
+    default_dest_path: str = Form(default=""),
+    default_persist: str = Form(default="inherit"),
+    default_extract: str = Form(default=""),
+    default_extract_to: str = Form(default=""),
+    default_overwrite: str = Form(default=""),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    managed = session.get(ManagedFile, file_id)
+    if managed is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "file not found")
+
+    if name.strip():
+        managed.name = name.strip()
+    managed.description = description or None
+    managed.default_dest_path = default_dest_path.strip() or None
+    managed.default_persist = {"yes": True, "no": False}.get(default_persist)
+    managed.default_extract = True if default_extract == "true" else None
+    managed.default_extract_to = default_extract_to.strip() or None
+    managed.default_overwrite = default_overwrite or None
+    session.commit()
+    return _redirect("/content")
+
+
+@router.post("/content/{file_id}/delete")
+def delete_content_form(
+    file_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    managed = session.get(ManagedFile, file_id)
+    if managed is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "file not found")
+
+    refs = content_admin.references(session, file_id)
+    if refs:
+        names = ", ".join(sorted({r.policy_name for r in refs}))
+        return _redirect(
+            f"/content?error={_quote(f'remove it from {names} before deleting')}"
+        )
+
+    file_service.delete_file(session, storage, managed)
+    eff.invalidate_all(session)
+    session.commit()
+    return _redirect("/content")
+
+
+# --------------------------------------------------------------------------- #
+# Reports (W7)
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/reports", response_class=HTMLResponse)
+def reports_page(
+    request: Request,
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
+    return _render(
+        request,
+        "reports.html",
+        identity=identity,
+        reports=list(report_service.REPORTS.values()),
+    )
+
+
+@router.get("/reports/{key}")
+def report_view(
+    key: str,
+    request: Request,
+    format: str = "",
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+):
+    report = report_service.get(key)
+    if report is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown report")
+
+    columns, rows = report.build(session)
+
+    if format == "csv":
+        return Response(
+            content=report_service.to_csv(columns, rows),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{key}.csv"'},
+        )
+
+    return _render(
+        request,
+        "report.html",
+        identity=identity,
+        report=report,
+        columns=columns,
+        rows=rows,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Admin — certificates, integration settings, custom attributes (W8)
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/admin", response_class=HTMLResponse)
+def admin_page(
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
+    certs = list(
+        session.execute(
+            select(DeviceCertificate, Device.serial_number)
+            .join(Device, DeviceCertificate.device_id == Device.id)
+            .order_by(DeviceCertificate.issued_at.desc())
+        )
+    )
+    groups = [
+        {
+            "group": group,
+            "current": settings_store.group_values(session, key),
+        }
+        for key, group in settings_store.GROUPS.items()
+    ]
+    env_settings = {
+        "TAKMDM_SERVER_URL": settings.server_url,
+        "TAKMDM_ADMIN_AUTH_MODE": settings.admin_auth_mode,
+        "TAKMDM_CONSOLE_ORIGIN": settings.console_origin or "(unset)",
+        "TAKMDM_AGENT_PACKAGE_NAME": settings.agent_package_name,
+        "TAKMDM_AGENT_SIGNATURE_CHECKSUM": settings.agent_signature_checksum or "(unset)",
+    }
+    return _render(
+        request,
+        "admin.html",
+        identity=identity,
+        certs=certs,
+        ca={
+            "common_name": settings.ca_common_name,
+            "ca_validity_days": settings.ca_validity_days,
+            "device_cert_validity_days": settings.device_cert_validity_days,
+        },
+        setting_groups=groups,
+        env_settings=env_settings,
+        attributes=attribute_service.list_attributes(session),
+    )
+
+
+@router.post("/admin/settings/{group_key}")
+def save_admin_settings_form(
+    group_key: str,
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    if group_key not in settings_store.GROUPS:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown settings group")
+    form = _sync_form(request)
+    values = {f.key: (form.get(f.key) or "") for f in settings_store.GROUPS[group_key].fields}
+    # Checkboxes: present means "on".
+    for f in settings_store.GROUPS[group_key].fields:
+        if f.kind == "bool":
+            values[f.key] = "true" if form.get(f.key) else ""
+    settings_store.save_group(
+        session, group_key, values,
+        updated_by=None if identity.is_anonymous else identity.username,
+    )
+    session.commit()
+    return _redirect(f"/admin?saved={group_key}#tab-{group_key}")
+
+
+@router.post("/admin/attributes")
+def create_attribute_form(
+    name: str = Form(...),
+    attr_type: str = Form(default="string"),
+    description: str = Form(default=""),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    try:
+        attribute_service.create(
+            session, name=name, attr_type=attr_type, description=description or None
+        )
+        session.commit()
+    except attribute_service.AttributeError_ as exc:
+        return _redirect(f"/admin?error={_quote(str(exc))}#tab-attributes")
+    except Exception:
+        session.rollback()
+        return _redirect(f"/admin?error={_quote(f'an attribute named {name!r} already exists')}#tab-attributes")
+    return _redirect("/admin#tab-attributes")
+
+
+@router.post("/admin/attributes/{attribute_id}/delete")
+def delete_attribute_form(
+    attribute_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    attribute = session.get(CustomAttribute, attribute_id)
+    if attribute is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "attribute not found")
+    attribute_service.delete(session, attribute)
+    session.commit()
+    return _redirect("/admin#tab-attributes")
+
+
+@router.post("/admin/certs/{cert_id}/revoke")
+def revoke_cert_form(
+    cert_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    cert = session.get(DeviceCertificate, cert_id)
+    if cert is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "certificate not found")
+    if cert.revoked_at is None:
+        cert.revoked_at = datetime.now(timezone.utc)
+        cert.revoked_reason = "revoked from the admin console"
+        session.commit()
+    return _redirect("/admin#tab-certificates")
+
+
+@router.post("/devices/{device_id}/attributes")
+def set_device_attribute_form(
+    device_id: uuid.UUID,
+    attribute_id: uuid.UUID = Form(...),
+    value: str = Form(default=""),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    if session.get(Device, device_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
+    attribute_service.set_value(session, device_id, attribute_id, value)
+    session.commit()
+    return _redirect(f"/devices/{device_id}#attributes")
+
+
+# --------------------------------------------------------------------------- #
+# Guides — how-to, FAQ, release notes (W9)
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/guides", response_class=HTMLResponse)
+def guides_page(
+    request: Request,
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
+    return _render(
+        request,
+        "guides.html",
+        identity=identity,
+        howto=guide_service.list_guides("howto"),
+        faq=guide_service.list_guides("faq"),
+        release_notes=guide_service.release_notes_html(),
+    )
+
+
+@router.get("/guides/{category}/{slug}", response_class=HTMLResponse)
+def guide_view(
+    category: str,
+    slug: str,
+    request: Request,
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
+    if category not in guide_service.CATEGORIES:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown guide category")
+    found = guide_service.get_guide(category, slug)
+    if found is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "guide not found")
+    title, body = found
+    return _render(
+        request, "guide.html", identity=identity, guide_title=title, guide_body=body
+    )
 
 
 # --------------------------------------------------------------------------- #
