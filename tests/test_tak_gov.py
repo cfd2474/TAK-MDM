@@ -68,7 +68,11 @@ def test_device_code_defaults_fill_in_what_keycloak_omits():
 
     assert code.interval == 5  # RFC 8628 default
     assert code.expires_in == 600
-    assert code.verification_uri == "https://tak.gov/register-device"
+    # ⚠️ Not tak.gov/register-device, which is what tpc.md documents and what the
+    # live realm does NOT return. The fallback is the realm's own device page, so
+    # an operator following it lands where the code actually works.
+    assert code.verification_uri == tak_gov.FALLBACK_VERIFICATION_URI
+    assert "auth.tak.gov" in code.verification_uri
     # Falls back to the plain URI so the console always has something to link to.
     assert code.verification_uri_complete == code.verification_uri
 
@@ -116,12 +120,15 @@ def test_the_rfc_8628_soft_errors_are_distinguished_from_real_ones(error, expect
 # --------------------------------------------------------------------------- #
 
 
+# Field-for-field the shape a live ATAK-CIV 5.8.0 row has (captured 2026-09-02),
+# so this file is a contract test rather than a guess about one.
 FULL_PLUGIN = {
+    "identifier": "example-5-8-0-civ",
     "package_name": "com.atakmap.android.plugin.example",
     "display_name": "Example Plugin",
     "version": "5.8.0",
     "revision_code": 42,
-    "apk_url": "https://tak.gov/download/example.apk",
+    "apk_url": "https://tak.gov/eud_api/software/v1/plugins/example-5-8-0-civ/apk",
     "apk_hash": "AABBCC",
     "apk_size_bytes": 1048576,
     "apk_type": "plugin",
@@ -138,7 +145,22 @@ def test_a_full_row_maps_across():
     assert plugin.package_name == "com.atakmap.android.plugin.example"
     assert plugin.revision_code == 42
     assert plugin.apk_hash == "aabbcc"  # lowered, so hash comparison is stable
+    assert plugin.identifier == "example-5-8-0-civ"
     assert plugin.unknown_fields == ()
+
+
+def test_the_identifier_is_kept_because_the_urls_are_built_from_it():
+    """Absent from tpc.md's field table, present on every live row, and the
+    stable key both apk_url and icon_url embed."""
+    plugin = tak_gov.parse_plugin(FULL_PLUGIN)
+    assert plugin.identifier == "example-5-8-0-civ"
+    assert plugin.identifier in FULL_PLUGIN["apk_url"]
+
+
+def test_os_requirement_survives_arriving_as_a_number():
+    """Live rows send it as an int, not the string the field table implies."""
+    plugin = tak_gov.parse_plugin({**FULL_PLUGIN, "os_requirement": 21})
+    assert plugin.os_requirement == "21"
 
 
 def test_a_row_missing_everything_but_the_package_name_still_lists():

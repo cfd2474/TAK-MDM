@@ -43,6 +43,13 @@ DEVICE_ENDPOINT = f"{REALM}/auth/device"
 TOKEN_ENDPOINT = f"{REALM}/token"
 CATALOG_ENDPOINT = "https://tak.gov/eud_api/software/v1/plugins"
 
+#: Where to send the operator if the server ever omits `verification_uri`.
+#: ⚠️ `tpc.md` documents `https://tak.gov/register-device`; the live realm returns
+#: this instead (verified 2026-09-02), and a code entered at the documented page
+#: does not work. Using the server's value is always preferred — this is only the
+#: fallback, and it is the realm's own page rather than the wrong one.
+FALLBACK_VERIFICATION_URI = "https://auth.tak.gov/auth/realms/TPC/device"
+
 #: Public client, no secret. This is the same id ATAK itself uses.
 CLIENT_ID = "tak-gov-eud"
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
@@ -61,6 +68,12 @@ PRODUCTS = ("ATAK-CIV", "ATAK-GOV", "ATAK-MIL")
 DEFAULT_PRODUCT = "ATAK-CIV"
 
 _TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+
+#: ⚠️ Verified against the live service (2026-09-02): `eud_api` answers
+#: **421 "HTTP/2 Required"** over HTTP/1.1. The auth endpoints at auth.tak.gov do
+#: not care, so the link succeeds and only the catalog fails — which reads as a
+#: permissions problem and is not one. Requires the `h2` package.
+_HTTP2 = True
 
 
 class TakGovError(RuntimeError):
@@ -97,7 +110,7 @@ def parse_device_code(payload: dict[str, Any]) -> DeviceCode:
     except KeyError as exc:  # pragma: no cover - defensive
         raise TakGovError(f"device authorization response missing {exc}") from exc
 
-    uri = payload.get("verification_uri") or "https://tak.gov/register-device"
+    uri = payload.get("verification_uri") or FALLBACK_VERIFICATION_URI
     return DeviceCode(
         device_code=device_code,
         user_code=user_code,
@@ -172,6 +185,10 @@ class Plugin:
     """
 
     package_name: str
+    #: The catalog's own stable id (e.g. "wave-5-8-0-civ"). Absent from the field
+    #: table in `tpc.md`, found on every live row, and load-bearing: both
+    #: ``apk_url`` and ``icon_url`` are built from it.
+    identifier: str | None = None
     display_name: str | None = None
     version: str | None = None
     revision_code: int | None = None
@@ -189,7 +206,7 @@ class Plugin:
 
 
 _KNOWN = {
-    "package_name", "display_name", "version", "revision_code", "apk_url",
+    "package_name", "identifier", "display_name", "version", "revision_code", "apk_url",
     "apk_hash", "apk_size_bytes", "apk_type", "os_requirement",
     "tak_prerequisite", "description", "platform", "icon_url",
 }
@@ -215,6 +232,7 @@ def parse_plugin(raw: dict[str, Any]) -> Plugin | None:
         return None
     return Plugin(
         package_name=package_name,
+        identifier=_str_or_none(raw.get("identifier")),
         display_name=_str_or_none(raw.get("display_name")),
         version=_str_or_none(raw.get("version")),
         revision_code=_int_or_none(raw.get("revision_code")),
@@ -390,7 +408,7 @@ def _client(client: httpx.Client | None) -> httpx.Client:
     """
     if client is not None:
         return _Borrowed(client)  # type: ignore[return-value]
-    return httpx.Client(timeout=_TIMEOUT)
+    return httpx.Client(timeout=_TIMEOUT, http2=_HTTP2)
 
 
 class _Borrowed:

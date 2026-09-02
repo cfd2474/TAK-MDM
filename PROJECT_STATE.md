@@ -3667,11 +3667,37 @@ whole of the stated ask) as one checkpoint, then 6 (import) after.
 * **Unlink is local.** It does not revoke anything at tak.gov, and the panel says
   so — an operator would otherwise reasonably assume it did.
 
-⚠️ **Untested against the real tak.gov.** Everything above is verified against
-`httpx.MockTransport` standing in for the shape `tpc.md` documents. `eud_api` is
-undocumented, so the first real link is also the first test of that contract.
-The adapter is built to degrade a column rather than the page, and
-`Plugin.unknown_fields` surfaces anything upstream grows.
+##### ✅ Verified against the live service, 2026-09-02
+
+Linked `michael.leckliter@coronaca.gov`, pulled **86 ATAK-CIV 5.8.0 plugins**,
+and downloaded one (`com.atakmap.android.oceusvpn`, 17 373 bytes) with a
+SHA-256 matching the catalog. Link → catalog → verified download, end to end.
+
+**Four things `tpc.md` had wrong or missing, now corrected there:**
+
+1. **The verification URI.** Documented as `https://tak.gov/register-device`; the
+   realm returns `https://auth.tak.gov/auth/realms/TPC/device`, and a code
+   entered at the documented page does not work. We were saved only because the
+   parser prefers the server's value — hardcoding the documented one, as the doc
+   implies, would have sent the operator to a dead end. The *fallback* has been
+   changed too, since a wrong fallback is worse than none.
+2. **`eud_api` requires HTTP/2** — `421 HTTP/2 Required` over HTTP/1.1. This one
+   is nasty: `auth.tak.gov` does not care, so **the link succeeds and only the
+   catalog fails**, which reads as an entitlements problem and is not one. Fixed
+   with `http2=True`; `h2` is now pinned in `requirements.txt`.
+3. **The code TTL is ~3 minutes**, not the RFC default of 10.
+4. **`identifier`** (e.g. `wave-5-8-0-civ`) is on every row, is the key both
+   `apk_url` and `icon_url` are built from, and is absent from the doc's field
+   table. It is now modelled. `os_requirement` also arrives as an int.
+
+**The defensive parsing earned itself.** All 86 rows parsed with no error, and
+`identifier` showed up in `Plugin.unknown_fields` on 86/86 — the design surfaced
+an undocumented field instead of silently dropping it, which is exactly the
+failure this was built to avoid. The only "missing" data was `tak_prerequisite`
+on 10 rows, which are standalone apps rather than plugins.
+
+`tests/test_tak_gov.py`'s fixture row is now field-for-field a real one, so it is
+a contract test rather than a guess about the contract. 47 tests.
 
 ⚠️ **R16 — the refresh lock is process-local.** `threading.Lock` is correct for
 the single-worker deployment this ships as. Under multiple workers two processes

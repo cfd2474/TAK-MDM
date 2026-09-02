@@ -1,5 +1,33 @@
 # Server-Side TAK.gov EUD Link
 
+> ## ✅ Verified against the live service — 2026-09-02
+>
+> ATLAS linked a real account (`michael.leckliter@coronaca.gov`), pulled **86
+> ATAK-CIV 5.8.0 plugins**, and downloaded one with a matching SHA-256. The
+> premise of this document holds: a headless server can complete "Link EUD" and
+> hold the credential.
+>
+> **Four corrections, each of which cost a failure to find:**
+>
+> 1. **The verification URI below is wrong.** §1 and §Flow say
+>    `https://tak.gov/register-device`. The realm actually returns
+>    `https://auth.tak.gov/auth/realms/TPC/device`, and a code entered at the
+>    documented page does not work. Always use the `verification_uri` the server
+>    sends; never hardcode one.
+> 2. **`eud_api` requires HTTP/2.** Over HTTP/1.1 it answers **`421 HTTP/2
+>    Required`**. `auth.tak.gov` does *not* care, so the link succeeds and only
+>    the catalog fails — which reads as a permissions problem and is not one.
+>    With `httpx` this means `http2=True` and the `h2` package.
+> 3. **The code TTL is ~3 minutes, not the RFC default of 10.** Observed
+>    `expires_in` of 180 s. Plan the admin experience around that.
+> 4. **§4's field table is missing `identifier`** (e.g. `wave-5-8-0-civ`), which
+>    is on every row and is the key both `apk_url` and `icon_url` are built from.
+>    `os_requirement` also arrives as an **integer**, not a string.
+>
+> Everything else in §4 matched field-for-field. 10 of the 86 rows have no
+> `tak_prerequisite` — those are standalone apps rather than plugins, not a
+> parsing fault.
+
 **Question:** Can a server application use ATAK's "Link EUD" process to get direct access to the TAK.gov plugin repository, and can it be driven from a webservice (an MDM)?
 
 **Answer:** Yes. "Link EUD" is not device-bound magic — it is a stock **OAuth 2.0 Device Authorization Grant (RFC 8628)** against TAK.gov's Keycloak. Nothing in the flow requires Android or a physical device. A headless server can complete it and hold the credential indefinitely.

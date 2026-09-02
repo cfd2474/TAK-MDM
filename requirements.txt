@@ -12,3 +12,5 @@ jinja2==3.1.4
 qrcode==8.0
 pytest==8.3.3
 httpx==0.27.2
+# tak.gov's eud_api refuses HTTP/1.1 with 421; httpx needs h2 to speak HTTP/2.
+h2==4.4.1
