@@ -13,26 +13,26 @@ update after every completed step.
 closed. **Enrollment is now a single persistent token with 15-minute signed QR
 derivatives** (Chunk 14), verified live through real nginx — including that
 retiring the primary kills an already-issued, still-time-valid QR immediately.
-Agent **v34 (`0.9.4`)** — v32 is what is running on `SM-X520` (compliant, serial
-`R5GL40MMHRN`). **W14 Wi-Fi, W15 quick wins and W16 allowlist enforcement all
-hardware-proven. W17 closed R2** — a DO cannot place XAPK OBB files (EACCES probed
-on hardware); the agent says so loudly and the Apps page flags it. **W18 closed
-the policy→agent audit** — Wi-Fi `auto_join`/`mac_randomization` dropped
-(`@SystemApi`), password `min_letters`/`min_digits`/`min_symbols` implemented via
-the granular DPM family. **W17 and W18 agent changes are not yet pushed to the
-tablet.**
+Agent **v34 (`0.9.4`)** running on `SM-X520` (compliant, serial `R5GL40MMHRN`).
+**W14 Wi-Fi, W15 quick wins, W16 allowlist enforcement and W18's granular
+password path all hardware-proven. W17 closed R2** — a DO cannot place XAPK OBB
+files (EACCES probed on hardware); the agent says so loudly and the Apps page
+flags it. **W18 closed the policy→agent audit** — Wi-Fi
+`auto_join`/`mac_randomization` dropped (`@SystemApi`), password
+`min_letters`/`min_digits`/`min_symbols` implemented via the granular DPM family
+and proven on the tablet (`passwordQuality` 0x20000→0x60000→0x20000 across a
+publish/revert cycle, `errors=0`).
 **✅ Web UI expansion (Chunks W1–W10, plus W4b) COMPLETE.** Eight-section ATLAS
 console — Enroll, Manage, Policies, Apps, Content, Reports, Admin, Guides — on
 server-rendered Jinja with no build step. **W10 replaced JSON-textarea policy
 editing with generated typed forms** (dropdowns, tri-state controls, repeatable
 rows; per-field merge hints). **W12 split each category's sub-topics into
 navigable sub-pages** with green-check completion markers. **W13 wired the
-Networks type; W14's agent Wi-Fi applier and W15's agent quick wins (password
-history, screen timeout, app auto_update) and W16's allowlist enforcement are
-hardware-proven on `SM-X520`. W17 closed R2 (OBB placement) as not feasible,
-made loud; W18 closed the policy→agent audit (Wi-Fi `@SystemApi` fields dropped,
-password character-class minimums implemented).** 448 server tests + 52 agent
-tests.
+Networks type; W14's Wi-Fi applier, W15's quick wins, W16's allowlist enforcement
+and W18's granular password path are all hardware-proven on `SM-X520`. W17 closed
+R2 (OBB placement) as not feasible, made loud; W18 closed the policy→agent audit
+(Wi-Fi `@SystemApi` fields dropped, password character-class minimums
+implemented and proven on the tablet).** 448 server tests + 52 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -2783,7 +2783,7 @@ The policy→agent audit's last item. Research (official DPM reference, 2026-09-
    verification on `SM-X520` (`quality: complex` + `min_digits: 2` → the device
    demands a complex passcode) is the checkpoint.
 
-##### Status: ✅ steps 1–7 COMPLETE — 448 server tests, 52 agent tests, agent v34 (`0.9.4`). Hardware verification pending.
+##### Status: ✅ COMPLETE and hardware-proven — 448 server tests, 52 agent tests, agent v34 (`0.9.4`) running on `SM-X520`.
 
 - Specs: `WifiNetwork.auto_join` / `.mac_randomization` and the `MacRandomization`
   enum removed. `PasswordSpec` `min_*` descriptions sharpened; fields kept.
@@ -2800,9 +2800,21 @@ The policy→agent audit's last item. Research (official DPM reference, 2026-09-
   ⏳ not-yet-re-verified. §6d — the two Wi-Fi fields removed and why.
 - Tests: `test_wifi_form_round_trip` updated for the removed fields.
 
-**Not done:** push v34 to `SM-X520` and confirm a `quality: complex` +
-`min_digits: 2` policy makes the device demand a complex passcode (the granular
-path replaced a hardware-verified bucket path, so it needs its own proof).
+**Hardware-proven on `SM-X520` (2026-09-02, agent v34), full cycle:**
+
+| Policy pushed | `dumpsys device_policy` (our admin) |
+|---|---|
+| `{min_length: 13}` | `passwordQuality=0x20000` (NUMERIC), `minimumPasswordLength=13` |
+| `{min_length: 13, quality: 6, min_digits: 2}` | `passwordQuality=0x60000` (COMPLEX), `minimumPasswordLength=13`, `minimumPasswordNumeric=2` |
+| revert to `{min_length: 13}` | quality fell to `0x20000`, `minimumPasswordNumeric` back to the `1` default |
+
+`SyncService: sync: state=N applied=N errors=0` on all three. Both branches of
+`PasswordPlan.effectiveQuality` (NUMERIC for a length floor, COMPLEX for a
+character-class minimum) confirmed, and the quality field reverts.
+
+**W17's OBB apply_error** ships in v34 but is **verified by inspection only** —
+no XAPK with an OBB payload is uploaded to test against, and the underlying fact
+(EACCES) is already hardware-proven. Fold a real OBB-XAPK apply into R5 work.
 
 ---
 
@@ -2858,8 +2870,10 @@ path replaced a hardware-verified bucket path, so it needs its own proof).
   6 tests: quality is derived as the strictest of the `quality` field, NUMERIC
   for a length floor, COMPLEX for any character-class minimum). Android reference
   §6c gets the family's contract (the `PASSWORD_QUALITY_COMPLEX` precondition,
-  the `setRequiredPasswordComplexity` clash). **Hardware proof of the granular
-  path is still pending** — it replaced a bucket path that was verified.
+  the `setRequiredPasswordComplexity` clash). **Hardware-proven on `SM-X520`
+  (v34):** `{quality: complex, min_digits: 2}` moved the device to
+  `passwordQuality=0x60000` + `minimumPasswordNumeric=2`; reverting dropped it to
+  NUMERIC. `errors=0` throughout.
 - **2026-09-02** — **W17: R2 (XAPK OBB placement) closed — not feasible, made
   loud.** 448 server tests, 46 agent tests, agent v33 (`0.9.3`). A `probe_obb`
   debug action wrote to `/sdcard/Android/obb/org.takmdm.testapp/` on `SM-X520`

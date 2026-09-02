@@ -645,10 +645,17 @@ if a `min_length` is set, and `COMPLEX` if any `min_letters`/`min_digits`/
 `min_symbols` is set; calls `setPasswordQuality` first, then the length and
 per-character-class setters. `history_length` / expiry / lockout are unchanged.
 
-📖→⏳ **Not yet re-verified on hardware after W18** — the pre-W18 path (complexity
-buckets) was verified; the granular path needs a `quality: complex` +
-`min_digits: 2` policy pushed to `SM-X520` to confirm the device then demands a
-complex passcode.
+✅ **Verified on `SM-X520` (agent v34), both directions:**
+
+| Policy | `dumpsys device_policy` for `org.takmdm.agent` |
+|---|---|
+| `{min_length: 13}` | `passwordQuality=0x20000` (NUMERIC), `minimumPasswordLength=13` |
+| `{min_length: 13, quality: 6, min_digits: 2}` | `passwordQuality=0x60000` (COMPLEX), `minimumPasswordLength=13`, `minimumPasswordNumeric=2` |
+| back to `{min_length: 13}` | `passwordQuality` fell to `0x20000`, `minimumPasswordNumeric` back to the `1` default |
+
+`sync: … applied=N errors=0` on every step. The pre-W18 path set
+`mPasswordComplexity` (a bucket) and left `minimumPasswordLength=0`; the granular
+path leaves `mPasswordComplexity=0` and sets the real minimums, as expected.
 
 ### Screenshot is not available to a Device Owner
 
