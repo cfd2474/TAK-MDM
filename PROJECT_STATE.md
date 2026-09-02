@@ -13,7 +13,7 @@ update after every completed step.
 closed. **Enrollment is now a single persistent token with 15-minute signed QR
 derivatives** (Chunk 14), verified live through real nginx — including that
 retiring the primary kills an already-issued, still-time-valid QR immediately.
-Agent **v37 (`0.9.7`)** running on `SM-X520` (compliant, serial `R5GL40MMHRN`).
+Agent **v39 (`0.9.9`)** running on `SM-X520` (compliant, serial `R5GL40MMHRN`).
 **No hardware verification is outstanding** — W17, W23 and W24 all cleared
 2026-09-02 (W25).
 **W14 Wi-Fi, W15 quick wins, W16 allowlist, W18's granular password path and
@@ -2634,6 +2634,10 @@ but **not reverted** when the field is dropped from the policy — only the bool
 is to set the field to a permissive value (`history_length: 0`, a large timeout),
 which the agent does apply.
 
+> ✅ **Fixed for the PASSWORD fields in W26 (R14)** — they are now driven to a
+> definite value every reconcile, absent meaning permissive. This paragraph still
+> stands for `RESTRICTIONS.screen_timeout_seconds`, which W26 did not touch.
+
 **The policy→agent audit is closed (W18):**
 * ~~XAPK **OBB** placement (R2)~~ — ✅ W17: not feasible for a normally-installed
   DO (EACCES probed on `SM-X520`); agent reports it loudly, Apps page flags it.
@@ -3023,6 +3027,11 @@ relaxed first, which the agent has no path for (W15). Undoing a `set_password`
 today means also publishing a permissive `min_length`/`quality` — worth a small
 follow-on that clears both when the passcode field goes away.
 
+> ✅ **Closed by W26 (R14).** The constraints now release themselves: dropping a
+> field from the policy pushes the permissive value, so no manual counter-policy
+> is needed. This gap went on to cause a real failure before it was fixed — see
+> R14.
+
 - Spec: `PasswordSpec.set_password` (`HIGHEST_RANK`, 4–16 chars, `password`
   control, `ui_secret`) + a validator (must be ≥ this policy's own `min_length`).
 - Form: `FormField.secret`; `_password` macro + `_control` branch;
@@ -3310,6 +3319,75 @@ footer and **no field contents**. Screenshot in the session scratchpad
 - The friendly name still only reaches the ATLAS console + the ATLAS MDM app's
   Device tab; the OS "About phone" name is unchanged, and stays that way.
 
+#### 🔻 W26 — R14: release password scalars instead of latching them
+
+**The bug, found in the wild (2026-09-02).** `applyPassword` only calls a DPM
+setter when the field is *present* in the merged spec. Nothing ever pushes a
+value when a field is *absent*, so every scalar it has ever set stays latched on
+the device forever. On `SM-X520` this left `minimumPasswordLength=13` from a
+policy that no longer applies, which then **rejected** a new policy's
+`set_password: "6819"` — and there is no console-side way out. W15 documented
+this as a limitation; W20 made it acute; it is now a live failure.
+
+**The rule this restores.** Everywhere else in the desired-state model, absent
+means "not managed", which on the device means "not enforced" — that is why the
+boolean `allow_*` restrictions revert correctly. The password scalars are the
+only place that silently breaks it. `applyPassword` becomes **fully declarative**:
+every field it manages is driven to a definite value on every reconcile, and the
+value for "absent" is the permissive one.
+
+⚠️ **This is a deliberate behaviour change.** Removing a PASSWORD policy now
+actually relaxes the device, where before it left the old constraint in place. The
+old behaviour looked fail-secure but was really just un-clearable state, and it is
+what produced a permanently DEGRADED device.
+
+##### Plan (5 steps)
+
+1. **`PasswordPlan.effectiveQuality` returns a non-null `PwQuality`** —
+   `UNSPECIFIED` when nothing is asked, rather than null. The applier then always
+   has a value to push. Update `charClassMinimumsApply`.
+2. **`PolicyApplier.applyPassword` drives every field**, absent → permissive:
+   quality always (`UNSPECIFIED` when unset) · `min_length ?: 0` ·
+   `history_length ?: 0` · `expiration_days ?: 0` (no expiry) ·
+   `max_failed_attempts_before_wipe ?: 0` (never wipe — **the most dangerous one
+   to leave latched**) · `lock_timeout_seconds ?: 0`. Char-class minimums are only
+   touched when the effective quality is `COMPLEX`, because below it they throw
+   `IllegalStateException` (Android reference §6c) and are inert anyway; when it
+   *is* COMPLEX, absent ones are pushed as 0.
+3. **Agent unit tests** for the new `PasswordPlan` contract.
+4. **Docs** — Android reference §6c gains the "absent means permissive" rule and
+   why; close R14; retire the W15/W20 "scalars are not reverted" caveats.
+5. **Agent v39; hardware-verify on `SM-X520`.** The stuck "Password Test" policy
+   must go green and the device return to `compliant`; then prove the cycle both
+   ways — add `min_length`, see it latch; remove it, see it released.
+
+##### Status: ✅ COMPLETE and hardware-proven — 464 server tests, 54 agent tests, agent v39 (`0.9.9`) on `SM-X520`.
+
+**The stuck device recovered.** Before v39: `minimumPasswordLength=13` latched,
+`set passcode: rejected`, permanently DEGRADED. After:
+
+```
+PolicyApplier: passcode set from policy (4 chars)
+SyncService: sync: state=54 applied=54 errors=0
+dumpsys → passwordQuality=0x20000 (NUMERIC), minimumPasswordLength=0
+locksettings verify --old 6819 → Lock credential verified successfully
+```
+
+**Latch-and-release proven both ways** on the live policy:
+
+| Policy edit | `minimumPasswordLength` on device |
+|---|---|
+| add `min_length: 4` | **4** |
+| remove `min_length` | **0** |
+
+Device left `compliant`, "Password Test" restored to `{quality: 2,
+set_password: "6819"}`.
+
+⚠️ Note for whoever reads the server next: `compliance_detail` lags one check-in.
+The agent reports the *previous* pass's `apply_errors`, so a device that has just
+fixed itself still shows the old error until it checks in once more. That is by
+design (D28 separates intent from reported reality) but it reads as a failed fix.
+
 ---
 
 ### Later chunks (sketch — to be detailed at approval time)
@@ -3383,7 +3461,7 @@ the `knox` flavour is build-it-yourself.
 | R2 | OBB placement for XAPKs inherits R1 | ✅ **CLOSED 2026-09-02 — not feasible, made loud (W17).** A `probe_obb` write to `/sdcard/Android/obb/org.takmdm.testapp/` on `SM-X520` returned `EACCES` even with all-files access. Scoped storage blocks writing another app's `Android/obb/` for a normally-installed Device Owner (same class as VPN — needs Knox or root). Resolution: the agent raises an apply_error (device `DEGRADED`, operator sees it) instead of skipping silently; the Apps page flags any package carrying an OBB; recorded in the Android reference §6. **Re-check on `SM-G736U1` / `SM-X828U` (R5)** — the probe action ships for it. |
 | R3 | ~~Knox partner application pending — gates KME **and KPE**~~ | ⚠️ **Largely stale, corrected 2026-09-02 — see [docs/KNOX.md](docs/KNOX.md).** KPE is **not** gated on a partner agreement: **KPE Premium is free** and the *end customer* generates their own key self-service in the Knox Admin Portal. A Knox **developer** account is needed only to download the SDK, which is a build-time concern for whoever compiles the agent — and the jar is `compileOnly`, so no Samsung code ships in the APK. **What remains open:** (a) whether Samsung permits distributing a Knox-built APK to third parties (a licence-agreement question, in the express-approval conversation now); (b) **Knox Mobile Enrollment** for a self-hosted EMM — that part of R3 stands. AOSP path must still not depend on Knox. |
 | R4 | `INTERSECT` on app allowlists is correct but counter-intuitive | Make configurable per policy; show resulting set before publish |
-| R14 | **Password scalars latch on the device and are never released.** `min_length`, `min_letters/digits/symbols` and quality are pushed when a policy sets them, but nothing clears them when the policy stops setting them (W15's known limitation, made acute by W20's `set_password`). | 🔴 **Open — now causing real failures, 2026-09-02.** On `SM-X520` a new policy (`quality: NUMERIC`, `set_password: "6819"`) is rejected with *"the value does not meet the policy's own length/quality rules"* because `minimumPasswordLength=13` is still latched from a policy that no longer applies. The device is permanently DEGRADED and the operator has no way to fix it from the console. **Fix:** when the merged PASSWORD spec omits a scalar, the agent should push the permissive value (0 / `UNSPECIFIED`) rather than leaving the old one — matching the desired-state contract everywhere else, where absent means "not managed" and therefore "not enforced". |
+| R14 | ~~**Password scalars latch on the device and are never released.**~~ | ✅ **CLOSED 2026-09-02 by W26, hardware-verified.** `applyPassword` is now fully declarative — every field it manages is driven to a definite value on every reconcile, and absent means permissive (`0` / `UNSPECIFIED`). The stuck `SM-X520` recovered: `minimumPasswordLength` released 13 → 0, the operator's 4-digit passcode applied, device back to `compliant`. Latch-and-release proven both directions. ⚠️ **Deliberate behaviour change:** removing a PASSWORD policy now genuinely relaxes the device. The old behaviour looked fail-secure but was un-clearable state. Original text: the scalars were pushed when set and never cleared when dropped (W15's limitation, made acute by W20's `set_password`), which permanently DEGRADED a device with no console-side fix. |
 | R15 | **The agent signing key is a fleet-wide single point of failure.** Android refuses an update signed with a different key, so losing it means no device can ever be updated again without re-provisioning. | Open. Same class as `pki/ca.key` (R8) and belongs in the same KMS/HSM answer. Called out now that OTA self-update is proven and will become the update path. |
 | R5 | Mixed SoC vendors (Qualcomm XCover6 Pro / MediaTek Tab S10+) on One UI 8 | Test every firmware-level behavior on **both** models |
 | R6 | ~~Advanced Protection Mode blocks Device Owner install~~ | ✅ **Downgraded to low, 2026-08-31.** The operator runs commercial MDMs and Headwind in production on this exact hardware and One UI 8, installing apps successfully. Device Owner `PackageInstaller` holds system install privilege and does not go through the user-facing "install unknown apps" gate — as predicted, now corroborated by production use rather than documentation. Residual risk is only a user *opting into* Advanced Protection, which a Device Owner can largely prevent by restricting Settings anyway. No lab work needed. |
@@ -3408,6 +3486,16 @@ the `knox` flavour is build-it-yourself.
 
 ## Changelog
 
+- **2026-09-02** — **W26: R14 fixed — password scalars release instead of
+  latching.** 464 server tests, 54 agent tests, agent v39 (`0.9.9`).
+  `applyPassword` is now fully declarative: every field it manages is driven to a
+  definite value each reconcile, with absent meaning permissive. The stuck
+  `SM-X520` recovered — `minimumPasswordLength` released 13 → 0, the operator's
+  4-digit passcode applied, device `compliant`. Latch-and-release proven both
+  ways (add `min_length: 4` → 4; remove → 0). **Deliberate behaviour change:**
+  removing a PASSWORD policy now genuinely relaxes the device. The most dangerous
+  case this fixes is a stale `max_failed_attempts_before_wipe` — a device could
+  have wiped itself for a policy long since unassigned.
 - **2026-09-02** — **Spike: OTA agent self-update works; and a real password bug
   found.** Agent v38 (`0.9.8`). Pushing the agent to itself via a policy's
   `required_apps` upgraded `SM-X520` from v37 → v38 with a **~4.4 s** management

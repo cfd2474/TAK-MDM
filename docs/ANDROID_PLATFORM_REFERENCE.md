@@ -752,6 +752,32 @@ when the agent re-applies an unchanged passcode.
 `ActivityManager E` / `LsLogVerify W` — this is the platform's own audit logging
 of the reset, **not** an agent error.
 
+### ⚠️ These setters latch — absent must be pushed as permissive
+
+There is no "unset" call in the granular family. Whatever was last written stays
+in force until something writes over it, and it survives the policy that put it
+there being removed entirely.
+
+✅ **This caused a real failure on `SM-X520`** (2026-09-02): a `min_length: 13`
+from a policy that no longer applied kept `minimumPasswordLength=13` latched, so
+a later policy's 4-digit `set_password` was rejected by `resetPasswordWithToken`
+— and nothing in the console could clear it.
+
+**The rule:** a DPC must drive every one of these to a definite value on every
+reconcile, pushing the permissive value when the field is absent —
+`setPasswordQuality(UNSPECIFIED)`, `setPasswordMinimumLength(0)`,
+`setPasswordHistoryLength(0)`, `setPasswordExpirationTimeout(0)`,
+`setMaximumTimeToLock(0)`, `setMaximumFailedPasswordsForWipe(0)`. That last one
+matters most: a stale attempt limit means a device can wipe itself to satisfy a
+policy nobody has assigned to it for months.
+
+The per-character-class minimums are the exception — they throw below
+`PASSWORD_QUALITY_COMPLEX`, so only touch them when the effective quality *is*
+COMPLEX. Below it they are inert, so nothing latched there can bite.
+
+✅ Verified both ways on `SM-X520` (agent v39): adding `min_length: 4` set
+`minimumPasswordLength=4`; removing it returned the device to `0`.
+
 ### ✅ Verified on `SM-X520` (agent v34), both directions:
 
 | Policy | `dumpsys device_policy` for `org.takmdm.agent` |

@@ -38,8 +38,10 @@ object PasswordPlan {
     private val BY_ORDINAL = PwQuality.entries
 
     /**
-     * The quality to pass to `setPasswordQuality`, or null when the policy asks
-     * for nothing password-shaped.
+     * The quality to pass to `setPasswordQuality`. **Never null** — when the
+     * policy asks for nothing this is [PwQuality.UNSPECIFIED], which the applier
+     * pushes so a quality left over from a policy that no longer applies is
+     * released rather than latched (R14).
      *
      * It is the strictest of:
      *  - the mapped `quality` field;
@@ -57,13 +59,17 @@ object PasswordPlan {
         minLetters: Int?,
         minDigits: Int?,
         minSymbols: Int?,
-    ): PwQuality? {
+    ): PwQuality {
         var q = BY_ORDINAL.getOrNull(quality ?: 0) ?: PwQuality.UNSPECIFIED
         if ((minLength ?: 0) > 0 && q < PwQuality.NUMERIC) q = PwQuality.NUMERIC
         if (listOf(minLetters, minDigits, minSymbols).any { (it ?: 0) > 0 }) q = PwQuality.COMPLEX
-        return q.takeIf { it != PwQuality.UNSPECIFIED }
+        return q
     }
 
-    /** The per-character-class minimums only apply once quality is COMPLEX. */
-    fun charClassMinimumsApply(effective: PwQuality?): Boolean = effective == PwQuality.COMPLEX
+    /**
+     * The per-character-class minimums only apply once quality is COMPLEX — below
+     * it the setters throw `IllegalStateException` for an app targeting API 30+,
+     * and the values are inert anyway (Android reference §6c).
+     */
+    fun charClassMinimumsApply(effective: PwQuality): Boolean = effective == PwQuality.COMPLEX
 }

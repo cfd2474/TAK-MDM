@@ -91,61 +91,65 @@ class PolicyApplier(private val context: Context) {
             minDigits = spec.optInt("min_digits").takeIf { spec.has("min_digits") },
             minSymbols = spec.optInt("min_symbols").takeIf { spec.has("min_symbols") },
         )
-        if (quality != null) {
-            runCatching {
-                dpm.setPasswordQuality(admin, dpmPasswordQuality(quality))
-            }.onFailure { failures += "password quality: ${it.message}" }
-        }
+        // R14: every field below is driven to a definite value on every reconcile,
+        // and the value for "absent" is the permissive one. Only setting a field
+        // when the spec carries it left the previous value latched on the device
+        // forever — which is how a `minimumPasswordLength` of 13, from a policy
+        // that no longer applied, silently rejected a later 4-digit passcode with
+        // no way to clear it from the console. Absent means "not managed", which
+        // on the device has to mean "not enforced", exactly as the boolean
+        // `allow_*` restrictions already behave.
+        fun scalar(key: String): Int? = spec.optInt(key).takeIf { spec.has(key) }
 
-        if (spec.has("min_length")) {
-            runCatching {
-                dpm.setPasswordMinimumLength(admin, spec.getInt("min_length"))
-            }.onFailure { failures += "password min length: ${it.message}" }
-        }
+        runCatching {
+            dpm.setPasswordQuality(admin, dpmPasswordQuality(quality))
+        }.onFailure { failures += "password quality: ${it.message}" }
 
-        // effectiveQuality() already forces COMPLEX whenever any of these is set,
-        // so this guard is belt-and-braces against a future change to that rule.
+        runCatching {
+            dpm.setPasswordMinimumLength(admin, scalar("min_length") ?: 0)
+        }.onFailure { failures += "password min length: ${it.message}" }
+
+        // Only reachable at COMPLEX: below it these setters throw for an app
+        // targeting API 30+, and the values are inert. So when quality is not
+        // COMPLEX there is nothing latched that can bite, and nothing to release.
         if (PasswordPlan.charClassMinimumsApply(quality)) {
-            if (spec.has("min_letters")) runCatching {
-                dpm.setPasswordMinimumLetters(admin, spec.getInt("min_letters"))
+            runCatching {
+                dpm.setPasswordMinimumLetters(admin, scalar("min_letters") ?: 0)
             }.onFailure { failures += "password min letters: ${it.message}" }
-            if (spec.has("min_digits")) runCatching {
-                dpm.setPasswordMinimumNumeric(admin, spec.getInt("min_digits"))
+            runCatching {
+                dpm.setPasswordMinimumNumeric(admin, scalar("min_digits") ?: 0)
             }.onFailure { failures += "password min digits: ${it.message}" }
-            if (spec.has("min_symbols")) runCatching {
-                dpm.setPasswordMinimumSymbols(admin, spec.getInt("min_symbols"))
+            runCatching {
+                dpm.setPasswordMinimumSymbols(admin, scalar("min_symbols") ?: 0)
             }.onFailure { failures += "password min symbols: ${it.message}" }
         }
 
-        if (spec.has("max_failed_attempts_before_wipe")) {
-            runCatching {
-                dpm.setMaximumFailedPasswordsForWipe(
-                    admin, spec.getInt("max_failed_attempts_before_wipe")
-                )
-            }.onFailure { failures += "max failed attempts: ${it.message}" }
-        }
+        // 0 means "never wipe". Leaving a stale attempt limit latched is the most
+        // dangerous case of this bug: a device could wipe itself to satisfy a
+        // policy nobody had assigned to it for months.
+        runCatching {
+            dpm.setMaximumFailedPasswordsForWipe(
+                admin, scalar("max_failed_attempts_before_wipe") ?: 0
+            )
+        }.onFailure { failures += "max failed attempts: ${it.message}" }
 
-        if (spec.has("lock_timeout_seconds")) {
-            runCatching {
-                dpm.setMaximumTimeToLock(admin, spec.getInt("lock_timeout_seconds") * 1000L)
-            }.onFailure { failures += "lock timeout: ${it.message}" }
-        }
+        // 0 means "no restriction beyond the user's own choice".
+        runCatching {
+            dpm.setMaximumTimeToLock(admin, (scalar("lock_timeout_seconds") ?: 0) * 1000L)
+        }.onFailure { failures += "lock timeout: ${it.message}" }
 
-        if (spec.has("expiration_days")) {
-            runCatching {
-                dpm.setPasswordExpirationTimeout(
-                    admin, spec.getInt("expiration_days") * 86_400_000L
-                )
-            }.onFailure { failures += "password expiry: ${it.message}" }
-        }
+        // 0 means "never expires".
+        runCatching {
+            dpm.setPasswordExpirationTimeout(
+                admin, (scalar("expiration_days") ?: 0) * 86_400_000L
+            )
+        }.onFailure { failures += "password expiry: ${it.message}" }
 
         // Not deprecated with the setPasswordMinimum* family at API 31 — history
         // length has no complexity-bucket equivalent and still applies directly.
-        if (spec.has("history_length")) {
-            runCatching {
-                dpm.setPasswordHistoryLength(admin, spec.getInt("history_length"))
-            }.onFailure { failures += "password history: ${it.message}" }
-        }
+        runCatching {
+            dpm.setPasswordHistoryLength(admin, scalar("history_length") ?: 0)
+        }.onFailure { failures += "password history: ${it.message}" }
 
         // Force an exact passcode (W20). Last, so the quality/length constraints
         // above are in place before resetPasswordWithToken checks the value

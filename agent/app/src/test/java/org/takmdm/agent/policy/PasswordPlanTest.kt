@@ -26,10 +26,17 @@ import org.takmdm.agent.policy.PasswordPlan.PwQuality
 class PasswordPlanTest {
 
     @Test
-    fun `nothing set yields no quality`() {
-        assertNull(PasswordPlan.effectiveQuality(null, null, null, null, null))
-        // quality 0 is UNSPECIFIED, which is "no requirement"
-        assertNull(PasswordPlan.effectiveQuality(0, null, null, null, null))
+    fun `nothing set yields UNSPECIFIED, not null`() {
+        // R14: the applier must always have a value to push, so a quality left by
+        // a policy that no longer applies is released rather than latched.
+        assertEquals(PwQuality.UNSPECIFIED, PasswordPlan.effectiveQuality(null, null, null, null, null))
+        assertEquals(PwQuality.UNSPECIFIED, PasswordPlan.effectiveQuality(0, null, null, null, null))
+    }
+
+    @Test
+    fun `a zero min length does not raise the quality`() {
+        // Absent and explicitly-zero both mean "no floor", so neither forces NUMERIC.
+        assertEquals(PwQuality.UNSPECIFIED, PasswordPlan.effectiveQuality(null, 0, null, null, null))
     }
 
     @Test
@@ -61,6 +68,16 @@ class PasswordPlanTest {
     fun `charClassMinimumsApply only at COMPLEX`() {
         assertTrue(PasswordPlan.charClassMinimumsApply(PwQuality.COMPLEX))
         assertFalse(PasswordPlan.charClassMinimumsApply(PwQuality.ALPHANUMERIC))
-        assertFalse(PasswordPlan.charClassMinimumsApply(null))
+        assertFalse(PasswordPlan.charClassMinimumsApply(PwQuality.UNSPECIFIED))
+    }
+
+    @Test
+    fun `R14 the exact case that broke on hardware`() {
+        // A policy asking only for a numeric passcode must resolve to NUMERIC —
+        // and because the applier now also pushes min_length 0, a 4-digit PIN is
+        // no longer rejected by a length latched from a policy long since removed.
+        val q = PasswordPlan.effectiveQuality(quality = 2, minLength = null, null, null, null)
+        assertEquals(PwQuality.NUMERIC, q)
+        assertFalse(PasswordPlan.charClassMinimumsApply(q))
     }
 }
