@@ -307,6 +307,16 @@ class Reconciler(private val context: Context) {
 
         val response = api.checkin(request)
 
+        // The operator-assigned name, echoed on every check-in so the on-device
+        // console can show it. `has` guards against an older server that omits it;
+        // an explicit null legitimately clears a name that was removed. (Android's
+        // optString returns the literal "null" for a JSON null, hence isNull.)
+        if (response.has("name")) {
+            config.deviceName =
+                if (response.isNull("name")) null
+                else response.optString("name").takeIf { it.isNotBlank() }
+        }
+
         // The server considers a reported result final, so only clear the queue
         // once it has actually been accepted. Clearing on send would lose the
         // outcome of a wipe or a log collection to one dropped response.

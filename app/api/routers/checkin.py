@@ -119,6 +119,7 @@ def checkin(
         state_version=device.state_version,
         generated_at=datetime.now(timezone.utc),
         policy_changed=policy_changed,
+        name=device.name,
         desired_state=bundle["desired_state"] if bundle else None,
         signature=bundle["signature"] if bundle else None,
         commands=[

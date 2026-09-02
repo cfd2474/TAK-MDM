@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ATLAS MDM palette, drawn from the app icon: dark navy field, electric blue,
+     brushed steel. -->
+<resources>
+    <color name="atlas_navy_deep">#FF071528</color>
+    <color name="atlas_navy">#FF0B1E37</color>
+    <color name="atlas_navy_panel">#FF102A4C</color>
+    <color name="atlas_navy_line">#FF1E4E86</color>
+
+    <color name="atlas_blue">#FF1E7BE8</color>
+    <color name="atlas_blue_bright">#FF2E9BFF</color>
+    <color name="atlas_cyan">#FF4FC3FF</color>
+
+    <color name="atlas_steel">#FFB7C0CC</color>
+    <color name="atlas_steel_dim">#FF8A97A6</color>
+
+    <color name="atlas_text">#FFE7EDF4</color>
+    <color name="atlas_text_muted">#FF9DB0C4</color>
+
+    <color name="atlas_ok">#FF3ECF8E</color>
+    <color name="atlas_warn">#FFF0A73B</color>
+    <color name="atlas_error">#FFFF5C6C</color>
+
+    <color name="atlas_on_blue">#FFFFFFFF</color>
+</resources>

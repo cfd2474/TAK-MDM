@@ -13,9 +13,11 @@ update after every completed step.
 closed. **Enrollment is now a single persistent token with 15-minute signed QR
 derivatives** (Chunk 14), verified live through real nginx — including that
 retiring the primary kills an already-issued, still-time-valid QR immediately.
-Agent **v34 (`0.9.4`)** running on `SM-X520` (compliant, serial `R5GL40MMHRN`).
+Agent **v35 (`0.9.5`)** running on `SM-X520` (compliant, serial `R5GL40MMHRN`).
 **W14 Wi-Fi, W15 quick wins, W16 allowlist enforcement and W18's granular
-password path all hardware-proven. W17 closed R2** — a DO cannot place XAPK OBB
+password path all hardware-proven. W19 rebuilt the on-device UI as the branded
+ATLAS MDM console (five sections + manual sync), hardware-proven. W17 closed
+R2** — a DO cannot place XAPK OBB
 files (EACCES probed on hardware); the agent says so loudly and the Apps page
 flags it. **W18 closed the policy→agent audit** — Wi-Fi
 `auto_join`/`mac_randomization` dropped (`@SystemApi`), password
@@ -32,7 +34,8 @@ Networks type; W14's Wi-Fi applier, W15's quick wins, W16's allowlist enforcemen
 and W18's granular password path are all hardware-proven on `SM-X520`. W17 closed
 R2 (OBB placement) as not feasible, made loud; W18 closed the policy→agent audit
 (Wi-Fi `@SystemApi` fields dropped, password character-class minimums
-implemented and proven on the tablet).** 448 server tests + 52 agent tests.
+implemented and proven on the tablet). W19 rebuilt the DPC's on-device UI as the
+branded ATLAS MDM console.** 449 server tests + 52 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -2816,6 +2819,109 @@ character-class minimum) confirmed, and the quality field reverts.
 no XAPK with an OBB payload is uploaded to test against, and the underlying fact
 (EACCES) is already hardware-proven. Fold a real OBB-XAPK apply into R5 work.
 
+#### 🔻 W19 — DPC app UI: ATLAS MDM branding + a real status console
+
+The agent's on-device UI is a monospace `TextView` dump plus four buttons
+(`activity_main.xml`). This chunk makes it a proper status console and brands it
+as **ATLAS MDM**, styled to the supplied icon (`Test Files/atlas icon.png` —
+brushed-steel "A" chevron over a blue wireframe globe on dark navy).
+
+**Sections the operator asked for:** Permissions · Available app downloads ·
+Available file downloads · Policies (what's applied) · Device info (enrolment,
+sync, server, device name, device ID) · a manual Sync.
+
+**Interpretation notes:**
+* "Available app downloads" = the managed apps from the desired state and their
+  install status (installed vN / update pending / missing / failed). Every app
+  the MDM pushes is mandatory — there is no user-choice app tier — so this is a
+  status list, not a store. (Say so if a store tier is wanted.)
+* "Available file downloads" = the existing marketplace (F4): `files.required`
+  shown as *Automatic*, `files.available` with the Install/Remove toggle.
+* "Policies" = a read-only pretty-print of the resolved `policy` object in the
+  cached desired state (PASSWORD / RESTRICTIONS / APP_CATALOG / FILES / NETWORKS).
+
+**Shape:** one `MainActivity` with a Material `BottomNavigationView` (Device /
+Permissions / Apps / Files / Policies) over five toggled `ScrollView` sections,
+a persistent header (banner + Sync action). No new Gradle deps — plain
+Activity + programmatic row inflation, matching `PolicyComplianceActivity`.
+
+##### Plan (7 steps)
+
+1. **Brand assets + theme.** Adaptive launcher icon — `ic_launcher_foreground.xml`
+   (flat vector reading of the mark: globe ring + steel-grey A chevron + blue
+   inner arrowhead, content inside the 66dp safe zone), `ic_launcher_background.xml`
+   (navy gradient + faint grid), `mipmap-anydpi-v26/ic_launcher.xml` +
+   `_round.xml`. `atlas icon.png` → `res/drawable-nodpi/atlas_banner.png` for the
+   in-app header. `colors.xml` (navy `#0A1A2F` / blue `#1E7BE8` / steel `#B7C0CC`
+   palette), `themes.xml` → dark Material3 with the blue as primary.
+   `strings.xml` `app_name` → **ATLAS MDM**; manifest `icon` / `roundIcon` /
+   `label`.
+2. **Shell.** Rebuild `MainActivity`: `BottomNavigationView` + menu resource +
+   five section containers in a `FrameLayout`, visibility-toggled; header with
+   `atlas_banner` and a Sync button; `onResume` re-renders the visible section.
+3. **Device Info section + manual sync.** Enrolment state, device name, device
+   ID (UUID), serial, server URL, agent version, last sync (relative + exact),
+   state vs applied version, next check-in. "Sync now" with an in-progress state
+   and the result/first-error. "Discard identity & re-enrol" kept here.
+4. **Permissions section.** A card per `PermissionRequirement.ALL` — title,
+   rationale, Granted / Needs a tap, and a Grant button for the app-op ones.
+   Link out to `PolicyComplianceActivity` for the guided flow. Refreshes on
+   resume (grants happen in Settings and the user comes back).
+5. **Apps + Files sections.** Apps: a row per `cachedDesiredState.apps[]` —
+   label (from `PackageManager` when installed, else package name), wanted
+   version, status from `AppInstaller.installedVersionCode`, download size.
+   Files: fold `MarketplaceActivity`'s logic in — `required` rows tagged
+   *Automatic*, `available` rows with Install/Remove that trigger a sync. Retire
+   `MarketplaceActivity` (or leave it as a thin alias — decide during build).
+6. **Policies section + device name over the wire.** Render the resolved
+   `policy` object as grouped key/value cards. Server: add `name: str | None`
+   (= `device.name`) to `CheckinResponse`; agent caches `config.deviceName` on
+   check-in. One server test. `docker compose up -d --build`.
+7. **Build, restyle pass, install v35 (`0.9.5`) on `SM-X520`, screenshot every
+   section, update `PROJECT_STATE.md` + changelog.** Stop for approval.
+
+##### Status: ✅ COMPLETE and hardware-proven — 449 server tests, 52 agent tests, agent v35 (`0.9.5`) on `SM-X520`
+
+- **Branding.** App renamed **ATLAS MDM**. Adaptive launcher icon built from the
+  supplied tile (`ic_launcher_foreground` = the globe + steel-A mark cropped out
+  of the tile, `ic_launcher_background` = navy + faint grid); the mark also
+  serves as the in-app header logo. New `colors.xml` (navy / electric-blue /
+  steel) and a committed dark Material3 theme.
+- **Console.** `MainActivity` is now a `BottomNavigationView` over five
+  visibility-toggled sections; no new Gradle deps, views built through a small
+  `ConsoleViews` helper (card / kv-row / status-pill / divider).
+  - **Device** — enrolment (green pill), device owner, **device name**, device
+    ID, serial, server, agent version; last sync (relative + exact), policy vs
+    applied version, last error / apply problems; a prominent Sync button and
+    the re-enrol escape hatch.
+  - **Permissions** — a card per `PermissionRequirement.ALL` with Granted /
+    Needs-a-tap / Automatic status and a Grant button for the app-op ones; link
+    to the guided `PolicyComplianceActivity`.
+  - **Apps** — a row per managed app: label (resolved via `PackageManager`),
+    package, target version, download size, Installed / Update pending / Missing.
+  - **Files** — the marketplace, folded in: `required` rows tagged *Automatic*
+    with Placed/Pending, `available` rows tagged *Optional* with Install/Remove
+    that trigger a sync. `MarketplaceActivity` retired.
+  - **Policies** — the resolved `policy` object rendered as grouped cards
+    (Passcode / Restrictions / Apps & kiosk / Managed files / Networks), arrays
+    summarised, with a policy-version footer.
+- **Device name over the wire.** `CheckinResponse.name` (= `device.name`) added;
+  agent caches `config.deviceName` each check-in (guarding Android's
+  `optString`→`"null"` quirk). One server test (`test_checkin_echoes_the_device_name`).
+- **Hardware (SM-X520, v35):** all five sections render correctly; naming the
+  device on the server (`PATCH /devices/{id}`) showed up as "Ops Tablet 07" in
+  the console after one sync; `sync: applied=40 errors=0` throughout.
+
+Screenshots in the session scratchpad (`shots/01_device` … `05_policies`).
+
+##### Not done / notes
+* The launcher-icon mark is a **crop of the supplied tile**, not a redrawn
+  vector — brushed-metal shading does not survive vectorisation, and the crop
+  keeps the exact look. Legacy square `mipmap` PNGs generated for < API 26
+  (moot at minSdk 33, kept for completeness).
+* `ANDROID_PLATFORM_REFERENCE.md` unchanged — the console uses only documented
+  APIs (`Build.getSerial()` behaviour already recorded in §identity).
+
 ---
 
 ### Later chunks (sketch — to be detailed at approval time)
@@ -2860,6 +2966,15 @@ no XAPK with an OBB payload is uploaded to test against, and the underlying fact
 
 ## Changelog
 
+- **2026-09-02** — **W19: DPC app UI — ATLAS MDM console.** 449 server tests, 52
+  agent tests, agent v35 (`0.9.5`). The agent's on-device screen went from a
+  monospace dump to a five-section `BottomNavigationView` console (Device /
+  Permissions / Apps / Files / Policies) with a manual Sync, branded **ATLAS
+  MDM** and styled to the supplied icon (adaptive launcher icon + dark navy
+  Material3 theme). New `CheckinResponse.name` plumbs the operator-assigned
+  device name to the Device tab. `MarketplaceActivity` folded into the Files
+  section. **Hardware-proven on `SM-X520`:** every section renders, the device
+  name round-trips after a `PATCH`, `errors=0`.
 - **2026-09-02** — **W18: dead spec fields resolved.** 448 server tests, 52 agent
   tests, agent v34 (`0.9.4`). Research corrected the audit: Wi-Fi `auto_join` /
   `mac_randomization` are genuinely `@SystemApi` (removed from the spec + form),

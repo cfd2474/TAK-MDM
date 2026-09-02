@@ -648,6 +648,9 @@ class CheckinResponse(BaseModel):
     state_version: int
     generated_at: datetime
     policy_changed: bool
+    # Echoed so the on-device console can show the operator-assigned name.
+    # Null when the device has not been named.
+    name: str | None = None
     # Omitted when the device already holds the current version — the bandwidth
     # saving that makes frequent check-in viable on a metered link.
     desired_state: dict[str, Any] | None = None

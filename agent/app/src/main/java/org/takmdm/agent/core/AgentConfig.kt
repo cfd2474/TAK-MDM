@@ -54,6 +54,15 @@ class AgentConfig(context: Context) {
         get() = prefs.getString(KEY_DEVICE_ID, null)
         set(value) = prefs.edit { putString(KEY_DEVICE_ID, value) }
 
+    /**
+     * The friendly device name the operator set on the server, echoed back on
+     * every check-in so the on-device console can show it. Null until the first
+     * check-in after enrolment, or when the operator has not named the device.
+     */
+    var deviceName: String?
+        get() = prefs.getString(KEY_DEVICE_NAME, null)
+        set(value) = prefs.edit { putString(KEY_DEVICE_NAME, value) }
+
     /** Ed25519 public key, base64, pinned at enrollment to verify policy bundles. */
     var bundleKeyBase64: String?
         get() = prefs.getString(KEY_BUNDLE_KEY, null)
@@ -181,6 +190,7 @@ class AgentConfig(context: Context) {
         private const val KEY_ENROLL_TOKEN = "enrollment_token"
         private const val KEY_SERVER_CA = "server_ca_pem"
         private const val KEY_DEVICE_ID = "device_id"
+        private const val KEY_DEVICE_NAME = "device_name"
         private const val KEY_BUNDLE_KEY = "bundle_key"
         private const val KEY_STATE_VERSION = "state_version"
         private const val KEY_APPLIED_VERSION = "applied_state_version"

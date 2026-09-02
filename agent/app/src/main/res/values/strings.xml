@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">TAK MDM</string>
+    <string name="app_name">ATLAS MDM</string>
     <string name="marketplace_title">Available downloads</string>
     <string name="sync_channel_name">Device management</string>
     <string name="sync_notification_title">Device management active</string>
@@ -28,4 +28,55 @@
     <string name="action_reenroll">Discard identity and re-enrol</string>
     <string name="reenroll_rationale">If this device cannot reach the server because its certificate or key is unusable, paste a new enrollment token to start over. This does not require a factory reset.</string>
     <string name="reenroll_hint">Enrollment token</string>
+
+    <!-- W19: DPC console -->
+    <string name="nav_device">Device</string>
+    <string name="nav_permissions">Permissions</string>
+    <string name="nav_apps">Apps</string>
+    <string name="nav_files">Files</string>
+    <string name="nav_policies">Policies</string>
+
+    <string name="section_device_title">Device information</string>
+    <string name="section_permissions_title">Permissions</string>
+    <string name="section_apps_title">Available app downloads</string>
+    <string name="section_files_title">Available file downloads</string>
+    <string name="section_policies_title">Applied policy</string>
+
+    <string name="label_enrollment">Enrollment</string>
+    <string name="label_device_name">Device name</string>
+    <string name="label_device_id">Device ID</string>
+    <string name="label_serial">Serial</string>
+    <string name="label_server">Server</string>
+    <string name="label_agent_version">Agent version</string>
+    <string name="label_device_owner">Device owner</string>
+    <string name="label_last_sync">Last sync</string>
+    <string name="label_state_version">Policy version</string>
+    <string name="label_next_checkin">Next check-in</string>
+    <string name="label_last_error">Last error</string>
+
+    <string name="value_not_set">Not set</string>
+    <string name="value_none">None</string>
+    <string name="value_never">Never</string>
+    <string name="value_unknown">Unknown</string>
+
+    <string name="syncing">Syncing…</string>
+    <string name="sync_ok">Synced. Policy version %1$d.</string>
+    <string name="sync_problems">Synced with %1$d problem(s): %2$s</string>
+    <string name="sync_failed">Sync failed: %1$s</string>
+
+    <string name="perm_granted">Granted</string>
+    <string name="perm_needs_tap">Needs a tap</string>
+    <string name="perm_auto">Granted automatically</string>
+    <string name="perm_open_setup">Open guided setup</string>
+
+    <string name="app_status_installed">Installed · v%1$d</string>
+    <string name="app_status_update">Update pending → v%1$d</string>
+    <string name="app_status_missing">Not installed</string>
+    <string name="app_status_nothing">Nothing uploaded for this app</string>
+    <string name="file_tag_automatic">Automatic</string>
+    <string name="file_tag_optional">Optional</string>
+
+    <string name="empty_apps">No managed apps.</string>
+    <string name="empty_files">Nothing is offered for this device.</string>
+    <string name="empty_policies">No policy is applied to this device.</string>
 </resources>
