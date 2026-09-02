@@ -289,6 +289,25 @@ def request_logs(
     return _redirect(f"/devices/{device_id}#logs")
 
 
+@router.post("/devices/{device_id}/checkin")
+def force_checkin_form(
+    device_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Ring this device's long-poll so it checks in now, instead of waiting for
+    its next park slice."""
+    device = session.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
+
+    parked = eff.request_checkin(session, {device_id})
+    session.commit()
+    return _redirect(
+        f"/devices/{device_id}?checkin={'now' if device_id in parked else 'queued'}"
+    )
+
+
 @router.post("/devices/{device_id}/rename")
 def rename_device_form(
     device_id: uuid.UUID,

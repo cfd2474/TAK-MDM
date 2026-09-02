@@ -23,13 +23,21 @@ it contentless means a missed wake costs latency and nothing else — the device
 converges on its next poll, and D7's guarantee that polling is the correctness floor
 survives intact.
 
-Written ``async`` deliberately. A parked request must not hold a worker thread or a
-database connection, or a few hundred waiting tablets would exhaust both. The
-session is released before parking and a fresh one is taken afterwards.
+**Lost-wake safety.** The doorbell ring can be lost — the notify runs in the
+window between one check-in finishing and the next park registering, or a
+recompute lands while the request is parked. So the endpoint does not park once
+for the whole timeout; it sub-parks in short slices and re-reads the pending
+reason between them. A lost ring therefore costs at most one slice (``_SLICE``
+seconds) instead of the full timeout.
+
+Written ``async`` deliberately. A parked request must not hold a worker thread or
+a database connection: the session is closed between every pending check, so the
+connection is only borrowed for the read itself, never held across a park.
 """
 
 from __future__ import annotations
 
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, Query
@@ -42,20 +50,29 @@ from app.services import notifications
 
 router = APIRouter(prefix="/api/v1/device", tags=["device"])
 
+# How long each internal sub-park lasts. A lost doorbell ring costs at most this.
+_SLICE = 10.0
 
-def _pending_reason(session: Session, device_id: uuid.UUID, known_version: int | None) -> str | None:
-    """Whether this device already has something waiting, without parking."""
+
+def _pending(
+    session: Session, device_id: uuid.UUID, known_version: int | None
+) -> tuple[str | None, int]:
+    """(reason this device should check in now, its current state_version).
+
+    Assumes a freshly-closed session so every read hits the database — the whole
+    point of the loop is to observe ``state_version`` change while parked.
+    """
     device = session.get(Device, device_id)
     if device is None:
-        return None
+        return None, known_version or 0
+    current = device.state_version
 
-    if known_version is not None and device.state_version != known_version:
-        return "state_changed"
+    if known_version is not None and current != known_version:
+        return "state_changed", current
 
     cache = session.get(EffectivePolicyCache, device_id)
     if cache is None or cache.stale:
-        # A recompute is pending, so the state may already have moved.
-        return "state_pending"
+        return "state_pending", current
 
     live_command = session.scalar(
         select(DeviceCommand)
@@ -65,7 +82,7 @@ def _pending_reason(session: Session, device_id: uuid.UUID, known_version: int |
         )
         .limit(1)
     )
-    return "command_queued" if live_command is not None else None
+    return ("command_queued" if live_command is not None else None), current
 
 
 @router.get("/wait")
@@ -78,28 +95,22 @@ async def wait_for_change(
     session: Session = Depends(get_db),
 ) -> dict:
     device_id = device.id
-    reason = _pending_reason(session, device_id, state_version)
-    current_version = device.state_version
+    known = state_version
+    deadline = time.monotonic() + timeout
 
-    # Release the connection before parking; holding one per waiting device would
-    # drain the pool long before the fleet is large.
-    session.close()
+    while True:
+        reason, current = _pending(session, device_id, known)
+        # Free the connection *and* expire the identity map, so the next
+        # iteration's reads see committed changes rather than cached rows.
+        session.close()
 
-    if reason is not None:
-        return {
-            "should_checkin": True,
-            "reason": reason,
-            "state_version": current_version,
-        }
+        if reason is not None:
+            return {"should_checkin": True, "reason": reason, "state_version": current}
 
-    woken = await notifications.bus.wait(device_id, timeout)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return {"should_checkin": False, "reason": "timeout", "state_version": current}
 
-    # No second database read after waking. The version reported here is only the
-    # one the agent already had — the check-in that follows is what establishes the
-    # authoritative value, and re-reading would mean either holding a connection
-    # across the park or reaching around dependency injection for a new one.
-    return {
-        "should_checkin": woken,
-        "reason": "woken" if woken else "timeout",
-        "state_version": current_version,
-    }
+        # Sub-park: released instantly by a doorbell ring, or falls through after a
+        # slice so the loop re-reads the pending reason.
+        await notifications.bus.wait(device_id, min(remaining, _SLICE))

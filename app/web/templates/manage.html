@@ -36,6 +36,7 @@
         <th data-sort>Convergence</th>
         <th data-sort>Compliance</th>
         <th data-sort>Last check-in</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
@@ -71,6 +72,12 @@
           <span class="pill {{ 'good' if c == 'compliant' else 'warn' if c == 'degraded' else 'bad' if c == 'failed' }}">{{ c }}</span>
         </td>
         <td class="muted">{{ d.last_checkin_at.strftime('%Y-%m-%d %H:%M') if d.last_checkin_at else 'never' }}</td>
+        <td>
+          <form method="post" action="/devices/{{ d.id }}/checkin" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="ghost">Check in</button>
+          </form>
+        </td>
       </tr>
     {% endfor %}
     </tbody>

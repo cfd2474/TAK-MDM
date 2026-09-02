@@ -110,6 +110,21 @@ def list_device_identifiers(
     ]
 
 
+@router.post("/devices/{device_id}/checkin", response_model=None)
+def force_checkin(
+    device: Device = Depends(require_device), session: Session = Depends(get_db)
+) -> dict:
+    """Ring this device's long-poll so it checks in now.
+
+    ``woken`` is true when the device has a live long-poll waiter — it will check
+    in within about a second. False means it is not connected right now; it will
+    pick up any pending change when it next reconnects.
+    """
+    parked = eff.request_checkin(session, {device.id})
+    session.commit()
+    return {"device_id": str(device.id), "woken": device.id in parked}
+
+
 @router.post("/devices/{device_id}/retire", response_model=DeviceRead)
 def retire_device(
     device: Device = Depends(require_device), session: Session = Depends(get_db)

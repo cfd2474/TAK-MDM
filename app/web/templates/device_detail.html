@@ -11,12 +11,25 @@
   server has v{{ device.state_version }}, device applied v{{ device.acked_state_version }}
 </p>
 
-<form method="post" action="/devices/{{ device.id }}/rename" class="toolbar">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-  <input type="text" name="name" value="{{ device.name or '' }}"
-         placeholder="Friendly name (blank to clear)" maxlength="128" style="min-width:280px">
-  <button type="submit" class="ghost">Save name</button>
-</form>
+<div class="toolbar">
+  <form method="post" action="/devices/{{ device.id }}/rename" class="toolbar" style="margin:0">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="text" name="name" value="{{ device.name or '' }}"
+           placeholder="Friendly name (blank to clear)" maxlength="128" style="min-width:280px">
+    <button type="submit" class="ghost">Save name</button>
+  </form>
+  <form method="post" action="/devices/{{ device.id }}/checkin" style="margin:0">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit">Check in now</button>
+  </form>
+</div>
+
+{% set ci = request.query_params.get('checkin') %}
+{% if ci == 'now' %}
+  <div class="banner good">Ringing the device — it will check in within a second.</div>
+{% elif ci == 'queued' %}
+  <div class="banner warn">The device is not connected right now. It will pick up any change when it reconnects.</div>
+{% endif %}
 
 {% if device.compliance_detail %}
   <div class="banner">Last reported problem: {{ device.compliance_detail }}</div>

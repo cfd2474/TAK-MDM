@@ -344,6 +344,18 @@ def invalidate(session: Session, device_ids: Iterable[uuid.UUID]) -> None:
     notifications.schedule_wake(session, ids)
 
 
+def request_checkin(session: Session, device_ids: set[uuid.UUID]) -> set[uuid.UUID]:
+    """Make these devices check in now, without any policy having changed.
+
+    Marks their cache stale (so the long-poll's pending check has a reason to
+    release) and rings the doorbell. The ensuing recompute finds nothing moved
+    and does not bump ``state_version``, so the check-in is a harmless no-op that
+    just refreshes ``last_checkin_at``. Returns the subset currently parked.
+    """
+    invalidate(session, device_ids)
+    return notifications.parked(set(device_ids))
+
+
 def invalidate_all(session: Session) -> None:
     """Mark every device's cache stale.
 

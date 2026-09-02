@@ -113,6 +113,12 @@ def schedule_wake(session: Session, device_ids: set[uuid.UUID]) -> None:
     session.info.setdefault(_SESSION_KEY, set()).update(device_ids)
 
 
+def parked(device_ids: set[uuid.UUID]) -> set[uuid.UUID]:
+    """The subset with a live long-poll waiter right now — the operator-facing
+    answer to "will this land immediately?"."""
+    return {d for d in device_ids if bus.waiter_count(d) > 0}
+
+
 @event.listens_for(Session, "after_commit")
 def _wake_after_commit(session: Session) -> None:
     """Ring the doorbell only for data that is actually durable."""

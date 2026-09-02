@@ -43,7 +43,8 @@ implemented and proven on the tablet). W19 rebuilt the DPC's on-device UI as the
 branded ATLAS MDM console; W20 added a forced screen-lock passcode to the
 PASSWORD policy, hardware-proven; W21 unified every policy into the composite
 kind with a values-in-fields editor; W22 added quick archive from the list with
-an impact modal.** 457 server tests + 52 agent tests.
+an impact modal; W23 hardened live push and added a "Check in now" button.**
+461 server tests + 52 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -3146,6 +3147,72 @@ appear anywhere in the console.
   `state 42 → 43`, the tablet synced and acked 43, `compliant`. Restore +
   re-assign brought it back (`state 44`, `min_length: 13`).
 
+#### 🔻 W23 — confirm push propagation; add a per-device "Check in now" button
+
+**Operator ask:** make policy changes push instead of waiting for a check-in;
+and a button to make a device check in on demand.
+
+**Finding:** policy changes **already push.** The agent parks a long-poll on
+`GET /api/v1/device/wait` (agent `WAIT_SECONDS = 120`); the server rings it the
+instant any write invalidates the device's state — wired to SQLAlchemy
+`after_commit` in `notifications.py`, so no write path can forget. Verified live
+right now: the tablet is parked at `state_version=44` and F3 was hardware-proven
+in Chunk 5 and W20 (park woken in the same second, bundle 1 s later). Polling
+stays the correctness floor for a device that goes dark. Single uvicorn worker —
+fine for 50–500 devices; a multi-process deployment would need Postgres
+`LISTEN/NOTIFY` or Redis (documented, not built). **No FCM** — the deployment has
+no managed Google Play, and the doorbell already gives ~1 s latency.
+
+##### Plan (6 steps)
+
+1. **Verify** the wake latency with a timed test against `SM-X520` (publish a
+   trivial change, measure park-return → apply).
+2. **`notifications.wake_now(session, ids)`** — schedules the wake and returns
+   the subset currently parked (`bus.waiter_count > 0`), so the UI can say
+   whether it landed.
+3. **Routes.** `POST /devices/{id}/checkin` (web → redirect with a flash) and
+   `POST /api/v1/devices/{id}/checkin` (admin-auth → `{"woken": bool}`).
+4. **UI.** "Check in now" on `device_detail.html` (with a result banner) and a
+   per-row "Check in" on the fleet table. Banner distinguishes "connected —
+   checking in now" from "not connected — will sync within 2 min".
+5. **Tests.** the route wakes a simulated parked waiter and reports it; an
+   offline device is a graceful no-op; the buttons render.
+6. **Docs + hardware.** PROJECT_STATE + a short note in the architecture doc that
+   push already exists (F3) and how the button uses it; click it against
+   `SM-X520` and watch the sync fire.
+
+##### Status: ✅ COMPLETE (server) — 461 server tests. Live re-confirm pending — the bench tablet went off-network mid-session.
+
+**Answer to the ask:** policy changes **already push.** The agent parks a
+long-poll (`GET /api/v1/device/wait`); the server rings it the instant any write
+invalidates the device's state, wired to SQLAlchemy `after_commit` so no path can
+forget. Latency is ~1 s (F3, proven Chunk 5 / W20).
+
+**Gap found and fixed:** the doorbell ring could be *lost* — the notify runs in
+the gap between one check-in finishing and the next park registering, or a
+recompute lands while the request is parked. Before W23 a lost ring meant the
+device waited the agent's full `WAIT_SECONDS = 120` park. `wait.py` now
+**sub-parks in 10 s slices and re-reads the pending reason between them**, so a
+lost ring costs ≤ 10 s. The session is closed between every check, so no
+connection is ever held across a park. New test
+`test_a_lost_doorbell_ring_still_releases_the_wait` monkeypatches the notify to a
+no-op and confirms recovery within a slice.
+
+**"Check in now":**
+- `eff.request_checkin(session, ids)` — marks the cache stale (gives the
+  long-poll's pending check a reason) + rings the doorbell; returns the parked
+  subset. The recompute finds nothing moved, so `state_version` does not bump —
+  a harmless no-op check-in that refreshes `last_checkin_at`.
+- `POST /devices/{id}/checkin` (web → redirect `?checkin=now|queued`) and
+  `POST /api/v1/devices/{id}/checkin` (→ `{"woken": bool}`).
+- Buttons: "Check in now" on the device page (with a result banner) and a
+  per-row "Check in" on the fleet table.
+
+**No FCM** — the deployment has no managed Google Play and the doorbell already
+gives ~1 s. Single uvicorn worker is fine for 50–500 devices; a multi-process
+deployment would fan the notify through Postgres `LISTEN/NOTIFY` (documented in
+`notifications.py`, not built).
+
 ---
 
 ### Later chunks (sketch — to be detailed at approval time)
@@ -3190,6 +3257,14 @@ appear anywhere in the console.
 
 ## Changelog
 
+- **2026-09-02** — **W23: reliable push + a "Check in now" button.** 461 server
+  tests. Policy changes already pushed via the long-poll doorbell (F3); W23
+  closes the lost-ring gap — `/device/wait` sub-parks in 10 s slices and
+  re-reads, so a missed doorbell costs ≤ 10 s instead of the agent's 120 s
+  park. New `eff.request_checkin` + `POST /devices/{id}/checkin` (web + API) and
+  a per-device button on the device page and the fleet table that rings that
+  device's long-poll and reports whether it landed. No FCM (no managed Play; the
+  doorbell is ~1 s).
 - **2026-09-02** — **W22: quick archive from the policy list.** 457 server tests.
   Each policy row gets an Archive button that opens an impact modal — the
   per-category summary, the devices it is on now, Archive / Cancel. Archiving
