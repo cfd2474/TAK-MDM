@@ -506,10 +506,16 @@ def test_the_linked_state_names_the_account_and_does_not_invent_a_second_step(
     body = text_of(client.get("/admin", headers=ADMIN_HEADERS).text)
 
     assert "kate@example.mil" in body
-    # tak.gov gives a user no way to revoke a linked EUD, so the panel must not
-    # send anyone looking for one.
-    assert "needs nothing done at tak.gov" in body.replace("  ", " ")
-    assert "TAK.gov account page" not in body
+    # tak.gov gives a user no way to revoke a linked EUD, so the panel says
+    # nothing about tak.gov here at all — neither a second step nor a reassurance
+    # that there isn't one, since raising the question invites the doubt.
+    assert "the credential is a person, not a service account" in body
+    for phrase in (
+        "TAK.gov account page",       # a page that does not exist
+        "needs nothing done at",      # and no reassurance either: raising the
+        "nothing to do at tak.gov",   # question is what invites the doubt
+    ):
+        assert phrase not in body
 
 
 def test_unlinking_through_the_console_clears_the_credential(
@@ -530,6 +536,8 @@ def test_unlinking_through_the_console_clears_the_credential(
     assert "unbound=1" in response.headers["location"]
     confirmed = text_of(client.get("/admin?unbound=1", headers=ADMIN_HEADERS).text)
     assert "has been unbound" in confirmed
+    assert "no longer holds a credential" in confirmed
+    assert "nothing to do at tak.gov" not in confirmed
 
 
 def test_the_catalog_is_not_fetched_unless_the_tab_is_asked_for(

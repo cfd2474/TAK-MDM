@@ -3667,8 +3667,10 @@ whole of the stated ask) as one checkpoint, then 6 (import) after.
 * **Unbinding is the whole operation.** ⚠️ Corrected 2026-09-02: the panel used
   to say the operator should also revoke at tak.gov. **tak.gov offers a user no
   such control**, so that sent people looking for a page that does not exist —
-  worse than saying nothing. It now confirms the account has been unbound and
-  states plainly that nothing is needed at tak.gov.
+  worse than saying nothing. The console now says nothing about tak.gov on that
+  path at all — not a second step, and not a reassurance that there isn't one,
+  because raising the question is what invites the doubt. It simply confirms the
+  account has been unbound.
 
 ##### ✅ Verified against the live service, 2026-09-02
 
