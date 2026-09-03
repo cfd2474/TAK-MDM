@@ -39,14 +39,24 @@
       {% else %}
       <table data-sortable>
         <thead><tr>
-          <th data-sort>Package</th><th data-sort>Label</th><th data-sort>Latest version</th>
-          <th data-sort>Parts</th><th>Signature</th><th>Store</th><th></th>
+          <th data-sort>App name</th><th data-sort>Latest version</th>
+          <th data-sort>Parts</th><th>Store</th><th></th>
         </tr></thead>
         <tbody>
         {% for p in packages %}
           <tr>
-            <td class="mono">{{ p.package_name }}</td>
-            <td>{{ p.label or '—' }}</td>
+            <td>
+              {# The package name is the identity that has to match the device, so
+                 it keeps its place under the name even without its own column. An
+                 unlabelled upload falls back to it rather than showing a bare
+                 dash — and then does not repeat it underneath. #}
+              {% if p.label %}
+                {{ p.label }}
+                <div class="mono muted" style="font-size:11px">{{ p.package_name }}</div>
+              {% else %}
+                <span class="mono">{{ p.package_name }}</span>
+              {% endif %}
+            </td>
             <td class="mono">
               {% if p.latest_version %}
                 {{ p.latest_version.version_code }}{% if p.latest_version.version_name %} ({{ p.latest_version.version_name }}){% endif %}
@@ -57,10 +67,6 @@
               {% if p.latest_version and p.latest_version.has_obb %}
                 <span class="pill" title="This package ships an OBB expansion file. A Device Owner cannot place OBB files on the device, so the APK installs WITHOUT it and the app will be missing the assets it expects. Assigning this package will mark a device degraded.">OBB</span>
               {% endif %}
-            </td>
-            <td class="mono muted" title="{{ p.signature_sha256 or '' }}">
-              {{ (p.signature_sha256[:12] ~ '…') if p.signature_sha256 else '—' }}
-              {% if p.signature_scheme %}<span class="pill">v{{ p.signature_scheme }}</span>{% endif %}
             </td>
             <td>
               <form method="post" action="/apps/{{ p.id }}/store" style="margin:0">
@@ -101,8 +107,18 @@
         <tbody>
         {% for p in store_packages %}
           <tr>
-            <td class="mono">{{ p.package_name }}</td>
-            <td>{{ p.label or '—' }}</td>
+            <td>
+              {# The package name is the identity that has to match the device, so
+                 it keeps its place under the name even without its own column. An
+                 unlabelled upload falls back to it rather than showing a bare
+                 dash — and then does not repeat it underneath. #}
+              {% if p.label %}
+                {{ p.label }}
+                <div class="mono muted" style="font-size:11px">{{ p.package_name }}</div>
+              {% else %}
+                <span class="mono">{{ p.package_name }}</span>
+              {% endif %}
+            </td>
             <td class="mono">{{ p.latest_version.version_code if p.latest_version else '—' }}</td>
             <td>
               <form method="post" action="/apps/{{ p.id }}/store" style="margin:0">
