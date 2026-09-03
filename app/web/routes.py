@@ -2065,7 +2065,15 @@ def _sync_form(request: Request):
 
     The rest of the app is sync, so these handlers run in a threadpool where there
     is no running loop to await Starlette's async form parser on.
-    """
-    import anyio
 
-    return anyio.from_thread.run(request.form)
+    ⚠️ The submodule is imported **explicitly**. `import anyio` alone does not bind
+    `from_thread` in anyio 4.15 — its lazy loader raises `AttributeError: module
+    'anyio' has no attribute 'from_thread'` — while 4.14 resolved it happily. That
+    difference took out every console form that posts through here, and no test saw
+    it: the venv had 4.14 and the container 4.15, because `anyio` arrives as an
+    unpinned transitive dependency and a rebuild moved it. It is pinned now, and
+    this import no longer depends on the loader's behaviour either way.
+    """
+    from anyio import from_thread
+
+    return from_thread.run(request.form)

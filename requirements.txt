@@ -1,4 +1,8 @@
 fastapi==0.115.0
+# Pinned because it is otherwise transitive and versions disagree about whether
+# `anyio.from_thread` resolves without an explicit submodule import — a drift the
+# test suite cannot see when the venv and the image resolve differently.
+anyio==4.14.2
 uvicorn[standard]==0.30.6
 sqlalchemy==2.0.35
 alembic==1.13.3

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.policies.specs.base import PolicySpec
 from app.policies.strategies import Merge, MergeStrategy
@@ -50,6 +50,43 @@ class AppCatalogSpec(PolicySpec):
         description="Apps the device must have installed. Pick from uploaded packages.",
         json_schema_extra={"ui_group": "Required apps", "ui_control": "app_list"},
     )
+
+    @model_validator(mode="after")
+    def _one_entry_per_package(self):
+        """Refuse two entries for the same package in one policy.
+
+        Rejected rather than warned about, unlike a plugin/ATAK mismatch: that has
+        a plausible reason behind it, this does not. A package name **is** the
+        app's identity on Android, so only one build of it can exist on a device.
+        Two entries are not a choice between builds, they are the same slot filled
+        twice.
+
+        The trap this closes is a plugin pinned to two ATAK lines at once — say UAS
+        Tool for 5.5.0 *and* for 5.8.0. Both are legitimate builds and an operator
+        can reasonably think they are covering a mixed fleet, but Android will
+        install exactly one. Without this the merge silently kept the first and
+        recorded a "conflict", which is language meant for two policies disagreeing
+        — here a policy disagrees with itself, and the resolved state never says
+        which build won.
+
+        Different ATAK lines mean different policies, assigned to different
+        devices.
+        """
+        seen: dict[str, int] = {}
+        for entry in self.required_apps or []:
+            seen[entry.package_name] = seen.get(entry.package_name, 0) + 1
+
+        duplicates = sorted(name for name, count in seen.items() if count > 1)
+        if duplicates:
+            names = ", ".join(duplicates)
+            raise ValueError(
+                f"{names} appears more than once in required apps. Only one build "
+                "of a package can be installed on a device, so a second entry "
+                "cannot take effect — if these are builds for different ATAK "
+                "versions, put them in separate policies and assign each to the "
+                "devices running that ATAK."
+            )
+        return self
 
     # The blacklist: make these packages unusable by whatever means each one allows.
     #

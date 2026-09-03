@@ -405,3 +405,111 @@ def test_the_device_page_shows_the_mismatch_and_names_the_atak(
     assert "This device reports ATAK" in text
     assert "built for ATAK 5.5.0" in text
     assert "the device has ATAK 5.8.0" in text
+
+
+# --------------------------------------------------------------------------- #
+# One entry per package — refused, not warned about
+# --------------------------------------------------------------------------- #
+
+
+def make_spec(entries):
+    from app.policies.registry import registry
+
+    return registry.validate_spec("APP_CATALOG", {"required_apps": entries})
+
+
+def test_two_entries_for_one_package_are_refused():
+    """A package name is the app's identity on Android: one build, one slot. Two
+    entries are not a choice between builds, they are the same slot filled twice."""
+    from app.policies.registry import PolicyTypeError
+
+    with pytest.raises(PolicyTypeError) as exc:
+        make_spec([
+            {"package_name": "com.plugin", "artifact_sha256": "ab" * 32},
+            {"package_name": "com.plugin", "artifact_sha256": "cd" * 32},
+        ])
+
+    assert "more than once" in str(exc.value)
+
+
+def test_the_refusal_says_what_to_do_instead():
+    """The realistic mistake is pinning one plugin to two ATAK lines to cover a
+    mixed fleet. The message has to name the actual remedy."""
+    from app.policies.registry import PolicyTypeError
+
+    with pytest.raises(PolicyTypeError) as exc:
+        make_spec([{"package_name": "com.plugin"}, {"package_name": "com.plugin"}])
+
+    message = str(exc.value)
+    assert "separate policies" in message
+    assert "ATAK" in message
+
+
+def test_a_duplicate_is_refused_even_when_the_entries_are_identical():
+    """Not a "they disagree" check — the second entry can never take effect."""
+    from app.policies.registry import PolicyTypeError
+
+    with pytest.raises(PolicyTypeError):
+        make_spec([
+            {"package_name": "com.plugin", "min_version_code": 5},
+            {"package_name": "com.plugin", "min_version_code": 5},
+        ])
+
+
+def test_every_duplicated_package_is_named_at_once():
+    """Fixing them one round-trip at a time would be tedious and needless."""
+    from app.policies.registry import PolicyTypeError
+
+    with pytest.raises(PolicyTypeError) as exc:
+        make_spec([
+            {"package_name": "com.a"}, {"package_name": "com.a"},
+            {"package_name": "com.b"}, {"package_name": "com.b"},
+            {"package_name": "com.c"},
+        ])
+
+    message = str(exc.value)
+    assert "com.a" in message and "com.b" in message
+    assert "com.c" not in message
+
+
+def test_distinct_packages_are_untouched():
+    spec = make_spec([
+        {"package_name": "com.a", "min_version_code": 1},
+        {"package_name": "com.b", "artifact_sha256": "ab" * 32},
+    ])
+    assert len(spec["required_apps"]) == 2
+
+
+def test_the_console_form_refuses_a_duplicate_legibly(client, db):
+    """The path an operator takes, and where a raw Pydantic dump would land in a
+    URL query string and be truncated past the useful sentence."""
+    from tests.conftest import ADMIN_HEADERS
+
+    response = client.post(
+        "/policies",
+        data={
+            "name": "Mixed fleet",
+            "policy_type": "APP_CATALOG",
+            "required_apps__package_name": ["com.plugin", "com.plugin"],
+            "required_apps__version_choice": ["", "min:5"],
+        },
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+
+    location = response.headers["location"]
+    assert "error=" in location
+    assert "more%20than%20once" in location or "more+than+once" in location
+    # The noise a bare str(ValidationError) would have carried into the banner.
+    assert "type%3Dvalue_error" not in location
+    assert "AppCatalogSpec" not in location
+
+
+def test_other_validation_errors_still_name_their_field():
+    """Tidying the message must not cost the field name on ordinary errors."""
+    from app.policies.registry import PolicyTypeError, registry
+
+    with pytest.raises(PolicyTypeError) as exc:
+        registry.validate_spec("PASSWORD", {"min_length": -5})
+
+    assert "min_length" in str(exc.value)
