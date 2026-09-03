@@ -408,7 +408,11 @@ def download_apk(
 
 
 def download_apk_to_file(
-    plugin: Plugin, access_token: str, dest, client: httpx.Client | None = None
+    plugin: Plugin,
+    access_token: str,
+    dest,
+    client: httpx.Client | None = None,
+    on_progress=None,
 ) -> int:
     """Stream a plugin APK to ``dest``, verifying its hash as it lands.
 
@@ -440,11 +444,16 @@ def download_apk_to_file(
                     f"{plugin.package_name}: download failed "
                     f"(HTTP {response.status_code})"
                 )
+            total = _int_or_none(response.headers.get("content-length")) or (
+                plugin.apk_size_bytes or 0
+            )
             with dest.open("wb") as handle:
                 for chunk in response.iter_bytes(1024 * 256):
                     digest.update(chunk)
                     handle.write(chunk)
                     written += len(chunk)
+                    if on_progress is not None:
+                        on_progress(written, total)
 
     if plugin.apk_hash and digest.hexdigest() != plugin.apk_hash:
         dest.unlink(missing_ok=True)

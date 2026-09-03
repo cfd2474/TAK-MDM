@@ -33,7 +33,13 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.api.deps import get_bundle_signer, get_ca, get_storage, get_token_vault
+from app.api.deps import (
+    get_bundle_signer,
+    get_ca,
+    get_session_factory,
+    get_storage,
+    get_token_vault,
+)
 from app.artifacts.storage import LocalArtifactStorage
 from app.config import Settings, get_settings
 from app.db.base import Base, get_session
@@ -133,6 +139,8 @@ def client(
     app.dependency_overrides[get_bundle_signer] = lambda: signer
     app.dependency_overrides[get_storage] = lambda: artifact_storage
     app.dependency_overrides[get_token_vault] = lambda: token_vault
+    # Background work must reach the test database, not the real one.
+    app.dependency_overrides[get_session_factory] = lambda: session_factory
     app.dependency_overrides[get_settings] = lambda: settings
     with TestClient(app) as test_client:
         yield test_client

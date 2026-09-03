@@ -295,3 +295,95 @@
     });
   })();
 })();
+
+/* --- TPC plugin import ------------------------------------------------------
+   The download runs on the server off the request, because a 433 MB plugin held
+   inside one takes minutes and tells the operator nothing while it does. This
+   starts the job, then polls it so the bar reflects real bytes rather than an
+   animation that would keep moving through a stall. */
+(function () {
+  var modal = document.getElementById("tpc-import-modal");
+  if (!modal) return;
+
+  var title = document.getElementById("tpc-import-title");
+  var detail = document.getElementById("tpc-import-detail");
+  var bar = document.getElementById("tpc-import-bar");
+  var bytes = document.getElementById("tpc-import-bytes");
+  var close = document.getElementById("tpc-import-close");
+  var timer = null;
+
+  function mb(n) { return (n / 1048576).toFixed(1) + " MB"; }
+
+  function finish(label, message, ok) {
+    if (timer) { clearInterval(timer); timer = null; }
+    title.textContent = label;
+    detail.textContent = message;
+    close.hidden = false;
+  }
+
+  close.addEventListener("click", function () {
+    modal.hidden = true;
+    // Reload so the row picks up its "imported" pill and Local apps is current.
+    location.reload();
+  });
+
+  function poll(id) {
+    fetch("/apps/tpc/import/" + encodeURIComponent(id), { headers: { "Accept": "application/json" } })
+      .then(function (r) { return r.json(); })
+      .then(function (job) {
+        if (job.state === "running") {
+          if (job.total) {
+            bar.style.width = job.percent + "%";
+            detail.textContent = "Downloading — " + job.percent + "%";
+            bytes.textContent = mb(job.downloaded) + " of " + mb(job.total);
+          } else {
+            // No Content-Length: show movement, but never a made-up percentage.
+            detail.textContent = "Downloading — size unknown";
+            bytes.textContent = mb(job.downloaded) + " so far";
+          }
+          return;
+        }
+        if (job.state === "done") {
+          bar.style.width = "100%";
+          bytes.textContent = "";
+          finish("Imported", (job.package_name || "The plugin") + " is in the local library.");
+        } else {
+          bytes.textContent = "";
+          finish("Import failed", job.error || "The import did not complete.");
+        }
+      })
+      .catch(function () { /* transient; the next tick retries */ });
+  }
+
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-tpc-import]");
+    if (!btn) return;
+
+    var body = new FormData();
+    body.append("identifier", btn.getAttribute("data-identifier"));
+    body.append("product", btn.getAttribute("data-product"));
+    body.append("product_version", btn.getAttribute("data-product-version"));
+    body.append("label", btn.getAttribute("data-label") || "");
+    var token = document.querySelector('input[name="csrf_token"]');
+    if (token) body.append("csrf_token", token.value);
+
+    title.textContent = "Importing " + (btn.getAttribute("data-label") || "");
+    detail.textContent = "Contacting tak.gov…";
+    bytes.textContent = "";
+    bar.style.width = "0";
+    close.hidden = true;
+    modal.hidden = false;
+
+    fetch("/apps/tpc/import", { method: "POST", body: body })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, job: j }; }); })
+      .then(function (res) {
+        if (!res.ok || !res.job.id) {
+          finish("Import failed", res.job.error || "The server refused to start the import.");
+          return;
+        }
+        timer = setInterval(function () { poll(res.job.id); }, 700);
+        poll(res.job.id);
+      })
+      .catch(function () { finish("Import failed", "Could not reach the server."); });
+  });
+})();

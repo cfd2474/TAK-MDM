@@ -193,24 +193,22 @@
           plugin{{ '' if tpc.plugins | length == 1 else 's' }}
           for {{ tpc.product }} {{ tpc.product_version }}.
         </p>
-        <table data-sortable>
+        <table data-sortable class="tpc-table">
           <thead><tr>
-            <th data-sort>Plugin</th><th data-sort>Package</th><th data-sort>Version</th>
-            <th>Requires</th><th data-sort style="white-space:nowrap">Size</th><th></th>
+            <th data-sort>Plugin</th>
+            <th data-sort>Version</th>
+            <th data-sort>Size</th>
+            <th>Import</th>
           </tr></thead>
           <tbody>
           {% for p in tpc.plugins %}
             <tr>
               <td>
-                {{ p.display_name or '—' }}
-                {% if p.description %}<div class="muted" style="font-size:12px">{{ p.description[:160] }}</div>{% endif %}
+                {{ p.display_name or p.package_name }}
+                <div class="mono muted" style="font-size:11px">{{ p.package_name }}</div>
+                {% if p.description %}<div class="muted" style="font-size:12px">{{ p.description[:200] }}</div>{% endif %}
               </td>
-              <td class="mono">{{ p.package_name }}</td>
               <td class="mono">{{ p.version or '—' }}</td>
-              <td class="muted">
-                {% if p.tak_prerequisite %}ATAK {{ p.tak_prerequisite }}{% endif %}
-                {% if p.os_requirement %}<span class="pill">SDK {{ p.os_requirement }}</span>{% endif %}
-              </td>
               <td class="muted mono" style="white-space:nowrap">{{ p.apk_size_bytes | filesizeformat if p.apk_size_bytes else '—' }}</td>
               <td style="white-space:nowrap">
                 {% if (p.package_name, p.revision_code) in tpc.imported %}
@@ -218,14 +216,11 @@
                 {% elif not p.apk_url %}
                   <span class="muted">no download</span>
                 {% else %}
-                  <form method="post" action="/apps/tpc/import" style="margin:0"
-                        data-confirm="Import {{ p.display_name or p.package_name }}{{ ' (' ~ (p.apk_size_bytes | filesizeformat) ~ ')' if p.apk_size_bytes }} into the local library? The download runs while you wait.">
-                    {{ csrf_field(csrf_token) }}
-                    <input type="hidden" name="identifier" value="{{ p.identifier }}">
-                    <input type="hidden" name="product" value="{{ tpc.product }}">
-                    <input type="hidden" name="product_version" value="{{ tpc.product_version }}">
-                    <button type="submit" class="ghost">Import</button>
-                  </form>
+                  <button type="button" class="ghost" data-tpc-import
+                          data-identifier="{{ p.identifier }}"
+                          data-product="{{ tpc.product }}"
+                          data-product-version="{{ tpc.product_version }}"
+                          data-label="{{ p.display_name or p.package_name }}">Import</button>
                 {% endif %}
               </td>
             </tr>
@@ -236,6 +231,18 @@
           {{ empty_state('The catalog returned no plugins for this product and version.') }}
         {% endif %}
       {% endif %}
+    </div>
+  </div>
+
+  <div id="tpc-import-modal" class="modal-backdrop" hidden>
+    <div class="modal">
+      <h2 id="tpc-import-title">Importing</h2>
+      <p class="muted" id="tpc-import-detail">Contacting tak.gov…</p>
+      <div class="progress"><span id="tpc-import-bar"></span></div>
+      <p class="mono muted" id="tpc-import-bytes" style="font-size:12px; margin-top:8px"></p>
+      <div class="toolbar" style="margin-top:12px">
+        <button type="button" class="ghost" id="tpc-import-close" hidden>Close</button>
+      </div>
     </div>
   </div>
 

@@ -39,6 +39,20 @@ def get_db(session: Session = Depends(get_session)) -> Session:
     return session
 
 
+def get_session_factory():
+    """A callable that opens a *new* session, for work that outlives the request.
+
+    Background work cannot borrow the request's session — it is closed when the
+    response is sent. This is a dependency rather than a direct import of
+    ``SessionLocal`` so a test can substitute its own factory; importing it
+    directly is how a background task ends up talking to the real database in the
+    middle of a test run.
+    """
+    from app.db.base import SessionLocal
+
+    return SessionLocal
+
+
 @lru_cache
 def _certificate_authority(pki_dir: str, common_name: str, validity_days: int):
     from pathlib import Path

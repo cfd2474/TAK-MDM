@@ -50,12 +50,18 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, get_enrollment_qr_guard, get_storage, get_token_vault
+from app.api.deps import (
+    get_db,
+    get_enrollment_qr_guard,
+    get_session_factory,
+    get_storage,
+    get_token_vault,
+)
 from app.security import admin_auth, csrf
 from app.security.admin_auth import AdminIdentity, admin_required
 from app.security.enrollment_qr import EnrollmentQrGuard
@@ -86,6 +92,7 @@ from app.policies import creator_catalog
 from app.policies import form_parse, form_schema
 from app.policies.registry import PolicyTypeError, registry
 from app.services import agent_update as agent_update_service
+from app.services import import_jobs
 from app.services import tak_gov
 from app.services import tak_gov_link
 from app.services import app_groups as app_group_service
@@ -1253,7 +1260,11 @@ def _tpc_panel(request: Request, session: Session, vault: TokenVault) -> dict:
             session, vault, product=product, product_version=product_version
         )
         session.commit()  # a refresh may have rotated the token
-        panel["plugins"] = plugins
+        # Sorted here rather than left to the client sorter, so the order is the
+        # same before JavaScript runs and for anyone who never gets it.
+        panel["plugins"] = sorted(
+            plugins, key=lambda x: (x.display_name or x.package_name).lower()
+        )
         panel["error"] = error
         panel["imported"] = _already_imported(session, plugins)
     return panel
@@ -1283,29 +1294,50 @@ def import_tpc_plugin_form(
     identifier: str = Form(...),
     product: str = Form(default=tak_gov.DEFAULT_PRODUCT),
     product_version: str = Form(default=tak_gov.DEFAULT_PRODUCT_VERSION),
-    session: Session = Depends(get_db),
+    label: str = Form(default=""),
+    session_factory=Depends(get_session_factory),
     storage: ArtifactStorage = Depends(get_storage),
     vault: TokenVault = Depends(get_token_vault),
     identity: AdminIdentity = Depends(admin_required),
-) -> RedirectResponse:
+) -> JSONResponse:
+    """Start an import and hand back a job to watch.
+
+    Returns JSON rather than redirecting: a 433 MB plugin takes minutes, and a
+    request held open for that long tells the operator nothing about whether it is
+    working. The console opens a modal and polls the status route below.
+    """
     if product not in tak_gov.PRODUCTS:
         product = tak_gov.DEFAULT_PRODUCT
     if product_version not in tak_gov.PRODUCT_VERSIONS:
         product_version = tak_gov.DEFAULT_PRODUCT_VERSION
 
-    back = f"/apps?tab=tpc&product={product}&product_version={product_version}"
-    try:
-        result = tak_gov_link.import_plugin(
-            session, vault, storage, identifier,
-            product=product, product_version=product_version,
-        )
-    except (tak_gov.TakGovError, package_service.PackageError) as exc:
-        session.rollback()
-        return _redirect(f"{back}&error={_quote(str(exc))}")
+    job = import_jobs.start(
+        session_factory,
+        vault,
+        storage,
+        identifier=identifier,
+        label=label.strip() or identifier,
+        product=product,
+        product_version=product_version,
+    )
+    return JSONResponse(job.as_dict(), status_code=status.HTTP_202_ACCEPTED)
 
-    eff.invalidate_all(session)
-    session.commit()
-    return _redirect(f"{back}&imported={_quote(result.package.package_name)}")
+
+@router.get("/apps/tpc/import/{job_id}")
+def import_tpc_plugin_status(
+    job_id: str,
+    identity: AdminIdentity = Depends(admin_required),
+) -> JSONResponse:
+    job = import_jobs.get(job_id)
+    if job is None:
+        # Most likely the server restarted mid-import. Say that, rather than 404ing
+        # into a modal that spins forever.
+        return JSONResponse(
+            {"state": "failed", "error": "the import job is no longer known — "
+             "the server may have restarted. Press Import again."},
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    return JSONResponse(job.as_dict())
 
 
 @router.post("/apps/upload")

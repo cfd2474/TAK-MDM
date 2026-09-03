@@ -278,6 +278,7 @@ def import_plugin(
     product: str,
     product_version: str,
     client=None,
+    on_progress=None,
 ):
     """Pull one catalog plugin into the local package library.
 
@@ -313,7 +314,9 @@ def import_plugin(
 
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "plugin.apk"
-        tak_gov.download_apk_to_file(plugin, token, path, client=client)
+        tak_gov.download_apk_to_file(
+            plugin, token, path, client=client, on_progress=on_progress
+        )
         return package_service.ingest(
             session, storage, path.read_bytes(), label=plugin.display_name
         )

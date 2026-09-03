@@ -3745,13 +3745,46 @@ cleanup-on-mismatch each fail tests.
   under a megabyte rendered as "0 MB"** — five of the current 86, including the
   very package used to verify the download path. Now `filesizeformat`.
 
+#### 🔻 W30 — Plugin table, and imports you can watch
+
+**Table.** Default sort by plugin name (server-side, so the order is the same
+before JavaScript runs); `Package` and `Requires` columns removed with the package
+name kept as a sub-line under the plugin name — it is the identity an operator
+matches against the local library, so it loses its column but not its place.
+`table-layout: fixed` gives the Plugin column the slack and stops the Import
+button's column sizing itself past the panel edge.
+
+**D42 — the import moved off the request, because the progress bar had to be
+real.** A percentage that is not tied to bytes is worse than no percentage: it
+keeps moving through a stall, which is exactly the moment an operator needs the
+truth. So `POST /apps/tpc/import` now starts a job and returns `202` with an id,
+`GET /apps/tpc/import/{id}` reports `{state, downloaded, total, percent}`, and a
+modal polls it. `total` of 0 means the server sent no Content-Length, and the
+console then shows bytes-so-far rather than a fabricated fraction.
+
+`app/services/import_jobs.py` is deliberately tiny — no queue, no retry, no
+persistence. An import is one operator pressing one button, and a job that dies
+with the process is one they can press again. A status poll for an unknown job
+answers "the server may have restarted. Press Import again" rather than 404ing
+into a modal that spins forever.
+
+**D43 — the session factory is a dependency now** (`get_session_factory`).
+Background work cannot borrow the request's session, and the first cut imported
+`SessionLocal` directly — which had a test's background thread connecting to the
+**real Postgres** mid-run. Third time this shape has bitten (W23, W29); the
+factory is injected and overridden in `conftest` like every other dependency.
+
+✅ **Verified live:** imported **UAS Tool at 376.6 MB** from the 5.5.0 catalog.
+Progress ran 0 % → 8 → 31 → 53 → 76 → 98 → 100 with byte counts matching, and
+finished naming `com.atakmap.android.uastool.plugin` (versionCode 1787086923,
+targetSdk 35, 394 892 123 bytes stored). 8 further tests, suite **548**.
+
 ##### Remaining known gap
 
-⚠️ **Import is synchronous.** A 433 MB plugin downloads inside the request while
-the operator waits. Acceptable for a deliberate single-operator button press on a
-loopback console, and the confirm dialog states the size and that it runs while
-you wait — but it is the obvious candidate for a background job if the catalog is
-ever driven at fleet scale.
+⚠️ Import progress lives **in the serving process** (R16 again, alongside the push
+doorbell and the token-refresh lock). Under multiple workers a poll could land on
+a worker that never heard of the job. Single-worker today; all three move together
+in Chunk 11.
 
 ---
 

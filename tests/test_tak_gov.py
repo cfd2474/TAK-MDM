@@ -708,3 +708,161 @@ def test_the_upload_paths_own_guards_still_apply_to_an_import(
         )
 
     assert "signing certificate" in str(exc.value)
+
+
+# --------------------------------------------------------------------------- #
+# Import jobs — progress the console can actually watch
+# --------------------------------------------------------------------------- #
+
+
+def run_now(work):
+    """Runner that executes the job inline, so a test never depends on timing."""
+    work()
+
+
+def test_a_job_carries_progress_through_from_the_download(
+    db, token_vault, artifact_storage
+):
+    """The bar must reflect bytes that actually landed. A download that stalls
+    should show a bar that stops, not one that keeps animating."""
+    from app.services import import_jobs
+    import app.services.tak_gov_link as tgl
+
+    body = b"y" * (900 * 1024)  # several 256 KiB chunks, so progress is stepwise
+    client, _ = catalog_and_apk(build_apk("com.example", 3), FULL_PLUGIN)
+    _link_with(db, token_vault, refresh="r", access="access-1", ttl=300)
+    db.commit()
+
+    def fake_import(session, vault, storage, identifier, *, product,
+                    product_version, client=None, on_progress=None):
+        for sent in range(0, len(body) + 1, 300 * 1024):
+            on_progress(sent, len(body))
+        return real(
+            db, token_vault, artifact_storage, identifier,
+            product=product, product_version=product_version, client=client_,
+        )
+
+    client_ = client
+    real = tgl.import_plugin
+    tgl.import_plugin = fake_import
+    try:
+        job = import_jobs.start(
+            lambda: db, token_vault, artifact_storage,
+            identifier=FULL_PLUGIN["identifier"], label="Example",
+            product="ATAK-CIV", product_version="5.8.0", runner=run_now,
+        )
+    finally:
+        tgl.import_plugin = real
+
+    assert job.state == "done", job.error
+    assert job.total == len(body)
+    assert job.downloaded == len(body)
+    assert job.percent == 100
+
+
+def test_percent_is_zero_rather_than_a_division_by_an_unknown_total():
+    from app.services.import_jobs import ImportJob
+
+    job = ImportJob(id="x", identifier="i", label="l", downloaded=5_000, total=0)
+    assert job.percent == 0  # "size unknown", not a fabricated fraction
+
+    job.total = 10_000
+    assert job.percent == 50
+
+
+def test_percent_never_exceeds_one_hundred():
+    """Content-Length can undercount a re-encoded body; the bar must not overrun."""
+    from app.services.import_jobs import ImportJob
+
+    job = ImportJob(id="x", identifier="i", label="l", downloaded=120, total=100)
+    assert job.percent == 100
+
+
+def test_a_failing_job_keeps_the_specific_reason(db, token_vault, artifact_storage):
+    """"Import failed" would throw away the only useful part of a hash mismatch."""
+    from app.services import import_jobs
+
+    client, _ = catalog_and_apk(
+        build_apk("com.example", 1), FULL_PLUGIN, hash_override="00" * 32
+    )
+    _link_with(db, token_vault, refresh="r", access="access-1", ttl=300)
+    db.commit()
+
+    import app.services.tak_gov_link as tgl
+
+    real = tgl.import_plugin
+    tgl.import_plugin = lambda *a, **k: real(*a, **{**k, "client": client})
+    try:
+        job = import_jobs.start(
+            lambda: db, token_vault, artifact_storage,
+            identifier=FULL_PLUGIN["identifier"], label="Example",
+            product="ATAK-CIV", product_version="5.8.0", runner=run_now,
+        )
+    finally:
+        tgl.import_plugin = real
+
+    assert job.state == "failed"
+    assert "hash mismatch" in job.error
+
+
+def test_a_successful_job_names_the_package_it_actually_ingested(
+    db, token_vault, artifact_storage
+):
+    from app.services import import_jobs
+    import app.services.tak_gov_link as tgl
+
+    client, _ = catalog_and_apk(build_apk("com.real.one", 9), FULL_PLUGIN)
+    _link_with(db, token_vault, refresh="r", access="access-1", ttl=300)
+    db.commit()
+
+    real = tgl.import_plugin
+    tgl.import_plugin = lambda *a, **k: real(*a, **{**k, "client": client})
+    try:
+        job = import_jobs.start(
+            lambda: db, token_vault, artifact_storage,
+            identifier=FULL_PLUGIN["identifier"], label="Example",
+            product="ATAK-CIV", product_version="5.8.0", runner=run_now,
+        )
+    finally:
+        tgl.import_plugin = real
+
+    assert job.state == "done", job.error
+    assert job.package_name == "com.real.one"
+
+
+def test_the_status_route_answers_for_a_job_it_knows(client: TestClient):
+    from app.services import import_jobs
+
+    job = import_jobs.start(
+        lambda: None, None, None, identifier="i", label="Example",
+        product="ATAK-CIV", product_version="5.8.0", runner=lambda work: None,
+    )
+
+    body = client.get(f"/apps/tpc/import/{job.id}", headers=ADMIN_HEADERS).json()
+    assert body["state"] == "running"
+    assert body["label"] == "Example"
+
+
+def test_an_unknown_job_says_the_server_may_have_restarted(client: TestClient):
+    """A 404 into a spinner would leave the modal turning forever."""
+    response = client.get("/apps/tpc/import/deadbeef", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 404
+    assert "restarted" in response.json()["error"]
+
+
+def test_starting_an_import_returns_a_job_to_poll_rather_than_blocking(
+    client: TestClient, db, token_vault
+):
+    _link_with(db, token_vault, refresh="r", access="access-1", ttl=300)
+    db.commit()
+
+    response = client.post(
+        "/apps/tpc/import",
+        data={"identifier": "nope", "product": "ATAK-CIV", "product_version": "5.8.0"},
+        headers=ADMIN_HEADERS,
+    )
+
+    assert response.status_code == 202
+    assert response.json()["id"]
+    assert response.json()["state"] == "running"

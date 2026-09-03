@@ -557,3 +557,31 @@ dl.kv dd { margin: 0; font-size: 13px; }
   .railed { flex-direction: column; }
   .rail { position: static; flex-basis: auto; max-height: none; width: 100%; }
 }
+
+/* --- TPC plugin catalog ----------------------------------------------------
+   Fixed layout so the Plugin column takes the slack and the three narrow
+   columns stop growing to fit their longest cell. Without this the Import
+   button sat in an auto-sized column that pushed past the panel edge. */
+.tpc-table { table-layout: fixed; }
+.tpc-table th:nth-child(1), .tpc-table td:nth-child(1) { width: auto; }
+.tpc-table th:nth-child(2), .tpc-table td:nth-child(2) { width: 20ch; }
+.tpc-table th:nth-child(3), .tpc-table td:nth-child(3) { width: 9ch; white-space: nowrap; }
+.tpc-table th:nth-child(4), .tpc-table td:nth-child(4) { width: 11ch; }
+.tpc-table td { overflow-wrap: anywhere; }
+.tpc-table td:nth-child(4) button { width: 100%; }
+
+/* Determinate progress bar for a running import. */
+.progress {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.progress > span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent, #387aff);
+  transition: width .25s ease;
+}
