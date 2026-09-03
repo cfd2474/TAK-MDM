@@ -173,6 +173,13 @@
         {% if tpc.error %}
           <div class="banner bad">{{ tpc.error }}</div>
         {% endif %}
+        {% if request.query_params.get('imported') %}
+          <div class="banner good">
+            Imported <span class="mono">{{ request.query_params.get('imported') }}</span>
+            into the local library. It is on the <a href="/apps">Local apps</a> tab;
+            nothing is on a device until you assign it.
+          </div>
+        {% endif %}
 
         {% if not tpc.loaded %}
           <p class="muted">
@@ -189,7 +196,7 @@
         <table data-sortable>
           <thead><tr>
             <th data-sort>Plugin</th><th data-sort>Package</th><th data-sort>Version</th>
-            <th>Requires</th><th data-sort style="white-space:nowrap">Size</th>
+            <th>Requires</th><th data-sort style="white-space:nowrap">Size</th><th></th>
           </tr></thead>
           <tbody>
           {% for p in tpc.plugins %}
@@ -205,6 +212,22 @@
                 {% if p.os_requirement %}<span class="pill">SDK {{ p.os_requirement }}</span>{% endif %}
               </td>
               <td class="muted mono" style="white-space:nowrap">{{ p.apk_size_bytes | filesizeformat if p.apk_size_bytes else '—' }}</td>
+              <td style="white-space:nowrap">
+                {% if (p.package_name, p.revision_code) in tpc.imported %}
+                  <span class="pill good">imported</span>
+                {% elif not p.apk_url %}
+                  <span class="muted">no download</span>
+                {% else %}
+                  <form method="post" action="/apps/tpc/import" style="margin:0"
+                        data-confirm="Import {{ p.display_name or p.package_name }}{{ ' (' ~ (p.apk_size_bytes | filesizeformat) ~ ')' if p.apk_size_bytes }} into the local library? The download runs while you wait.">
+                    {{ csrf_field(csrf_token) }}
+                    <input type="hidden" name="identifier" value="{{ p.identifier }}">
+                    <input type="hidden" name="product" value="{{ tpc.product }}">
+                    <input type="hidden" name="product_version" value="{{ tpc.product_version }}">
+                    <button type="submit" class="ghost">Import</button>
+                  </form>
+                {% endif %}
+              </td>
             </tr>
           {% endfor %}
           </tbody>

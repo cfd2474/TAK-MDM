@@ -407,6 +407,54 @@ def download_apk(
     return data
 
 
+def download_apk_to_file(
+    plugin: Plugin, access_token: str, dest, client: httpx.Client | None = None
+) -> int:
+    """Stream a plugin APK to ``dest``, verifying its hash as it lands.
+
+    Streaming rather than ``download_apk`` because the catalog is not all small
+    change — the largest current ATAK-CIV plugin is 433 MB, and materialising that
+    in a response body *and* again as bytes for ingest is most of a gigabyte of
+    peak memory inside one request.
+
+    The hash is computed incrementally over the same bytes that get written, so
+    there is no window where an unverified file is complete on disk and looks
+    usable. A mismatch deletes the file before raising, because the next thing a
+    half-trusted APK does is get picked up by something.
+    """
+    import hashlib
+    from pathlib import Path
+
+    if not plugin.apk_url:
+        raise TakGovError(f"{plugin.package_name}: the catalog gave no download URL")
+
+    dest = Path(dest)
+    digest = hashlib.sha256()
+    written = 0
+    with _client(client) as http:
+        with http.stream(
+            "GET", plugin.apk_url, headers=_headers(access_token), follow_redirects=True
+        ) as response:
+            if response.status_code != 200:
+                raise TakGovError(
+                    f"{plugin.package_name}: download failed "
+                    f"(HTTP {response.status_code})"
+                )
+            with dest.open("wb") as handle:
+                for chunk in response.iter_bytes(1024 * 256):
+                    digest.update(chunk)
+                    handle.write(chunk)
+                    written += len(chunk)
+
+    if plugin.apk_hash and digest.hexdigest() != plugin.apk_hash:
+        dest.unlink(missing_ok=True)
+        raise TakGovError(
+            f"{plugin.package_name}: APK hash mismatch — expected "
+            f"{plugin.apk_hash[:16]}…, got {digest.hexdigest()[:16]}…. Not importing."
+        )
+    return written
+
+
 def _client(client: httpx.Client | None) -> httpx.Client:
     """The caller's client, or a short-lived one.
 

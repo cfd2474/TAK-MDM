@@ -246,6 +246,79 @@ def catalog(
         return [], str(exc)
 
 
+def find_plugin(
+    session: Session,
+    vault: TokenVault,
+    identifier: str,
+    *,
+    product: str,
+    product_version: str,
+    client=None,
+) -> tak_gov.Plugin | None:
+    """One catalog row by its identifier.
+
+    The console posts an identifier rather than a URL, so a form submission can
+    never be talked into fetching an arbitrary address with the operator's TAK.gov
+    bearer token attached. The URL only ever comes from the catalog.
+    """
+    plugins, error = catalog(
+        session, vault, product=product, product_version=product_version, client=client
+    )
+    if error:
+        raise tak_gov.TakGovError(error)
+    return next((p for p in plugins if p.identifier == identifier), None)
+
+
+def import_plugin(
+    session: Session,
+    vault: TokenVault,
+    storage,
+    identifier: str,
+    *,
+    product: str,
+    product_version: str,
+    client=None,
+):
+    """Pull one catalog plugin into the local package library.
+
+    Deliberately thin. The APK is downloaded, hash-checked, and then handed to the
+    ordinary upload path — so identity (package name, versionCode, signing
+    certificate) is read from the file itself rather than believed from the
+    catalog. A catalog that mislabels a row therefore cannot smuggle a package in
+    under the wrong name, and every guard the upload path already has (signature
+    continuity, minimum target SDK, duplicate versionCode) applies unchanged.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from app.services import packages as package_service
+
+    plugin = find_plugin(
+        session,
+        vault,
+        identifier,
+        product=product,
+        product_version=product_version,
+        client=client,
+    )
+    if plugin is None:
+        raise tak_gov.TakGovError(
+            f"{identifier} is not in the {product} {product_version} catalog — "
+            "it may have been withdrawn, or belong to another version."
+        )
+
+    token = access_token(session, vault, client=client)
+    if not token:
+        raise tak_gov.TakGovError("not linked to TAK.gov")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "plugin.apk"
+        tak_gov.download_apk_to_file(plugin, token, path, client=client)
+        return package_service.ingest(
+            session, storage, path.read_bytes(), label=plugin.display_name
+        )
+
+
 # --------------------------------------------------------------------------- #
 
 

@@ -3634,7 +3634,7 @@ A headless server can complete it and hold the credential indefinitely, because
 ⚠️ **Natural split** if this runs long: 1–5 + 7 (auth and read-only catalog — the
 whole of the stated ask) as one checkpoint, then 6 (import) after.
 
-##### Status: steps 1–5 and 7 done (auth + read-only catalog). Step 6 (import) open.
+##### Status: ✅ complete. All 7 steps, verified against the live service.
 
 **Done.**
 
@@ -3704,10 +3704,54 @@ the single-worker deployment this ships as. Under multiple workers two processes
 could rotate concurrently and kill the link. Same constraint as the push
 doorbell; both belong to the multi-worker work in Chunk 11.
 
-**Not done: step 6 (import).** The tab lists the catalog; it cannot yet pull a
-plugin into the local package library. `tak_gov.download_apk()` exists and
-verifies the hash, so what remains is wiring it to the existing
-`package_service` upload path.
+##### Step 6 — import, and the console polish that went with it
+
+An **Import** button per catalog row, and an `imported` pill on rows the library
+already holds (matched on `revision_code` == `versionCode`, which is what
+`tpc.md` says to key on and what Android's upgrade rule uses).
+
+**D40 — the catalog is an ingest source, not an authority.** The APK is
+downloaded, hash-checked, and then handed to the ordinary `package_service.ingest`
+path, so package name, versionCode and signing certificate are read **from the
+file**. A row that mislabels itself cannot smuggle a package in under the wrong
+name, and every guard the manual upload already has — signature continuity,
+minimum target SDK, duplicate versionCode — applies unchanged and for free. There
+is a test that imports an APK whose real identity differs from the catalog row's
+and asserts the file wins.
+
+**D41 — the download streams to a temp file.** The largest current ATAK-CIV
+plugin is **433 MB**; materialising that as a response body *and* again as bytes
+for ingest is most of a gigabyte of peak memory inside one request. The SHA-256 is
+computed over the same bytes as they are written, so there is never a window where
+a complete-but-unverified APK sits on disk looking usable, and a mismatch deletes
+the file before raising.
+
+**Verified on the live service.** Imported `com.atakmap.android.oceusvpn` from
+`oceus-vpn-5-8-0-civ`: recorded versionCode `1781188854`, versionName
+`1.0 (ac165cf4) - [5.8.0]`, minSdk 21, targetSdk 34, signature scheme **v3** —
+all read from the APK. Re-importing is refused with *"version code … is already
+uploaded"*; an unknown identifier is refused by name. 6 further tests
+(53 in the file, suite **540**), mutation-checked: removing the hash check or the
+cleanup-on-mismatch each fail tests.
+
+##### Console polish (same pass)
+
+* A count above the table — "86 plugins for ATAK-CIV 5.8.0".
+* ATAK version is a **closed dropdown** (5.1.0 – 5.8.0), not free text. An
+  unrecognised version returns an empty catalog, which is indistinguishable from
+  an account entitled to nothing — an expensive thing to debug over a typo.
+* `Rev` column removed; `Size` no longer wraps.
+* 🐛 Fixed while there: the size cell divided by 1024 twice, so **every plugin
+  under a megabyte rendered as "0 MB"** — five of the current 86, including the
+  very package used to verify the download path. Now `filesizeformat`.
+
+##### Remaining known gap
+
+⚠️ **Import is synchronous.** A 433 MB plugin downloads inside the request while
+the operator waits. Acceptable for a deliberate single-operator button press on a
+loopback console, and the confirm dialog states the size and that it runs while
+you wait — but it is the obvious candidate for a background job if the catalog is
+ever driven at fleet scale.
 
 ---
 

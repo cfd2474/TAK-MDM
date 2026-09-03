@@ -35,8 +35,11 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.db.models import TakGovLink, TakGovLinkStatus
+from sqlalchemy import select
+
+from app.db.models import AppPackage, TakGovLink, TakGovLinkStatus
 from app.services import tak_gov, tak_gov_link
+from tests.apk_fixtures import build_apk, make_signing_certificate
 from tests.conftest import ADMIN_HEADERS
 
 
@@ -568,3 +571,140 @@ def _link_with(
     link.linked_at = datetime.now(timezone.utc)
     db.flush()
     return link
+
+
+# --------------------------------------------------------------------------- #
+# Import — catalog row to local package library
+# --------------------------------------------------------------------------- #
+
+
+def catalog_and_apk(apk: bytes, plugin: dict, *, hash_override: str | None = None):
+    """A transport serving one catalog row and its APK."""
+    import hashlib
+
+    row = {
+        **plugin,
+        "apk_hash": hash_override or hashlib.sha256(apk).hexdigest(),
+        "apk_size_bytes": len(apk),
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/token"):
+            return json_response(
+                200,
+                {"access_token": "a", "refresh_token": "r", "expires_in": 300},
+            )
+        if request.url.path.endswith("/apk"):
+            return httpx.Response(200, content=apk)
+        return httpx.Response(200, json=[row])
+
+    return transport(handler), row
+
+
+def test_importing_reads_identity_from_the_apk_not_the_catalog(
+    db, token_vault, artifact_storage
+):
+    """The catalog is an ingest source, not an authority. A row that lies about
+    its package name must not be able to smuggle one in under that name."""
+    from app.services import packages as package_service
+
+    apk = build_apk("com.real.package", 77, "1.2.3")
+    client, _ = catalog_and_apk(
+        apk, {**FULL_PLUGIN, "package_name": "com.catalog.claims.otherwise"}
+    )
+    _link_with(db, token_vault, refresh="r", access="access-1", ttl=300)
+
+    result = tak_gov_link.import_plugin(
+        db, token_vault, artifact_storage, FULL_PLUGIN["identifier"],
+        product="ATAK-CIV", product_version="5.8.0", client=client,
+    )
+
+    assert result.package.package_name == "com.real.package"
+    assert result.version.version_code == 77
+    assert isinstance(result, package_service.IngestResult)
+
+
+def test_an_apk_whose_hash_does_not_match_is_never_ingested(
+    db, token_vault, artifact_storage
+):
+    client, _ = catalog_and_apk(
+        build_apk("com.example", 1), FULL_PLUGIN, hash_override="00" * 32
+    )
+    _link_with(db, token_vault, refresh="r", access="access-1", ttl=300)
+
+    with pytest.raises(tak_gov.TakGovError) as exc:
+        tak_gov_link.import_plugin(
+            db, token_vault, artifact_storage, FULL_PLUGIN["identifier"],
+            product="ATAK-CIV", product_version="5.8.0", client=client,
+        )
+
+    assert "hash mismatch" in str(exc.value)
+    assert db.scalar(select(AppPackage).where(AppPackage.package_name == "com.example")) is None
+
+
+def test_a_failed_download_leaves_no_half_file_behind(tmp_path):
+    """A complete-looking but unverified APK on disk is the thing most likely to
+    get picked up by something else."""
+    plugin = tak_gov.parse_plugin({**FULL_PLUGIN, "apk_hash": "11" * 32})
+    dest = tmp_path / "plugin.apk"
+    client = transport(lambda r: httpx.Response(200, content=b"wrong bytes"))
+
+    with pytest.raises(tak_gov.TakGovError):
+        tak_gov.download_apk_to_file(plugin, "token", dest, client=client)
+
+    assert not dest.exists()
+
+
+def test_streaming_a_good_download_writes_every_byte(tmp_path):
+    import hashlib
+
+    body = b"x" * (700 * 1024)  # spans several 256 KiB chunks
+    plugin = tak_gov.parse_plugin(
+        {**FULL_PLUGIN, "apk_hash": hashlib.sha256(body).hexdigest()}
+    )
+    dest = tmp_path / "plugin.apk"
+    client = transport(lambda r: httpx.Response(200, content=body))
+
+    assert tak_gov.download_apk_to_file(plugin, "token", dest, client=client) == len(body)
+    assert dest.read_bytes() == body
+
+
+def test_importing_an_identifier_the_catalog_does_not_have_says_so(
+    db, token_vault, artifact_storage
+):
+    client, _ = catalog_and_apk(build_apk("com.example", 1), FULL_PLUGIN)
+    _link_with(db, token_vault, refresh="r", access="access-1", ttl=300)
+
+    with pytest.raises(tak_gov.TakGovError) as exc:
+        tak_gov_link.import_plugin(
+            db, token_vault, artifact_storage, "withdrawn-plugin",
+            product="ATAK-CIV", product_version="5.8.0", client=client,
+        )
+
+    assert "withdrawn-plugin" in str(exc.value)
+
+
+def test_the_upload_paths_own_guards_still_apply_to_an_import(
+    db, token_vault, artifact_storage
+):
+    """Import goes through package_service.ingest, so signature continuity is
+    enforced against an already-known package exactly as for a manual upload."""
+    from app.services import packages as package_service
+
+    first, second = make_signing_certificate("A"), make_signing_certificate("B")
+    package_service.ingest(
+        db, artifact_storage, build_apk("com.example", 1, certificate_der=first)
+    )
+    db.flush()
+
+    apk = build_apk("com.example", 2, certificate_der=second)
+    client, _ = catalog_and_apk(apk, FULL_PLUGIN)
+    _link_with(db, token_vault, refresh="r", access="access-1", ttl=300)
+
+    with pytest.raises(package_service.PackageError) as exc:
+        tak_gov_link.import_plugin(
+            db, token_vault, artifact_storage, FULL_PLUGIN["identifier"],
+            product="ATAK-CIV", product_version="5.8.0", client=client,
+        )
+
+    assert "signing certificate" in str(exc.value)

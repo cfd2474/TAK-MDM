@@ -64,6 +64,7 @@ from app.artifacts.storage import ArtifactStorage
 from app.config import Settings, get_settings
 from app.db.models import (
     AppPackage,
+    AppPackageVersion,
     Assignment,
     AssignmentScope,
     CommandStatus,
@@ -1244,6 +1245,7 @@ def _tpc_panel(request: Request, session: Session, vault: TokenVault) -> dict:
         "plugins": [],
         "error": None,
         "loaded": False,
+        "imported": set(),
     }
     if linked and request.query_params.get("tab") == "tpc":
         panel["loaded"] = True
@@ -1253,7 +1255,57 @@ def _tpc_panel(request: Request, session: Session, vault: TokenVault) -> dict:
         session.commit()  # a refresh may have rotated the token
         panel["plugins"] = plugins
         panel["error"] = error
+        panel["imported"] = _already_imported(session, plugins)
     return panel
+
+
+def _already_imported(session: Session, plugins: list) -> set[tuple[str, int]]:
+    """(package_name, revision_code) pairs the local library already holds.
+
+    Matched on revision_code against versionCode, which is what `tpc.md` says to
+    key on and what Android's own upgrade rule uses. Shown so an operator can see
+    at a glance what is new, rather than discovering it by pressing Import and
+    reading "already uploaded".
+    """
+    wanted = {p.package_name for p in plugins}
+    if not wanted:
+        return set()
+    rows = session.execute(
+        select(AppPackage.package_name, AppPackageVersion.version_code)
+        .join(AppPackageVersion, AppPackageVersion.package_id == AppPackage.id)
+        .where(AppPackage.package_name.in_(wanted))
+    )
+    return {(name, code) for name, code in rows}
+
+
+@router.post("/apps/tpc/import")
+def import_tpc_plugin_form(
+    identifier: str = Form(...),
+    product: str = Form(default=tak_gov.DEFAULT_PRODUCT),
+    product_version: str = Form(default=tak_gov.DEFAULT_PRODUCT_VERSION),
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+    vault: TokenVault = Depends(get_token_vault),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    if product not in tak_gov.PRODUCTS:
+        product = tak_gov.DEFAULT_PRODUCT
+    if product_version not in tak_gov.PRODUCT_VERSIONS:
+        product_version = tak_gov.DEFAULT_PRODUCT_VERSION
+
+    back = f"/apps?tab=tpc&product={product}&product_version={product_version}"
+    try:
+        result = tak_gov_link.import_plugin(
+            session, vault, storage, identifier,
+            product=product, product_version=product_version,
+        )
+    except (tak_gov.TakGovError, package_service.PackageError) as exc:
+        session.rollback()
+        return _redirect(f"{back}&error={_quote(str(exc))}")
+
+    eff.invalidate_all(session)
+    session.commit()
+    return _redirect(f"{back}&imported={_quote(result.package.package_name)}")
 
 
 @router.post("/apps/upload")
