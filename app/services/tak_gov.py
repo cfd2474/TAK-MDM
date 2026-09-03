@@ -67,6 +67,13 @@ USER_AGENT = "ATLAS-MDM/1.0"
 PRODUCTS = ("ATAK-CIV", "ATAK-GOV", "ATAK-MIL")
 DEFAULT_PRODUCT = "ATAK-CIV"
 
+#: The `product_version` values the catalog serves. A closed list rather than a
+#: free-text box: an unrecognised version returns an empty catalog, which is
+#: indistinguishable from "this account is entitled to nothing" — an expensive
+#: thing to debug over a typo.
+PRODUCT_VERSIONS = ("5.8.0", "5.7.0", "5.6.0", "5.5.0", "5.4.0", "5.3.0", "5.2.0", "5.1.0")
+DEFAULT_PRODUCT_VERSION = "5.8.0"
+
 _TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
 #: ⚠️ Verified against the live service (2026-09-02): `eud_api` answers

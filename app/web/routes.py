@@ -1229,13 +1229,16 @@ def _tpc_panel(request: Request, session: Session, vault: TokenVault) -> dict:
     product = request.query_params.get("product") or tak_gov.DEFAULT_PRODUCT
     if product not in tak_gov.PRODUCTS:
         product = tak_gov.DEFAULT_PRODUCT
-    product_version = (request.query_params.get("product_version") or "5.8.0").strip()[:16]
+    product_version = (request.query_params.get("product_version") or "").strip()
+    if product_version not in tak_gov.PRODUCT_VERSIONS:
+        product_version = tak_gov.DEFAULT_PRODUCT_VERSION
 
     panel = {
         "linked": linked,
         "status": link.status.value,
         "account_label": link.account_label,
         "products": tak_gov.PRODUCTS,
+        "product_versions": tak_gov.PRODUCT_VERSIONS,
         "product": product,
         "product_version": product_version,
         "plugins": [],

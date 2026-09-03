@@ -154,7 +154,11 @@
             {% endfor %}
           </select>
           <label for="tpc-version" class="muted">ATAK version</label>
-          <input id="tpc-version" type="text" name="product_version" value="{{ tpc.product_version }}" size="8">
+          <select id="tpc-version" name="product_version">
+            {% for v in tpc.product_versions %}
+              <option value="{{ v }}" {{ 'selected' if v == tpc.product_version }}>{{ v }}</option>
+            {% endfor %}
+          </select>
           <button type="submit">Show</button>
         </form>
         {% if tpc.product != 'ATAK-CIV' %}
@@ -177,10 +181,15 @@
             in front of every visit to this page.
           </p>
         {% elif tpc.plugins %}
+        <p>
+          <strong>{{ tpc.plugins | length }}</strong>
+          plugin{{ '' if tpc.plugins | length == 1 else 's' }}
+          for {{ tpc.product }} {{ tpc.product_version }}.
+        </p>
         <table data-sortable>
           <thead><tr>
             <th data-sort>Plugin</th><th data-sort>Package</th><th data-sort>Version</th>
-            <th data-sort>Rev</th><th>Requires</th><th>Size</th>
+            <th>Requires</th><th data-sort style="white-space:nowrap">Size</th>
           </tr></thead>
           <tbody>
           {% for p in tpc.plugins %}
@@ -191,12 +200,11 @@
               </td>
               <td class="mono">{{ p.package_name }}</td>
               <td class="mono">{{ p.version or '—' }}</td>
-              <td class="mono">{{ p.revision_code if p.revision_code is not none else '—' }}</td>
               <td class="muted">
                 {% if p.tak_prerequisite %}ATAK {{ p.tak_prerequisite }}{% endif %}
                 {% if p.os_requirement %}<span class="pill">SDK {{ p.os_requirement }}</span>{% endif %}
               </td>
-              <td class="muted mono">{{ (p.apk_size_bytes // 1024 // 1024) ~ ' MB' if p.apk_size_bytes else '—' }}</td>
+              <td class="muted mono" style="white-space:nowrap">{{ p.apk_size_bytes | filesizeformat if p.apk_size_bytes else '—' }}</td>
             </tr>
           {% endfor %}
           </tbody>
