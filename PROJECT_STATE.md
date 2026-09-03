@@ -2655,6 +2655,31 @@ which the agent does apply.
 > capture the pre-policy value on first write and put it back when the field goes
 > away — more than a one-line change, and a decision (restore-original vs a
 > configured fleet default) rather than an obvious correction.
+>
+> ✅ **FIXED and verified on hardware, 2026-09-03 (agent v45).** `ScreenTimeoutPlan`
+> records the value the *first* write displaces and puts it back when the field goes
+> away. The original is captured **before** the write, so a crash between the two
+> cannot leave the setting changed with nothing remembering what it replaced; and it
+> is forgotten only **after** a successful restore, so a failure retries instead of
+> losing it. A later policy changing 45s to 60s does not re-record — otherwise 45s
+> would become "the user's setting" and 30 minutes could never come back.
+>
+> ⚠️ **The first fix was wrong, and only hardware showed it.** v44 remembered the
+> value correctly and still never restored, because `PolicyApplier.apply` dispatched
+> sections with `policy.optJSONObject("RESTRICTIONS")?.let { … }` — remove the last
+> RESTRICTIONS policy and the section vanishes, so the code never ran. That is the
+> same "absent means no work" mistake as R14 and R19 themselves, one level up.
+>
+> 🐛 **The same hole was in the W26 password fix.** Driving the minimums to
+> permissive every reconcile only ever ran while *some* PASSWORD policy still
+> applied. Remove them all and the section disappears and nothing resets — exactly
+> the state R14 was raised for. PASSWORD and RESTRICTIONS now apply even when absent
+> (as NETWORKS already did, for this reason); APP_CATALOG stays conditional on
+> purpose, because "no policy requires apps" means leave them alone, not uninstall.
+>
+> Verified across three agent builds: v43 latched at 45 s, v44 latched still, v45
+> restored to 1800000 the moment it landed. Device `64/64`, COMPLIANT,
+> `minimumPasswordLength=0`.
 
 **The policy→agent audit is closed (W18):**
 * ~~XAPK **OBB** placement (R2)~~ — ✅ W17: not feasible for a normally-installed

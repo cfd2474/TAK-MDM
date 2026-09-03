@@ -123,6 +123,18 @@ class AgentConfig(context: Context) {
         get() = prefs.getStringSet(KEY_APPLY_ERRORS, emptySet())?.toList() ?: emptyList()
         set(value) = prefs.edit { putStringSet(KEY_APPLY_ERRORS, value.take(20).toSet()) }
 
+    /**
+     * The `SCREEN_OFF_TIMEOUT` a policy displaced, in milliseconds, or -1 if the
+     * agent has never written that setting.
+     *
+     * `setSystemSetting` latches and Android will not hand the previous value back,
+     * so the only way a policy can ever be *un*applied is for the agent to have
+     * recorded what it replaced (R19).
+     */
+    var savedScreenTimeoutMillis: Int
+        get() = prefs.getInt(KEY_SAVED_SCREEN_TIMEOUT, -1)
+        set(value) = prefs.edit { putInt(KEY_SAVED_SCREEN_TIMEOUT, value) }
+
     var lastSyncAt: Long
         get() = prefs.getLong(KEY_LAST_SYNC, 0L)
         set(value) = prefs.edit { putLong(KEY_LAST_SYNC, value) }
@@ -225,6 +237,7 @@ class AgentConfig(context: Context) {
         private const val KEY_FILE_PREFIX = "applied_file:"
         private const val KEY_LAST_ERROR = "last_error"
         private const val KEY_LAST_SYNC = "last_sync_at"
+        private const val KEY_SAVED_SCREEN_TIMEOUT = "saved_screen_timeout_ms"
         private const val KEY_APPLY_ERRORS = "last_apply_errors"
         private const val KEY_COMMAND_RESULTS = "pending_command_results"
         private const val KEY_HIDDEN_BY_POLICY = "hidden_by_policy"

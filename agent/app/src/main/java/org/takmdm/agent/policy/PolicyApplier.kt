@@ -61,11 +61,24 @@ class PolicyApplier(private val context: Context) {
             return listOf("not device owner; policy cannot be applied")
         }
         val failures = mutableListOf<String>()
-        policy.optJSONObject("PASSWORD")?.let { failures += applyPassword(it) }
-        policy.optJSONObject("RESTRICTIONS")?.let { failures += applyRestrictions(it) }
+        // ⚠️ PASSWORD, RESTRICTIONS and NETWORKS run **even when their section is
+        // absent**, because every one of them can leave something behind on the
+        // device that only they can take away.
+        //
+        // Skipping an absent section looks harmless and is the same bug as R14 and
+        // R19 one level up: DevicePolicyManager setters latch, so "no policy says
+        // anything" has to be pushed as a state, not treated as no work. Removing
+        // the last PASSWORD policy left `minimumPasswordLength` stuck at its old
+        // value — the W26 fix drove those fields to permissive but never ran,
+        // because there was no section left to carry them. Removing the last
+        // RESTRICTIONS policy left the screen timeout stuck the same way (R19), and
+        // its restore could not fire for the same reason.
+        //
+        // APP_CATALOG stays conditional on purpose: "no policy requires any apps"
+        // means leave the device's apps alone, not uninstall them.
+        failures += applyPassword(policy.optJSONObject("PASSWORD") ?: JSONObject())
+        failures += applyRestrictions(policy.optJSONObject("RESTRICTIONS") ?: JSONObject())
         policy.optJSONObject("APP_CATALOG")?.let { failures += applyAppCatalog(it) }
-        // NETWORKS runs even when absent: an emptied policy must remove the Wi-Fi
-        // networks the agent previously added.
         failures += applyNetworks(policy.optJSONObject("NETWORKS") ?: JSONObject())
         return failures
     }
@@ -273,18 +286,64 @@ class PolicyApplier(private val context: Context) {
         // SCREEN_OFF_TIMEOUT is one of the three system settings a Device Owner may
         // write via setSystemSetting (API 28). Milliseconds, as a string. Applies
         // even when DISALLOW_CONFIG_SCREEN_TIMEOUT is set.
-        if (spec.has("screen_timeout_seconds")) {
-            runCatching {
-                dpm.setSystemSetting(
-                    admin,
-                    Settings.System.SCREEN_OFF_TIMEOUT,
-                    (spec.getInt("screen_timeout_seconds") * 1000).toString(),
-                )
-            }.onFailure { failures += "screen timeout: ${it.message}" }
-        }
+        //
+        // It latches, and unlike the password minimums it has no permissive value
+        // to push instead — so the agent remembers what it displaced and puts that
+        // back when the field goes away (R19). See ScreenTimeoutPlan.
+        failures += applyScreenTimeout(spec)
 
         failures += oem.applyRestrictions(context, spec)
         return failures
+    }
+
+    private fun applyScreenTimeout(spec: JSONObject): List<String> {
+        val config = AgentConfig(context)
+        val desired = if (spec.has("screen_timeout_seconds")) {
+            spec.getInt("screen_timeout_seconds")
+        } else {
+            null
+        }
+        val saved = config.savedScreenTimeoutMillis.takeIf { it >= 0 }
+        val current = runCatching {
+            Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_OFF_TIMEOUT)
+        }.getOrNull()
+
+        return when (val action = ScreenTimeoutPlan.decide(desired, current, saved)) {
+            is ScreenTimeoutPlan.Action.Nothing -> emptyList()
+
+            is ScreenTimeoutPlan.Action.Apply -> {
+                // Recorded *before* the write. A crash between the two would
+                // otherwise leave the setting changed with nothing remembering what
+                // it replaced — the exact state R19 describes.
+                action.remember?.let { config.savedScreenTimeoutMillis = it }
+                runCatching {
+                    dpm.setSystemSetting(
+                        admin, Settings.System.SCREEN_OFF_TIMEOUT, action.millis.toString()
+                    )
+                }.fold({ emptyList() }, { listOf("screen timeout: ${it.message}") })
+            }
+
+            is ScreenTimeoutPlan.Action.Restore -> {
+                AgentLog.i(
+                    TAG,
+                    "no policy sets a screen timeout; restoring the ${action.millis} ms " +
+                        "the first policy displaced"
+                )
+                runCatching {
+                    dpm.setSystemSetting(
+                        admin, Settings.System.SCREEN_OFF_TIMEOUT, action.millis.toString()
+                    )
+                }.fold(
+                    {
+                        // Only forgotten once the write succeeded, so a failure is
+                        // retried on the next reconcile rather than losing the value.
+                        config.savedScreenTimeoutMillis = -1
+                        emptyList()
+                    },
+                    { listOf("screen timeout restore: ${it.message}") }
+                )
+            }
+        }
     }
 
     // ----------------------------------------------------------------------- //

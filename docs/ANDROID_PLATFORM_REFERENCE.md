@@ -889,6 +889,14 @@ its first write, if it ever intends to release it. Driving it to a fixed default
 instead would silently overwrite a user preference the operator never asked to
 change.
 
+⚠️ **And the release has to run when no policy is present at all.** The obvious
+shape — apply a section only when the desired state carries one — means the code
+that undoes a latched setting never executes, because removing the last policy of
+that type removes the section too. Verified the hard way on `SM-X520`: an agent
+that remembered the displaced value correctly still failed to restore it, for this
+reason alone. A section whose setters latch must be applied with an empty document
+rather than skipped.
+
 ### ✅ Verified on `SM-X520` (agent v34), both directions:
 
 | Policy | `dumpsys device_policy` for `org.takmdm.agent` |
