@@ -3919,6 +3919,48 @@ it.** An operator uploading something "to have it on hand" ships it fleet-wide.
 The one case where policies genuinely need re-pointing is an **exact
 `artifact_sha256` pin**, which today can only be set through the API.
 
+##### ✅ "Enforce an exact version, including an older one" already works server-side
+
+Probed against the resolver with two builds of one package (100 and 200):
+
+| Policy says | Resolves to | |
+|---|---|---|
+| no floor, no pin | **200** | latest, as intended |
+| `artifact_sha256` = the **100** build | **100** | ✅ an older build *is* enforceable today |
+| `artifact_sha256` = a sha not in the library | **200** | 🐛 **R17** |
+| `artifact_sha256` = another package''s artifact | **7**, declared as `com.probe` | 🐛 **R18** |
+
+So the missing piece is **UI, not capability** — `artifact_sha256` has no control in
+the policy form, so the distinction is reachable only through the API.
+
+⚠️ **Two defects must be fixed before that UI ships**, because both defeat exactly
+the feature being asked for:
+
+* **R17 — a pin to a missing artifact silently falls through to *latest*.**
+  `effective_policy.resolve_required_apps` sets `version = None` when the pinned
+  file is not found, and the next branch resolves the floor instead. For "hold this
+  fleet at an older build" that is the worst possible failure mode: delete the
+  artifact and the fleet **jumps to the newest build**, silently, which is the
+  precise opposite of the operator''s intent. It must report `available: false`.
+* **R18 — a pin is not checked against the package it is attached to.** The lookup
+  is `AppPackageFile.artifact_sha256 == pinned` with no package constraint, so
+  pinning another package''s artifact yields that package''s version while still
+  being declared under the original `package_name`. The agent would fetch and
+  install the wrong app, then never converge, because the named package is still
+  absent. The lookup must be joined to the package.
+
+##### Enforcing it *on a device that already has newer* — the genuinely hard half
+
+Pinning covers most of the need cheaply and safely: any device **without** the app,
+or with an **older** build, converges on exactly the pinned version. New enrolments,
+re-enrolments and wiped devices all land on it.
+
+The hard case is only a device already running something **newer**. There Android
+refuses the install outright, and today `AppUpdatePlan` returns `SKIP_UP_TO_DATE`
+and says nothing — so the operator pins 5.5.0, sees the policy applied cleanly, and
+never learns the device is still on 5.8.0. That silence is the bug worth fixing
+first; the destructive uninstall-and-reinstall stays behind an explicit opt-in.
+
 ##### Revised strategy
 
 **D44 — a version is `published` or it is not, mirroring the agent-update channel.**
