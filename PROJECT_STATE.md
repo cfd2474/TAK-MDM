@@ -4123,6 +4123,95 @@ appear in ATAK, which looks like an MDM failure and is not one.
 
 ---
 
+#### 🔻 W32 — Plugin/ATAK compatibility warnings
+
+**Operator''s design, taken as given:** *warn, never forbid*; treat the **installed
+ATAK as the concrete truth**; put the warning on the **plugin**, never on ATAK; and
+**rank versions only within one ATAK line**, because that is the only place a build
+sequence is meaningful.
+
+##### The two truths, and why one costs more
+
+* **A — the policy''s own intent.** If a policy installs both ATAK and plugins, the
+  mismatch is visible at edit time with no device involved. Cheap, immediate, and
+  it is what "something in the policy builder" asks for.
+* **B — what is actually on the device.** The stronger signal, and the operator''s
+  example ("UAS Tools 5.5.0, but ATAK 5.8.0 **is installed**"). ⚠️ The agent does
+  **not** report installed app versions today — `userInstalledPackages()` exists but
+  is used locally for allowlist decisions and never sent. So B needs an agent
+  change and a device round-trip before it can say anything true.
+
+Doing A first is not a shortcut: a warning that silently knows nothing (because no
+device has reported yet) is worse than one that clearly reasons from the policy.
+
+##### Plan (7 steps)
+
+1. **`AppPackageVersion.plugin_api`** — read from `<meta-data android:name=
+   "plugin-api">` at ingest (the existing axml parser already returns it), and
+   backfill existing rows by re-reading their stored artifacts.
+2. **Rank within an ATAK line only** — fixes the defect D45 identified in W31.
+   Two builds with different `plugin_api` are neither newer nor older: hold the
+   incoming one and say *why*.
+3. **Compatibility service** — pure comparison of an ATAK version against a set of
+   plugin targets, returning warnings. Testable without a device or a policy.
+4. **Policy builder** shows them inline on the plugin row, non-blocking.
+5. **Agent reports ATAK''s installed version** at check-in; stored on `Device`.
+6. **Device and fleet views** warn where a device''s real ATAK does not match the
+   plugins assigned to it — truth B.
+7. **Tests**, plus a hardware check on `SM-X520`.
+
+⚠️ **Split:** 1–4 + 7 is the policy-builder ask and needs no agent change. 5–6 add
+the live truth and require a new agent build.
+
+##### Status: steps 1–4 and 7 done. Steps 5–6 (live device truth) open.
+
+**Done.**
+
+* `AppPackageVersion.plugin_api`, read from the manifest at ingest; migration
+  `l2n4p6r8t0v2`, plus `backfill_plugin_api()` for rows uploaded before it existed
+  — **7 backfilled** on the live library.
+* **Ranking now happens within one ATAK line only.** Two builds with different
+  `plugin_api` are alternatives, not a sequence: the incoming one is held. This
+  closes the defect D45 identified in what W31 shipped.
+* `app/services/atak_compat.py` — pure comparison, no session, no device.
+* Policy builder warns inline on the **plugin** row, never on ATAK, and never
+  blocks. The version picker now labels each build with the ATAK it targets, so
+  "Exactly 1787086923" reads as "— for ATAK 5.5.0".
+
+✅ **The live library demonstrates the exact problem**, which is the best argument
+for the feature:
+
+| package | code | targets | published |
+|---|---|---|---|
+| `com.atakmap.app.civ` (ATAK) | 1787255575 | **5.8.0** | ✅ |
+| `…uastool.plugin` | 1787086923 | **5.5.0** | ✅ ← mismatch |
+| `…uastool.plugin` | 1787086761 | 5.8.0 | held |
+
+The published UAS Tool is built for ATAK **5.5.0** while the published ATAK is
+**5.8.0**. Assign both today and the plugin installs and never appears.
+
+##### 🐛 Found on the way: two `PartRole` enums, and `is` silently lying
+
+`app/artifacts/bundles.py` defined its own `PartRole` alongside the ORM''s in
+`app/db/models.py`. Both are `str` enums with the same three values, so `==`
+matched while **`is` returned False** — code holding a database row and the copy
+imported from `bundles` disagreed about a value that printed identically.
+`packages.py` imports the `bundles` one, so every
+`f.role is PartRole.BASE` over ORM rows in that module was quietly always False.
+
+Caught because the new backfill returned 0 while the same loop worked inline.
+Fixed by deleting the duplicate and re-exporting the ORM enum, so there is exactly
+one object to be identical to. ⚠️ Worth remembering: a `str` enum makes this class
+of bug invisible to `==`, and every other call site
+(`enrollment.py`, `agent_update.py`, `routes.py`) happened to import the right one
+by luck rather than design.
+
+**Not done: steps 5–6.** The agent does not report ATAK''s installed version, so
+the *device* truth — the operator''s actual example — cannot be shown yet. Needs a
+new agent build.
+
+---
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |

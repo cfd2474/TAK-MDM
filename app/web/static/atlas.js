@@ -387,3 +387,61 @@
       .catch(function () { finish("Import failed", "Could not reach the server."); });
   });
 })();
+
+/* --- ATAK plugin compatibility -------------------------------------------
+   A plugin only loads in the ATAK build it was compiled against. A mismatch is
+   not a crash: the plugin installs and then never appears in ATAK, which looks
+   like an MDM fault and is not one. So warn, never block — and warn on the
+   plugin, since ATAK is the fixed point everything else is built against. */
+(function () {
+  var blob = document.querySelector("[data-app-compat]");
+  if (!blob) return;
+
+  var compat;
+  try { compat = JSON.parse(blob.textContent); } catch (e) { return; }
+
+  function lineFor(row) {
+    var pkg = row.querySelector('select[name$="__package_name"]');
+    var ver = row.querySelector('select[name$="__version_choice"]');
+    if (!pkg || !pkg.value) return null;
+    var entry = compat[pkg.value];
+    if (!entry) return null;
+    var choice = ver ? ver.value : "";
+    if (choice.indexOf("pin:") === 0) {
+      // A pinned build names itself; "latest" and a floor both resolve to the
+      // newest published one.
+      return { pkg: pkg.value, atak: entry.is_atak, line: entry.pins[choice.slice(4)] || null };
+    }
+    return { pkg: pkg.value, atak: entry.is_atak, line: entry.latest };
+  }
+
+  function refresh(scope) {
+    var rows = Array.from(scope.querySelectorAll(".rs-row"));
+    var infos = rows.map(lineFor);
+
+    // ATAK is the truth. If the policy does not install it, there is nothing to
+    // compare against here and the device view is the place that knows.
+    var atak = infos.find(function (i) { return i && i.atak && i.line; });
+
+    rows.forEach(function (row, i) {
+      var box = row.querySelector(".app-compat-warning");
+      if (!box) return;
+      var info = infos[i];
+      box.hidden = true;
+      if (!atak || !info || info.atak || !info.line) return;
+      if (info.line === atak.line) return;
+      box.textContent =
+        info.pkg + " is built for ATAK " + info.line + ", but this policy installs ATAK " +
+        atak.line + ". ATAK loads only plugins built for its own version, so this one " +
+        "will install and then not appear. Assigning it anyway is allowed.";
+      box.hidden = false;
+    });
+  }
+
+  document.querySelectorAll("[data-rowset]").forEach(function (scope) {
+    if (!scope.querySelector(".app-compat-warning")) return;
+    scope.addEventListener("change", function () { refresh(scope); });
+    scope.addEventListener("click", function () { setTimeout(function () { refresh(scope); }, 0); });
+    refresh(scope);
+  });
+})();

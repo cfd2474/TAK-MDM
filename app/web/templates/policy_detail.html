@@ -1,11 +1,12 @@
 {% extends "base.html" %}
 {% from "_macros.html" import csrf_field %}
-{% from "_policy_form.html" import policy_subform %}
+{% from "_policy_form.html" import policy_subform, app_compat_blob %}
 {% set nav = 'policies' %}
 {% block main_class %}wide{% endblock %}
 {% block title %}{{ policy.name }} — ATLAS{% endblock %}
 
 {% block content %}
+{{ app_compat_blob(app_compat) }}
 <h1>{{ policy.name }}</h1>
 <p class="sub">
   <span class="pill">{{ policy.policy_type }}</span>

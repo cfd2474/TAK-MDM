@@ -82,6 +82,7 @@ from app.db.models import (
     CustomAttribute,
     DeviceCertificate,
     ManagedFile,
+    PartRole,
     Policy,
     PolicyVersion,
     ProfileAssignment,
@@ -92,6 +93,7 @@ from app.policies import creator_catalog
 from app.policies import form_parse, form_schema
 from app.policies.registry import PolicyTypeError, registry
 from app.services import agent_update as agent_update_service
+from app.services import atak_compat
 from app.services import import_jobs
 from app.services import tak_gov
 from app.services import tak_gov_link
@@ -165,6 +167,9 @@ def _spec_rows(spec: Any, policy_type: str | None = None) -> list[dict[str, str]
 
 
 _TEMPLATES.env.filters["spec_rows"] = _spec_rows
+# A filter, not context: Jinja macros do not inherit the page context, and the
+# version picker lives inside one. Parsing stays in Python either way.
+_TEMPLATES.env.filters["atak_target"] = atak_compat.plugin_target
 _TEMPLATES.env.filters["category_label"] = lambda key: (
     creator_catalog.get(key).label if creator_catalog.get(key) else key
 )
@@ -490,14 +495,49 @@ def _catalog_view(profile=None) -> list[dict[str, Any]]:
 
 def _form_catalogs(session: Session) -> dict[str, Any]:
     """Uploaded apps and files, for the policy form's list controls."""
+    packages = list(session.scalars(select(AppPackage).order_by(AppPackage.package_name)))
     return {
-        "app_packages": list(
-            session.scalars(select(AppPackage).order_by(AppPackage.package_name))
-        ),
+        "app_packages": packages,
         "managed_files": list(
             session.scalars(select(ManagedFile).order_by(ManagedFile.name))
         ),
+        "app_compat": _app_compat_map(packages),
     }
+
+
+def _app_compat_map(packages: list[AppPackage]) -> dict[str, Any]:
+    """Per package, the ATAK line each selectable build implies.
+
+    Computed here rather than in the template or the browser: version strings need
+    real parsing, and a compatibility warning that is quietly wrong is worse than
+    none. The console only decides which rows disagree.
+    """
+    out: dict[str, Any] = {}
+    for package in packages:
+        published = [v for v in package.versions if v.published]
+        latest = max(published, key=lambda v: v.version_code, default=None)
+        is_atak = atak_compat.is_atak(package.package_name)
+
+        def line_of(version) -> str | None:
+            return (
+                atak_compat.atak_line(version.version_name)
+                if is_atak
+                else atak_compat.plugin_target(version.plugin_api)
+            )
+
+        pins = {}
+        for version in package.versions:
+            base = next((f for f in version.files if f.role is PartRole.BASE), None)
+            value = line_of(version)
+            if base and value:
+                pins[base.artifact_sha256] = value
+
+        out[package.package_name] = {
+            "is_atak": is_atak,
+            "latest": line_of(latest) if latest else None,
+            "pins": pins,
+        }
+    return out
 
 
 def _app_group_hints(session: Session) -> list[dict[str, Any]]:

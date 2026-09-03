@@ -114,8 +114,13 @@ def build_manifest_axml(
     target_sdk: int = 34,
     split: str | None = None,
     utf8: bool = True,
+    plugin_api: str | None = None,
 ) -> bytes:
-    """Compile a minimal AndroidManifest.xml to binary XML."""
+    """Compile a minimal AndroidManifest.xml to binary XML.
+
+    ``plugin_api`` emits the meta-data element an ATAK plugin uses to declare the
+    ATAK build it was compiled against.
+    """
     strings = [
         ANDROID_NS,          # 0
         "manifest",          # 1
@@ -131,6 +136,9 @@ def build_manifest_axml(
     ]
     if split:
         strings.append(split)  # 11
+    if plugin_api:
+        meta_index = len(strings)
+        strings += ["meta-data", "name", "value", "plugin-api", plugin_api]
 
     manifest_attributes = [
         (0xFFFFFFFF, 2, _TYPE_STRING, 8),
@@ -146,6 +154,15 @@ def build_manifest_axml(
         5, [(0, 6, _TYPE_INT_DEC, min_sdk), (0, 7, _TYPE_INT_DEC, target_sdk)]
     )
     body += _encode_end_element(5)
+    if plugin_api:
+        body += _encode_start_element(
+            meta_index,
+            [
+                (0xFFFFFFFF, meta_index + 1, _TYPE_STRING, meta_index + 3),
+                (0xFFFFFFFF, meta_index + 2, _TYPE_STRING, meta_index + 4),
+            ],
+        )
+        body += _encode_end_element(meta_index)
     body += _encode_end_element(1)
 
     return struct.pack("<HHI", 0x0003, 8, 8 + len(body)) + body
@@ -279,9 +296,11 @@ def build_apk(
     sign: bool = True,
     extra_files: dict[str, bytes] | None = None,
     utf8_strings: bool = True,
+    plugin_api: str | None = None,
 ) -> bytes:
     manifest = build_manifest_axml(
-        package_name, version_code, version_name, min_sdk, target_sdk, split, utf8_strings
+        package_name, version_code, version_name, min_sdk, target_sdk, split,
+        utf8_strings, plugin_api,
     )
 
     buffer = io.BytesIO()

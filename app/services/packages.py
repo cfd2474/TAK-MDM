@@ -183,8 +183,19 @@ def ingest(
     if publish is None:
         # Never let an upload move a fleet backwards by accident: an older build is
         # held, a newer one (or the first) is published.
+        #
+        # ⚠️ Only compared **within one ATAK line**. Two builds of a plugin
+        # targeting different ATAK versions are alternatives, not a sequence, and
+        # their versionCodes do not order — UAS Tool for ATAK 5.8.0 carries a
+        # *lower* code than the 5.5.0 build (D45). Ranking across lines would
+        # publish whichever number happened to be bigger.
         deployed = latest_published(session, package)
-        publish = deployed is None or bundle.version_code > deployed.version_code
+        if deployed is None:
+            publish = True
+        elif deployed.plugin_api != bundle.plugin_api:
+            publish = False
+        else:
+            publish = bundle.version_code > deployed.version_code
 
     version = AppPackageVersion(
         package_id=package.id,
@@ -192,6 +203,7 @@ def ingest(
         version_name=bundle.version_name,
         min_sdk=bundle.min_sdk,
         target_sdk=bundle.target_sdk,
+        plugin_api=bundle.plugin_api,
         published=publish,
     )
     session.add(version)
@@ -404,6 +416,38 @@ def _reach_of(session: Session, package_name: str) -> tuple[tuple[str, ...], int
                 device_ids |= eff.devices_targeted_by(session, assignment)
 
     return tuple(sorted(set(names))), len(device_ids)
+
+
+def backfill_plugin_api(session: Session, storage: ArtifactStorage) -> int:
+    """Fill `plugin_api` on versions uploaded before it was recorded.
+
+    Re-reads each base APK's manifest. A version whose artifact has gone is skipped
+    rather than failing the run — this is a convenience pass, not a migration, and
+    one missing blob should not stop the rest.
+    """
+    from app.artifacts.apk import ApkError, inspect_apk
+    from app.artifacts.storage import ArtifactNotFound
+
+    filled = 0
+    for version in session.scalars(
+        select(AppPackageVersion).where(AppPackageVersion.plugin_api.is_(None))
+    ):
+        base = next((f for f in version.files if f.role is PartRole.BASE), None)
+        if base is None:
+            continue
+        try:
+            with storage.open(base.artifact_sha256) as handle:
+                info = inspect_apk(handle.read())
+        except (ArtifactNotFound, ApkError, OSError):
+            # A blob that has been deleted, or an archive that no longer parses.
+            # This is a convenience pass, not a migration: one bad row must not
+            # stop the rest.
+            continue
+        if info.plugin_api:
+            version.plugin_api = info.plugin_api
+            filled += 1
+    session.flush()
+    return filled
 
 
 def get_by_id(session: Session, package_id: uuid.UUID) -> AppPackage | None:

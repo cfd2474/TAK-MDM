@@ -745,6 +745,13 @@ class AppPackageVersion(Base):
     version_name: Mapped[str | None] = mapped_column(String(128), default=None)
     min_sdk: Mapped[int | None] = mapped_column(Integer, default=None)
     target_sdk: Mapped[int | None] = mapped_column(Integer, default=None)
+    # The ATAK build an ATAK plugin was compiled against, e.g.
+    # "com.atakmap.app@5.5.0.CIV". A plugin only loads in that build, so this is a
+    # **compatibility key, not a version** — two builds of one plugin targeting
+    # different ATAK lines are alternatives, and their versionCodes cannot
+    # meaningfully be ranked against each other (D45). NULL for anything that is
+    # not an ATAK plugin.
+    plugin_api: Mapped[str | None] = mapped_column(String(128), default=None)
     # Eligible for *automatic* selection — "latest", or "newest above the floor".
     # A held build stays in the library and can still be reached by an explicit
     # `artifact_sha256` pin, because a pin names one exact build and is a

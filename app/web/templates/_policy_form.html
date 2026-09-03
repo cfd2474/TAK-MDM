@@ -111,13 +111,16 @@
             <option value="pin:{{ base.artifact_sha256 }}"
                     data-package="{{ p.package_name }}"
                     {{ 'selected' if entry and entry.artifact_sha256 == base.artifact_sha256 }}>
-              Exactly {{ v.version_code }}{% if v.version_name %} ({{ v.version_name }}){% endif %}{{ ' — held' if not v.published }}
+              Exactly {{ v.version_code }}{% if v.version_name %} ({{ v.version_name }}){% endif %}{% if v.plugin_api | atak_target %} — for ATAK {{ v.plugin_api | atak_target }}{% endif %}{{ ' — held' if not v.published }}
             </option>
           {% endif %}
         {% endfor %}
       {% endfor %}
     </select>
     <button type="button" class="ghost" data-remove-row>Remove</button>
+    {# Filled by atlas.js when the selection implies a mismatch. Warn, never
+       forbid — and always on the plugin, since ATAK is the fixed point. #}
+    <div class="app-compat-warning banner" hidden></div>
   </div>
 {% endmacro %}
 
@@ -227,6 +230,15 @@
   `fields` is a SubPage.fields list; `spec` is the whole section spec dict (only
   this page's names are read, but hidden pages' inputs stay in the same <form>).
 #}
+{#
+  Emitted once per page rather than inside a macro: Jinja macros do not inherit the
+  page context, and threading one more argument through every call site to carry
+  data the browser reads globally is worse than a named block.
+#}
+{% macro app_compat_blob(app_compat) %}
+<script type="application/json" data-app-compat>{{ app_compat | tojson }}</script>
+{% endmacro %}
+
 {% macro policy_subform(fields, spec, app_packages, managed_files) %}
   {% for f in fields %}
   <div class="pf-field">

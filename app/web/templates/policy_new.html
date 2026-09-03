@@ -1,11 +1,12 @@
 {% extends "base.html" %}
 {% from "_macros.html" import page_header, csrf_field %}
-{% from "_policy_form.html" import policy_subform, app_group_buttons %}
+{% from "_policy_form.html" import policy_subform, app_group_buttons, app_compat_blob %}
 {% set nav = 'policies' %}
 {% block title %}New single-concern policy — ATLAS{% endblock %}
 {% block main_class %}wide{% endblock %}
 
 {% block content %}
+{{ app_compat_blob(app_compat) }}
 {{ page_header('New single-concern policy', 'One typed policy of a single kind, outside any bundle. Most operators use a composite policy instead.') }}
 <p class="sub"><a href="/policies">← policies</a> · <a href="/policies/new">build a composite policy</a></p>
 
