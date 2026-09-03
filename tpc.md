@@ -219,6 +219,29 @@ Path B is more work and more version-coupling. Its one real advantage is that pl
 
 Two non-technical constraints worth settling early, because they shape the product.
 
+### ⚠️ The catalog does not enforce entitlement — verified 2026-09-02
+
+Tested with a live CIV-only credential (`groups` = `Developers`, `Non Commercial`,
+`Standard SDK`, **`Website Civil Use`**, `Website Public`):
+
+| `product` | HTTP | rows | entries not also in CIV |
+|---|---|---|---|
+| `ATAK-CIV` | 200 | 86 | — |
+| `ATAK-GOV` | 200 | 85 | **0** |
+| `ATAK-MIL` | 200 | 81 | **0** |
+
+It never returns 403. GOV and MIL come back **200 with a plausible list**, but for
+this account both are strict *subsets* of CIV — `product` filters the entitled set
+by ATAK-build compatibility, it does not open a higher tier. A UI that offers all
+three products therefore misleads: pick ATAK-MIL, get 81 CIV plugins, and
+reasonably conclude you are MIL-entitled.
+
+**What to interrogate instead:** the `groups` claim, present both in the access
+token body and at the standard OIDC `userinfo` endpoint
+(`{REALM}/userinfo`). `Website Civil Use` is the CIV marker. ⚠️ The GOV and MIL
+group names are **not known** — one account cannot reveal them, and guessing from
+a single sample is how the four corrections at the top of this document happened.
+
 ### The token is a person's identity, not a service account
 
 You inherit exactly the entitlements of whoever linked — `list_plugins` only returns what that account is permitted to see.

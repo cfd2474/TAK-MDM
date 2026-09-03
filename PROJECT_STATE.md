@@ -3779,6 +3779,44 @@ Progress ran 0 % → 8 → 31 → 53 → 76 → 98 → 100 with byte counts matc
 finished naming `com.atakmap.android.uastool.plugin` (versionCode 1787086923,
 targetSdk 35, 394 892 123 bytes stored). 8 further tests, suite **548**.
 
+##### ⏸️ PENDING — restrict the product dropdown to what the account is entitled to
+
+**Blocked on the operator obtaining an ATAK-GOV account and an ATAK-MIL account
+to test with.** Not started; do not implement from inference.
+
+**What is already established** (live, 2026-09-02, CIV-only credential):
+
+* The entitlement signal is the **`groups` claim**, available both in the access
+  token body and at the standard OIDC `userinfo` endpoint. The account tested
+  carries `Developers`, `Non Commercial`, `Standard SDK`, **`Website Civil Use`**,
+  `Website Public`.
+* **The catalog API does not enforce entitlement and cannot be used to detect it.**
+  All three products answer `200`: CIV 86 rows, GOV 85, MIL 81 — and GOV and MIL
+  contain **zero** entries that are not also in CIV. `product` filters the entitled
+  set by ATAK-build compatibility rather than opening a tier. So the dropdown as it
+  stands actively misleads: choosing ATAK-MIL shows 81 CIV plugins and looks like
+  MIL entitlement.
+* Downloads are not the enforcement point either — a fetch of the smallest entry
+  under each product returned `200` with the same CIV artifact.
+
+**Why this is not being built yet.** `Website Civil Use` → CIV is *verified*. The
+GOV and MIL group names are **unknown**, and a sample of one cannot reveal them.
+Guessing `Website Gov Use` / `Website Mil Use` is precisely the class of inference
+that produced all four corrections at the top of `tpc.md`.
+
+**The experiment to run** once a GOV and a MIL account exist: link each, read
+`groups` from `userinfo`, and record the exact strings. Then compare each
+account's `ATAK-MIL` catalog against its `ATAK-CIV` one — if a MIL account sees
+entries a CIV account does not, that also confirms the subset behaviour above is
+an entitlement effect rather than a catalog quirk.
+
+**Design agreed in advance, to avoid re-litigating it:** persist `groups` on the
+link row; show them **verbatim** in Admin → TAK.gov so an operator can always see
+what their account carries; restrict the dropdown to mapped products; and **fail
+open** — if no group matches anything recognised, show all products with a note
+rather than locking the console out on a guess. Mark the GOV/MIL patterns as
+inferred in code until evidence replaces them.
+
 ##### Remaining known gap
 
 ⚠️ Import progress lives **in the serving process** (R16 again, alongside the push
