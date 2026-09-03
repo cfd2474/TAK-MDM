@@ -3831,6 +3831,98 @@ in Chunk 11.
 
 ---
 
+#### 🔻 W31 — Multiple versions of one package, and downgrades (PLANNED — not started)
+
+##### What already works, so it does not get rebuilt
+
+* **Multiple versions per package already coexist and are kept forever.**
+  `AppPackage` → many `AppPackageVersion`, ordered by `version_code`. Uploading a
+  different versionCode of an existing package **adds a row**; nothing is replaced
+  and nothing is lost. Only a *duplicate* versionCode is refused.
+* **Policies can already target a version**: `RequiredApp.min_version_code` is a
+  floor, and `RequiredApp.artifact_sha256` pins one exact build.
+  `packages.resolve_for_policy` picks the highest version at or above the floor.
+
+##### Two parts of the request that do not survive contact with Android
+
+* ⚠️ **"Create a separate package" is not implementable, and would not help.**
+  `AppPackage.package_name` is `unique=True`, and must be: on Android the package
+  name **is** the app's identity. Two library entries sharing one package name
+  could never both be installed — the second would replace the first. The branch
+  offers a choice that cannot exist.
+* ⚠️ **"Replace the old one" does not do what it sounds like.** Deleting the older
+  version from the library uninstalls nothing from any device, and breaks any
+  policy pinned to that build. The library is a record of what *can* be deployed,
+  not of what *is*.
+
+So the prompt as described offers a choice between something impossible and
+something that already happens automatically. **The question actually worth asking
+at upload time is different: "should policies now deploy this build?"** — because
+that is the only part of the upload that changes fleet behaviour.
+
+##### What is genuinely missing
+
+1. Upload says nothing about how the new build relates to the ones already held.
+2. The Local apps list shows only the newest version, with no sign that others
+   exist — the "remind me there is a duplicate" gap in the request.
+3. The policy form exposes `min_version_code` as a **bare number box**. An
+   operator cannot see which versions exist, let alone pick one, and
+   `artifact_sha256` (exact pinning) has no UI at all.
+
+##### Downgrading an app on a device — the hard part
+
+📖 Verified contract (Android reference, W27): **Android refuses to install an
+older `versionCode` over a newer one.** Device Owner does not override it;
+`INSTALL_ALLOW_DOWNGRADE` / `setRequestDowngrade` are shell/system-only.
+
+The only route is **uninstall, then install the older APK** — which the agent can
+already do (`installer.uninstall`). ⚠️ **That destroys the app''s data.** For ATAK
+that is configuration, certificates, data packages and mission state; in the field
+that is plausibly worse than whatever the downgrade was meant to escape.
+
+⚠️ **Today a downgrade is a silent no-op.** `AppUpdatePlan.decide` returns
+`SKIP_UP_TO_DATE` whenever `installed >= desired`, so lowering a policy''s floor
+changes nothing and says nothing. Safe, but invisible: the operator believes the
+fleet moved and it did not. **Fixing the silence is worth more than adding the
+capability**, and should land first.
+
+**Proposed shape**, consistent with D5 (desired state, not commands) and D6:
+
+* The floor going down must **never** trigger a wipe-and-reinstall as a side
+  effect of editing a policy.
+* The agent reports the refusal as an `apply_error`, naming both versions and the
+  reason — the operator learns from the console instead of from a device.
+* An actual downgrade requires an explicit per-app opt-in in the spec
+  (`allow_destructive_downgrade`, default false) whose label states that app data
+  is lost. Desired state still expresses the intent; the flag authorises the only
+  transition that can reach it.
+
+##### Plan (7 steps)
+
+1. **Compare on upload.** A service returning "newer than / older than / same as"
+   the versions already held, plus what policies currently resolve to.
+2. **Upload flow** that shows that comparison and asks the one question that
+   matters — deploy this build, or hold it in the library — rather than
+   replace-or-separate.
+3. **Library UI.** Versions listed per package, with a badge on any package
+   holding more than one, and delete-a-version guarded against pinned policies.
+4. **Policy form.** Replace the bare number box with a picker over real uploaded
+   versions: "latest", "at least X", or "exactly this build" (`artifact_sha256`).
+5. **Agent: make the refusal loud.** `AppUpdatePlan` gains a
+   `REFUSED_DOWNGRADE` action; the reconciler raises an `apply_error`.
+6. **Opt-in destructive downgrade.** Spec flag, uninstall-then-install, logged
+   loudly before the uninstall, and never for the agent''s own package.
+7. **Hardware on `SM-X520`.** Downgrade a real app both ways: refused by default
+   and reported; permitted with the flag, confirming data loss is what happens.
+
+⚠️ **Natural split**: 1–3 + 5 (library truth and honest reporting) is a complete,
+useful checkpoint on its own. 4, 6 and 7 add version choice and the destructive
+path, and 6 is the only part that can lose a user''s data.
+
+##### Status: planned, awaiting approval.
+
+---
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |
