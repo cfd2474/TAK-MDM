@@ -93,6 +93,11 @@ def checkin(
     device.last_checkin_at = datetime.now(timezone.utc)
     device.agent_version = payload.agent_version or device.agent_version
     device.os_version = payload.os_version or device.os_version
+    # Only overwritten when reported. An agent too old to send these would
+    # otherwise erase a perfectly good record on every check-in.
+    if payload.atak_version:
+        device.atak_package = payload.atak_package
+        device.atak_version = payload.atak_version
 
     # "Settled" means this device has already checked in at least once on the
     # agent build it is running. Computed *before* the column is overwritten, so

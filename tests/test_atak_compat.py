@@ -24,6 +24,8 @@ nothing.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from app.services import atak_compat
@@ -258,3 +260,148 @@ def test_backfill_reads_plugin_api_from_stored_artifacts(db, artifact_storage):
 
     assert package_service.backfill_plugin_api(db, artifact_storage) == 1
     assert result.version.plugin_api == "com.atakmap.app@5.5.0.CIV"
+
+
+# --------------------------------------------------------------------------- #
+# Truth B: what the device actually has
+# --------------------------------------------------------------------------- #
+
+
+def assign_apps(client, make_policy, assign, device_id, required):
+    policy = make_policy("Apps", "APP_CATALOG", {"required_apps": required})
+    assign(policy["id"], device_id)
+
+
+def test_a_device_reports_its_atak_at_checkin(client, db, enrolled, mtls_headers):
+    session = enrolled()
+    headers = mtls_headers(session["certificate_pem"])
+
+    client.post(
+        "/api/v1/device/checkin",
+        json={
+            "state_version": 0,
+            "atak_package": "com.atakmap.app.civ",
+            "atak_version": "5.8.0.4 (174b425)[playstore]",
+        },
+        headers=headers,
+    )
+
+    db.expire_all()
+    from app.db.models import Device
+
+    device = db.get(Device, uuid.UUID(session["device_id"]))
+    assert device.atak_version == "5.8.0.4 (174b425)[playstore]"
+    assert device.atak_package == "com.atakmap.app.civ"
+
+
+def test_an_agent_too_old_to_report_does_not_erase_what_is_known(
+    client, db, enrolled, mtls_headers
+):
+    """Absent is not "no ATAK": an older agent sends nothing, and overwriting on
+    every check-in would wipe a good record and silently stop the warnings."""
+    session = enrolled()
+    headers = mtls_headers(session["certificate_pem"])
+    client.post(
+        "/api/v1/device/checkin",
+        json={"state_version": 0, "atak_package": "com.atakmap.app.civ",
+              "atak_version": "5.8.0.4"},
+        headers=headers,
+    )
+    client.post("/api/v1/device/checkin", json={"state_version": 0}, headers=headers)
+
+    db.expire_all()
+    from app.db.models import Device
+
+    assert db.get(Device, uuid.UUID(session["device_id"])).atak_version == "5.8.0.4"
+
+
+def test_a_plugin_for_another_atak_is_flagged_against_the_device(
+    client, db, artifact_storage, enrolled, make_policy, assign
+):
+    """The operator's example: UAS Tool built for 5.5.0, ATAK 5.8.0 installed."""
+    session = enrolled()
+    package_service.ingest(
+        db, artifact_storage,
+        build_apk("com.plugin", 1, plugin_api="com.atakmap.app@5.5.0.CIV"),
+    )
+    db.commit()
+    assign_apps(client, make_policy, assign, session["device_id"],
+                [{"package_name": "com.plugin"}])
+    db.commit()
+
+    from app.db.models import Device
+
+    device = db.get(Device, uuid.UUID(session["device_id"]))
+    device.atak_version = "5.8.0.4 (174b425)[playstore]"
+    db.commit()
+
+    found = atak_compat.for_device(db, device)
+    assert [m.package_name for m in found] == ["com.plugin"]
+    assert found[0].source == "device"
+
+
+def test_a_matching_plugin_raises_nothing_against_the_device(
+    client, db, artifact_storage, enrolled, make_policy, assign
+):
+    session = enrolled()
+    package_service.ingest(
+        db, artifact_storage,
+        build_apk("com.plugin", 1, plugin_api="com.atakmap.app@5.8.0.CIV"),
+    )
+    db.commit()
+    assign_apps(client, make_policy, assign, session["device_id"],
+                [{"package_name": "com.plugin"}])
+    db.commit()
+
+    from app.db.models import Device
+
+    device = db.get(Device, uuid.UUID(session["device_id"]))
+    device.atak_version = "5.8.0.4"
+    db.commit()
+
+    assert atak_compat.for_device(db, device) == []
+
+
+def test_a_device_that_has_not_reported_atak_claims_nothing(
+    client, db, artifact_storage, enrolled, make_policy, assign
+):
+    """Unknown is not a clean bill of health, and must not read as one."""
+    session = enrolled()
+    package_service.ingest(
+        db, artifact_storage,
+        build_apk("com.plugin", 1, plugin_api="com.atakmap.app@5.5.0.CIV"),
+    )
+    db.commit()
+    assign_apps(client, make_policy, assign, session["device_id"],
+                [{"package_name": "com.plugin"}])
+    db.commit()
+
+    from app.db.models import Device
+
+    assert atak_compat.for_device(db, db.get(Device, uuid.UUID(session["device_id"]))) == []
+
+
+def test_the_device_page_shows_the_mismatch_and_names_the_atak(
+    client, db, artifact_storage, enrolled, make_policy, assign
+):
+    session = enrolled()
+    package_service.ingest(
+        db, artifact_storage,
+        build_apk("com.plugin", 1, plugin_api="com.atakmap.app@5.5.0.CIV"),
+    )
+    db.commit()
+    assign_apps(client, make_policy, assign, session["device_id"],
+                [{"package_name": "com.plugin"}])
+    from app.db.models import Device
+
+    db.get(Device, uuid.UUID(session["device_id"])).atak_version = "5.8.0.4 (174b425)[playstore]"
+    db.commit()
+
+    from tests.conftest import ADMIN_HEADERS
+
+    body = client.get(f"/devices/{session['device_id']}", headers=ADMIN_HEADERS).text
+    text = " ".join(body.split())
+
+    assert "This device reports ATAK" in text
+    assert "built for ATAK 5.5.0" in text
+    assert "the device has ATAK 5.8.0" in text

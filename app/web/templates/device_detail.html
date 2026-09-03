@@ -120,12 +120,30 @@
 {% if apps %}
 <h2>Apps</h2>
 <div class="panel">
+  <p class="muted" style="font-size:12px">
+    {% if device.atak_version %}
+      This device reports ATAK <span class="mono">{{ device.atak_version }}</span>
+      (<span class="mono">{{ device.atak_package }}</span>). Plugins are checked against it.
+    {% else %}
+      This device has not reported an ATAK version, so plugin compatibility cannot
+      be checked here — an older agent, or no ATAK installed.
+    {% endif %}
+  </p>
   <table>
-    <thead><tr><th>Package</th><th>Version</th><th>Parts</th><th>Status</th></tr></thead>
+<thead><tr><th>Package</th><th>Version</th><th>Parts</th><th>Status</th></tr></thead>
     <tbody>
     {% for app in apps %}
       <tr>
-        <td class="mono">{{ app.package_name }}</td>
+        <td class="mono">
+          {{ app.package_name }}
+          {% if atak_mismatches.get(app.package_name) %}
+            {# The device's own ATAK is the evidence; a plugin built for another
+               line installs and then never appears, which reads as an MDM fault. #}
+            <div class="muted" style="font-size:12px; color:var(--warn, #b26b00)">
+              ⚠ {{ atak_mismatches.get(app.package_name) }}
+            </div>
+          {% endif %}
+        </td>
         <td class="mono">{{ app.version_code or '—' }}</td>
         <td class="muted">{{ (app.files or [])|length }}</td>
         <td>

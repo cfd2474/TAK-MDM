@@ -148,6 +148,13 @@ class Device(Base):
     # self-update gate has to compare numerically, and Android's own upgrade rule
     # is on the code. NULL until an agent new enough to report it checks in.
     agent_version_code: Mapped[int | None] = mapped_column(Integer, default=None)
+    # Which ATAK the device actually has, reported at check-in. An ATAK plugin
+    # only loads in the build it was compiled against, and a mismatch is silent on
+    # the device — the plugin installs and never appears — so this is what lets the
+    # console say so (W32). NULL until an agent new enough to report it checks in,
+    # or when no ATAK is installed.
+    atak_package: Mapped[str | None] = mapped_column(String(128), default=None)
+    atak_version: Mapped[str | None] = mapped_column(String(64), default=None)
     enrollment_state: Mapped[EnrollmentState] = mapped_column(
         Enum(EnrollmentState, native_enum=False, length=16), default=EnrollmentState.PENDING
     )

@@ -595,6 +595,12 @@ class CheckinRequest(BaseModel):
     # the self-update gate has to decide "is the target newer than this" (W27).
     agent_version_code: int | None = None
     os_version: str | None = None
+    # The ATAK actually installed, so the console can flag a plugin built for a
+    # different one. Absent means "no ATAK", which is not the same as "unknown" —
+    # an agent too old to report it also sends nothing, so the server only ever
+    # overwrites what it is told (W32).
+    atak_package: str | None = None
+    atak_version: str | None = None
     results: list[CommandResultReport] = Field(default_factory=list)
     # Escape hatch for an agent whose local cache is gone.
     force_full: bool = False

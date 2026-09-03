@@ -242,6 +242,27 @@ class AppInstaller(private val context: Context) {
     }.getOrNull()
 
     /**
+     * The installed ATAK, as (packageName, versionName), or null if none is.
+     *
+     * Reported at check-in so the console can tell an operator that a plugin they
+     * assigned was built for a different ATAK. That mismatch is silent on the
+     * device — the plugin installs and simply never appears in ATAK — so the
+     * server is the only place it can surface.
+     *
+     * Matched by prefix because the flavour is part of the package name
+     * (`com.atakmap.app.civ`, `.mil`), and the *first* match is taken: two ATAK
+     * flavours side by side is not a supported arrangement, and picking one
+     * arbitrarily is better than reporting nothing.
+     */
+    fun installedAtak(): Pair<String, String>? = runCatching {
+        context.packageManager.getInstalledPackages(0)
+            .asSequence()
+            .filter { it.packageName.startsWith(ATAK_PACKAGE_PREFIX) }
+            .mapNotNull { info -> info.versionName?.let { info.packageName to it } }
+            .firstOrNull()
+    }.getOrNull()
+
+    /**
      * Package names of non-system, currently-enabled user apps, excluding the
      * agent. This is the universe the `allowed_packages` allowlist acts on —
      * system apps (launcher, dialer, settings) are deliberately out of scope.
@@ -265,6 +286,8 @@ class AppInstaller(private val context: Context) {
         private const val INSTALL_TIMEOUT_SECONDS = 180L
         // Removal is far quicker than an install: no download, no session.
         private const val UNINSTALL_TIMEOUT_SECONDS = 60L
+        // ATAK ships under a flavour-suffixed package: com.atakmap.app.civ, .mil.
+        private const val ATAK_PACKAGE_PREFIX = "com.atakmap.app"
     }
 }
 

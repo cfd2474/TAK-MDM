@@ -299,6 +299,16 @@ class Reconciler(private val context: Context) {
             // self-update gate compares versionCodes, which is also the only
             // thing Android's own upgrade rule looks at (W27).
             .put("agent_version_code", BuildConfig.VERSION_CODE)
+            // Which ATAK is actually on the device. An ATAK plugin only loads in
+            // the build it was compiled against, and a mismatch is invisible here
+            // — the plugin installs and simply never appears — so the server is
+            // the only place that can tell an operator (W32).
+            .apply {
+                installer.installedAtak()?.let { (pkg, version) ->
+                    put("atak_package", pkg)
+                    put("atak_version", version)
+                }
+            }
             .put("os_version", Build.VERSION.RELEASE)
             .put("applied_optional_files", JSONArray(config.selectedOptionalFiles.toList()))
             // Without this the server cannot tell a healthy device from one that

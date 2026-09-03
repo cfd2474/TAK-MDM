@@ -131,3 +131,42 @@ def check(
             )
         )
     return mismatches
+
+
+def for_device(session, device) -> list[Mismatch]:
+    """Plugins assigned to this device that its real ATAK will not load.
+
+    Reads the device's **resolved** apps rather than the raw policies, so it
+    reflects what will actually be installed after floors and pins are applied.
+    Returns nothing when the device has never reported an ATAK version — that is
+    an unknown, not a clean bill of health, and the caller says so.
+    """
+    from sqlalchemy import select
+
+    from app.db.models import AppPackage, AppPackageVersion
+    from app.services import effective_policy as eff
+
+    line = atak_line(device.atak_version)
+    if not line:
+        return []
+
+    resolved = (eff.get_effective(session, device) or {}).get("apps") or []
+    wanted = {
+        entry["package_name"]: entry.get("version_code")
+        for entry in resolved
+        if entry.get("available") and not is_atak(entry.get("package_name"))
+    }
+    if not wanted:
+        return []
+
+    rows = session.execute(
+        select(AppPackage.package_name, AppPackageVersion.version_code, AppPackageVersion.plugin_api)
+        .join(AppPackageVersion, AppPackageVersion.package_id == AppPackage.id)
+        .where(AppPackage.package_name.in_(wanted))
+    )
+    plugins = {
+        name: plugin_api
+        for name, version_code, plugin_api in rows
+        if wanted.get(name) == version_code
+    }
+    return check(atak_version=line, plugins=plugins, source="device")

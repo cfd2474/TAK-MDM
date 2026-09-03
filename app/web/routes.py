@@ -265,6 +265,7 @@ def device_detail(
         provenance=payload.get("provenance", {}),
         conflicts=payload.get("conflicts", []),
         apps=payload.get("apps", []),
+        atak_mismatches={m.package_name: m.message for m in atak_compat.for_device(session, device)},
         files=payload.get("files", {"required": [], "available": []}),
         log_bundles=log_service.list_for_device(session, device_id),
         pending_log_request=_has_open_log_request(session, device_id),
