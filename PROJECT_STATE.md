@@ -3897,27 +3897,81 @@ capability**, and should land first.
   is lost. Desired state still expresses the intent; the flag authorises the only
   transition that can reach it.
 
+##### ⚠️ The finding that reframes this: uploading already deploys
+
+Traced through the code and confirmed against the live database. `upload_app_form`
+calls `eff.invalidate_all`, which marks every device''s cache stale **and rings the
+doorbell for the whole fleet**. On recompute, `resolve_for_policy` returns the
+highest version satisfying the policy''s floor — which is the build just uploaded.
+`state_version` bumps and the device upgrades.
+
+Every live policy uses a **floor** (`min_version_code`) and **none** pins an exact
+artifact, because `artifact_sha256` has no UI. For example `Install Proof` holds
+`com.atakmap.app.civ` at floor `1787255575`; uploading any newer ATAK-CIV build
+pushes it to the tablet on the next check-in, with no confirmation anywhere.
+
+So the request inverts. **"Replace with a newer version" is already the default and
+the only behaviour** — the upload *is* the replace, and the policies do not need
+updating because a floor already resolves to the newest build. What does not exist
+is the opposite: **there is no way to add a build to the library without deploying
+it.** An operator uploading something "to have it on hand" ships it fleet-wide.
+
+The one case where policies genuinely need re-pointing is an **exact
+`artifact_sha256` pin**, which today can only be set through the API.
+
+##### Revised strategy
+
+**D44 — a version is `published` or it is not, mirroring the agent-update channel.**
+`AppPackageVersion.published`; `resolve_for_policy` ignores unpublished builds.
+This is deliberately the same concept, and the same word, as W27''s agent channel:
+an operator already knows what "published to the fleet" means here, and a second
+vocabulary for the same idea would be worse than the feature is worth.
+
+That makes every case fall out of one rule:
+
+| Upload | What the operator is told | Default |
+|---|---|---|
+| **Newer** than the deployed build | which policies reference it, which devices they reach, and the version each would move **from → to** | offer **Publish** (deploy) or **Hold in library** |
+| **Older** than the deployed build | "this is older than the deployed X; it has been added to the library as a separate version and is **not** deployed" | held, never auto-deployed |
+| **Same versionCode** | already refused today, unchanged | — |
+
+⚠️ **Migration hazard:** `published` cannot default to false for existing rows or
+the fleet loses its apps at the next recompute. The migration backfills all 18
+existing versions as published, and the column defaults true for uploads until the
+console flow lands — feature first, default second.
+
+**Publishing an older build** is where this meets the downgrade problem: the
+resolver returns it, the agent sees `installed > desired`, and today that is a
+silent no-op (`SKIP_UP_TO_DATE`). Making that refusal loud is step 5 and is worth
+more than the destructive capability.
+
 ##### Plan (7 steps)
 
-1. **Compare on upload.** A service returning "newer than / older than / same as"
-   the versions already held, plus what policies currently resolve to.
-2. **Upload flow** that shows that comparison and asks the one question that
-   matters — deploy this build, or hold it in the library — rather than
-   replace-or-separate.
-3. **Library UI.** Versions listed per package, with a badge on any package
-   holding more than one, and delete-a-version guarded against pinned policies.
-4. **Policy form.** Replace the bare number box with a picker over real uploaded
-   versions: "latest", "at least X", or "exactly this build" (`artifact_sha256`).
-5. **Agent: make the refusal loud.** `AppUpdatePlan` gains a
-   `REFUSED_DOWNGRADE` action; the reconciler raises an `apply_error`.
-6. **Opt-in destructive downgrade.** Spec flag, uninstall-then-install, logged
-   loudly before the uninstall, and never for the agent''s own package.
-7. **Hardware on `SM-X520`.** Downgrade a real app both ways: refused by default
-   and reported; permitted with the flag, confirming data loss is what happens.
+1. **`AppPackageVersion.published`** + migration backfilling existing rows true.
+   `resolve_for_policy` and the pinned-artifact lookup both skip unpublished.
+2. **Compare on upload.** A service returning newer/older/same against the
+   deployed build, the policies that reference the package, and the devices they
+   reach — the "from → to" an operator needs to decide.
+3. **Upload flow** presenting that comparison and asking **Publish or Hold**,
+   with older uploads defaulting to held and saying so.
+4. **Library UI.** Versions per package with a published badge, a duplicate-version
+   marker on the package row, publish/unpublish per version, and deletion guarded
+   against any policy pinning that artifact.
+5. **Agent: make a refused downgrade loud.** `AppUpdatePlan` gains
+   `REFUSED_DOWNGRADE`; the reconciler raises an `apply_error` naming both
+   versions. Fixes today''s silent no-op.
+6. **Re-point exact pins.** When publishing a newer build, offer to move any
+   policy pinning the old `artifact_sha256` — an immutable new `PolicyVersion`
+   (D2), which bumps `state_version` and wakes the device. ⚠️ Assignments carrying
+   `pinned_version_id` will **not** follow a policy edit; that has to be surfaced,
+   not discovered.
+7. **Opt-in destructive downgrade** + hardware on `SM-X520`: refused by default and
+   reported, then permitted with `allow_destructive_downgrade` and confirming that
+   app data is lost.
 
-⚠️ **Natural split**: 1–3 + 5 (library truth and honest reporting) is a complete,
-useful checkpoint on its own. 4, 6 and 7 add version choice and the destructive
-path, and 6 is the only part that can lose a user''s data.
+⚠️ **Natural split**: **1–5** is the whole of "many versions, honestly reported",
+ends with the fleet safer than it is today, and cannot lose data. **6–7** add pin
+re-pointing and the destructive path.
 
 ##### Status: planned, awaiting approval.
 
