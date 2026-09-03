@@ -497,7 +497,7 @@ def test_the_pending_state_shows_the_code_to_type(client: TestClient, db):
     assert "register-device" in page
 
 
-def test_the_linked_state_names_the_account_and_warns_unlink_is_local(
+def test_the_linked_state_names_the_account_and_does_not_invent_a_second_step(
     client: TestClient, db, token_vault
 ):
     _link_with(db, token_vault, refresh="r", account="kate@example.mil")
@@ -506,8 +506,10 @@ def test_the_linked_state_names_the_account_and_warns_unlink_is_local(
     body = text_of(client.get("/admin", headers=ADMIN_HEADERS).text)
 
     assert "kate@example.mil" in body
-    # Unlinking here does not revoke at tak.gov, and an operator would assume it does.
-    assert "does not revoke anything at tak.gov" in body.replace("  ", " ")
+    # tak.gov gives a user no way to revoke a linked EUD, so the panel must not
+    # send anyone looking for one.
+    assert "needs nothing done at tak.gov" in body.replace("  ", " ")
+    assert "TAK.gov account page" not in body
 
 
 def test_unlinking_through_the_console_clears_the_credential(
@@ -523,6 +525,11 @@ def test_unlinking_through_the_console_clears_the_credential(
 
     db.expire_all()
     assert link_row(db).status is TakGovLinkStatus.UNLINKED
+    # The operator gets told it happened, rather than inferring it from the panel
+    # changing shape.
+    assert "unbound=1" in response.headers["location"]
+    confirmed = text_of(client.get("/admin?unbound=1", headers=ADMIN_HEADERS).text)
+    assert "has been unbound" in confirmed
 
 
 def test_the_catalog_is_not_fetched_unless_the_tab_is_asked_for(

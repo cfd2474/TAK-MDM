@@ -3664,8 +3664,11 @@ whole of the stated ask) as one checkpoint, then 6 (import) after.
 * **The catalog loads only when asked for** (`/apps?tab=tpc`). Fetching it on
   every visit to Apps would put a third-party call *and* a token rotation in front
   of unrelated work like uploading an APK.
-* **Unlink is local.** It does not revoke anything at tak.gov, and the panel says
-  so — an operator would otherwise reasonably assume it did.
+* **Unbinding is the whole operation.** ⚠️ Corrected 2026-09-02: the panel used
+  to say the operator should also revoke at tak.gov. **tak.gov offers a user no
+  such control**, so that sent people looking for a page that does not exist —
+  worse than saying nothing. It now confirms the account has been unbound and
+  states plainly that nothing is needed at tak.gov.
 
 ##### ✅ Verified against the live service, 2026-09-02
 

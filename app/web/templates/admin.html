@@ -111,6 +111,14 @@
         tak.gov, and the server keeps the credential afterwards.
       </p>
 
+      {% if request.query_params.get('unbound') %}
+        <div class="banner good">
+          The TAK.gov account has been unbound. ATLAS no longer holds a credential
+          for it, and there is nothing to do at tak.gov.
+        </div>
+      {% endif %}
+
+
       {% if takgov.link.status.value == 'linked' %}
         <p>
           <span class="pill good">linked</span>
@@ -124,11 +132,10 @@
         <div class="banner">
           The catalog shows exactly what <strong>this account</strong> is entitled
           to see — the credential is a person, not a service account. Unlinking
-          forgets it here; it does <strong>not</strong> revoke anything at
-          tak.gov, which you do from your TAK.gov account page.
+          unbinds it here and needs nothing done at tak.gov.
         </div>
         <form method="post" action="/admin/takgov/unlink" style="margin-top:12px"
-              data-confirm="Forget the TAK.gov credential? The plugin catalog stops loading until someone links again.">
+              data-confirm="Unbind this TAK.gov account? The plugin catalog stops loading until an account is linked again. Nothing needs doing at tak.gov.">
           {{ csrf_field(csrf_token) }}
           <button type="submit" class="danger">Unlink</button>
         </form>

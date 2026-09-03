@@ -1704,7 +1704,7 @@ def takgov_unlink_form(
 ) -> RedirectResponse:
     tak_gov_link.unlink(session)
     session.commit()
-    return _redirect("/admin#tab-takgov")
+    return _redirect("/admin?unbound=1#tab-takgov")
 
 
 def _agent_update_panel(session: Session, settings: Settings) -> dict:

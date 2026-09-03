@@ -144,10 +144,12 @@ def poll(
 
 
 def unlink(session: Session) -> TakGovLink:
-    """Forget the credential.
+    """Unbind the account: forget every credential held for it.
 
-    Local only: this does not revoke anything at tak.gov, and the operator should
-    be told that rather than left to assume it.
+    This is the whole of unbinding. tak.gov offers the user no place to revoke a
+    linked EUD, so there is no second step to send an operator looking for — an
+    earlier version of the console said there was, which was worse than saying
+    nothing.
     """
     link = get(session)
     link.status = TakGovLinkStatus.UNLINKED
