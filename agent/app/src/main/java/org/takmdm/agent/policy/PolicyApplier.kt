@@ -16,6 +16,7 @@
 
 package org.takmdm.agent.policy
 
+import android.app.WallpaperManager
 import android.app.admin.DevicePolicyManager
 import android.app.ActivityOptions
 import android.content.Intent
@@ -31,6 +32,7 @@ import androidx.core.content.ContextCompat
 import org.takmdm.agent.core.AgentConfig
 import org.takmdm.agent.diag.AgentLog
 import org.json.JSONObject
+import java.io.File
 import org.takmdm.agent.admin.MdmDeviceAdminReceiver
 
 /**
@@ -294,6 +296,42 @@ class PolicyApplier(private val context: Context) {
 
         failures += oem.applyRestrictions(context, spec)
         return failures
+    }
+
+    /**
+     * Set [image] as the wallpaper. Returns null on success, or the reason.
+     *
+     * ⚠️ Order matters. `DISALLOW_SET_WALLPAPER` is applied **after** the image,
+     * because the restriction may block the agent as well as the user — it is a
+     * user restriction, not an admin exemption, and nothing in the documentation
+     * promises the setter is exempt. Setting it first would risk a policy that
+     * permanently prevents its own image from ever being applied.
+     */
+    fun setWallpaper(image: File, alsoLockScreen: Boolean, preventUserChange: Boolean): String? {
+        val manager = WallpaperManager.getInstance(context)
+
+        val failure = runCatching {
+            // Cleared first: an existing restriction from a previous reconcile would
+            // otherwise block this write, and the device would keep the old image
+            // with no indication why.
+            runCatching { dpm.clearUserRestriction(admin, UserManager.DISALLOW_SET_WALLPAPER) }
+
+            var which = WallpaperManager.FLAG_SYSTEM
+            if (alsoLockScreen) which = which or WallpaperManager.FLAG_LOCK
+            image.inputStream().use { stream ->
+                manager.setStream(stream, null, true, which)
+            }
+        }.exceptionOrNull()
+
+        if (failure != null) {
+            return "${failure.javaClass.simpleName}: ${failure.message ?: "no message"}"
+        }
+
+        if (preventUserChange) {
+            runCatching { dpm.addUserRestriction(admin, UserManager.DISALLOW_SET_WALLPAPER) }
+                .onFailure { return "image applied, but the user restriction failed: ${it.message}" }
+        }
+        return null
     }
 
     private fun applyScreenTimeout(spec: JSONObject): List<String> {

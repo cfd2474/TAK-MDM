@@ -4342,6 +4342,96 @@ probe policies archived and the probe package deleted.
 
 ---
 
+#### 🔻 W33 — WALLPAPER policy
+
+**Ask:** separate uploads for tablet and phone; either or both; the device gets the
+one that fits its screen; if only one is uploaded that one applies regardless; and
+a console preview showing portrait and landscape.
+
+##### Decisions taken up front
+
+* **D46 — the *device* chooses, not the server.** The desired state carries both
+  images when both exist, and the agent picks using its own
+  `smallestScreenWidthDp`. The device is the authority on its own screen, and this
+  needs no new reporting, no server-side guess, and no re-resolve when a device's
+  configuration changes. Only sha256 references travel; the agent downloads the one
+  it will actually use.
+* **D47 — 600dp is the tablet line.** Android's own resource-qualifier boundary
+  (`sw600dp`), so the split matches what every app on the device already assumes
+  rather than inventing a threshold.
+* **Reuse `ManagedFile`.** A wallpaper is opaque uploaded content with an artifact,
+  exactly what that table is for. The spec references files by id as `FILES` does.
+* **Warn, never forbid, on aspect ratio.** A phone image on a tablet still applies;
+  Android crops. The console says it will look wrong rather than refusing.
+
+##### Plan (6 steps)
+
+1. **Spec** `WallpaperSpec`: `tablet_file_id`, `phone_file_id`, both optional, plus
+   `lock_screen` (apply to lock as well as home) and `prevent_user_change`. At least
+   one file required, or the policy does nothing and should say so.
+2. **Resolver** turns file ids into artifact references, exactly as `FILES` does,
+   so a deleted file fails loudly rather than resolving to nothing.
+3. **Agent** `WallpaperPlan` — a pure choice of tablet/phone/neither given the two
+   ids and `smallestScreenWidthDp`, unit-tested off-device — plus the
+   `WallpaperManager` apply. ⚠️ Needs `SET_WALLPAPER`, which the manifest does not
+   currently declare.
+4. **Console**: upload both slots, and a **preview** rendering the chosen image in
+   portrait and landscape frames at phone and tablet aspect ratios.
+5. **Tests** on both sides.
+6. **Hardware on `SM-X520`** — a tablet, so it should take the tablet image; then
+   with only a phone image uploaded, it should take that instead.
+
+⚠️ **Unknown to settle on hardware, not by reasoning:** whether
+`DISALLOW_SET_WALLPAPER` blocks the *agent* as well as the user. If it does,
+`prevent_user_change` and the policy itself are mutually exclusive and the order of
+operations matters. Recorded rather than assumed (rule 6).
+
+##### Status: complete. Verified on `SM-X520`.
+
+**Done.** `WallpaperSpec` (two slots + `lock_screen` + `prevent_user_change`),
+resolution through `ManagedFile`, `WallpaperPlan` on the agent, the console control
+with a portrait/landscape preview, 14 server tests and 6 agent tests.
+
+✅ **Both rules verified on hardware.** With both images uploaded the tablet chose
+correctly — `applying TABLET wallpaper (smallestScreenWidthDp=823)` — and with only
+a phone image it took that instead: `applying PHONE wallpaper (…=823)`. The screen
+confirmed it both times.
+
+##### 🐛 The bug that 639 passing tests did not catch
+
+Resolution worked, the effective-policy payload carried the wallpaper, every test
+passed — and **the device was never told**. `desired_state.build` enumerates the
+bundle's keys explicitly (`policy`, `apps`, `files`), so a new section is invisible
+until it is named there. The device reported COMPLIANT throughout, because from its
+point of view there was nothing to do.
+
+⚠️ Worth generalising: **adding a section to the effective policy is two changes,
+not one.** Tests that stop at the resolver will pass while the fleet does nothing.
+There are now two tests asserting the wallpaper reaches the *signed bundle*, and
+both fail if that line is removed.
+
+⚠️ Also learned: **changing the bundle's shape does not bump `state_version`.**
+Change detection compares the payload, and the payload was already correct — so a
+converged device kept its cached state and never saw the new field until an
+unrelated change moved it. Fine in practice (any policy edit pushes it) but it made
+the fix look like it had failed.
+
+⚠️ **Removing a wallpaper policy does not restore the previous wallpaper** — the
+same shape as R19, and left as-is deliberately: unlike a screen timeout there is no
+sensible "previous" to keep (the old bitmap is not recoverable from
+`WallpaperManager`), so the honest options are to leave it or to require an
+explicit "revert to" image. Recorded, not guessed at.
+
+##### 🐛 Pre-existing: a single-page policy type rendered a blank edit form
+
+`policy_detail.html` marked every page panel `hidden` but only drew the rail that
+reveals them when a type had **more than one** page. `FILES` and `NETWORKS` are both
+single-page, so their edit forms have been blank since the rail landed; `WALLPAPER`
+is simply the type that made it obvious. The panel is now hidden only when there is
+a rail to unhide it.
+
+---
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |

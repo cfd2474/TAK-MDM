@@ -24,6 +24,7 @@ from app.policies.specs.files import FilesSpec
 from app.policies.specs.networks import NetworksSpec
 from app.policies.specs.password import PasswordSpec
 from app.policies.specs.restrictions import RestrictionsSpec
+from app.policies.specs.wallpaper import WallpaperSpec
 
 __all__ = [
     "AppCatalogSpec",
@@ -32,4 +33,5 @@ __all__ = [
     "PasswordSpec",
     "PolicySpec",
     "RestrictionsSpec",
+    "WallpaperSpec",
 ]

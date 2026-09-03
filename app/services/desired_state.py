@@ -62,6 +62,9 @@ def build(session: Session, device: Device) -> dict[str, Any]:
         # Split into what the agent must install and what it should offer the user
         # in the marketplace (F4).
         "files": payload.get("files", {"required": [], "available": []}),
+        # Both wallpaper slots when both are set: the device chooses by its own
+        # screen (D46) and downloads only the one it uses.
+        "wallpaper": payload.get("wallpaper", {}),
     }
 
 

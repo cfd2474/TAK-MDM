@@ -16,7 +16,7 @@
     {% for s in sections %}
       <div style="margin-bottom:10px">
         <strong>{{ s.profile_section | category_label }}</strong>
-        {% set rows = s.latest_version.spec | spec_rows(s.policy_type) %}
+        {% set rows = s.latest_version.spec | spec_rows(s.policy_type, file_names) %}
         {% if rows %}
           <dl class="kv" style="margin-top:4px">
             {% for r in rows %}<dt>{{ r.label }}</dt><dd>{{ r.value }}</dd>{% endfor %}

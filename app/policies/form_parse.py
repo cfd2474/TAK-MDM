@@ -61,6 +61,14 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
             if value is not None:
                 spec[name] = value
 
+        elif field.control == "image_file":
+            # A single managed-file id, or "" for "no image in this slot". Empty is
+            # left unset rather than written as null, so the field stays absent and
+            # does not contribute to a merge (to_stored uses exclude_unset).
+            raw = (form.get(name) or "").strip()
+            if raw:
+                spec[name] = raw
+
         elif field.control in ("str", "password"):
             raw = (form.get(name) or "").strip()
             if raw:

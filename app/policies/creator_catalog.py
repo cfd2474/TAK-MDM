@@ -75,8 +75,16 @@ CATALOG: tuple[Category, ...] = (
     ),
     Category("accounts", "Accounts", None, subtopics=("email", "exchange activesync")),
     Category(
+        "wallpaper", "Wallpaper", "WALLPAPER",
+        subtopics=("tablet", "phone"),
+        blurb="Home and lock screen wallpaper, chosen per form factor on the device.",
+    ),
+    # "wallpaper" has left this placeholder's subtopics — it is a real section now,
+    # and listing it in both would offer the operator the same thing twice, once
+    # working and once inert.
+    Category(
         "configurations", "Configurations", None,
-        subtopics=("fonts", "wallpaper", "boot/shutdown animation"),
+        subtopics=("fonts", "boot/shutdown animation"),
     ),
     Category("customizations", "Customizations", None, subtopics=("support message", "lock screen")),
     Category("network_data_use", "Network data use management", None),

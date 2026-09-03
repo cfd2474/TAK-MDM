@@ -445,3 +445,25 @@
     refresh(scope);
   });
 })();
+
+/* --- Wallpaper preview ------------------------------------------------------
+   Shows the selected image in both orientations at the slot's real aspect
+   ratio, cropped the way Android crops it. */
+(function () {
+  document.querySelectorAll("[data-image-slot]").forEach(function (slot) {
+    var select = slot.querySelector("[data-image-select]");
+    var preview = slot.querySelector("[data-image-preview]");
+    if (!select || !preview) return;
+
+    function refresh() {
+      var id = select.value;
+      if (!id) { preview.hidden = true; return; }
+      var src = "/content/" + encodeURIComponent(id) + "/raw";
+      preview.querySelectorAll("img").forEach(function (img) { img.src = src; });
+      preview.hidden = false;
+    }
+
+    select.addEventListener("change", refresh);
+    refresh();
+  });
+})();

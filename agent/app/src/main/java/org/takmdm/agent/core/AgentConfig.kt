@@ -135,6 +135,17 @@ class AgentConfig(context: Context) {
         get() = prefs.getInt(KEY_SAVED_SCREEN_TIMEOUT, -1)
         set(value) = prefs.edit { putInt(KEY_SAVED_SCREEN_TIMEOUT, value) }
 
+    /**
+     * sha256 of the wallpaper currently applied, or null.
+     *
+     * Re-setting a wallpaper flickers visibly, so an idempotent reconcile has to
+     * genuinely do nothing — and `WallpaperManager` offers no way to ask what is
+     * already set that would survive a crop.
+     */
+    var appliedWallpaperSha: String?
+        get() = prefs.getString(KEY_WALLPAPER_SHA, null)
+        set(value) = prefs.edit { putString(KEY_WALLPAPER_SHA, value) }
+
     var lastSyncAt: Long
         get() = prefs.getLong(KEY_LAST_SYNC, 0L)
         set(value) = prefs.edit { putLong(KEY_LAST_SYNC, value) }
@@ -237,6 +248,7 @@ class AgentConfig(context: Context) {
         private const val KEY_FILE_PREFIX = "applied_file:"
         private const val KEY_LAST_ERROR = "last_error"
         private const val KEY_LAST_SYNC = "last_sync_at"
+        private const val KEY_WALLPAPER_SHA = "applied_wallpaper_sha"
         private const val KEY_SAVED_SCREEN_TIMEOUT = "saved_screen_timeout_ms"
         private const val KEY_APPLY_ERRORS = "last_apply_errors"
         private const val KEY_COMMAND_RESULTS = "pending_command_results"

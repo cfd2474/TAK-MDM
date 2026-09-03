@@ -50,7 +50,12 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -128,12 +133,19 @@ _TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 _TEMPLATES.env.filters["pretty_json"] = lambda value: json.dumps(value, indent=2, sort_keys=True)
 
 
-def _spec_rows(spec: Any, policy_type: str | None = None) -> list[dict[str, str]]:
+def _spec_rows(
+    spec: Any,
+    policy_type: str | None = None,
+    names: dict[str, str] | None = None,
+) -> list[dict[str, str]]:
     """A policy spec as flat label/value rows for a readable, no-JSON summary.
 
     Given the policy type, field labels come from the spec's own ``title`` (the
     same text the editor shows); otherwise the raw key is de-underscored.
     """
+    # Referenced ids rendered as the thing they name. A wallpaper summary reading
+    # "45cc5418-3aae-…" tells an operator nothing about which picture it is.
+    names = names or {}
     labels: dict[str, str] = {}
     if policy_type:
         try:
@@ -157,7 +169,7 @@ def _spec_rows(spec: Any, policy_type: str | None = None) -> list[dict[str, str]
             )
         if isinstance(value, dict):
             return ", ".join(f"{k}={render(v)}" for k, v in value.items())
-        return str(value)
+        return names.get(str(value), str(value))
 
     for key, value in (spec or {}).items():
         rows.append(
@@ -455,6 +467,7 @@ def list_policies(
         device_policies=policy_admin.list_tab(session, "device"),
         templates=policy_admin.list_tab(session, "templates"),
         archived=policy_admin.list_tab(session, "archived"),
+        file_names=_managed_file_names(session),
     )
 
 
@@ -494,6 +507,14 @@ def _catalog_view(profile=None) -> list[dict[str, Any]]:
     return view
 
 
+def _managed_file_names(session: Session) -> dict[str, str]:
+    """id -> display name, so a spec summary shows the picture, not its uuid."""
+    return {
+        str(managed.id): managed.name
+        for managed in session.scalars(select(ManagedFile))
+    }
+
+
 def _form_catalogs(session: Session) -> dict[str, Any]:
     """Uploaded apps and files, for the policy form's list controls."""
     packages = list(session.scalars(select(AppPackage).order_by(AppPackage.package_name)))
@@ -503,6 +524,7 @@ def _form_catalogs(session: Session) -> dict[str, Any]:
             session.scalars(select(ManagedFile).order_by(ManagedFile.name))
         ),
         "app_compat": _app_compat_map(packages),
+        "file_names": _managed_file_names(session),
     }
 
 
@@ -1588,6 +1610,36 @@ def delete_app_group_form(
 # --------------------------------------------------------------------------- #
 # Content — managed files and where policies place them (W6)
 # --------------------------------------------------------------------------- #
+
+
+@router.get("/content/{file_id}/raw")
+def content_raw(
+    file_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+    identity: AdminIdentity = Depends(admin_required),
+) -> StreamingResponse:
+    """Serve a managed file's bytes to the console.
+
+    Needed for the wallpaper preview: the device-facing artifact route is behind
+    mTLS and unreachable from a browser. Admin-guarded like every other console
+    route, and it streams rather than reading the blob into memory — a wallpaper is
+    small, but nothing here enforces that.
+    """
+    managed = session.get(ManagedFile, file_id)
+    if managed is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "file not found")
+    try:
+        handle = storage.open(managed.artifact_sha256)
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "the stored artifact is missing"
+        ) from exc
+    return StreamingResponse(
+        handle,
+        media_type=managed.media_type or "application/octet-stream",
+        headers={"Content-Disposition": f'inline; filename="{managed.original_filename}"'},
+    )
 
 
 @router.get("/content", response_class=HTMLResponse)

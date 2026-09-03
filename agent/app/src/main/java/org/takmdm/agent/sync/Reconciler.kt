@@ -43,6 +43,7 @@ import org.takmdm.agent.permissions.PermissionRequirement
 import org.takmdm.agent.policy.AllowlistPlan
 import org.takmdm.agent.policy.AppUpdatePlan
 import org.takmdm.agent.policy.PolicyApplier
+import org.takmdm.agent.policy.WallpaperPlan
 
 /** Outcome of one reconciliation pass. */
 data class SyncOutcome(
@@ -468,6 +469,69 @@ class Reconciler(private val context: Context) {
             desired.optJSONArray("apps") ?: JSONArray()
         )
         errors += reconcileFiles(desired.optJSONObject("files") ?: JSONObject())
+        errors += reconcileWallpaper(desired.optJSONObject("wallpaper") ?: JSONObject())
+        return errors
+    }
+
+    /**
+     * Set the wallpaper the policy asks for, choosing by this device's own screen.
+     *
+     * The choice happens here rather than on the server (D46) — only sha256
+     * references travel, and the chosen image alone is downloaded.
+     */
+    private fun reconcileWallpaper(wallpaper: JSONObject): List<String> {
+        val tablet = wallpaper.optJSONObject("tablet")
+        val phone = wallpaper.optJSONObject("phone")
+        if (tablet == null && phone == null) return emptyList()
+
+        val errors = mutableListOf<String>()
+        // A slot pointing at a file that has left the library. Reported rather than
+        // treated as "no image", so a broken policy looks broken.
+        for ((label, slot) in listOf("tablet" to tablet, "phone" to phone)) {
+            if (slot != null && !slot.optBoolean("available", false)) {
+                errors += "wallpaper: the $label image is no longer in the library"
+            }
+        }
+
+        val usableTablet = tablet?.takeIf { it.optBoolean("available", false) }
+        val usablePhone = phone?.takeIf { it.optBoolean("available", false) }
+        val width = context.resources.configuration.smallestScreenWidthDp
+        val choice = WallpaperPlan.choose(
+            hasTablet = usableTablet != null,
+            hasPhone = usablePhone != null,
+            smallestWidthDp = width,
+        )
+        val chosen = when (choice) {
+            WallpaperPlan.Choice.TABLET -> usableTablet
+            WallpaperPlan.Choice.PHONE -> usablePhone
+            WallpaperPlan.Choice.NONE -> null
+        } ?: return errors
+
+        val sha = chosen.optString("sha256").takeIf { it.isNotBlank() }
+            ?: return errors + "wallpaper: the chosen image has no artifact"
+
+        // Nothing to do if this exact image is already on. Re-setting a wallpaper
+        // is visible to the user as a flicker, so an idempotent reconcile must
+        // genuinely do nothing.
+        if (config.appliedWallpaperSha == sha) return errors
+
+        val target = File(cacheDir, sha)
+        if (!downloadArtifact(sha, target)) {
+            return errors + "wallpaper: download of $sha failed verification"
+        }
+
+        AgentLog.i(
+            TAG,
+            "applying $choice wallpaper (smallestScreenWidthDp=$width) from ${sha.take(12)}…"
+        )
+        val applied = policyApplier.setWallpaper(
+            image = target,
+            alsoLockScreen = wallpaper.optBoolean("lock_screen", false),
+            preventUserChange = wallpaper.optBoolean("prevent_user_change", false),
+        )
+        if (applied != null) return errors + "wallpaper: $applied"
+
+        config.appliedWallpaperSha = sha
         return errors
     }
 

@@ -227,3 +227,60 @@ def list_selections(session: Session, device_id: uuid.UUID) -> list[DeviceFileSe
             select(DeviceFileSelection).where(DeviceFileSelection.device_id == device_id)
         )
     )
+
+
+def resolve_wallpaper(session: Session, values: Mapping[str, Any]) -> dict[str, Any]:
+    """Turn ``WALLPAPER``'s file ids into downloadable references.
+
+    Both slots travel when both are filled: **the device chooses** (D46). It knows
+    its own `smallestScreenWidthDp`, the server does not, and sending both costs two
+    sha256 strings rather than two images — the agent fetches only the one it uses.
+
+    A slot referencing a file that has been deleted is reported with
+    ``available: false`` rather than dropped, for the same reason as `resolve_files`:
+    a broken policy has to look broken, not empty.
+    """
+    spec = values.get("WALLPAPER") or {}
+    slots = {
+        form_factor: spec.get(f"{form_factor}_file_id")
+        for form_factor in ("tablet", "phone")
+    }
+    wanted: dict[str, uuid.UUID] = {}
+    for form_factor, raw in slots.items():
+        if raw is None:
+            continue
+        try:
+            wanted[form_factor] = uuid.UUID(str(raw))
+        except (ValueError, TypeError):
+            continue
+
+    if not wanted:
+        return {}
+
+    catalog = {
+        managed.id: managed
+        for managed in session.scalars(
+            select(ManagedFile).where(ManagedFile.id.in_(wanted.values()))
+        )
+    }
+
+    resolved: dict[str, Any] = {}
+    for form_factor, file_id in wanted.items():
+        managed = catalog.get(file_id)
+        if managed is None:
+            resolved[form_factor] = {"file_id": str(file_id), "available": False}
+            continue
+        resolved[form_factor] = {
+            "file_id": str(file_id),
+            "available": True,
+            "name": managed.name,
+            "media_type": managed.media_type,
+            "sha256": managed.artifact_sha256,
+            "size_bytes": managed.artifact.size_bytes if managed.artifact else None,
+            "url": f"/api/v1/device/artifacts/{managed.artifact_sha256}",
+        }
+
+    for key in ("lock_screen", "prevent_user_change"):
+        if spec.get(key) is not None:
+            resolved[key] = bool(spec[key])
+    return resolved

@@ -124,6 +124,41 @@
   </div>
 {% endmacro %}
 
+{#
+  One uploaded image, with a preview.
+
+  The frames use `object-fit: cover`, which is what Android does to a wallpaper —
+  it fills the screen and crops the overflow. A `contain` preview would look
+  tidier and would lie about what the device shows.
+#}
+{% macro _image_file(f, value, name, managed_files) %}
+  {% set is_tablet = 'tablet' in name %}
+  <div class="image-slot" data-image-slot data-form-factor="{{ 'tablet' if is_tablet else 'phone' }}">
+    <select name="{{ name }}" data-image-select>
+      <option value="">— none —</option>
+      {% for m in managed_files if (m.media_type or '').startswith('image/') %}
+        <option value="{{ m.id }}" {{ 'selected' if value and (value | string) == (m.id | string) }}>
+          {{ m.name }} ({{ m.original_filename }})
+        </option>
+      {% endfor %}
+    </select>
+    <p class="muted" style="font-size:12px; margin:6px 0 0">
+      Images come from the <a href="/content">Content</a> page. Only uploads with an
+      image media type are listed.
+    </p>
+    <div class="wallpaper-preview" data-image-preview hidden>
+      <figure>
+        <div class="frame portrait"><img alt="Portrait preview"></div>
+        <figcaption>Portrait</figcaption>
+      </figure>
+      <figure>
+        <div class="frame landscape"><img alt="Landscape preview"></div>
+        <figcaption>Landscape</figcaption>
+      </figure>
+    </div>
+  </div>
+{% endmacro %}
+
 {% macro _file_list(f, items, name, managed_files) %}
   <div class="rowset" data-rowset>
     {% for entry in items or [] %}{{ _file_row(name, managed_files, entry) }}{% endfor %}
@@ -207,6 +242,7 @@
   {% elif f.control == 'package_list' %}{{ _package_list(f, value, name) }}
   {% elif f.control == 'app_list' %}{{ _app_list(f, value, name, app_packages) }}
   {% elif f.control == 'file_list' %}{{ _file_list(f, value, name, managed_files) }}
+  {% elif f.control == 'image_file' %}{{ _image_file(f, value, name, managed_files) }}
   {% elif f.control == 'wifi_list' %}{{ _wifi_list(f, value, name) }}
   {% endif %}
 {% endmacro %}

@@ -34,6 +34,7 @@ from app.policies.specs import (
     PasswordSpec,
     PolicySpec,
     RestrictionsSpec,
+    WallpaperSpec,
 )
 from app.policies.strategies import Merge, MergeStrategy
 
@@ -149,6 +150,11 @@ registry.register(
     "FILES",
     FilesSpec,
     "Files placed on the device, required or offered in the marketplace.",
+)
+registry.register(
+    "WALLPAPER",
+    WallpaperSpec,
+    "Home and lock screen wallpaper, per form factor.",
 )
 registry.register(
     "NETWORKS",

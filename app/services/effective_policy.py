@@ -281,6 +281,7 @@ def refresh(session: Session, device: Device) -> dict[str, Any]:
     payload = effective.as_dict()
     payload["apps"] = resolve_required_apps(session, payload["values"])
     payload["files"] = files.resolve_files(session, payload["values"])
+    payload["wallpaper"] = files.resolve_wallpaper(session, payload["values"])
 
     cache = session.get(EffectivePolicyCache, device.id)
     # A device that has never been computed starts from an empty desired state, not
@@ -290,13 +291,19 @@ def refresh(session: Session, device: Device) -> dict[str, Any]:
         previous.get("values", {}),
         previous.get("apps", []),
         previous.get("files", {"required": [], "available": []}),
+        previous.get("wallpaper", {}),
     )
 
     # Resolved apps and files are compared too, not just policy values. Uploading a
     # new build of a required app, or replacing a managed file, changes what the
     # device must do without changing a single word of policy — comparing values
     # alone would leave the fleet on the old version indefinitely.
-    if previous_state != (payload["values"], payload["apps"], payload["files"]):
+    if previous_state != (
+        payload["values"],
+        payload["apps"],
+        payload["files"],
+        payload["wallpaper"],
+    ):
         device.state_version += 1
 
     if cache is None:
