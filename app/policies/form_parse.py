@@ -76,16 +76,28 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
 
         elif field.control == "app_list":
             packages = form.getlist(f"{name}__package_name")
-            versions = form.getlist(f"{name}__min_version_code")
+            # One select carrying all three intents, because they are mutually
+            # exclusive and two controls would let an operator express a
+            # contradiction the resolver then has to arbitrate silently:
+            #   ""          -> latest published
+            #   "min:<code>"-> at least that versionCode
+            #   "pin:<sha>" -> exactly this build, including an older one
+            choices = form.getlist(f"{name}__version_choice")
             rows: list[dict[str, Any]] = []
             for i, package in enumerate(packages):
                 package = (package or "").strip()
                 if not package:
                     continue
                 row: dict[str, Any] = {"package_name": package}
-                version = _int_or_none(versions[i] if i < len(versions) else None)
-                if version is not None:
-                    row["min_version_code"] = version
+                choice = (choices[i] if i < len(choices) else "") or ""
+                if choice.startswith("min:"):
+                    floor = _int_or_none(choice[4:])
+                    if floor is not None:
+                        row["min_version_code"] = floor
+                elif choice.startswith("pin:"):
+                    sha = choice[4:].strip().lower()
+                    if len(sha) == 64:
+                        row["artifact_sha256"] = sha
                 rows.append(row)
             if rows:
                 spec[name] = rows

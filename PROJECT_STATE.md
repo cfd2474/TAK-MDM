@@ -4027,7 +4027,53 @@ more than the destructive capability.
 ends with the fleet safer than it is today, and cannot lose data. **6–7** add pin
 re-pointing and the destructive path.
 
-##### Status: planned, awaiting approval.
+##### Status: steps 1–5 done, plus the pin UI. Steps 6–7 open.
+
+**Done.**
+
+* `AppPackageVersion.published` + migration `k1m3o5q7s9u1`. All **18** existing
+  versions backfilled true, verified against the live database — holding them
+  would have emptied the resolver at the next recompute.
+* `resolve_for_policy` skips held builds. **Only** automatic selection is gated;
+  an explicit `artifact_sha256` pin still reaches a held build, because a pin
+  names one exact build deliberately and a second gate with no separate meaning
+  would just be R17 wearing a different hat.
+* `compare_upload()` — relation, the build being replaced, the policies naming the
+  package, and how many devices they reach — computed **before** anything is
+  stored. `POST /apps/preview-upload` exposes it without side effects.
+* `ingest(publish=...)`. Left unset it defaults by comparison: **newer publishes,
+  older is held.** The asymmetry is deliberate — publishing is undone by
+  publishing something else, but a fleet that has already upgraded cannot be
+  walked back, because Android refuses downgrades.
+* Upload now says what it did ("… was published, replacing 100 on 3 devices" /
+  "… is being held — devices stay on 200"). It used to deploy fleet-wide in total
+  silence.
+* Library UI: a package holding more than one version links to a per-version list
+  with published/held state and a publish/hold button each.
+* **The version picker** (`__version_choice`): *Latest published* / *At least X* /
+  **Exactly X, including a held or older build**. One select, because the three
+  intents are mutually exclusive and two controls would let an operator express a
+  contradiction the resolver then arbitrates silently. This is the "enforce an
+  older version" distinction, and it previously had no control at all.
+* Agent: `AppUpdatePlan.REFUSED_DOWNGRADE`. A device ahead of its policy raises an
+  `apply_error` naming both versions instead of folding into `SKIP_UP_TO_DATE` and
+  saying nothing.
+
+✅ **Verified on the live stack with real data.** Imported UAS Tool from the
+**5.8.0** catalog next to the **5.5.0** build already published — and 5.8.0''s
+build carries the *lower* versionCode (`1787086761` vs `1787086923`). It was held
+automatically, and `SM-X520` stayed at `state_version 56`, acked, COMPLIANT.
+
+⚠️ **Worth knowing: a newer ATAK version does not imply a newer versionCode.** The
+TAK.gov catalog ships per-ATAK-version builds whose codes do not track the ATAK
+version, so "the 5.8.0 one must be newer" is wrong and an operator would
+reasonably believe it. The publish/hold default protects against exactly this.
+
+⚠️ **Found while testing: the app-list form parser had no test coverage at all.**
+Rewriting the control broke nothing, which is how it was noticed. Now covered.
+
+**Not done: steps 6 (re-point exact pins on publish) and 7 (opt-in destructive
+downgrade + hardware).** Nothing so far can lose a user''s data.
 
 ---
 

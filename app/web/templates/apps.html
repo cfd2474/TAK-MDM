@@ -21,6 +21,7 @@
         {{ csrf_field(csrf_token) }}
         <input type="file" name="file" accept=".apk,.xapk,.apks,.apkm" required>
         <input type="text" name="label" placeholder="Label (optional)">
+        <input type="hidden" name="publish" value="auto">
         <button type="submit">Upload</button>
       </form>
       <p class="muted" style="font-size:12px">
@@ -34,6 +35,9 @@
     </div>
 
     <div class="panel">
+      {% if request.query_params.get('uploaded') %}
+        <div class="banner good">{{ request.query_params.get('uploaded') }}</div>
+      {% endif %}
       {% if not packages %}
         {{ empty_state('No packages uploaded yet.') }}
       {% else %}
@@ -58,9 +62,17 @@
               {% endif %}
             </td>
             <td class="mono">
-              {% if p.latest_version %}
-                {{ p.latest_version.version_code }}{% if p.latest_version.version_name %} ({{ p.latest_version.version_name }}){% endif %}
-              {% else %}—{% endif %}
+              {% set deployed = p.versions | selectattr('published') | sort(attribute='version_code') | last %}
+              {% if deployed %}
+                {{ deployed.version_code }}{% if deployed.version_name %} ({{ deployed.version_name }}){% endif %}
+              {% else %}
+                <span class="pill warn">none published</span>
+              {% endif %}
+              {% if (p.versions | length) > 1 %}
+                <div class="muted" style="font-size:11px">
+                  <a href="?versions={{ p.id }}#tab-local">{{ p.versions | length }} versions in the library</a>
+                </div>
+              {% endif %}
             </td>
             <td class="muted">
               {{ (p.latest_version.files | length) if p.latest_version else 0 }}
@@ -85,6 +97,43 @@
               </form>
             </td>
           </tr>
+          {% if request.query_params.get('versions') == (p.id | string) %}
+          <tr>
+            <td colspan="5" style="background:var(--panel-2)">
+              <strong>Versions of {{ p.label or p.package_name }}</strong>
+              <p class="muted" style="font-size:12px; margin:4px 0 8px">
+                Only a <em>published</em> build is chosen automatically by a policy
+                asking for "latest" or "at least X". A held build stays available and
+                can still be pinned to exactly by a policy.
+              </p>
+              <table>
+                <thead><tr><th>versionCode</th><th>Version</th><th>Uploaded</th><th>State</th><th></th></tr></thead>
+                <tbody>
+                {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
+                  <tr>
+                    <td class="mono">{{ v.version_code }}</td>
+                    <td>{{ v.version_name or '—' }}</td>
+                    <td class="muted">{{ v.uploaded_at.strftime('%Y-%m-%d %H:%M') if v.uploaded_at else '—' }}</td>
+                    <td>
+                      {% if v.published %}<span class="pill good">published</span>
+                      {% else %}<span class="pill">held</span>{% endif %}
+                    </td>
+                    <td>
+                      <form method="post" action="/apps/versions/{{ v.id }}/publish" style="margin:0"
+                            data-confirm="{{ 'Hold ' ~ v.version_code ~ '? Policies asking for latest will fall back to the newest published build.' if v.published else 'Publish ' ~ v.version_code ~ '? Every policy asking for latest will deploy it at the next check-in.' }}">
+                        {{ csrf_field(csrf_token) }}
+                        <input type="hidden" name="published" value="{{ 'false' if v.published else 'true' }}">
+                        <button type="submit" class="ghost">{{ 'Hold' if v.published else 'Publish' }}</button>
+                      </form>
+                    </td>
+                  </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+              <p style="margin-top:8px"><a href="?#tab-local" class="muted">Close</a></p>
+            </td>
+          </tr>
+          {% endif %}
         {% endfor %}
         </tbody>
       </table>

@@ -557,6 +557,19 @@ class Reconciler(private val context: Context) {
                     AgentLog.d(TAG, "$packageName already at versionCode $installed (want $desiredVersion); skipping")
                     continue
                 }
+                AppUpdatePlan.Action.REFUSED_DOWNGRADE -> {
+                    // An apply_error, not a log line: the whole point is that the
+                    // operator learns from the console rather than from the device.
+                    AgentLog.w(
+                        TAG,
+                        "$packageName is at versionCode $installed but the policy wants " +
+                            "$desiredVersion; Android will not install a downgrade"
+                    )
+                    errors += "$packageName: installed versionCode $installed is newer than " +
+                        "the required $desiredVersion. Android refuses to install a downgrade, " +
+                        "and removing it first would erase the app's data, so it was left alone."
+                    continue
+                }
                 AppUpdatePlan.Action.SKIP_PINNED -> {
                     AgentLog.i(
                         TAG,

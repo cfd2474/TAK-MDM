@@ -23,7 +23,7 @@ package org.takmdm.agent.policy
  */
 object AppUpdatePlan {
 
-    enum class Action { INSTALL, UPGRADE, SKIP_UP_TO_DATE, SKIP_PINNED }
+    enum class Action { INSTALL, UPGRADE, SKIP_UP_TO_DATE, SKIP_PINNED, REFUSED_DOWNGRADE }
 
     /**
      * @param installed the installed versionCode, or null if the app is absent.
@@ -33,7 +33,17 @@ object AppUpdatePlan {
      */
     fun decide(installed: Long?, desired: Long, autoUpdate: Boolean): Action = when {
         installed == null -> Action.INSTALL
-        installed >= desired -> Action.SKIP_UP_TO_DATE
+        installed == desired -> Action.SKIP_UP_TO_DATE
+        // The device is *ahead* of what the policy asks for. Android refuses to
+        // install an older versionCode over a newer one, and Device Owner does not
+        // override it, so the only route down is uninstall-then-install — which
+        // destroys the app's data and is never something to do as a side effect of
+        // a policy edit.
+        //
+        // This used to fold into SKIP_UP_TO_DATE and say nothing, so an operator
+        // pinning an older build saw the policy apply cleanly and never learned the
+        // device had ignored it. Distinguished so the reconciler can report it.
+        installed > desired -> Action.REFUSED_DOWNGRADE
         !autoUpdate -> Action.SKIP_PINNED
         else -> Action.UPGRADE
     }

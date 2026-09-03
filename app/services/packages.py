@@ -70,6 +70,34 @@ class IngestResult:
     provisioning_checksum: str | None
 
 
+@dataclass(frozen=True)
+class VersionComparison:
+    """How an upload relates to what the library already deploys.
+
+    Built *before* the upload is committed so the console can say what will happen
+    rather than what has happened — uploading used to deploy to the whole fleet
+    with no confirmation anywhere.
+    """
+
+    #: "first" | "newer" | "older" | "same"
+    relation: str
+    package_name: str
+    version_code: int
+    version_name: str | None
+    #: The build currently deployed for this package, if any.
+    deployed_version_code: int | None = None
+    deployed_version_name: str | None = None
+    #: Names of policies whose required_apps mention this package.
+    policy_names: tuple[str, ...] = ()
+    #: How many enrolled devices those policies reach.
+    device_count: int = 0
+
+    @property
+    def would_deploy(self) -> bool:
+        """True when publishing this build changes what devices install."""
+        return self.relation in ("first", "newer")
+
+
 def _validate(session: Session, bundle: InspectedBundle) -> AppPackage | None:
     if bundle.target_sdk is not None and bundle.target_sdk < MINIMUM_TARGET_SDK:
         raise PackageError(
@@ -103,9 +131,21 @@ def _validate(session: Session, bundle: InspectedBundle) -> AppPackage | None:
 
 
 def ingest(
-    session: Session, storage: ArtifactStorage, data: bytes, *, label: str | None = None
+    session: Session,
+    storage: ArtifactStorage,
+    data: bytes,
+    *,
+    label: str | None = None,
+    publish: bool | None = None,
 ) -> IngestResult:
-    """Inspect an APK or XAPK/APKS upload, store its parts, and record the version."""
+    """Inspect an APK or XAPK/APKS upload, store its parts, and record the version.
+
+    ``publish`` decides whether the new build is eligible for automatic selection.
+    Left as None it defaults by comparison: a build **newer** than everything
+    published is published, and an **older** one is held. That keeps an upload from
+    quietly moving a fleet backwards, and matches what the operator almost always
+    means by uploading an old build — keeping it available, not deploying it.
+    """
     try:
         bundle = inspect(data)
     except ApkError as exc:
@@ -140,12 +180,19 @@ def ingest(
             "uploaded; bump versionCode to publish a new build"
         )
 
+    if publish is None:
+        # Never let an upload move a fleet backwards by accident: an older build is
+        # held, a newer one (or the first) is published.
+        deployed = latest_published(session, package)
+        publish = deployed is None or bundle.version_code > deployed.version_code
+
     version = AppPackageVersion(
         package_id=package.id,
         version_code=bundle.version_code,
         version_name=bundle.version_name,
         min_sdk=bundle.min_sdk,
         target_sdk=bundle.target_sdk,
+        published=publish,
     )
     session.add(version)
     session.flush()
@@ -248,7 +295,13 @@ def delete_package(
 def resolve_for_policy(
     session: Session, package_name: str, *, min_version_code: int | None = None
 ) -> AppPackageVersion | None:
-    """Best version satisfying a policy's floor, or None if nothing qualifies."""
+    """Best **published** version satisfying a policy's floor, or None.
+
+    Held builds are skipped here and only here. This is the *automatic* selection
+    path — "latest", or "newest above the floor" — and publishing is what an
+    operator uses to say a build may be chosen automatically. An explicit
+    `artifact_sha256` pin names one exact build and bypasses this entirely (W31).
+    """
     package = session.scalar(
         select(AppPackage).where(AppPackage.package_name == package_name)
     )
@@ -258,9 +311,99 @@ def resolve_for_policy(
     candidates = [
         version
         for version in package.versions
-        if min_version_code is None or version.version_code >= min_version_code
+        if version.published
+        and (min_version_code is None or version.version_code >= min_version_code)
     ]
     return max(candidates, key=lambda v: v.version_code, default=None)
+
+
+def latest_published(session: Session, package: AppPackage) -> AppPackageVersion | None:
+    """The build this package currently deploys, or None if every one is held."""
+    return max(
+        (v for v in package.versions if v.published),
+        key=lambda v: v.version_code,
+        default=None,
+    )
+
+
+def compare_upload(session: Session, data: bytes) -> VersionComparison:
+    """What this upload would do, without committing anything.
+
+    Inspects the bytes and reads the library, so the console can present the
+    decision *before* it is taken. Raises the same `PackageError`s `ingest` would,
+    so an upload that cannot be accepted is rejected here rather than after the
+    operator has answered a question about it.
+    """
+    try:
+        bundle = inspect(data)
+    except ApkError as exc:
+        raise PackageError(str(exc)) from exc
+
+    package = _validate(session, bundle)
+    if package is None:
+        return VersionComparison(
+            relation="first",
+            package_name=bundle.package_name,
+            version_code=bundle.version_code,
+            version_name=bundle.version_name,
+        )
+
+    duplicate = any(v.version_code == bundle.version_code for v in package.versions)
+    deployed = latest_published(session, package)
+    if duplicate:
+        relation = "same"
+    elif deployed is None or bundle.version_code > deployed.version_code:
+        relation = "newer"
+    else:
+        relation = "older"
+
+    policy_names, device_count = _reach_of(session, bundle.package_name)
+    return VersionComparison(
+        relation=relation,
+        package_name=bundle.package_name,
+        version_code=bundle.version_code,
+        version_name=bundle.version_name,
+        deployed_version_code=deployed.version_code if deployed else None,
+        deployed_version_name=deployed.version_name if deployed else None,
+        policy_names=policy_names,
+        device_count=device_count,
+    )
+
+
+def _reach_of(session: Session, package_name: str) -> tuple[tuple[str, ...], int]:
+    """Policies naming this package, and how many devices they reach.
+
+    Read from each policy's **current** version only. Older PolicyVersions are kept
+    for the audit trail (D2) but are not what any device is running, so counting
+    them would inflate the number an operator is asked to act on.
+    """
+    from app.db.models import Assignment, Policy
+    from app.services import effective_policy as eff
+
+    names: list[str] = []
+    device_ids: set[uuid.UUID] = set()
+
+    for policy in session.scalars(
+        select(Policy).where(Policy.archived_at.is_(None), Policy.is_template.is_(False))
+    ):
+        latest = policy.latest_version
+        required = ((latest.spec if latest else None) or {}).get("required_apps") or []
+        if not any(entry.get("package_name") == package_name for entry in required):
+            continue
+
+        # A profile section is reached through its profile, never assigned directly
+        # (W21). Naming the profile is what an operator recognises.
+        names.append(policy.profile.name if policy.profile else policy.name)
+
+        if policy.profile_id is not None:
+            device_ids |= eff.devices_affected_by_profile(session, policy.profile_id)
+        else:
+            for assignment in session.scalars(
+                select(Assignment).where(Assignment.policy_id == policy.id)
+            ):
+                device_ids |= eff.devices_targeted_by(session, assignment)
+
+    return tuple(sorted(set(names))), len(device_ids)
 
 
 def get_by_id(session: Session, package_id: uuid.UUID) -> AppPackage | None:

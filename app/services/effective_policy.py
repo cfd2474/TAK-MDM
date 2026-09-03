@@ -229,7 +229,7 @@ def resolve_required_apps(
             )
             floor = entry.get("min_version_code")
             unavailable_reason = (
-                f"no uploaded build at or above versionCode {floor}"
+                f"no published build at or above versionCode {floor}"
                 if floor
                 else "nothing uploaded for it"
             )

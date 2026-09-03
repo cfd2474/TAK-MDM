@@ -1343,21 +1343,115 @@ def import_tpc_plugin_status(
 @router.post("/apps/upload")
 def upload_app_form(
     label: str = Form(default=""),
+    publish: str = Form(default="auto"),
     file: UploadFile = File(...),
     session: Session = Depends(get_db),
     storage: ArtifactStorage = Depends(get_storage),
     settings: Settings = Depends(get_settings),
     identity: AdminIdentity = Depends(admin_required),
 ) -> RedirectResponse:
+    """Upload a package, and say what it did to the fleet.
+
+    ``publish`` is "auto" (newer deploys, older is held), "yes", or "no". The
+    redirect carries a summary because an upload used to deploy fleet-wide in
+    silence — the operator had no way to tell whether anything had moved.
+    """
     data = file.file.read()
     if not data:
         return _redirect("/apps?error=the+uploaded+file+is+empty")
     if len(data) > settings.max_upload_bytes:
         return _redirect(f"/apps?error={_quote(f'upload exceeds {settings.max_upload_bytes} bytes')}")
+
+    wanted = {"yes": True, "no": False}.get(publish)
     try:
-        package_service.ingest(session, storage, data, label=label.strip() or None)
+        comparison = package_service.compare_upload(session, data)
+        result = package_service.ingest(
+            session, storage, data, label=label.strip() or None, publish=wanted
+        )
     except package_service.PackageError as exc:
         return _redirect(f"/apps?error={_quote(str(exc))}")
+
+    eff.invalidate_all(session)
+    session.commit()
+    return _redirect(f"/apps?uploaded={_quote(_upload_summary(comparison, result))}")
+
+
+def _upload_summary(
+    comparison: package_service.VersionComparison, result: package_service.IngestResult
+) -> str:
+    """One sentence saying what the upload actually did."""
+    name = result.package.label or result.package.package_name
+    code = result.version.version_code
+    if not result.version.published:
+        held = f"{name} {code} was added to the library and is being held"
+        if comparison.deployed_version_code is not None:
+            held += f" — devices stay on {comparison.deployed_version_code}"
+        return held + "."
+
+    if comparison.relation == "first":
+        return f"{name} {code} was uploaded and published."
+
+    moved = f"{name} {code} was published"
+    if comparison.deployed_version_code is not None:
+        moved += f", replacing {comparison.deployed_version_code}"
+    if comparison.device_count:
+        plural = "" if comparison.device_count == 1 else "s"
+        moved += f" on {comparison.device_count} device{plural}"
+    return moved + "."
+
+
+@router.post("/apps/preview-upload")
+def preview_app_upload(
+    file: UploadFile = File(...),
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    identity: AdminIdentity = Depends(admin_required),
+) -> JSONResponse:
+    """What this upload would do, before it is taken.
+
+    Nothing is stored. The console calls this to decide whether it needs to ask
+    the operator anything at all — for a first upload of a package there is no
+    decision to make, and a dialog with one option is just an extra click.
+    """
+    data = file.file.read()
+    if not data:
+        return JSONResponse({"error": "the uploaded file is empty"}, status_code=400)
+    if len(data) > settings.max_upload_bytes:
+        return JSONResponse(
+            {"error": f"upload exceeds {settings.max_upload_bytes} bytes"}, status_code=400
+        )
+    try:
+        c = package_service.compare_upload(session, data)
+    except package_service.PackageError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    return JSONResponse(
+        {
+            "relation": c.relation,
+            "package_name": c.package_name,
+            "version_code": c.version_code,
+            "version_name": c.version_name,
+            "deployed_version_code": c.deployed_version_code,
+            "deployed_version_name": c.deployed_version_name,
+            "policy_names": list(c.policy_names),
+            "device_count": c.device_count,
+            "would_deploy": c.would_deploy,
+        }
+    )
+
+
+@router.post("/apps/versions/{version_id}/publish")
+def publish_version_form(
+    version_id: uuid.UUID,
+    published: str = Form(...),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    version = session.get(AppPackageVersion, version_id)
+    if version is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "version not found")
+
+    version.published = published == "true"
     eff.invalidate_all(session)
     session.commit()
     return _redirect("/apps")

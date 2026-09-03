@@ -31,7 +31,41 @@ class AppUpdatePlanTest {
     @Test
     fun `up-to-date app is skipped regardless of auto_update`() {
         assertEquals(Action.SKIP_UP_TO_DATE, AppUpdatePlan.decide(installed = 5, desired = 5, autoUpdate = true))
-        assertEquals(Action.SKIP_UP_TO_DATE, AppUpdatePlan.decide(installed = 7, desired = 5, autoUpdate = false))
+        assertEquals(Action.SKIP_UP_TO_DATE, AppUpdatePlan.decide(installed = 5, desired = 5, autoUpdate = false))
+    }
+
+    @Test
+    fun `a device ahead of the policy is refused, not silently skipped`() {
+        // Previously folded into SKIP_UP_TO_DATE, which said nothing: an operator
+        // pinning an older build saw the policy apply cleanly and never learned the
+        // device had ignored it. Android will not install a downgrade, and the only
+        // route down destroys the app's data, so this reports rather than acts.
+        assertEquals(
+            Action.REFUSED_DOWNGRADE,
+            AppUpdatePlan.decide(installed = 7, desired = 5, autoUpdate = true)
+        )
+        assertEquals(
+            Action.REFUSED_DOWNGRADE,
+            AppUpdatePlan.decide(installed = 7, desired = 5, autoUpdate = false)
+        )
+    }
+
+    @Test
+    fun `auto_update off does not turn a downgrade into a pin`() {
+        // SKIP_PINNED means "newer exists, we chose not to chase it" — the opposite
+        // situation. Reporting it here would tell the operator nothing is wrong.
+        assertEquals(
+            Action.REFUSED_DOWNGRADE,
+            AppUpdatePlan.decide(installed = 100, desired = 1, autoUpdate = false)
+        )
+    }
+
+    @Test
+    fun `one versionCode ahead still counts as a downgrade`() {
+        assertEquals(
+            Action.REFUSED_DOWNGRADE,
+            AppUpdatePlan.decide(installed = 6, desired = 5, autoUpdate = true)
+        )
     }
 
     @Test

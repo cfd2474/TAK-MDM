@@ -88,9 +88,35 @@
         </option>
       {% endfor %}
     </select>
-    <input type="number" name="{{ name }}__min_version_code" min="0" style="width:150px"
-           value="{{ (entry.min_version_code if entry and entry.min_version_code is not none else '') }}"
-           placeholder="min version code">
+    {#
+      One select rather than a number box. The three intents are mutually
+      exclusive, and an operator could not previously see which builds exist —
+      let alone pin an older one, which had no control at all.
+    #}
+    <select name="{{ name }}__version_choice" style="min-width:280px">
+      <option value="">Latest published</option>
+      {% for p in app_packages %}
+        {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
+          <option value="min:{{ v.version_code }}"
+                  data-package="{{ p.package_name }}"
+                  {{ 'selected' if entry and entry.min_version_code == v.version_code and not entry.artifact_sha256 }}>
+            At least {{ v.version_code }}{% if v.version_name %} ({{ v.version_name }}){% endif %}
+          </option>
+        {% endfor %}
+      {% endfor %}
+      {% for p in app_packages %}
+        {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
+          {% set base = (v.files | selectattr('role.value', 'equalto', 'base') | list | first) %}
+          {% if base %}
+            <option value="pin:{{ base.artifact_sha256 }}"
+                    data-package="{{ p.package_name }}"
+                    {{ 'selected' if entry and entry.artifact_sha256 == base.artifact_sha256 }}>
+              Exactly {{ v.version_code }}{% if v.version_name %} ({{ v.version_name }}){% endif %}{{ ' — held' if not v.published }}
+            </option>
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+    </select>
     <button type="button" class="ghost" data-remove-row>Remove</button>
   </div>
 {% endmacro %}
