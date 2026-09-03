@@ -209,8 +209,8 @@
                 {% if p.description %}<div class="muted" style="font-size:12px">{{ p.description[:200] }}</div>{% endif %}
               </td>
               <td class="mono">{{ p.version or '—' }}</td>
-              <td class="muted mono" style="white-space:nowrap">{{ p.apk_size_bytes | filesizeformat if p.apk_size_bytes else '—' }}</td>
-              <td style="white-space:nowrap">
+              <td class="muted mono">{{ p.apk_size_bytes | filesizeformat if p.apk_size_bytes else '—' }}</td>
+              <td>
                 {% if (p.package_name, p.revision_code) in tpc.imported %}
                   <span class="pill good">imported</span>
                 {% elif not p.apk_url %}

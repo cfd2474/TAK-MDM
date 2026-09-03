@@ -559,16 +559,19 @@ dl.kv dd { margin: 0; font-size: 13px; }
 }
 
 /* --- TPC plugin catalog ----------------------------------------------------
-   Fixed layout so the Plugin column takes the slack and the three narrow
-   columns stop growing to fit their longest cell. Without this the Import
-   button sat in an auto-sized column that pushed past the panel edge. */
+   Fixed layout with percentages that sum to 100. In `ch` the three narrow
+   columns under-claimed, the Plugin column absorbed all the slack, and the
+   Import button overflowed a cell too small to hold it. Percentages keep the
+   proportions stable at any panel width. */
 .tpc-table { table-layout: fixed; }
-.tpc-table th:nth-child(1), .tpc-table td:nth-child(1) { width: auto; }
-.tpc-table th:nth-child(2), .tpc-table td:nth-child(2) { width: 20ch; }
-.tpc-table th:nth-child(3), .tpc-table td:nth-child(3) { width: 9ch; white-space: nowrap; }
-.tpc-table th:nth-child(4), .tpc-table td:nth-child(4) { width: 11ch; }
-.tpc-table td { overflow-wrap: anywhere; }
-.tpc-table td:nth-child(4) button { width: 100%; }
+.tpc-table th:nth-child(1), .tpc-table td:nth-child(1) { width: 50%; }
+.tpc-table th:nth-child(2), .tpc-table td:nth-child(2) { width: 22%; }
+.tpc-table th:nth-child(3), .tpc-table td:nth-child(3) { width: 12%; text-align: right; }
+.tpc-table th:nth-child(4), .tpc-table td:nth-child(4) { width: 16%; text-align: right; }
+.tpc-table td { overflow-wrap: anywhere; vertical-align: top; }
+/* Sized by its label rather than stretched to the column: a full-width button
+   in a narrow cell is what pushed it past the table edge. */
+.tpc-table td:nth-child(4) button { white-space: nowrap; padding: 6px 14px; }
 
 /* Determinate progress bar for a running import. */
 .progress {
