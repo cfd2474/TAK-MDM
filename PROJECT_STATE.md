@@ -4468,10 +4468,11 @@ wire: `DISALLOW_WIFI_TETHERING` (API 33+, and minSdk is 33), plus
 **Not started — the operator's call**, because what can be delivered differs
 materially from what was asked. Adding the tethering restrictions to `RESTRICTIONS`
 is a small, well-understood change; setting the SSID is a vendor-layer feature that
-belongs with VPN profiles and the all-files app-op. ⚠️ Samsung's `WifiPolicy` is the
-plausible home for it but is **unverified** — three Knox capability claims in this
-project have already proved wrong on inspection, so it should not be promised
-before the SDK is in hand.
+belongs with VPN profiles and the all-files app-op. Recorded in `docs/KNOX.md` as **§4.1a — wanted, plausible, not yet verified**, a
+table kept deliberately apart from the confirmed wins, and as **question 5** for
+Samsung. `net.wifi` is the plausible home; three Knox capability claims in this
+project have already proved wrong on inspection, so it stays a question until the
+SDK is in hand.
 
 ---
 

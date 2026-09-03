@@ -129,6 +129,18 @@ cannot, and which are being retired.
 | `net.wifi`, `net.apn` | Enterprise Wi-Fi (EAP/certs) properly, rather than the deprecated `WifiConfiguration` we are grandfathered into (§6d of the platform reference). |
 | `application.ApplicationPolicy` | Battery-optimisation allow-list (one of our permission-wizard steps), force-stop blacklist, signature-based app allow/deny. |
 
+### 4.1a ❓ Wanted, plausible, and **not yet verified**
+
+Kept separate from §4.1 on purpose. Everything above was read off the API
+reference; the entries here are things AOSP demonstrably cannot do and Knox
+plausibly can, with **no confirmation yet**. Three capability claims in this
+document were wrong before they were checked (§4.2), so a wish belongs in its own
+table until the SDK is in hand.
+
+| Want | AOSP position | Where it would live |
+|---|---|---|
+| **Mobile hotspot configuration** — default SSID, passphrase, band, timeout | ❌ Impossible. `WifiManager.setSoftApConfiguration` is absent from the public SDK (only a local-only hotspot that shares no connection, and a validator); `DevicePolicyManager` has no tethering API at all; the config is not in `Settings.Global`, so the Device Owner's three-key `setGlobalSetting` allowance cannot reach it. A DO can only **allow or forbid** tethering, via `DISALLOW_WIFI_TETHERING` and friends. Verified against the Android 36 SDK and probed on `SM-X520`, 2026-09-03 — see the Android reference. | `net.wifi` is the plausible home, beside the enterprise Wi-Fi work already listed in §4.1. **Unverified.** |
+
 ### 4.2 ❌ Walls Knox does **not** close
 
 These were hoped for and are ruled out. Recorded so nobody re-litigates them.
@@ -216,6 +228,10 @@ one that could change the distribution model.
    activate a KPE licence, or is a valid key sufficient?
 4. Is **Knox Mobile Enrollment** available to a self-hosted EMM, and what does it
    require? (This is the part of R3 that is *not* stale.)
+5. **Can the SDK configure the mobile hotspot** — set a default SSID, passphrase,
+   band and idle timeout — and if so, under which package and licence tier? AOSP
+   offers no way to do this at all (§4.1a): a Device Owner can only allow or forbid
+   tethering, never configure it. This is an operator request, not a hypothetical.
 
 **If (1) is a no**, the fallback is bounded: operators who want Knox build the
 `knox` flavour themselves with their own free developer account. Everyone else
