@@ -41,6 +41,27 @@ object WallpaperPlan {
     enum class Choice { TABLET, PHONE, NONE }
 
     /**
+     * Whether to put the device back on its factory wallpaper.
+     *
+     * Only when the policy now names **no image at all** and the agent had
+     * previously applied one. Two things this deliberately does not do:
+     *
+     * - it does not clear a wallpaper the agent never set, which would be the same
+     *   overreach as R19's restore-what-we-never-displaced;
+     * - it does not clear when a slot is filled but its file has left the library.
+     *   That is a *broken* policy, not a removed one, and wiping the wallpaper
+     *   would turn a reported error into a visible change nobody asked for.
+     *
+     * Unlike a screen timeout there is nothing to remember: `WallpaperManager.clear`
+     * restores the device default, and the user's own previous picture is not
+     * recoverable from the platform in any case.
+     */
+    fun shouldClear(
+        policyNamesAnyImage: Boolean,
+        previouslyApplied: Boolean
+    ): Boolean = !policyNamesAnyImage && previouslyApplied
+
+    /**
      * @param hasTablet a tablet image is available in the desired state.
      * @param hasPhone a phone image is available.
      * @param smallestWidthDp this device's `smallestScreenWidthDp`.

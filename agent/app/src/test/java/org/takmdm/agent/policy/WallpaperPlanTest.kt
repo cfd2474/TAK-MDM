@@ -57,6 +57,23 @@ class WallpaperPlanTest {
     }
 
     @Test
+    fun `removing the policy restores the device default`() {
+        assertEquals(true, WallpaperPlan.shouldClear(policyNamesAnyImage = false, previouslyApplied = true))
+    }
+
+    @Test
+    fun `a wallpaper the agent never set is left alone`() {
+        // The same overreach R19 guards against, in the other direction: clearing
+        // something we did not put there would replace a user's own choice.
+        assertEquals(false, WallpaperPlan.shouldClear(policyNamesAnyImage = false, previouslyApplied = false))
+    }
+
+    @Test
+    fun `a policy still naming an image never clears`() {
+        assertEquals(false, WallpaperPlan.shouldClear(policyNamesAnyImage = true, previouslyApplied = true))
+    }
+
+    @Test
     fun `an unreadable width still applies a single uploaded image`() {
         // A width of 0 should not cost the device its wallpaper when there is only
         // one candidate and no decision to make.

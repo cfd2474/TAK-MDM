@@ -334,6 +334,21 @@ class PolicyApplier(private val context: Context) {
         return null
     }
 
+    /**
+     * Put the device back on its factory wallpaper. Returns null on success.
+     *
+     * The restriction is lifted first: `DISALLOW_SET_WALLPAPER` may block the agent
+     * as well as the user, and a policy that left it in place would strand the
+     * device on an image no policy asks for and the user cannot change.
+     */
+    fun clearWallpaper(): String? {
+        runCatching { dpm.clearUserRestriction(admin, UserManager.DISALLOW_SET_WALLPAPER) }
+        return runCatching {
+            WallpaperManager.getInstance(context)
+                .clear(WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)
+        }.fold({ null }, { "${it.javaClass.simpleName}: ${it.message ?: "no message"}" })
+    }
+
     private fun applyScreenTimeout(spec: JSONObject): List<String> {
         val config = AgentConfig(context)
         val desired = if (spec.has("screen_timeout_seconds")) {

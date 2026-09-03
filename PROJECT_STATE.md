@@ -4416,11 +4416,27 @@ converged device kept its cached state and never saw the new field until an
 unrelated change moved it. Fine in practice (any policy edit pushes it) but it made
 the fix look like it had failed.
 
-⚠️ **Removing a wallpaper policy does not restore the previous wallpaper** — the
-same shape as R19, and left as-is deliberately: unlike a screen timeout there is no
-sensible "previous" to keep (the old bitmap is not recoverable from
-`WallpaperManager`), so the honest options are to leave it or to require an
-explicit "revert to" image. Recorded, not guessed at.
+✅ **Removing the policy reverts to the device default** (operator's call, agent
+v47). `WallpaperManager.clear(FLAG_SYSTEM or FLAG_LOCK)` restores the factory
+wallpaper, so unlike R19 there is nothing to remember — the user's own previous
+picture is not recoverable from the platform in any case, and the factory default
+is a definite state rather than a guess.
+
+Two things it deliberately does **not** do, both the R19 lesson in mirror image:
+
+* it never clears a wallpaper **the agent did not set** — that would replace a
+  user's own choice with a default nobody asked for;
+* it never clears when a slot is filled but its **file has left the library**. That
+  is a broken policy, not a removed one, and wiping the screen would turn a
+  reported error into a visible change.
+
+`DISALLOW_SET_WALLPAPER` is lifted before the clear, since the restriction may
+block the agent as well as the user — leaving it would strand the device on an
+image no policy asks for and the user cannot change.
+
+✅ Verified on `SM-X520`: with the policy gone and the blue image still on screen,
+v47 logged *"no policy sets a wallpaper; restoring the device default"* and the
+tablet returned to the stock Samsung wallpaper, byte-for-byte the baseline.
 
 ##### 🐛 Pre-existing: a single-page policy type rendered a blank edit form
 

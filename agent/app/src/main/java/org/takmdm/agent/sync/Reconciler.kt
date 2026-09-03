@@ -482,6 +482,20 @@ class Reconciler(private val context: Context) {
     private fun reconcileWallpaper(wallpaper: JSONObject): List<String> {
         val tablet = wallpaper.optJSONObject("tablet")
         val phone = wallpaper.optJSONObject("phone")
+
+        // Handled before the early return, and reached because the section is
+        // applied even when absent — the same lesson as R14/R19: "no policy says
+        // anything" is a state to converge on, not an absence of work.
+        if (WallpaperPlan.shouldClear(
+                policyNamesAnyImage = tablet != null || phone != null,
+                previouslyApplied = config.appliedWallpaperSha != null,
+            )
+        ) {
+            AgentLog.i(TAG, "no policy sets a wallpaper; restoring the device default")
+            val failure = policyApplier.clearWallpaper()
+                ?: run { config.appliedWallpaperSha = null; return emptyList() }
+            return listOf("wallpaper: could not restore the default — $failure")
+        }
         if (tablet == null && phone == null) return emptyList()
 
         val errors = mutableListOf<String>()
