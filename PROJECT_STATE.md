@@ -4075,6 +4075,52 @@ Rewriting the control broke nothing, which is how it was noticed. Now covered.
 **Not done: steps 6 (re-point exact pins on publish) and 7 (opt-in destructive
 downgrade + hardware).** Nothing so far can lose a user''s data.
 
+##### ⚠️ D45 — an ATAK plugin''s target build is a *variant*, not a version
+
+Raised by the operator, and it invalidates part of the model above. **An ATAK
+plugin only loads in the ATAK build it was compiled against**: a 5.5.0 plugin will
+not run under 5.8.0. ATAK enforces this itself.
+
+But the two builds share **one Android package name**, so:
+
+* they cannot be separate `AppPackage` rows — `package_name` is unique, and Android
+  agrees: only one can be installed on a device;
+* **`versionCode` ordering across ATAK lines is meaningless.** Proven on real data:
+  UAS Tool for **5.8.0** is `1787086761`, *lower* than the **5.5.0** build''s
+  `1787086923`. "Newer ATAK version" and "higher versionCode" are unrelated.
+
+So `published`/`held` — which ranks by `version_code` — **is the wrong comparison
+between two builds targeting different ATAK versions.** They are not older and
+newer; they are alternatives, and which one is correct depends on the ATAK build
+on the device. The current default happened to hold the 5.8.0 plugin, which is
+right only if the fleet runs 5.5.0.
+
+✅ **The discriminator is in the APK and needs no catalog lookup**, so it works for
+manual uploads too. `AndroidManifest.xml` carries
+`<meta-data android:name="plugin-api" android:value="com.atakmap.app@5.5.0.CIV">`,
+and `app/artifacts/axml.parse_elements` already returns it — verified against both
+imported builds. Nothing new has to be parsed, only kept.
+
+**Proposed (not built):**
+
+1. Store `plugin_api` on `AppPackageVersion`, read from the manifest at ingest.
+2. **Never rank across different `plugin_api` values.** An upload targeting a
+   different ATAK build is neither newer nor older — hold it and say *why*:
+   "targets ATAK 5.8.0; the published build targets 5.5.0".
+3. Show it everywhere a version is chosen, so "Exactly 1787086923" reads as
+   "13.0.6 for ATAK 5.5.0" instead of an opaque number.
+4. Badge a package holding builds for more than one ATAK line — that is the
+   operator''s cue that these are variants, not a version history.
+5. Selection stays **explicit**: one policy per ATAK line, pinning its plugins.
+   That works today with the picker built above. Automatic matching against the
+   device''s installed ATAK build is possible later, but it needs the agent to
+   report ATAK''s version and would silently pick nothing when it could not match
+   — worse than an operator choosing on purpose.
+
+⚠️ Until this lands, **an operator can publish a plugin build that cannot load on
+their fleet''s ATAK**, and nothing says so. The plugin installs and simply does not
+appear in ATAK, which looks like an MDM failure and is not one.
+
 ---
 
 ### Later chunks (sketch — to be detailed at approval time)
