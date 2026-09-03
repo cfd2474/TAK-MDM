@@ -4448,6 +4448,33 @@ a rail to unhide it.
 
 ---
 
+#### ⏸️ Hotspot configuration — asked for, and not possible on AOSP
+
+**Ask:** default hotspot SSID, password, band, timeout.
+
+**Finding (2026-09-03):** ❌ not available to a normally-installed Device Owner.
+Confirmed three ways — `setSoftApConfiguration` is absent from the public SDK
+(`javap` on `android.jar` shows only the local-only hotspot and a validator),
+`DevicePolicyManager` exposes no tethering API at all, and the config is not in
+`Settings.Global` so the DO's three-key `setGlobalSetting` allowance cannot reach
+it. Full detail in the Android reference.
+
+**What is available** is allow/forbid, via user restrictions the agent does not yet
+wire: `DISALLOW_WIFI_TETHERING` (API 33+, and minSdk is 33), plus
+`DISALLOW_CONFIG_TETHERING`, `DISALLOW_SHARING_ADMIN_CONFIGURED_WIFI`,
+`DISALLOW_CHANGE_WIFI_STATE`, `DISALLOW_CONFIG_WIFI`, `DISALLOW_WIFI_DIRECT`,
+`DISALLOW_ADD_WIFI_CONFIG`, `DISALLOW_NETWORK_RESET`.
+
+**Not started — the operator's call**, because what can be delivered differs
+materially from what was asked. Adding the tethering restrictions to `RESTRICTIONS`
+is a small, well-understood change; setting the SSID is a vendor-layer feature that
+belongs with VPN profiles and the all-files app-op. ⚠️ Samsung's `WifiPolicy` is the
+plausible home for it but is **unverified** — three Knox capability claims in this
+project have already proved wrong on inspection, so it should not be promised
+before the SDK is in hand.
+
+---
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |

@@ -364,6 +364,46 @@ Two consequences worth internalising before choosing a key:
 
 ---
 
+### ❌ A Device Owner cannot configure the mobile hotspot
+
+Checked against the Android 36 SDK stub and probed on `SM-X520` (2026-09-03),
+because "set a default hotspot SSID and password" is an entirely reasonable thing
+to expect an MDM to do.
+
+**It is not available.** Three independent confirmations:
+
+* **`WifiManager.setSoftApConfiguration` is not in the public SDK.** `javap` on
+  `android.jar` shows only `startLocalOnlyHotspotWithConfiguration` — a temporary,
+  app-scoped hotspot that shares no internet connection and dies with the caller —
+  and `validateSoftApConfiguration`, which validates without setting. The real
+  setter needs `NETWORK_SETTINGS` (signature|privileged).
+* **`DevicePolicyManager` has nothing for it.** Its only Wi-Fi surface is the
+  provisioning extras (`EXTRA_PROVISIONING_WIFI_*`, for joining a network during
+  setup) and `getMinimumRequiredWifiSecurityLevel`. No tethering or SoftAP API at
+  any level.
+* **It is not a writable setting either.** `settings list global` on the device
+  shows only `tethered_config_state`; the SSID, passphrase and band are held in
+  the Wi-Fi stack's own store, not in `Settings.Global`, so the Device Owner's
+  three-key `setGlobalSetting` allowance cannot reach them.
+
+**What a Device Owner *can* do is allow or forbid it**, via user restrictions:
+
+| Restriction | Effect |
+|---|---|
+| `DISALLOW_WIFI_TETHERING` | No Wi-Fi hotspot at all (API 33+) |
+| `DISALLOW_CONFIG_TETHERING` | The user cannot change tethering settings |
+| `DISALLOW_SHARING_ADMIN_CONFIGURED_WIFI` | The user cannot share an admin-provisioned network |
+| `DISALLOW_CHANGE_WIFI_STATE`, `DISALLOW_CONFIG_WIFI`, `DISALLOW_WIFI_DIRECT`, `DISALLOW_ADD_WIFI_CONFIG`, `DISALLOW_NETWORK_RESET` | Adjacent Wi-Fi controls |
+
+⚠️ So "set the hotspot SSID/password/band/timeout" is **not a policy this project
+can implement on AOSP**. It belongs with VPN profiles and the all-files app-op in
+the set of things that need a vendor layer. Samsung's `WifiPolicy` is the plausible
+home — ⚠️ **unverified**, and not to be promised until the Knox SDK is in hand
+(three Knox capability claims in this project have already turned out to be wrong
+when checked).
+
+---
+
 ## 5a. Removing and suppressing apps
 
 ### ⚠️ A system app cannot be uninstalled, and the platform says SUCCESS anyway
