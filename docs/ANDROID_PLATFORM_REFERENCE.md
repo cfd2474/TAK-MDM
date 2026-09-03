@@ -870,6 +870,25 @@ COMPLEX. Below it they are inert, so nothing latched there can bite.
 ✅ Verified both ways on `SM-X520` (agent v39): adding `min_length: 4` set
 `minimumPasswordLength=4`; removing it returned the device to `0`.
 
+#### ⚠️ `setSystemSetting(SCREEN_OFF_TIMEOUT)` latches too, and has **no permissive
+value** to push
+
+Verified on `SM-X520` (2026-09-03). The device sat at its default `1800000`; a
+policy set `45000`; **removing that policy left it at `45000`**, with the device
+converged and compliant. Nothing but a re-push or a manual
+`adb shell settings put system screen_off_timeout` moves it back.
+
+Same latch as the password minimums, **different fix**. A password minimum has a
+permissive value — `0` — so writing it on every reconcile is both correct and
+complete. A screen timeout does not: what "no policy" should mean is *the user's
+own setting*, which the platform will not hand back and which nothing records
+before the first overwrite.
+
+So an MDM that writes this setting has to capture the prior value itself, before
+its first write, if it ever intends to release it. Driving it to a fixed default
+instead would silently overwrite a user preference the operator never asked to
+change.
+
 ### ✅ Verified on `SM-X520` (agent v34), both directions:
 
 | Policy | `dumpsys device_policy` for `org.takmdm.agent` |

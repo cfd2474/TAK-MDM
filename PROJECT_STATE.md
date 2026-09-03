@@ -2640,6 +2640,22 @@ which the agent does apply.
 > definite value every reconcile, absent meaning permissive. This paragraph still
 > stands for `RESTRICTIONS.screen_timeout_seconds`, which W26 did not touch.
 
+> 🐛 **R19 — CONFIRMED ON HARDWARE, 2026-09-03.** The hypothesis was right.
+> `SM-X520` sat at the device default `1800000`; a policy with
+> `screen_timeout_seconds: 45` drove it to `45000`; **removing that policy left it
+> at `45000`** with the device converged and COMPLIANT (`60/60`). The agent's guard
+> is `if (spec.has("screen_timeout_seconds"))`, so absent writes nothing and the
+> last value stands. Restored by hand over adb — **there is no console action that
+> can undo it**, which is exactly what made R14 severe.
+>
+> ⚠️ The W26 fix does **not** transfer. For passwords, "absent" has a well-defined
+> permissive value (`0`), so driving the field every reconcile is correct. A screen
+> timeout has no such value: the right behaviour is to restore *the user's own
+> setting*, and the agent never recorded it before overwriting. So the fix is to
+> capture the pre-policy value on first write and put it back when the field goes
+> away — more than a one-line change, and a decision (restore-original vs a
+> configured fleet default) rather than an obvious correction.
+
 **The policy→agent audit is closed (W18):**
 * ~~XAPK **OBB** placement (R2)~~ — ✅ W17: not feasible for a normally-installed
   DO (EACCES probed on `SM-X520`); agent reports it loudly, Apps page flags it.
@@ -4279,6 +4295,25 @@ leaves an app behind that no later policy edit clears. `blocked_packages` is the
 only thing that removes one.
 
 Device left at `state_version 58`, acked, COMPLIANT, plugin removed.
+
+##### Two verifications run while the device was connected, 2026-09-03
+
+**✅ `REFUSED_DOWNGRADE` fires on hardware.** Built in W31 step 5 and until now only
+unit-tested — the code path had never executed on a device. `org.takmdm.testapp`
+was installed at versionCode **2**; a policy pinning versionCode **1** produced:
+
+> `org.takmdm.testapp: installed versionCode 2 is newer than the required 1.`
+> `Android refuses to install a downgrade, and removing it first would erase the`
+> `app's data, so it was left alone.`
+
+Device went **DEGRADED** with that in `compliance_detail`, and the app stayed at 2.
+Before this change the same situation returned `SKIP_UP_TO_DATE` and said nothing,
+so the device reported COMPLIANT while quietly ignoring the policy.
+
+**🐛 `RESTRICTIONS.screen_timeout_seconds` latches — see R19 above.**
+
+Device left at `state_version 62`, acked, COMPLIANT, screen timeout restored, all
+probe policies archived and the probe package deleted.
 
 ---
 
