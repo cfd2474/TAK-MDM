@@ -4125,17 +4125,17 @@ appear in ATAK, which looks like an MDM failure and is not one.
 
 #### 🔻 W32 — Plugin/ATAK compatibility warnings
 
-**Operator''s design, taken as given:** *warn, never forbid*; treat the **installed
+**Operator's design, taken as given:** *warn, never forbid*; treat the **installed
 ATAK as the concrete truth**; put the warning on the **plugin**, never on ATAK; and
 **rank versions only within one ATAK line**, because that is the only place a build
 sequence is meaningful.
 
 ##### The two truths, and why one costs more
 
-* **A — the policy''s own intent.** If a policy installs both ATAK and plugins, the
+* **A — the policy's own intent.** If a policy installs both ATAK and plugins, the
   mismatch is visible at edit time with no device involved. Cheap, immediate, and
   it is what "something in the policy builder" asks for.
-* **B — what is actually on the device.** The stronger signal, and the operator''s
+* **B — what is actually on the device.** The stronger signal, and the operator's
   example ("UAS Tools 5.5.0, but ATAK 5.8.0 **is installed**"). ⚠️ The agent does
   **not** report installed app versions today — `userInstalledPackages()` exists but
   is used locally for allowlist decisions and never sent. So B needs an agent
@@ -4155,15 +4155,15 @@ device has reported yet) is worse than one that clearly reasons from the policy.
 3. **Compatibility service** — pure comparison of an ATAK version against a set of
    plugin targets, returning warnings. Testable without a device or a policy.
 4. **Policy builder** shows them inline on the plugin row, non-blocking.
-5. **Agent reports ATAK''s installed version** at check-in; stored on `Device`.
-6. **Device and fleet views** warn where a device''s real ATAK does not match the
+5. **Agent reports ATAK's installed version** at check-in; stored on `Device`.
+6. **Device and fleet views** warn where a device's real ATAK does not match the
    plugins assigned to it — truth B.
 7. **Tests**, plus a hardware check on `SM-X520`.
 
 ⚠️ **Split:** 1–4 + 7 is the policy-builder ask and needs no agent change. 5–6 add
 the live truth and require a new agent build.
 
-##### Status: steps 1–4 and 7 done. Steps 5–6 (live device truth) open.
+##### Status: complete. All 7 steps, verified on hardware.
 
 **Done.**
 
@@ -4192,7 +4192,7 @@ The published UAS Tool is built for ATAK **5.5.0** while the published ATAK is
 
 ##### 🐛 Found on the way: two `PartRole` enums, and `is` silently lying
 
-`app/artifacts/bundles.py` defined its own `PartRole` alongside the ORM''s in
+`app/artifacts/bundles.py` defined its own `PartRole` alongside the ORM's in
 `app/db/models.py`. Both are `str` enums with the same three values, so `==`
 matched while **`is` returned False** — code holding a database row and the copy
 imported from `bundles` disagreed about a value that printed identically.
@@ -4206,9 +4206,79 @@ of bug invisible to `==`, and every other call site
 (`enrollment.py`, `agent_update.py`, `routes.py`) happened to import the right one
 by luck rather than design.
 
-**Not done: steps 5–6.** The agent does not report ATAK''s installed version, so
-the *device* truth — the operator''s actual example — cannot be shown yet. Needs a
-new agent build.
+**Steps 5-7 done.**
+
+* `AppInstaller.installedAtak()` finds ATAK by package prefix (the flavour is part
+  of the name: `.civ`, `.mil`) and reports `(package, versionName)` at check-in.
+* `Device.atak_package` / `Device.atak_version`, migration `m3o5q7s9u1w3`.
+  WARNING: only overwritten **when reported**. An agent too old to send them would
+  otherwise erase a good record on every check-in and silently stop the warnings,
+  which is the exact failure this feature exists to prevent.
+* `atak_compat.for_device()` reads the device's **resolved** apps, so it reflects
+  what will actually be installed after floors and pins, not the raw policy.
+* The device page names the ATAK it checks against, and says plainly when none has
+  been reported. Unknown is not a clean bill of health and must not read as one.
+
+##### One entry per package: refused, not warned about
+
+Two entries for the same package in one policy is now **rejected** by
+`AppCatalogSpec`. Unlike a plugin/ATAK mismatch, which has a plausible reason
+behind it, this is incoherent: a package name *is* the app's identity on Android,
+so one build occupies one slot and a second entry can never take effect.
+
+The realistic mistake it closes is pinning one plugin to two ATAK lines to cover a
+mixed fleet. Previously `_merge_by_key` kept the first and recorded a **conflict**
+- language meant for two *policies* disagreeing, here a policy disagreeing with
+itself - and the resolved state never said which build won. The message names the
+remedy: separate policies, each assigned to the devices running that ATAK.
+
+Validation errors also reach the console readable now: a bare `ValidationError`
+string carries the model name, a `[type=value_error, ...]` suffix and a repr of the
+whole input, which in a redirect banner is noise *and* the part most likely to
+survive truncation while the useful sentence is cut.
+
+##### BUG found while verifying live: every console form was returning 500
+
+`_sync_form` did `import anyio` then `anyio.from_thread.run(...)`. **anyio 4.15's
+lazy loader does not bind `from_thread` on bare attribute access**; 4.14 did. So
+creating or editing any policy or profile through the console 500'd.
+
+WARNING: no test could see it. The venv had 4.14.2 and the image 4.15.0, because
+`anyio` arrives as an unpinned transitive dependency and a rebuild moved it. Fixed
+by importing the submodule explicitly (correct under either version) and pinning
+`anyio==4.14.2`.
+
+WARNING: my first probe reported both environments healthy and was wrong - an
+earlier `import anyio.from_thread` in the same process had registered the submodule,
+so the later bare access succeeded. A clean process shows False in the container and
+True in the venv. Probing a lazy import in a process that has already touched it
+proves nothing.
+
+##### Verified on `SM-X520`, 2026-09-03
+
+Agent **v43 (`0.11.1`)** was published while the tablet was offline and it took the
+update unprompted on reconnect - the update channel working with nobody watching.
+It then reported `com.atakmap.app.civ` / `5.8.0.4 (174b425)[playstore]`, matching
+`dumpsys` exactly.
+
+Assigning the published UAS Tool - built for **5.5.0** - produced the warning
+against the ATAK actually installed:
+
+> built for ATAK 5.5.0, but the device has ATAK 5.8.0. ATAK loads only plugins
+> built for its own version, so this one will install and then not appear.
+
+The whole path - manifest, library, policy, device report, warning - works on real
+data the fleet already had.
+
+WARNING: the verification had a side effect worth keeping. The device began
+installing the 394 MB plugin before the probe assignment was removed, and finished
+afterwards. **Removing an app from `required_apps` does not uninstall it** - nothing
+in the desired state says it should go - so it stayed until removed by hand. That is
+correct (unrequiring is not forbidding), but it means a policy assigned by mistake
+leaves an app behind that no later policy edit clears. `blocked_packages` is the
+only thing that removes one.
+
+Device left at `state_version 58`, acked, COMPLIANT, plugin removed.
 
 ---
 
