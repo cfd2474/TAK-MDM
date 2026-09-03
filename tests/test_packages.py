@@ -610,7 +610,14 @@ def test_required_app_with_nothing_uploaded_is_flagged(client: TestClient, enrol
     state = client.get(f"/api/v1/devices/{device['device_id']}/desired-state").json()
 
     assert state["desired_state"]["apps"] == [
-        {"package_name": "com.notyet.uploaded", "available": False}
+        {
+            "package_name": "com.notyet.uploaded",
+            "available": False,
+            # The reason travels with the failure: an unresolvable pin and an
+            # unsatisfied floor are also `available: false`, and reading all three
+            # as "nothing uploaded" is wrong for two of them (R17/R18).
+            "reason": "nothing uploaded for it",
+        }
     ]
 
 

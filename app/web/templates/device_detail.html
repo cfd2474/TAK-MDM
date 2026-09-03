@@ -130,7 +130,10 @@
         <td class="muted">{{ (app.files or [])|length }}</td>
         <td>
           {% if app.available %}<span class="pill good">resolved</span>
-          {% else %}<span class="pill bad">nothing uploaded</span>{% endif %}
+          {% else %}
+            <span class="pill bad">unresolved</span>
+            <div class="muted" style="font-size:12px">{{ app.reason or 'nothing uploaded for it' }}</div>
+          {% endif %}
         </td>
       </tr>
     {% endfor %}

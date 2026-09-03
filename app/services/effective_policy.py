@@ -42,7 +42,9 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
+    AppPackage,
     AppPackageFile,
+    AppPackageVersion,
     Assignment,
     AssignmentScope,
     Device,
@@ -193,21 +195,56 @@ def resolve_required_apps(
         if not package_name:
             continue
 
-        version = None
         pinned = entry.get("artifact_sha256")
         if pinned:
-            # An explicitly pinned artifact wins over "latest satisfying the floor".
-            pinned_file = session.scalar(
-                select(AppPackageFile).where(AppPackageFile.artifact_sha256 == pinned).limit(1)
+            # A pin is **absolute**, and joined to the package it hangs off.
+            #
+            # Absolute because falling back to the floor would resolve to the
+            # *newest* build — the exact opposite of what pinning an older version
+            # asks for, and silently (R17). Pinning is how an operator holds a
+            # fleet back; a pin that cannot be honoured has to fail loudly, not
+            # quietly do the reverse.
+            #
+            # Joined because matching on the sha alone would happily return
+            # another app's version and hand it to the agent under this
+            # package_name (R18) — the device would install the wrong app and then
+            # never converge, because the named one is still missing.
+            version = session.scalar(
+                select(AppPackageVersion)
+                .join(AppPackageFile, AppPackageFile.version_id == AppPackageVersion.id)
+                .join(AppPackage, AppPackage.id == AppPackageVersion.package_id)
+                .where(
+                    AppPackageFile.artifact_sha256 == pinned,
+                    AppPackage.package_name == package_name,
+                )
+                .limit(1)
             )
-            version = pinned_file.version if pinned_file else None
-        if version is None:
+            unavailable_reason = (
+                f"pinned to artifact {pinned[:12]}…, which is not in the library "
+                f"for {package_name}"
+            )
+        else:
             version = packages.resolve_for_policy(
                 session, package_name, min_version_code=entry.get("min_version_code")
             )
+            floor = entry.get("min_version_code")
+            unavailable_reason = (
+                f"no uploaded build at or above versionCode {floor}"
+                if floor
+                else "nothing uploaded for it"
+            )
 
         if version is None:
-            resolved.append({"package_name": package_name, "available": False})
+            # The reason travels with the failure. Both the agent and the console
+            # used to assume "nothing uploaded", which is now only one of three
+            # ways this can happen and the least alarming of them.
+            resolved.append(
+                {
+                    "package_name": package_name,
+                    "available": False,
+                    "reason": unavailable_reason,
+                }
+            )
             continue
 
         resolved.append(

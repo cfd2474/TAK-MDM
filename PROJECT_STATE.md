@@ -3936,18 +3936,30 @@ the policy form, so the distinction is reachable only through the API.
 ⚠️ **Two defects must be fixed before that UI ships**, because both defeat exactly
 the feature being asked for:
 
-* **R17 — a pin to a missing artifact silently falls through to *latest*.**
+* ✅ **R17 — FIXED 2026-09-03.** *(was: a pin to a missing artifact silently falls through to latest)*
   `effective_policy.resolve_required_apps` sets `version = None` when the pinned
   file is not found, and the next branch resolves the floor instead. For "hold this
   fleet at an older build" that is the worst possible failure mode: delete the
   artifact and the fleet **jumps to the newest build**, silently, which is the
   precise opposite of the operator''s intent. It must report `available: false`.
-* **R18 — a pin is not checked against the package it is attached to.** The lookup
+* ✅ **R18 — FIXED 2026-09-03.** *(was: a pin is not checked against its package)* The lookup
   is `AppPackageFile.artifact_sha256 == pinned` with no package constraint, so
   pinning another package''s artifact yields that package''s version while still
   being declared under the original `package_name`. The agent would fetch and
   install the wrong app, then never converge, because the named package is still
   absent. The lookup must be joined to the package.
+
+**The fix, in `resolve_required_apps`:** a pin is now **absolute** — it never falls
+back to the floor — and its lookup is **joined to the package** it hangs off. An
+unhonourable pin reports `available: false`.
+
+⚠️ **A reason now travels with every unavailable app.** The agent and the console
+both hard-coded "nothing uploaded", which after this fix would be wrong for two of
+the three ways an app can fail to resolve: an unsatisfied floor and a broken pin
+read very differently from an app nobody has uploaded. Both consumers now show the
+server''s reason, falling back to the old wording only for a server too old to send
+one. `tests/test_app_version_pinning.py` — 12 tests, 5 of which fail against the
+previous behaviour.
 
 ##### Enforcing it *on a device that already has newer* — the genuinely hard half
 

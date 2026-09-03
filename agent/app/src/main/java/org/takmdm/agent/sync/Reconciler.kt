@@ -536,7 +536,13 @@ class Reconciler(private val context: Context) {
             val packageName = app.optString("package_name")
 
             if (!app.optBoolean("available", false)) {
-                errors += "$packageName: required but nothing uploaded for it"
+                // The server says why. Falling back to the old wording only for a
+                // server too old to send one — "nothing uploaded" is now just one
+                // of the ways this happens, and the least alarming of them: a
+                // policy pinned to a build that has left the library reads very
+                // differently to an app nobody has uploaded yet.
+                val reason = app.str("reason") ?: "nothing uploaded for it"
+                errors += "$packageName: required but $reason"
                 continue
             }
 
@@ -796,6 +802,16 @@ class Reconciler(private val context: Context) {
         config.suspendedByPolicy = now
         return errors
     }
+
+    /**
+     * A string field, or null when absent, JSON-null, or blank.
+     *
+     * `optString` cannot be used bare: for a JSON null it returns the literal
+     * four characters `"null"`, which has reached a user-facing screen once
+     * already on this project.
+     */
+    private fun JSONObject.str(field: String): String? =
+        if (isNull(field)) null else optString(field).takeIf { it.isNotBlank() }
 
     /** Read a JSON string array as a Kotlin list, tolerating absence. */
     private fun JSONObject.stringList(field: String): List<String> {
