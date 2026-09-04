@@ -308,7 +308,7 @@ def test_upload_records_identity_read_from_the_file(client: TestClient):
 
 def test_upload_returns_the_provisioning_checksum(client: TestClient):
     """Closes the Chunk 2 gap: QR payloads were blocked on this value."""
-    body = upload(client, build_apk("org.takmdm.agent", 1))
+    body = upload(client, build_apk("com.taksolutions.atlasmdm", 1))
 
     assert body["provisioning_checksum"]
     assert len(body["provisioning_checksum"]) > 20

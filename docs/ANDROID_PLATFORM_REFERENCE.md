@@ -19,6 +19,13 @@ Two kinds of statement appear, and they are labelled:
 Where the two disagree, the observation wins and the disagreement is called out.
 One already exists: see [Signature checksum](#signature-checksum).
 
+⚠️ **The old package name `org.takmdm.agent` still appears below, on purpose.** The
+DPC was renamed to `com.taksolutions.atlasmdm` (W34). Instructions and current
+values were updated; **captured log output and `dumpsys` excerpts were not**, because
+they record what a device actually printed at the time. Rewriting them would make
+the evidence say something that never happened. Any `org.takmdm.*` remaining here is
+history, not a stale value.
+
 **Why this file exists.** Three factory resets were spent on a failure whose cause
 is stated plainly in Android's documentation. Reasoning from symptoms lost to
 reading the spec, twice in one session. Platform contracts fail vaguely on purpose
@@ -57,7 +64,7 @@ The ADB form, which is what to reach for when provisioning misbehaves:
 
 ```
 adb install -r app-debug.apk
-adb shell dpm set-device-owner org.takmdm.agent/.admin.MdmDeviceAdminReceiver
+adb shell dpm set-device-owner com.taksolutions.atlasmdm/.admin.MdmDeviceAdminReceiver
 ```
 
 ---
@@ -141,12 +148,12 @@ It is the component named in `PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME`.
 ### Component name expansion
 
 ✅ **A leading dot expands against the package root, not the declaring class's
-package.** `org.takmdm.agent/.MdmDeviceAdminReceiver` means
-`org.takmdm.agent.MdmDeviceAdminReceiver`. Our receiver is in the `.admin`
+package.** `com.taksolutions.atlasmdm/.MdmDeviceAdminReceiver` means
+`com.taksolutions.atlasmdm.MdmDeviceAdminReceiver`. Our receiver is in the `.admin`
 sub-package, so the correct value is:
 
 ```
-org.takmdm.agent/.admin.MdmDeviceAdminReceiver
+com.taksolutions.atlasmdm/.admin.MdmDeviceAdminReceiver
 ```
 
 Getting this wrong installs the APK and then fails, indistinguishably from every

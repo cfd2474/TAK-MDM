@@ -31,11 +31,11 @@ plugins {
  * the tablet, not only by trusting a version code the server reported.
  */
 android {
-    namespace = "org.takmdm.testapp"
+    namespace = "com.taksolutions.testapp"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "org.takmdm.testapp"
+        applicationId = "com.taksolutions.testapp"
         minSdk = 33
         // Well above the API 24 floor Android 16 enforces; below it every install
         // fails with INSTALL_FAILED_DEPRECATED_SDK_VERSION whatever the source.

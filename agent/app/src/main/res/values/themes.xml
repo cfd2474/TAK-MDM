@@ -4,7 +4,7 @@
     <!-- ATLAS MDM: a dark, navy console. Committed to one look — the agent is a
          fixed-purpose fleet tool, not a consumer app that should follow the
          system light/dark toggle. -->
-    <style name="Theme.TakMdm" parent="Theme.Material3.Dark.NoActionBar">
+    <style name="Theme.AtlasMdm" parent="Theme.Material3.Dark.NoActionBar">
         <item name="colorPrimary">@color/atlas_blue_bright</item>
         <item name="colorOnPrimary">@color/atlas_on_blue</item>
         <item name="colorPrimaryContainer">@color/atlas_blue</item>

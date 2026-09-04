@@ -24,5 +24,5 @@ preference all clear within about 15 seconds — no cable needed.
 ## If a device is stuck
 
 - `adb shell am task lock stop`
-- `adb shell dpm remove-active-admin org.takmdm.agent/.admin.MdmDeviceAdminReceiver`
+- `adb shell dpm remove-active-admin com.taksolutions.atlasmdm/.admin.MdmDeviceAdminReceiver`
 - factory reset (last resort)

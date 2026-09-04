@@ -31,7 +31,7 @@ from app.services import agent_update
 from tests.apk_fixtures import build_apk, make_signing_certificate
 from tests.conftest import ADMIN_HEADERS
 
-AGENT = "org.takmdm.agent"
+AGENT = "com.taksolutions.atlasmdm"
 
 
 # --------------------------------------------------------------------------- #

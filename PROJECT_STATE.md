@@ -4532,7 +4532,44 @@ this chunk unless the operator says otherwise.
 ⚠️ **Split:** steps 1–5 are reversible and land nothing on a device. Step 6 is the
 one-way door and needs a separate go-ahead.
 
-##### Status: planned, awaiting approval.
+##### Status: steps 1–5 done. Step 6 (factory reset) awaiting go-ahead.
+
+**Done.** 44 agent sources moved with `git mv` (history preserved) to
+`java/com/taksolutions/atlasmdm/`, `applicationId` and `namespace` set, the
+broadcast actions and `DebugConfigReceiver`'s fully-qualified references renamed,
+`testapp` → `com.taksolutions.testapp`, server defaults, the kiosk guide, the
+instruction lines in the Android reference, and both test suites. Agent unit tests
+pass, server suite **641 green**, and the built APK verifies through our own parser
+as `com.taksolutions.atlasmdm`, declaring
+`com.taksolutions.atlasmdm.admin.MdmDeviceAdminReceiver` — which is exactly what
+`agent_admin_receiver` names, so the QR validation will pass.
+
+**versionCode bumped 47 → 48 (`0.13.0`).** Not required — a rename makes a new
+package and 47 would have been legal — but v47 already exists as a *different APK*
+under the old name, and two artifacts sharing a versionCode across a rename is a
+trap when reading update history. 48 marks the boundary.
+
+⚠️ **`org.takmdm.*` still appears in the docs, deliberately.** Instructions and
+current values were updated; **captured `logcat` and `dumpsys` excerpts were not**,
+because they record what a device actually printed. Rewriting them would make the
+evidence describe something that never happened. A note at the top of the Android
+reference says so, so the mixture does not read as staleness later.
+
+##### Step 6 — the reset, not yet run
+
+`SM-X520` still runs `org.takmdm.agent` as Device Owner. The new package is a
+different app to Android, and a Device Owner cannot be uninstalled, so the device
+needs a **factory reset and re-enrolment**. Nothing above has touched it.
+
+⚠️ **`TAKMDM_` is still the server's environment-variable prefix**, deliberately.
+It is the deployment interface — every `.env`, the compose file and the install
+guide use it — and it has nothing to do with the Android package name. Renaming it
+would break every existing deployment for cosmetic consistency, so it is left as a
+separate decision rather than folded into this one.
+
+⚠️ **Still worth folding in the release-signing switch** before the reset is spent
+— it needs one for the same reason, and doing both together costs one reset instead
+of two.
 
 ---
 

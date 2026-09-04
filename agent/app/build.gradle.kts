@@ -46,19 +46,19 @@ val signingProps: Properties? = run {
 }
 
 android {
-    namespace = "org.takmdm.agent"
+    namespace = "com.taksolutions.atlasmdm"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "org.takmdm.agent"
+        applicationId = "com.taksolutions.atlasmdm"
         // 33 so java.security Ed25519 comes from the platform provider instead of a
         // bundled BouncyCastle. Every device in this fleet is on Android 16.
         minSdk = 33
         targetSdk = 36
         // Bump on every build you intend to upload: the server refuses a duplicate
         // versionCode, and Android refuses to install a downgrade.
-        versionCode = 47
-        versionName = "0.12.1"
+        versionCode = 48
+        versionName = "0.13.0"
     }
 
     signingConfigs {

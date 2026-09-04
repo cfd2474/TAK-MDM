@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 
 from tests.conftest import ADMIN_HEADERS
 
-KIOSK = "org.takmdm.testapp"
+KIOSK = "com.taksolutions.testapp"
 
 
 def policy_with(client: TestClient, name: str, spec: dict) -> str:

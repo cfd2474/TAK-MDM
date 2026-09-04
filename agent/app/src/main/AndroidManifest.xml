@@ -56,13 +56,13 @@
         tools:ignore="ScopedStorage" />
 
     <application
-        android:name=".TakMdmApplication"
+        android:name=".AtlasMdmApplication"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.TakMdm">
+        android:theme="@style/Theme.AtlasMdm">
 
         <activity
             android:name=".ui.MainActivity"
@@ -163,7 +163,7 @@
             android:exported="true"
             android:enabled="true">
             <intent-filter>
-                <action android:name="org.takmdm.agent.CONFIGURE" />
+                <action android:name="com.taksolutions.atlasmdm.CONFIGURE" />
             </intent-filter>
         </receiver>
     </application>
