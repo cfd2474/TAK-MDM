@@ -4476,6 +4476,66 @@ SDK is in hand.
 
 ---
 
+#### 🔻 W34 — Rename the DPC to `com.taksolutions.atlasmdm`
+
+**Operator's decision.** `org.takmdm.agent` was a working name; the product ships
+as **ATLAS MDM** from **TAK-Solutions**, and the package should say so.
+
+Hyphens are illegal in a package segment (each is a Java identifier), so
+`tak-solutions` becomes `taksolutions` — Google's own guidance is to drop the
+invalid character rather than substitute an underscore.
+
+##### ⚠️ This is a one-way door, and this is the cheapest moment it will ever be
+
+Android treats a renamed package as a **different app**. It is not an update: the
+old agent stays installed and the new one is a stranger to it. Because the agent is
+Device Owner it cannot be uninstalled, so every enrolled device needs a **factory
+reset and re-enrolment**.
+
+Today that is **one tablet**. After distribution it is every device every operator
+has ever enrolled. There is no migration path to buy later.
+
+⚠️ **Fold in the release-signing switch if it is wanted.** Chunk 11 already carries
+a factory reset for the same class of reason (a signature change is equally
+un-updatable). Doing both in one pass costs one reset instead of two. Left out of
+this chunk unless the operator says otherwise.
+
+##### What does *not* change
+
+* **The signature checksum.** `EXTRA_PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM`
+  is the SHA-256 of the *signing certificate*, not of the package, so it is
+  untouched by a rename.
+* **`versionCode` continuity.** Kept running (48 next) rather than restarting at 1.
+  Nothing requires continuity across a package rename, but the changelog, the
+  Android reference and the agent-update history all number builds this way, and
+  resetting would make every existing note ambiguous.
+
+##### Plan (6 steps)
+
+1. **Agent sources.** Move `java/org/takmdm/agent/` → `java/com/taksolutions/atlasmdm/`,
+   rewrite `package`/`import`, and set `applicationId` + `namespace`. Same for the
+   test source set.
+2. **Hardcoded identifiers**, which a directory move does not catch: the broadcast
+   actions (`…CONFIGURE`, `…INSTALL_RESULT`, `…UNINSTALL_RESULT`) and the
+   fully-qualified references inside `DebugConfigReceiver`. Internal and
+   non-exported, so renaming them is safe and keeps them consistent.
+3. **`testapp`** → `com.taksolutions.testapp`. A sibling, not a child: it is a
+   separate app used to prove install/uninstall, and nesting it under the DPC's
+   name would imply it ships as part of it.
+4. **Server + docs.** `agent_package_name`, `agent_admin_receiver`, the guides, and
+   the Android reference — keeping the old string where it records what was
+   *observed at the time*, since rewriting history would falsify the evidence.
+5. **Tests**, both suites, then a build.
+6. **Hardware.** Factory-reset `SM-X520`, re-enrol under the new package, confirm
+   Device Owner, check-in, and one policy applying end to end.
+
+⚠️ **Split:** steps 1–5 are reversible and land nothing on a device. Step 6 is the
+one-way door and needs a separate go-ahead.
+
+##### Status: planned, awaiting approval.
+
+---
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |
