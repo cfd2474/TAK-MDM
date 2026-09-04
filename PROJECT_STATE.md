@@ -4555,11 +4555,50 @@ because they record what a device actually printed. Rewriting them would make th
 evidence describe something that never happened. A note at the top of the Android
 reference says so, so the mixture does not read as staleness later.
 
-##### Step 6 — the reset, not yet run
+##### Step 6 — the operator is doing the reset; the server is ready for it
 
 `SM-X520` still runs `org.takmdm.agent` as Device Owner. The new package is a
 different app to Android, and a Device Owner cannot be uninstalled, so the device
-needs a **factory reset and re-enrolment**. Nothing above has touched it.
+needs a **factory reset and re-enrolment**. Nothing above has touched it, and the
+device is **off the LAN**, so this could not be verified here.
+
+**Prepared and verified server-side:**
+
+* `com.taksolutions.atlasmdm` **48 (`0.13.0`)** uploaded and **published** to the
+  agent-update channel.
+* 🐛 **Caught while doing so:** `agent.current_version_code` was still `47`, and
+  after the config change that number resolves against the *new* package name —
+  which had no builds. The channel was pointing at nothing, silently. This is the
+  exact shape `offer_for` drops without comment; it only surfaced because the
+  rename forced a look. Now `48`.
+* `/api/v1/provisioning/agent.apk` re-checked end to end: it serves the **renamed**
+  build and declares `com.taksolutions.atlasmdm.admin.MdmDeviceAdminReceiver`,
+  which is what `agent_admin_receiver` names — so the QR component validation
+  passes. The enrollment page renders with no mismatch error.
+* Primary enrollment token **active**.
+* ✅ The provisioning **signature checksum is unchanged**
+  (`h5QFWJTb6y5MX0kxuTiEeP7-wzHaSizE5zgAT-PzWA4`), confirming the prediction that
+  it hashes the signing certificate rather than the package.
+
+##### ⚠️ Re-enrolment cannot complete off-LAN
+
+Both provisioning URLs are private addresses:
+
+```
+TAKMDM_SERVER_URL   = https://192.168.68.89:8443
+TAKMDM_AGENT_APK_URL= http://192.168.68.89:8080/api/v1/provisioning/agent.apk
+```
+
+A QR carries both to the device, so a device that cannot reach `192.168.68.89`
+fails at the APK download — and provisioning failure costs another factory reset
+before the next attempt (§1 of the Android reference). **Reset freely; enrol only
+when the device and this server are on the same network**, or after pointing both
+variables at an address the device can actually reach.
+
+The bench alternative needs USB, not the LAN:
+`adb install -r app-debug.apk` then
+`adb shell dpm set-device-owner com.taksolutions.atlasmdm/.admin.MdmDeviceAdminReceiver`
+on a reset, account-free device.
 
 ⚠️ **`TAKMDM_` is still the server's environment-variable prefix**, deliberately.
 It is the deployment interface — every `.env`, the compose file and the install
