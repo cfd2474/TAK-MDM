@@ -64,6 +64,9 @@ class ApkInfo:
     # Fully-qualified names of every declared <receiver>. Used to verify that a
     # provisioning payload names a component the APK actually contains.
     receivers: tuple[str, ...] = ()
+    # The exact ATAK build an ATAK plugin was compiled against, e.g.
+    # "com.atakmap.app@5.5.0.CIV". None for anything that is not an ATAK plugin.
+    plugin_api: str | None = None
 
     @property
     def provisioning_checksum(self) -> str | None:
@@ -84,7 +87,7 @@ class ApkInfo:
 
 def _read_manifest(
     archive: zipfile.ZipFile,
-) -> tuple[str, int, str | None, int | None, int | None, str | None, tuple[str, ...]]:
+) -> tuple[str, int, str | None, int | None, int | None, str | None, tuple[str, ...], str | None]:
     try:
         raw = archive.read(_MANIFEST)
     except KeyError:
@@ -124,9 +127,24 @@ def _read_manifest(
         if name
     )
 
+    # ATAK plugins declare the exact ATAK build they were compiled against:
+    #     <meta-data android:name="plugin-api"
+    #                android:value="com.atakmap.app@5.5.0.CIV"/>
+    # A plugin only loads in that build, so this is a compatibility key, not a
+    # version — and it is in the APK, so it works for a hand-uploaded plugin as
+    # well as one pulled from the TAK.gov catalog (D45).
+    plugin_api = next(
+        (
+            element.get_str("value")
+            for element in elements
+            if element.name == "meta-data" and element.get_str("name") == "plugin-api"
+        ),
+        None,
+    )
+
     return (
         package_name, version_code, version_name, min_sdk, target_sdk,
-        split_name, receivers,
+        split_name, receivers, plugin_api,
     )
 
 
@@ -292,7 +310,7 @@ def inspect_apk(data: bytes) -> ApkInfo:
     with archive:
         (
             package_name, version_code, version_name, min_sdk, target_sdk,
-            split_name, receivers,
+            split_name, receivers, plugin_api,
         ) = _read_manifest(archive)
         signature_sha256, scheme = extract_signature(data, archive)
 
@@ -306,6 +324,7 @@ def inspect_apk(data: bytes) -> ApkInfo:
         signature_sha256=signature_sha256,
         signature_scheme=scheme,
         receivers=receivers,
+        plugin_api=plugin_api,
     )
 
 

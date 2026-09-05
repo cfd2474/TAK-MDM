@@ -1,0 +1,53 @@
+{#
+  Copyright 2026 TAK-Solutions LLC — Apache 2.0.
+
+  Shared markup for the ATLAS console. Import at the top of a template with:
+    {% from "_macros.html" import page_header, panel, tabs, modal, csrf_field, empty_state %}
+#}
+
+{% macro csrf_field(token) -%}
+<input type="hidden" name="csrf_token" value="{{ token }}">
+{%- endmacro %}
+
+{% macro page_header(title, sub=None) -%}
+<h1>{{ title }}</h1>
+{% if sub %}<p class="sub">{{ sub }}</p>{% endif %}
+{%- endmacro %}
+
+{% macro empty_state(message) -%}
+<p class="muted">{{ message }}</p>
+{%- endmacro %}
+
+{% macro stub(section, note) -%}
+<div class="panel stub">
+  <div class="big">{{ section }} is coming in a later chunk.</div>
+  <div>{{ note }}</div>
+</div>
+{%- endmacro %}
+
+{#
+  Tab bar. `items` is a list of (key, label) pairs. Renders the buttons only;
+  the caller supplies the matching <div class="tab-panel" data-tab-panel="key">
+  blocks and, if the panels live in a wrapper, sets data-tabs-scope to its id.
+#}
+{% macro tabs(items, active, scope=None) -%}
+<div class="tabs" data-tabs {% if scope %}data-tabs-scope="{{ scope }}"{% endif %}>
+  {% for key, label in items %}
+    <button type="button" class="tab {{ 'on' if key == active }}" data-tab="{{ key }}">{{ label }}</button>
+  {% endfor %}
+</div>
+{%- endmacro %}
+
+{#
+  Modal shell. Caller passes the body as the macro's `caller()` block:
+    {% call modal("new-policy", "New policy") %} ...form... {% endcall %}
+  Open it from anywhere with <button data-modal-open="new-policy">.
+#}
+{% macro modal(id, title) -%}
+<div class="modal-backdrop" id="{{ id }}" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-label="{{ title }}">
+    <h2>{{ title }}</h2>
+    {{ caller() }}
+  </div>
+</div>
+{%- endmacro %}

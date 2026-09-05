@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/nav_device"
+        android:icon="@drawable/ic_nav_device"
+        android:title="@string/nav_device" />
+    <item
+        android:id="@+id/nav_permissions"
+        android:icon="@drawable/ic_nav_permissions"
+        android:title="@string/nav_permissions" />
+    <item
+        android:id="@+id/nav_apps"
+        android:icon="@drawable/ic_nav_apps"
+        android:title="@string/nav_apps" />
+    <item
+        android:id="@+id/nav_files"
+        android:icon="@drawable/ic_nav_files"
+        android:title="@string/nav_files" />
+    <item
+        android:id="@+id/nav_policies"
+        android:icon="@drawable/ic_nav_policies"
+        android:title="@string/nav_policies" />
+</menu>

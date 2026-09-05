@@ -29,6 +29,7 @@ from app.api.schemas import (
     DeviceCreate,
     DeviceIdentifierRead,
     DeviceRead,
+    DeviceUpdate,
     GroupRead,
     MembershipUpdate,
     NamedCreate,
@@ -76,6 +77,21 @@ def get_device(device: Device = Depends(require_device)) -> Device:
     return device
 
 
+@router.patch("/devices/{device_id}", response_model=DeviceRead)
+def update_device(
+    payload: DeviceUpdate,
+    device: Device = Depends(require_device),
+    session: Session = Depends(get_db),
+) -> Device:
+    """Edit operator-owned device fields. Identity and reported attributes are not
+    editable here — only the friendly name."""
+    fields = payload.model_dump(exclude_unset=True)
+    if "name" in fields:
+        device.name = (fields["name"] or "").strip() or None
+    session.commit()
+    return device
+
+
 @router.get(
     "/devices/{device_id}/identifiers", response_model=list[DeviceIdentifierRead]
 )
@@ -92,6 +108,21 @@ def list_device_identifiers(
         DeviceIdentifierRead.model_validate(row)
         for row in device_identity.for_device(session, device.id)
     ]
+
+
+@router.post("/devices/{device_id}/checkin", response_model=None)
+def force_checkin(
+    device: Device = Depends(require_device), session: Session = Depends(get_db)
+) -> dict:
+    """Ring this device's long-poll so it checks in now.
+
+    ``woken`` is true when the device has a live long-poll waiter — it will check
+    in within about a second. False means it is not connected right now; it will
+    pick up any pending change when it next reconnects.
+    """
+    parked = eff.request_checkin(session, {device.id})
+    session.commit()
+    return {"device_id": str(device.id), "woken": device.id in parked}
 
 
 @router.post("/devices/{device_id}/retire", response_model=DeviceRead)

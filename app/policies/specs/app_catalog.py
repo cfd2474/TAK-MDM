@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.policies.specs.base import PolicySpec
 from app.policies.strategies import Merge, MergeStrategy
@@ -44,7 +44,49 @@ class AppCatalogSpec(PolicySpec):
     required_apps: Annotated[
         list[RequiredApp] | None,
         Merge(MergeStrategy.MERGE_BY_KEY, key="package_name"),
-    ] = None
+    ] = Field(
+        default=None,
+        title="Required apps",
+        description="Apps the device must have installed. Pick from uploaded packages.",
+        json_schema_extra={"ui_group": "Required apps", "ui_control": "app_list"},
+    )
+
+    @model_validator(mode="after")
+    def _one_entry_per_package(self):
+        """Refuse two entries for the same package in one policy.
+
+        Rejected rather than warned about, unlike a plugin/ATAK mismatch: that has
+        a plausible reason behind it, this does not. A package name **is** the
+        app's identity on Android, so only one build of it can exist on a device.
+        Two entries are not a choice between builds, they are the same slot filled
+        twice.
+
+        The trap this closes is a plugin pinned to two ATAK lines at once — say UAS
+        Tool for 5.5.0 *and* for 5.8.0. Both are legitimate builds and an operator
+        can reasonably think they are covering a mixed fleet, but Android will
+        install exactly one. Without this the merge silently kept the first and
+        recorded a "conflict", which is language meant for two policies disagreeing
+        — here a policy disagrees with itself, and the resolved state never says
+        which build won.
+
+        Different ATAK lines mean different policies, assigned to different
+        devices.
+        """
+        seen: dict[str, int] = {}
+        for entry in self.required_apps or []:
+            seen[entry.package_name] = seen.get(entry.package_name, 0) + 1
+
+        duplicates = sorted(name for name, count in seen.items() if count > 1)
+        if duplicates:
+            names = ", ".join(duplicates)
+            raise ValueError(
+                f"{names} appears more than once in required apps. Only one build "
+                "of a package can be installed on a device, so a second entry "
+                "cannot take effect — if these are builds for different ATAK "
+                "versions, put them in separate policies and assign each to the "
+                "devices running that ATAK."
+            )
+        return self
 
     # The blacklist: make these packages unusable by whatever means each one allows.
     #
@@ -58,7 +100,13 @@ class AppCatalogSpec(PolicySpec):
     # **Reversible.** Taking a package off this list unhides it, and the agent only
     # unhides what it hid. Removal is not reversible; that is the trade for it
     # actually reclaiming the storage.
-    blocked_packages: Annotated[list[str] | None, Merge(MergeStrategy.UNION)] = None
+    blocked_packages: Annotated[list[str] | None, Merge(MergeStrategy.UNION)] = Field(
+        default=None,
+        title="Blocklist (hide / uninstall)",
+        description="Made unusable: an ordinary app is uninstalled, a preinstalled "
+        "one is hidden. Reversible.",
+        json_schema_extra={"ui_group": "Blocklist", "ui_control": "package_list"},
+    )
 
     # Packages that must **not be installed** — the strict form of the blacklist.
     #
@@ -77,7 +125,13 @@ class AppCatalogSpec(PolicySpec):
     # UNION for the same reason as the blocklist: with several policies stacked, any
     # one of them saying "not this" is the restrictive answer, and a merge that
     # could drop that instruction would be a policy that silently fails to remove.
-    removed_packages: Annotated[list[str] | None, Merge(MergeStrategy.UNION)] = None
+    removed_packages: Annotated[list[str] | None, Merge(MergeStrategy.UNION)] = Field(
+        default=None,
+        title="Must-not-be-installed (uninstall, verified)",
+        description="Uninstalled outright and checked afterwards. Not reversible. "
+        "Use the blocklist for preinstalled apps.",
+        json_schema_extra={"ui_group": "Must-not-be-installed", "ui_control": "package_list"},
+    )
 
     # INTERSECT is the correct "most restrictive" reading of an allowlist but it
     # surprises people: stacking two allowlists yields only their overlap, which can
@@ -88,9 +142,19 @@ class AppCatalogSpec(PolicySpec):
             MergeStrategy.INTERSECT,
             note="Stacking allowlists yields only their overlap, which may be empty.",
         ),
-    ] = None
+    ] = Field(
+        default=None,
+        title="Allowlist (only these may run)",
+        description="If set, only these packages are permitted.",
+        json_schema_extra={"ui_group": "Allowlist", "ui_control": "package_list"},
+    )
 
     # No natural ordering between two kiosk apps — someone has to lose, loudly.
     kiosk_package: Annotated[str | None, Merge(MergeStrategy.HIGHEST_RANK)] = Field(
-        default=None, pattern=_PACKAGE_PATTERN
+        default=None,
+        pattern=_PACKAGE_PATTERN,
+        title="Kiosk app",
+        description="Lock the device to this single app. Leave unmanaged for a "
+        "normal (non-kiosk) device.",
+        json_schema_extra={"ui_group": "Kiosk"},
     )

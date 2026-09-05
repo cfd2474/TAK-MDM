@@ -1,14 +1,35 @@
 {% extends "base.html" %}
-{% set nav = 'devices' %}
-{% block title %}{{ device.serial_number }} — TAK MDM{% endblock %}
+{% set nav = 'manage' %}
+{% block title %}{{ device.name or device.serial_number }} — ATLAS{% endblock %}
 
 {% block content %}
-<h1 class="mono">{{ device.serial_number }}</h1>
+<h1{% if not device.name %} class="mono"{% endif %}>{{ device.name or device.serial_number }}</h1>
 <p class="sub">
+  {% if device.name %}<span class="mono">{{ device.serial_number }}</span> · {% endif %}
   {{ device.model or 'unknown model' }} · Android {{ device.os_version or '?' }} ·
   agent {{ device.agent_version or '—' }} ·
   server has v{{ device.state_version }}, device applied v{{ device.acked_state_version }}
 </p>
+
+<div class="toolbar">
+  <form method="post" action="/devices/{{ device.id }}/rename" class="toolbar" style="margin:0">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="text" name="name" value="{{ device.name or '' }}"
+           placeholder="Friendly name (blank to clear)" maxlength="128" style="min-width:280px">
+    <button type="submit" class="ghost">Save name</button>
+  </form>
+  <form method="post" action="/devices/{{ device.id }}/checkin" style="margin:0">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit">Check in now</button>
+  </form>
+</div>
+
+{% set ci = request.query_params.get('checkin') %}
+{% if ci == 'now' %}
+  <div class="banner good">Ringing the device — it will check in within a second.</div>
+{% elif ci == 'queued' %}
+  <div class="banner warn">The device is not connected right now. It will pick up any change when it reconnects.</div>
+{% endif %}
 
 {% if device.compliance_detail %}
   <div class="banner">Last reported problem: {{ device.compliance_detail }}</div>
@@ -99,17 +120,38 @@
 {% if apps %}
 <h2>Apps</h2>
 <div class="panel">
+  <p class="muted" style="font-size:12px">
+    {% if device.atak_version %}
+      This device reports ATAK <span class="mono">{{ device.atak_version }}</span>
+      (<span class="mono">{{ device.atak_package }}</span>). Plugins are checked against it.
+    {% else %}
+      This device has not reported an ATAK version, so plugin compatibility cannot
+      be checked here — an older agent, or no ATAK installed.
+    {% endif %}
+  </p>
   <table>
-    <thead><tr><th>Package</th><th>Version</th><th>Parts</th><th>Status</th></tr></thead>
+<thead><tr><th>Package</th><th>Version</th><th>Parts</th><th>Status</th></tr></thead>
     <tbody>
     {% for app in apps %}
       <tr>
-        <td class="mono">{{ app.package_name }}</td>
+        <td class="mono">
+          {{ app.package_name }}
+          {% if atak_mismatches.get(app.package_name) %}
+            {# The device's own ATAK is the evidence; a plugin built for another
+               line installs and then never appears, which reads as an MDM fault. #}
+            <div class="muted" style="font-size:12px; color:var(--warn, #b26b00)">
+              ⚠ {{ atak_mismatches.get(app.package_name) }}
+            </div>
+          {% endif %}
+        </td>
         <td class="mono">{{ app.version_code or '—' }}</td>
         <td class="muted">{{ (app.files or [])|length }}</td>
         <td>
           {% if app.available %}<span class="pill good">resolved</span>
-          {% else %}<span class="pill bad">nothing uploaded</span>{% endif %}
+          {% else %}
+            <span class="pill bad">unresolved</span>
+            <div class="muted" style="font-size:12px">{{ app.reason or 'nothing uploaded for it' }}</div>
+          {% endif %}
         </td>
       </tr>
     {% endfor %}
@@ -210,6 +252,26 @@
   </p>
   {% else %}
     <p class="muted">No identifiers recorded — this device enrolled before they were tracked.</p>
+  {% endif %}
+</div>
+
+<h2 id="attributes">Custom attributes</h2>
+<div class="panel">
+  {% if not attributes %}
+    <p class="muted">
+      No custom attributes defined. Add them on the
+      <a href="/admin#tab-attributes">Admin</a> page.
+    </p>
+  {% else %}
+    {% for attr, value in attributes %}
+      <form method="post" action="/devices/{{ device.id }}/attributes" class="toolbar" style="margin:4px 0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="attribute_id" value="{{ attr.id }}">
+        <label style="margin:0; min-width:160px">{{ attr.name }} <span class="muted">({{ attr.attr_type }})</span></label>
+        <input type="text" name="value" value="{{ value }}" style="min-width:220px">
+        <button type="submit" class="ghost">Save</button>
+      </form>
+    {% endfor %}
   {% endif %}
 </div>
 

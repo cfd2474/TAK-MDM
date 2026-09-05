@@ -31,11 +31,26 @@ from app.db.models import Device, DeviceCertificate, EnrollmentState
 from app.artifacts.storage import ArtifactStorage, LocalArtifactStorage
 from app.security.bundle import BundleSigner
 from app.security.ca import CertificateAuthority, CertificateError
+from app.security.enrollment_qr import EnrollmentQrGuard
 from app.security.token_vault import TokenVault
 
 
 def get_db(session: Session = Depends(get_session)) -> Session:
     return session
+
+
+def get_session_factory():
+    """A callable that opens a *new* session, for work that outlives the request.
+
+    Background work cannot borrow the request's session — it is closed when the
+    response is sent. This is a dependency rather than a direct import of
+    ``SessionLocal`` so a test can substitute its own factory; importing it
+    directly is how a background task ends up talking to the real database in the
+    middle of a test run.
+    """
+    from app.db.base import SessionLocal
+
+    return SessionLocal
 
 
 @lru_cache
@@ -76,6 +91,20 @@ def _token_vault(pki_dir: str) -> TokenVault:
 def get_token_vault(settings: Settings = Depends(get_settings)) -> TokenVault:
     """Seals and recovers enrollment token secrets."""
     return _token_vault(str(settings.pki_dir))
+
+
+@lru_cache
+def _enrollment_qr_guard(pki_dir: str, ttl_seconds: int) -> EnrollmentQrGuard:
+    from pathlib import Path
+
+    return EnrollmentQrGuard.load_or_create(Path(pki_dir), ttl_seconds=ttl_seconds)
+
+
+def get_enrollment_qr_guard(
+    settings: Settings = Depends(get_settings),
+) -> EnrollmentQrGuard:
+    """Mints and verifies the 15-minute secrets shown as enrollment QR codes."""
+    return _enrollment_qr_guard(str(settings.pki_dir), settings.enrollment_qr_ttl_seconds)
 
 
 @lru_cache

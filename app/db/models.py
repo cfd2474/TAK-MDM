@@ -35,13 +35,17 @@ from sqlalchemy import (
     Column,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Table,
     Text,
     UniqueConstraint,
     Uuid,
+    false as sa_false,
+    true as sa_true,
 )
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, JsonDict, UtcDateTime
@@ -132,10 +136,25 @@ class Device(Base):
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     serial_number: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # An operator-assigned friendly name. Optional: a freshly enrolled device has
+    # only the identity it reported. The console falls back to the serial for
+    # display when this is unset.
+    name: Mapped[str | None] = mapped_column(String(128), default=None)
     model: Mapped[str | None] = mapped_column(String(64), default=None)
     imei: Mapped[str | None] = mapped_column(String(32), default=None)
     os_version: Mapped[str | None] = mapped_column(String(32), default=None)
     agent_version: Mapped[str | None] = mapped_column(String(32), default=None)
+    # The agent's versionCode, distinct from the display versionName above: the
+    # self-update gate has to compare numerically, and Android's own upgrade rule
+    # is on the code. NULL until an agent new enough to report it checks in.
+    agent_version_code: Mapped[int | None] = mapped_column(Integer, default=None)
+    # Which ATAK the device actually has, reported at check-in. An ATAK plugin
+    # only loads in the build it was compiled against, and a mismatch is silent on
+    # the device — the plugin installs and never appears — so this is what lets the
+    # console say so (W32). NULL until an agent new enough to report it checks in,
+    # or when no ATAK is installed.
+    atak_package: Mapped[str | None] = mapped_column(String(128), default=None)
+    atak_version: Mapped[str | None] = mapped_column(String(64), default=None)
     enrollment_state: Mapped[EnrollmentState] = mapped_column(
         Enum(EnrollmentState, native_enum=False, length=16), default=EnrollmentState.PENDING
     )
@@ -191,6 +210,32 @@ class Tag(Base):
 # --------------------------------------------------------------------------- #
 
 
+class PolicyProfile(Base):
+    """A named bundle of single-concern policies, edited as tabs and assigned as a
+    unit.
+
+    A profile does not hold policy content itself — each of its tabs is a real
+    ``Policy`` row (``Policy.profile_id`` set), so the resolver, the merge registry
+    and the stacking view keep working unchanged. The profile is a bulk editor and
+    a bulk-assignment target over those children (DW5).
+    """
+
+    __tablename__ = "policy_profile"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+    created_by: Mapped[str | None] = mapped_column(String(128), default=None)
+    archived_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+
+    sections: Mapped[list[Policy]] = relationship(
+        back_populates="profile",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
 class Policy(Base):
     """A named, single-concern policy. Its content lives in immutable versions."""
 
@@ -204,6 +249,20 @@ class Policy(Base):
     description: Mapped[str | None] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
     archived_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+    # A template is a reusable blueprint: it is never assigned and never reaches a
+    # device (the resolver skips it), it only gets cloned into a real policy.
+    is_template: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=sa_false()
+    )
+    # Set when this policy is a section of a profile: it is then managed only
+    # through that profile and hidden from the standalone policy list. NULL is an
+    # ordinary standalone policy.
+    profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("policy_profile.id", ondelete="CASCADE"), default=None, index=True
+    )
+    # Which creator-catalog category this section fills (e.g. "password"). NULL for
+    # standalone policies.
+    profile_section: Mapped[str | None] = mapped_column(String(64), default=None)
 
     versions: Mapped[list[PolicyVersion]] = relationship(
         back_populates="policy",
@@ -211,6 +270,7 @@ class Policy(Base):
         order_by="PolicyVersion.version",
         lazy="selectin",
     )
+    profile: Mapped[PolicyProfile | None] = relationship(back_populates="sections")
 
     @property
     def latest_version(self) -> PolicyVersion | None:
@@ -286,6 +346,47 @@ class Assignment(Base):
     pinned_version: Mapped[PolicyVersion | None] = relationship(lazy="selectin")
 
 
+class ProfileAssignment(Base):
+    """Binds a whole profile to a device, group, or tag at a given rank.
+
+    The resolver expands one of these into an assignment of every section the
+    profile owns, so a profile stacks against standalone policies exactly as its
+    sections would individually — at this one rank.
+    """
+
+    __tablename__ = "profile_assignment"
+    __table_args__ = (
+        CheckConstraint(
+            "(CASE WHEN device_id IS NOT NULL THEN 1 ELSE 0 END) "
+            "+ (CASE WHEN group_id IS NOT NULL THEN 1 ELSE 0 END) "
+            "+ (CASE WHEN tag_id IS NOT NULL THEN 1 ELSE 0 END) = 1",
+            name="ck_profile_assignment_single_target",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    profile_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("policy_profile.id", ondelete="CASCADE"), index=True
+    )
+    scope: Mapped[AssignmentScope] = mapped_column(
+        Enum(AssignmentScope, native_enum=False, length=16)
+    )
+    device_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("device.id", ondelete="CASCADE"), default=None, index=True
+    )
+    group_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("device_group.id", ondelete="CASCADE"), default=None, index=True
+    )
+    tag_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("tag.id", ondelete="CASCADE"), default=None, index=True
+    )
+    rank: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+    profile: Mapped[PolicyProfile] = relationship(lazy="selectin")
+
+
 # --------------------------------------------------------------------------- #
 # Enrollment and device identity
 # --------------------------------------------------------------------------- #
@@ -321,6 +422,21 @@ class EnrollmentToken(Base):
     """
 
     __tablename__ = "enrollment_token"
+    __table_args__ = (
+        # "At most one live primary" as a database guarantee rather than an
+        # application-level hope — the same reasoning as D24's unique device
+        # serial or R13's unique identifier value. Partial: a *revoked* primary
+        # does not block a new one, which is exactly the retire-and-replace flow.
+        # The index only ever contains rows matching the WHERE clause, so
+        # uniqueness on a single always-true column there means "at most one".
+        Index(
+            "uq_enrollment_token_one_live_primary",
+            "is_primary",
+            unique=True,
+            postgresql_where=sa_text("is_primary AND revoked_at IS NULL"),
+            sqlite_where=sa_text("is_primary AND revoked_at IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     name: Mapped[str] = mapped_column(String(128))
@@ -344,6 +460,13 @@ class EnrollmentToken(Base):
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
     # A token authorizes devices onto the fleet, so who minted it is worth keeping.
     created_by: Mapped[str | None] = mapped_column(String(128), default=None)
+
+    # Marks the one standing enrollment credential an operator manages day to day
+    # (Chunk 14). Its raw secret is never displayed; only a signed, 15-minute
+    # derivative of it is ever shown, as a QR. Everything else about this row —
+    # hash, vault seal, scoping, revocation — is the ordinary EnrollmentToken
+    # machinery, unchanged; a primary is just a token nobody types in by hand.
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     groups: Mapped[list[DeviceGroup]] = relationship(
         secondary=enrollment_token_group, lazy="selectin"
@@ -569,6 +692,11 @@ class AppPackage(Base):
     label: Mapped[str | None] = mapped_column(String(255), default=None)
     signature_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
     signature_scheme: Mapped[str | None] = mapped_column(String(8), default=None)
+    # Offered in the ATLAS store — the curated set that ships with a deployment and
+    # is presented to operators as ready-to-assign.
+    store_listed: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=sa_false()
+    )
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
 
     versions: Mapped[list[AppPackageVersion]] = relationship(
@@ -581,6 +709,33 @@ class AppPackage(Base):
     @property
     def latest_version(self) -> AppPackageVersion | None:
         return self.versions[-1] if self.versions else None
+
+
+app_group_member = Table(
+    "app_group_member",
+    Base.metadata,
+    Column("group_id", Uuid, ForeignKey("app_group.id", ondelete="CASCADE"), primary_key=True),
+    Column("package_id", Uuid, ForeignKey("app_package.id", ondelete="CASCADE"), primary_key=True),
+    Column("position", Integer, nullable=False, default=0),
+)
+
+
+class AppGroup(Base):
+    """A named set of app packages, so a policy can reference the group rather than
+    listing every package by hand."""
+
+    __tablename__ = "app_group"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+    packages: Mapped[list[AppPackage]] = relationship(
+        secondary=app_group_member,
+        order_by=app_group_member.c.position,
+        lazy="selectin",
+    )
 
 
 class AppPackageVersion(Base):
@@ -597,12 +752,39 @@ class AppPackageVersion(Base):
     version_name: Mapped[str | None] = mapped_column(String(128), default=None)
     min_sdk: Mapped[int | None] = mapped_column(Integer, default=None)
     target_sdk: Mapped[int | None] = mapped_column(Integer, default=None)
+    # The ATAK build an ATAK plugin was compiled against, e.g.
+    # "com.atakmap.app@5.5.0.CIV". A plugin only loads in that build, so this is a
+    # **compatibility key, not a version** — two builds of one plugin targeting
+    # different ATAK lines are alternatives, and their versionCodes cannot
+    # meaningfully be ranked against each other (D45). NULL for anything that is
+    # not an ATAK plugin.
+    plugin_api: Mapped[str | None] = mapped_column(String(128), default=None)
+    # Eligible for *automatic* selection — "latest", or "newest above the floor".
+    # A held build stays in the library and can still be reached by an explicit
+    # `artifact_sha256` pin, because a pin names one exact build and is a
+    # deliberate act; making it also require publication would be a second gate
+    # with no separate meaning, and a pin that silently did nothing is the R17
+    # failure wearing a different hat.
+    published: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default=sa_true()
+    )
     uploaded_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
 
     package: Mapped[AppPackage] = relationship(back_populates="versions")
     files: Mapped[list[AppPackageFile]] = relationship(
         back_populates="version", cascade="all, delete-orphan", lazy="selectin"
     )
+
+    @property
+    def has_obb(self) -> bool:
+        """True when this version carries an OBB expansion file.
+
+        A normally-installed Device Owner cannot place another app's OBB on the
+        device — scoped storage blocks ``Android/obb/<pkg>/`` even with all-files
+        access (verified EACCES on ``SM-X520``). Surfaced so the operator sees it
+        before assigning, not as missing assets at runtime.
+        """
+        return any(f.role == PartRole.OBB for f in self.files)
 
 
 class AppPackageFile(Base):
@@ -647,6 +829,24 @@ class ManagedFile(Base):
         String(64), ForeignKey("artifact.sha256", ondelete="RESTRICT"), index=True
     )
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+    # False for a file uploaded from inside a policy editor — a wallpaper, say.
+    # It is an ordinary managed file in every way that matters to the device; it
+    # simply is not part of the browsable Content library, because an operator who
+    # picked an image for one policy did not mean to publish an asset to the fleet's
+    # catalogue. Listings filter on this; nothing in the delivery path reads it.
+    in_library: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default=sa_text("true")
+    )
+
+    # Suggested deployment, set on the Content page. These are *defaults* the
+    # policy editor pre-fills — the authoritative destination/persist/extract for a
+    # given placement still live on the FILES policy entry that places the file.
+    default_dest_path: Mapped[str | None] = mapped_column(String(512), default=None)
+    default_persist: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    default_extract: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    default_extract_to: Mapped[str | None] = mapped_column(String(512), default=None)
+    default_overwrite: Mapped[str | None] = mapped_column(String(16), default=None)
 
     artifact: Mapped[Artifact] = relationship(lazy="selectin")
 
@@ -694,3 +894,115 @@ class EffectivePolicyCache(Base):
     payload: Mapped[dict] = mapped_column(JsonDict)
     stale: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     computed_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+
+# --------------------------------------------------------------------------- #
+# Admin: settings store and custom attributes
+# --------------------------------------------------------------------------- #
+
+
+class AppSetting(Base):
+    """A key/value the operator edits through the Admin console — EULA text, SMTP,
+    directory and SMS credentials, geofencing defaults. Environment-backed settings
+    are not stored here; they are shown read-only with their variable name."""
+
+    __tablename__ = "app_setting"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow, onupdate=_utcnow)
+    updated_by: Mapped[str | None] = mapped_column(String(128), default=None)
+
+
+class CustomAttribute(Base):
+    """An operator-defined field attached to devices — asset tag, owning unit,
+    deployment date. Not interpreted by the MDM; it is for the operator's own
+    inventory."""
+
+    __tablename__ = "custom_attribute"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    # string | number | boolean | date — validated in the schema, not a DB enum.
+    attr_type: Mapped[str] = mapped_column(String(16), default="string")
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+
+class DeviceAttributeValue(Base):
+    __tablename__ = "device_attribute_value"
+
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("device.id", ondelete="CASCADE"), primary_key=True
+    )
+    attribute_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("custom_attribute.id", ondelete="CASCADE"), primary_key=True
+    )
+    value: Mapped[str] = mapped_column(Text, default="")
+
+    attribute: Mapped[CustomAttribute] = relationship(lazy="selectin")
+
+
+class TakGovLinkStatus(str, enum.Enum):
+    UNLINKED = "unlinked"
+    #: A device-authorization code has been issued and the operator has not yet
+    #: entered it at tak.gov, or has and we have not yet noticed.
+    PENDING = "pending"
+    LINKED = "linked"
+    #: The link was live and stopped working — most often a rotated refresh token
+    #: that was lost, which needs a human to re-enter a code.
+    BROKEN = "broken"
+
+
+class TakGovLink(Base):
+    """The single TAK.gov account this ATLAS instance pulls plugins as.
+
+    One row, id 1. ATLAS is one instance per operator, so the per-tenant model in
+    `tpc.md` collapses to a singleton — but it stays a table rather than settings
+    because it carries a state machine, timestamps, and a credential that must not
+    sit in `app_setting`, which is plaintext.
+
+    ⚠️ The refresh token is a **durable bearer credential to a named person's
+    TAK.gov account**, it inherits exactly that person's entitlements, and it does
+    not idle out. It is sealed with the same `TokenVault` as enrollment tokens.
+
+    ⚠️ Keycloak **rotates the refresh token on every refresh** and invalidates the
+    old one. `previous_refresh_token` exists solely so that losing the race —
+    crashing between "received" and "committed" — costs a retry rather than a trip
+    to tak.gov for a human to type a code.
+    """
+
+    __tablename__ = "tak_gov_link"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    status: Mapped[TakGovLinkStatus] = mapped_column(
+        Enum(TakGovLinkStatus, native_enum=False, length=16),
+        default=TakGovLinkStatus.UNLINKED,
+    )
+
+    # --- device-authorization flow, only meaningful while PENDING ---
+    device_code: Mapped[str | None] = mapped_column(Text, default=None)
+    user_code: Mapped[str | None] = mapped_column(String(64), default=None)
+    verification_uri: Mapped[str | None] = mapped_column(Text, default=None)
+    verification_uri_complete: Mapped[str | None] = mapped_column(Text, default=None)
+    #: Seconds between polls, raised when the server answers `slow_down`.
+    poll_interval_seconds: Mapped[int] = mapped_column(Integer, default=5)
+    code_expires_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+
+    # --- credentials ---
+    refresh_token_sealed: Mapped[str | None] = mapped_column(Text, default=None)
+    previous_refresh_token_sealed: Mapped[str | None] = mapped_column(Text, default=None)
+    access_token_sealed: Mapped[str | None] = mapped_column(Text, default=None)
+    access_expires_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+
+    # --- who linked, for the console ---
+    account_label: Mapped[str | None] = mapped_column(String(256), default=None)
+    linked_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+    linked_by: Mapped[str | None] = mapped_column(String(128), default=None)
+
+    #: Why the last operation failed, shown verbatim. An undocumented API fails in
+    #: undocumented ways, and paraphrasing them loses the only clue there is.
+    last_error: Mapped[str | None] = mapped_column(Text, default=None)
+    updated_at: Mapped[datetime] = mapped_column(
+        UtcDateTime, default=_utcnow, onupdate=_utcnow
+    )

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf_field %}
+{% from "_policy_form.html" import policy_subform, app_group_buttons, app_compat_blob %}
+{% set nav = 'policies' %}
+{% block title %}New single-concern policy — ATLAS{% endblock %}
+{% block main_class %}wide{% endblock %}
+
+{% block content %}
+{{ app_compat_blob(app_compat) }}
+{{ page_header('New single-concern policy', 'One typed policy of a single kind, outside any bundle. Most operators use a composite policy instead.') }}
+<p class="sub"><a href="/policies">← policies</a> · <a href="/policies/new">build a composite policy</a></p>
+
+<div class="panel">
+  <form method="post" action="/policies">
+    {{ csrf_field(csrf_token) }}
+    <div class="row">
+      <div>
+        <label for="name">Name</label>
+        <input id="name" name="name" required class="field-full" placeholder="Baseline Password">
+      </div>
+      <div>
+        <label for="description">Description</label>
+        <input id="description" name="description" class="field-full">
+      </div>
+      <div>
+        <label for="policy_type">Type</label>
+        <select id="policy_type" name="policy_type" class="field-full"
+                onchange="var v=this.value;document.querySelectorAll('[data-type-form]').forEach(function(el){el.hidden=el.dataset.typeForm!==v})">
+          {% for t in wired_types %}
+            <option value="{{ t.policy_type }}">{{ t.label }} ({{ t.policy_type }})</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <label class="checks" style="display:flex; gap:8px; align-items:center; max-height:none; margin-top:10px">
+      <input type="checkbox" name="is_template" value="true" style="width:auto">
+      Save as a template (a reusable blueprint — never assigned, only cloned)
+    </label>
+
+    {% for t in wired_types %}
+      <div data-type-form="{{ t.policy_type }}" {{ 'hidden' if not loop.first }}>
+        {% for pg in t.pages %}
+          <h2>{{ t.label }}{% if t.pages | length > 1 %} <span class="muted">· {{ pg.label }}</span>{% endif %}</h2>
+          {% if t.policy_type == 'APP_CATALOG' and pg.slug == 'required-apps' %}{{ app_group_buttons(app_groups) }}{% endif %}
+          {{ policy_subform(pg.fields, {}, app_packages, managed_files) }}
+        {% endfor %}
+      </div>
+    {% endfor %}
+
+    <button type="submit" style="margin-top:12px">Create</button>
+  </form>
+</div>
+{% endblock %}

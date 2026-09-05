@@ -33,6 +33,7 @@ The distinction between ``overridden`` and ``conflict`` matters:
 from __future__ import annotations
 
 import enum
+import json
 from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -182,14 +183,31 @@ def _as_sequence(value: Any, strategy: MergeStrategy) -> Sequence[Hashable]:
     return value
 
 
+def _dedupe_key(item: Any) -> Hashable:
+    """A hashable stand-in for ``item``, so a list of dicts can be unioned.
+
+    UNION was written for lists of scalars — package names, SSIDs — and used the
+    items themselves as set members. A list of objects (a data-usage threshold,
+    say) then failed with a bare ``TypeError: unhashable type: 'dict'`` from
+    inside the merge, which reads as a server fault rather than a policy one.
+
+    Sorted-key JSON rather than ``repr``: two equal rules written in a different
+    field order are the same rule, and should collapse to one.
+    """
+    if isinstance(item, Hashable):
+        return item
+    return json.dumps(item, sort_keys=True, default=str)
+
+
 def _merge_union(contributions: Sequence[Contribution], cfg: Merge) -> MergeOutcome:
     """Set union, preserving first-seen order for deterministic output."""
     merged: list[Any] = []
     seen: set[Hashable] = set()
     for c in contributions:
         for item in _as_sequence(c.value, MergeStrategy.UNION):
-            if item not in seen:
-                seen.add(item)
+            key = _dedupe_key(item)
+            if key not in seen:
+                seen.add(key)
                 merged.append(item)
     # Aggregate strategies have no single winner; every contributor shaped the result.
     return MergeOutcome(

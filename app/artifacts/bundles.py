@@ -31,15 +31,19 @@ import io
 import json
 import zipfile
 from dataclasses import dataclass
-from enum import Enum
+
+# ⚠️ One enum, deliberately. This module used to define its own `PartRole` with
+# the same three values as the ORM's, and because both are `str` enums the two
+# compared equal with `==` while `is` silently returned False. Code holding a row
+# from the database and the copy imported from here would disagree about a value
+# that printed identically. Re-exported rather than redefined so there is exactly
+# one object to be identical to.
+#
+# The dependency direction is safe: `app.db.models` imports nothing from
+# `app.artifacts`.
+from app.db.models import PartRole  # re-export
 
 from app.artifacts.apk import ApkError, ApkInfo, inspect_apk
-
-
-class PartRole(str, Enum):
-    BASE = "base"
-    SPLIT = "split"
-    OBB = "obb"
 
 
 @dataclass(frozen=True)
@@ -60,6 +64,8 @@ class InspectedBundle:
     target_sdk: int | None
     signature_sha256: str | None
     signature_scheme: str | None
+    #: ATAK plugin compatibility key, from the base APK's manifest (D45).
+    plugin_api: str | None
     parts: tuple[BundlePart, ...]
 
     @property
@@ -156,6 +162,7 @@ def inspect_bundle(data: bytes) -> InspectedBundle:
         target_sdk=base_info.target_sdk,
         signature_sha256=base_info.signature_sha256,
         signature_scheme=base_info.signature_scheme,
+        plugin_api=base_info.plugin_api,
         parts=tuple(parts),
     )
 
@@ -176,6 +183,7 @@ def inspect_single_apk(data: bytes) -> InspectedBundle:
         target_sdk=info.target_sdk,
         signature_sha256=info.signature_sha256,
         signature_scheme=info.signature_scheme,
+        plugin_api=info.plugin_api,
         parts=(BundlePart(role=PartRole.BASE, file_name="base.apk", data=data, info=info),),
     )
 

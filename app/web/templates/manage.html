@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% set nav = 'manage' %}
+{% block title %}Manage — ATLAS{% endblock %}
+
+{% block content %}
+{{ page_header('Fleet', 'Enrolled devices, the policies reaching each one, and whether they have actually converged.') }}
+
+<div class="panel stat">
+  <div><span>{{ counts.devices }}</span><small>devices</small></div>
+  <div><span>{{ counts.policies }}</span><small>policies</small></div>
+  <div><span>{{ counts.packages }}</span><small>app packages</small></div>
+  <div><span>{{ counts.files }}</span><small>managed files</small></div>
+</div>
+
+<div class="panel">
+  {% if not rows %}
+    <p class="muted">
+      No devices yet. Create an enrollment token on the
+      <a href="/enrollment">Enroll</a> page and scan its QR from a factory-reset
+      tablet's setup wizard.
+    </p>
+  {% else %}
+  <div class="toolbar">
+    <input type="search" data-filter="#fleet-table" placeholder="Filter by name, serial, model, policy…">
+    <span class="muted" data-filter-count="#fleet-table">{{ rows|length }} devices</span>
+  </div>
+  <table id="fleet-table" data-sortable>
+    <thead>
+      <tr>
+        <th data-sort>Name</th>
+        <th data-sort>Serial</th>
+        <th data-sort>Model</th>
+        <th data-sort>OS / Agent</th>
+        <th data-sort>Policies</th>
+        <th data-sort>Convergence</th>
+        <th data-sort>Compliance</th>
+        <th data-sort>Last check-in</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in rows %}
+      {% set d = r.device %}
+      <tr>
+        <td>
+          <div class="stack-name">
+            <a href="/devices/{{ d.id }}">{{ d.name or d.serial_number }}</a>
+            {% if d.name %}<span class="mono">{{ d.serial_number }}</span>{% endif %}
+          </div>
+          <form method="post" action="/devices/{{ d.id }}/rename" class="inline-rename">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="next" value="/">
+            <input type="text" name="name" value="{{ d.name or '' }}"
+                   placeholder="name this device" maxlength="128" aria-label="rename {{ d.serial_number }}">
+            <button type="submit" class="ghost" title="Save name">Save</button>
+          </form>
+        </td>
+        <td class="mono">{{ d.serial_number }}</td>
+        <td>{{ d.model or '—' }}</td>
+        <td class="mono">{{ d.os_version or '?' }} / {{ d.agent_version or '—' }}</td>
+        <td>
+          {% if r.policy_names %}
+            <span class="pill accent" title="{{ r.policy_names | join(', ') }}">{{ r.policy_count }}</span>
+            <span class="muted">{{ r.policy_names | join(', ') }}</span>
+          {% else %}
+            <span class="muted">none</span>
+          {% endif %}
+        </td>
+        <td class="mono">
+          {# The gap between these two is the real convergence lag (D28). #}
+          {{ d.acked_state_version }} / {{ d.state_version }}
+          {% if d.acked_state_version < d.state_version %}
+            <span class="pill warn">behind</span>
+          {% endif %}
+        </td>
+        <td>
+          {% set c = d.compliance_status.value %}
+          <span class="pill {{ 'good' if c == 'compliant' else 'warn' if c == 'degraded' else 'bad' if c == 'failed' }}">{{ c }}</span>
+        </td>
+        <td class="muted">{{ d.last_checkin_at.strftime('%Y-%m-%d %H:%M') if d.last_checkin_at else 'never' }}</td>
+        <td>
+          <form method="post" action="/devices/{{ d.id }}/checkin" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="ghost">Check in</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endblock %}

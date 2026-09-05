@@ -14,8 +14,10 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.security import admin_auth
@@ -23,6 +25,8 @@ from app.services import notifications
 from app.web import routes as web_routes
 
 from app.api.routers import (
+    admin_settings,
+    app_groups,
     artifacts,
     assignments,
     checkin,
@@ -35,6 +39,7 @@ from app.api.routers import (
     packages,
     policies,
     policy_types,
+    profiles,
     wait,
 )
 
@@ -84,6 +89,7 @@ _admin = [Depends(admin_auth.csrf_protected)]
 for admin_router in (
     policy_types.router,
     policies.router,
+    profiles.router,
     inventory.router,
     assignments.router,
     assignments.targets_router,
@@ -92,11 +98,24 @@ for admin_router in (
     commands.router,
     device_logs.admin_router,
     packages.router,
+    app_groups.router,
+    admin_settings.router,
+    admin_settings.device_router,
     files.router,
     files.selections_router,
     web_routes.router,
 ):
     app.include_router(admin_router, dependencies=_admin)
+
+
+# Console CSS/JS. A mount, so it sits outside the admin guard (these assets are
+# not sensitive) and outside the OpenAPI schema. Not exposed on the device port —
+# nginx default-denies everything there that is not an explicit device endpoint.
+app.mount(
+    "/static",
+    StaticFiles(directory=str(Path(__file__).parent / "web" / "static")),
+    name="static",
+)
 
 
 @app.get("/healthz", tags=["ops"])

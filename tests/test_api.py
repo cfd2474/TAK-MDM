@@ -34,9 +34,11 @@ def test_policy_types_publish_their_merge_contract(client: TestClient):
     body = client.get("/api/v1/policy-types").json()
     by_name = {t["name"]: t for t in body}
 
-    assert set(by_name) == {"PASSWORD", "RESTRICTIONS", "APP_CATALOG", "FILES"}
+    assert {"PASSWORD", "RESTRICTIONS", "APP_CATALOG", "FILES", "NETWORKS"} <= set(by_name)
     assert by_name["PASSWORD"]["merge_rules"]["min_length"]["strategy"] == "max"
+    assert by_name["PASSWORD"]["merge_rules"]["set_password"]["strategy"] == "highest_rank"
     assert by_name["APP_CATALOG"]["merge_rules"]["required_apps"]["key"] == "package_name"
+    assert by_name["NETWORKS"]["merge_rules"]["wifi_networks"]["key"] == "ssid"
 
 
 # --------------------------------------------------------------------------- #
@@ -62,6 +64,24 @@ def test_invalid_spec_is_rejected(client: TestClient):
     response = client.post(
         "/api/v1/policies",
         json={"name": "Bad", "policy_type": "PASSWORD", "spec": {"min_length": 999}},
+    )
+    assert response.status_code == 422
+
+
+def test_set_password_forces_an_exact_passcode(client: TestClient, make_policy):
+    policy = make_policy(
+        "Fixed passcode", "PASSWORD", {"min_length": 6, "set_password": "atlas12"}
+    )
+    assert policy["versions"][0]["spec"]["set_password"] == "atlas12"
+
+
+def test_set_password_shorter_than_the_policy_minimum_is_rejected(client: TestClient):
+    response = client.post(
+        "/api/v1/policies",
+        json={
+            "name": "Contradiction", "policy_type": "PASSWORD",
+            "spec": {"min_length": 10, "set_password": "short"},
+        },
     )
     assert response.status_code == 422
 

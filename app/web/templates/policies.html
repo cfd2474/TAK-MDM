@@ -1,93 +1,217 @@
 {% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf_field, tabs, modal, empty_state %}
 {% set nav = 'policies' %}
-{% block title %}Policies — TAK MDM{% endblock %}
+{% block title %}Policies — ATLAS{% endblock %}
+
+{% macro policy_contents(pr) %}
+  {% set names = pr.sections | map(attribute='profile_section') | reject('none') | map('category_label') | list %}
+  {{ names | join(', ') if names else 'no categories yet' }}
+{% endmacro %}
+
+{% macro policy_summary(pr) %}
+  {% set sections = pr.sections | selectattr('latest_version') | list %}
+  {% if not sections %}
+    <p class="muted">This policy has no categories configured — it would apply nothing.</p>
+  {% else %}
+    {% for s in sections %}
+      <div style="margin-bottom:10px">
+        <strong>{{ s.profile_section | category_label }}</strong>
+        {% set rows = s.latest_version.spec | spec_rows(s.policy_type, file_names) %}
+        {% if rows %}
+          <dl class="kv" style="margin-top:4px">
+            {% for r in rows %}<dt>{{ r.label }}</dt><dd>{{ r.value }}</dd>{% endfor %}
+          </dl>
+        {% else %}<div class="muted">nothing set</div>{% endif %}
+      </div>
+    {% endfor %}
+  {% endif %}
+{% endmacro %}
 
 {% block content %}
-<h1>Policies</h1>
-<p class="sub">
-  Single-concern and stackable. Build a password policy once and apply it wherever
-  it belongs, rather than rebuilding it inside every profile.
-</p>
+{{ page_header('Policies', 'A policy bundles the settings for as many categories as you need. Build it once, then assign it — several policies still stack per-field where they overlap.') }}
 
-<div class="panel">
-  {% if not policies %}
-    <p class="muted">None yet.</p>
-  {% else %}
-  <table>
-    <thead><tr><th>Name</th><th>Type</th><th>Versions</th><th>Description</th></tr></thead>
-    <tbody>
-    {% for p in policies %}
-      <tr>
-        <td><a href="/policies/{{ p.id }}">{{ p.name }}</a></td>
-        <td><span class="pill">{{ p.policy_type }}</span></td>
-        <td class="mono">v{{ p.latest_version.version if p.latest_version else 0 }}</td>
-        <td class="muted">{{ p.description or '—' }}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
+<div class="toolbar">
+  <button type="button" data-modal-open="new-policy">New Policy</button>
 </div>
 
-<h2>New policy</h2>
-<div class="panel">
-  <form method="post" action="/policies">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="row">
-      <div>
-        <label for="name">Name</label>
-        <input id="name" name="name" required style="width:100%" placeholder="Baseline Password">
+{{ tabs([
+  ('device', 'Device policies'),
+  ('templates', 'Templates'),
+  ('archived', 'Archived'),
+], active='device', scope='policy-tabs') }}
 
-        <label for="policy_type">Type</label>
-        <select id="policy_type" name="policy_type" style="width:100%" onchange="showRef(this.value)">
-          {% for t in policy_types %}
-            <option value="{{ t.name }}">{{ t.name }} — {{ t.description }}</option>
-          {% endfor %}
-        </select>
-
-        <label for="description">Description</label>
-        <input id="description" name="description" style="width:100%">
-
-        <label for="spec">Spec (JSON)</label>
-        <textarea id="spec" name="spec" rows="10">{}</textarea>
-        <p class="muted" style="font-size:12px">
-          Only the fields you set are stored, so a narrow policy stacks on a broad
-          one without blanking it.
-        </p>
-        <button type="submit">Create</button>
-      </div>
-
-      <div>
-        <label>Fields and how they merge when stacked</label>
-        {% for t in policy_types %}
-        <div class="checks" id="ref-{{ t.name }}" style="display:none; max-height:420px">
-          <table>
-            <thead><tr><th>Field</th><th>Strategy</th></tr></thead>
-            <tbody>
-            {% for field, rule in t.merge_rules.items() %}
-              <tr>
-                <td class="mono">{{ field }}</td>
-                <td>
-                  <span class="pill">{{ rule.strategy }}</span>
-                  {% if rule.note %}<br><small class="muted">{{ rule.note }}</small>{% endif %}
-                </td>
-              </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-        </div>
+<div id="policy-tabs">
+  <div class="tab-panel" data-tab-panel="device">
+    <div class="panel">
+      {% if not profiles and not device_policies %}
+        {{ empty_state('No policies yet. Use "New Policy" to create one.') }}
+      {% else %}
+      <table data-sortable>
+        <thead><tr>
+          <th data-sort>Name</th><th data-sort>Categories</th><th data-sort>On devices</th>
+          <th>Description</th><th></th>
+        </tr></thead>
+        <tbody>
+        {% for pr in profiles %}
+          <tr>
+            <td><a href="/profiles/{{ pr.id }}">{{ pr.name }}</a></td>
+            <td class="muted">{{ policy_contents(pr) }}</td>
+            <td class="muted">
+              {% set on = reaches.get(pr.id | string, []) %}
+              {{ on | length if on else '—' }}
+            </td>
+            <td class="muted">{{ pr.description or '—' }}</td>
+            <td><button type="button" class="ghost" data-modal-open="archive-{{ pr.id }}">Archive</button></td>
+          </tr>
         {% endfor %}
-      </div>
+        {% for p in device_policies %}
+          <tr>
+            <td><a href="/policies/{{ p.id }}">{{ p.name }}</a></td>
+            <td><span class="pill">{{ p.policy_type }}</span></td>
+            <td class="muted">—</td>
+            <td class="muted">{{ p.description or '—' }}</td>
+            <td></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
     </div>
-  </form>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="templates" hidden>
+    <div class="panel">
+      <p class="sub">
+        Blueprints. A template is never assigned and never reaches a device — it is
+        cloned into a real policy, which is then edited and assigned on its own.
+      </p>
+      {% if not templates %}
+        {{ empty_state('No templates. Save any policy as a template from its detail page.') }}
+      {% else %}
+      <table>
+        <thead><tr><th>Name</th><th>Type</th><th>Create a policy from this template</th></tr></thead>
+        <tbody>
+        {% for p in templates %}
+          <tr>
+            <td><a href="/policies/{{ p.id }}">{{ p.name }}</a></td>
+            <td><span class="pill">{{ p.policy_type }}</span></td>
+            <td>
+              <form method="post" action="/policies/clone" class="toolbar" style="margin:0">
+                {{ csrf_field(csrf_token) }}
+                <input type="hidden" name="source_id" value="{{ p.id }}">
+                <input type="text" name="name" required placeholder="New policy name">
+                <button type="submit" class="ghost">Create</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="archived" hidden>
+    <div class="panel">
+      <p class="sub">
+        Archived policies stop applying and are taken off every device. Restoring
+        one brings it back assigned to nothing. Keeping a policy here is the
+        normal answer — what a device once had stays answerable — so
+        <strong>delete only the ones that never reached a device</strong>: it is
+        permanent and takes the whole version history with it.
+      </p>
+      {% if not archived_profiles and not archived %}
+        {{ empty_state('Nothing archived.') }}
+      {% else %}
+      <table>
+        <thead><tr><th>Name</th><th>Categories</th><th>Archived</th><th>Restore</th><th>Delete</th></tr></thead>
+        <tbody>
+        {% for pr in archived_profiles %}
+          <tr>
+            <td><a href="/profiles/{{ pr.id }}">{{ pr.name }}</a></td>
+            <td class="muted">{{ policy_contents(pr) }}</td>
+            <td class="muted">{{ pr.archived_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td>
+              <form method="post" action="/profiles/{{ pr.id }}/restore" style="margin:0">
+                {{ csrf_field(csrf_token) }}
+                <button type="submit" class="ghost">Restore</button>
+              </form>
+            </td>
+            <td>
+              <form method="post" action="/profiles/{{ pr.id }}/delete" style="margin:0"
+                    data-confirm="Permanently delete {{ pr.name }}? Its categories and every version they ever published go with it. This cannot be undone.">
+                {{ csrf_field(csrf_token) }}
+                <button type="submit" class="danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        {% for p in archived %}
+          <tr>
+            <td><a href="/policies/{{ p.id }}">{{ p.name }}</a>{% if p.is_template %} <span class="pill">template</span>{% endif %}</td>
+            <td><span class="pill">{{ p.policy_type }}</span></td>
+            <td class="muted">{{ p.archived_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td>
+              <form method="post" action="/policies/{{ p.id }}/restore" style="margin:0">
+                {{ csrf_field(csrf_token) }}
+                <button type="submit" class="ghost">Restore</button>
+              </form>
+            </td>
+            <td>
+              <form method="post" action="/policies/{{ p.id }}/delete" style="margin:0"
+                    data-confirm="Permanently delete {{ p.name }}? Every version it ever published goes with it. This cannot be undone.">
+                {{ csrf_field(csrf_token) }}
+                <button type="submit" class="danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
 </div>
 
-<script>
-  function showRef(name) {
-    document.querySelectorAll('[id^="ref-"]').forEach(el => el.style.display = 'none');
-    const target = document.getElementById('ref-' + name);
-    if (target) target.style.display = 'block';
-  }
-  showRef(document.getElementById('policy_type').value);
-</script>
+{% for pr in profiles %}
+  {% call modal('archive-' ~ pr.id, 'Archive ' ~ pr.name) %}
+    <p class="sub">Archiving stops this policy applying and removes it from the devices below. Its history is kept and you can restore it later.</p>
+
+    <h3>What it does</h3>
+    {{ policy_summary(pr) }}
+
+    <h3>On devices now</h3>
+    {% set on = reaches.get(pr.id | string, []) %}
+    {% if on %}
+      <ul class="checks" style="max-height:none">
+        {% for name in on %}<li class="mono">{{ name }}</li>{% endfor %}
+      </ul>
+      <p class="muted">These {{ on | length }} device(s) will drop this policy at their next check-in.</p>
+    {% else %}
+      <p class="muted">Not assigned to anything — archiving only files it away.</p>
+    {% endif %}
+
+    <div class="toolbar" style="margin-top:16px">
+      <form method="post" action="/profiles/{{ pr.id }}/archive" style="margin:0">
+        {{ csrf_field(csrf_token) }}
+        <button type="submit" class="danger">Archive policy</button>
+      </form>
+      <button type="button" class="ghost" data-modal-close>Cancel</button>
+    </div>
+  {% endcall %}
+{% endfor %}
+
+{% call modal('new-policy', 'New Policy') %}
+  <p class="sub">Start from nothing, or copy an existing template.</p>
+  <div class="choice-grid">
+    <a href="/policies/new">
+      <strong>Create from scratch</strong>
+      Fill in the categories this policy should manage.
+    </a>
+    <a href="#tab-templates" data-modal-close>
+      <strong>Use a template</strong>
+      {{ templates|length }} available in the Templates tab.
+    </a>
+  </div>
+{% endcall %}
 {% endblock %}

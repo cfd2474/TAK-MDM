@@ -43,14 +43,22 @@ class ORMModel(BaseModel):
 
 class DeviceCreate(BaseModel):
     serial_number: str = Field(min_length=1, max_length=64)
+    name: str | None = Field(default=None, max_length=128)
     model: str | None = None
     imei: str | None = None
     os_version: str | None = None
 
 
+class DeviceUpdate(BaseModel):
+    """Operator-editable device fields. Only `name` for now."""
+
+    name: str | None = Field(default=None, max_length=128)
+
+
 class DeviceRead(ORMModel):
     id: uuid.UUID
     serial_number: str
+    name: str | None
     model: str | None
     imei: str | None
     os_version: str | None
@@ -108,6 +116,14 @@ class PolicyCreate(BaseModel):
     description: str | None = None
     spec: dict[str, Any] = Field(default_factory=dict)
     notes: str | None = None
+    is_template: bool = False
+
+
+class PolicyClone(BaseModel):
+    """Copy a policy (or template) into a new one."""
+
+    name: str = Field(min_length=1, max_length=128)
+    as_template: bool = False
 
 
 class PolicyVersionCreate(BaseModel):
@@ -124,7 +140,45 @@ class PolicyRead(ORMModel):
     description: str | None
     created_at: datetime
     archived_at: datetime | None
+    is_template: bool
+    profile_id: uuid.UUID | None = None
+    profile_section: str | None = None
     versions: list[PolicyVersionRead]
+
+
+# --------------------------------------------------------------------------- #
+# Profiles (composite policies)
+# --------------------------------------------------------------------------- #
+
+
+class ProfileCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = None
+    #: catalog category key -> raw spec. Empty specs are skipped.
+    sections: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
+class ProfileSectionUpsert(BaseModel):
+    spec: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProfileSectionRead(ORMModel):
+    id: uuid.UUID
+    profile_section: str | None
+    policy_type: str
+    name: str
+    archived_at: datetime | None
+    versions: list[PolicyVersionRead]
+
+
+class ProfileRead(ORMModel):
+    id: uuid.UUID
+    name: str
+    description: str | None
+    created_at: datetime
+    created_by: str | None
+    archived_at: datetime | None
+    sections: list[ProfileSectionRead]
 
 
 # --------------------------------------------------------------------------- #
@@ -227,6 +281,29 @@ class EnrollmentTokenCreated(BaseModel):
     provisioning: dict[str, Any]
 
 
+class PrimaryEnrollmentTokenCreate(BaseModel):
+    """Retire whichever primary token is live and stand up a new one (Chunk 14).
+
+    No ``ttl_hours`` or ``max_uses``: the primary is meant to persist until
+    deliberately retired, and its raw secret is never handed to a device directly —
+    only 15-minute derivatives of it are, which is what makes an unbounded lifetime
+    and unlimited uses safe to fix rather than expose as settings here.
+    """
+
+    name: str = Field(min_length=1, max_length=128)
+    group_ids: list[uuid.UUID] = Field(default_factory=list)
+    tag_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class PrimaryEnrollmentQrIssued(BaseModel):
+    """A fresh 15-minute QR minted from the active primary token."""
+
+    token: EnrollmentTokenRead
+    secret: str
+    expires_at: datetime
+    provisioning: dict[str, Any]
+
+
 class ProvisioningRequest(BaseModel):
     """Re-render provisioning payloads for a secret the operator already holds."""
 
@@ -312,8 +389,43 @@ class PackageRead(ORMModel):
     label: str | None
     signature_sha256: str | None
     signature_scheme: str | None
+    store_listed: bool
     created_at: datetime
     versions: list[PackageVersionRead]
+
+
+class PackageUpdate(BaseModel):
+    label: str | None = None
+    store_listed: bool | None = None
+
+
+class AppGroupCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = None
+    package_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class AppGroupUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=128)
+    description: str | None = None
+
+
+class AppGroupMembers(BaseModel):
+    package_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class AppGroupPackageRead(ORMModel):
+    id: uuid.UUID
+    package_name: str
+    label: str | None
+
+
+class AppGroupRead(ORMModel):
+    id: uuid.UUID
+    name: str
+    description: str | None
+    created_at: datetime
+    packages: list[AppGroupPackageRead]
 
 
 class PackageUploadResult(BaseModel):
@@ -339,12 +451,58 @@ class ManagedFileRead(ORMModel):
     is_archive: bool
     artifact_sha256: str
     created_at: datetime
+    default_dest_path: str | None = None
+    default_persist: bool | None = None
+    default_extract: bool | None = None
+    default_extract_to: str | None = None
+    default_overwrite: str | None = None
+
+
+class ManagedFileUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    default_dest_path: str | None = Field(default=None, max_length=512)
+    default_persist: bool | None = None
+    default_extract: bool | None = None
+    default_extract_to: str | None = Field(default=None, max_length=512)
+    default_overwrite: Literal["always", "if_newer", "if_absent", None] = None
 
 
 class FileSelectionRead(BaseModel):
     file_id: uuid.UUID
     name: str
     applied_at: datetime
+
+
+# --------------------------------------------------------------------------- #
+# Admin: custom attributes
+# --------------------------------------------------------------------------- #
+
+
+class CustomAttributeCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    attr_type: Literal["string", "number", "boolean", "date"] = "string"
+    description: str | None = None
+
+
+class CustomAttributeRead(ORMModel):
+    id: uuid.UUID
+    name: str
+    attr_type: str
+    description: str | None
+    created_at: datetime
+
+
+class DeviceAttributeSet(BaseModel):
+    attribute_id: uuid.UUID
+    value: str = ""
+
+
+class DeviceAttributeRead(BaseModel):
+    attribute_id: uuid.UUID
+    name: str
+    attr_type: str
+    value: str
 
 
 # --------------------------------------------------------------------------- #
@@ -433,7 +591,16 @@ class CheckinRequest(BaseModel):
     apply_errors: list[str] = Field(default_factory=list)
 
     agent_version: str | None = None
+    # The numeric versionCode. The display version above cannot be compared, and
+    # the self-update gate has to decide "is the target newer than this" (W27).
+    agent_version_code: int | None = None
     os_version: str | None = None
+    # The ATAK actually installed, so the console can flag a plugin built for a
+    # different one. Absent means "no ATAK", which is not the same as "unknown" —
+    # an agent too old to report it also sends nothing, so the server only ever
+    # overwrites what it is told (W32).
+    atak_package: str | None = None
+    atak_version: str | None = None
     results: list[CommandResultReport] = Field(default_factory=list)
     # Escape hatch for an agent whose local cache is gone.
     force_full: bool = False
@@ -490,6 +657,15 @@ class CheckinResponse(BaseModel):
     state_version: int
     generated_at: datetime
     policy_changed: bool
+    # Echoed so the on-device console can show the operator-assigned name.
+    # Null when the device has not been named.
+    name: str | None = None
+    # The names of the policies currently reaching this device, so the on-device
+    # console can list them without the server sending policy content.
+    policy_names: list[str] = Field(default_factory=list)
+    # An agent build this device should install now, or null. Decided server-side
+    # per device (W27) — candidate builds reach canaries only.
+    agent_update: dict[str, Any] | None = None
     # Omitted when the device already holds the current version — the bandwidth
     # saving that makes frequent check-in viable on a metered link.
     desired_state: dict[str, Any] | None = None

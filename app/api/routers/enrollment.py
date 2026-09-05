@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -29,6 +30,7 @@ from app.api.deps import (
     get_bundle_signer,
     get_ca,
     get_db,
+    get_enrollment_qr_guard,
     get_storage,
     get_token_vault,
 )
@@ -39,17 +41,29 @@ from app.api.schemas import (
     EnrollmentTokenRead,
     EnrollRequest,
     EnrollResponse,
+    PrimaryEnrollmentQrIssued,
+    PrimaryEnrollmentTokenCreate,
     ProvisioningRequest,
 )
 from app.config import Settings, get_settings
 from app.db.models import AppPackage, EnrollmentToken, PartRole
 from app.security.admin_auth import AdminIdentity, admin_required
 from app.security.bundle import BundleSigner
+from app.security.enrollment_qr import EnrollmentQrGuard
 from app.security.token_vault import TokenVault
 from app.security.ca import CertificateAuthority, CertificateError
 from app.services import packages as package_service
 from app.services import provisioning
-from app.services.enrollment import EnrollmentError, create_token, enroll_device, revoke_token
+from app.services.enrollment import (
+    EnrollmentError,
+    create_token,
+    enroll_device,
+    get_primary_token,
+    mint_qr_secret,
+    resolve_token,
+    retire_and_create_primary,
+    revoke_token,
+)
 
 # Administrative: token lifecycle and provisioning payload rendering. Guarded by
 # Authentik in main.py.
@@ -138,6 +152,85 @@ def list_enrollment_tokens(session: Session = Depends(get_db)) -> list[Enrollmen
     )
 
 
+# --------------------------------------------------------------------------- #
+# The single persistent enrollment token (Chunk 14).
+#
+# Declared with literal path segments ("primary") ahead of any future
+# `{token_id}` route on this prefix, so a UUID-shaped lookup can never be
+# shadowed by — or shadow — these.
+# --------------------------------------------------------------------------- #
+
+
+@router.get(
+    "/enrollment-tokens/primary", response_model=EnrollmentTokenRead | None
+)
+def get_primary_enrollment_token(
+    session: Session = Depends(get_db),
+) -> EnrollmentToken | None:
+    """The active primary, or null if none has been created yet."""
+    return get_primary_token(session)
+
+
+@router.post("/enrollment-tokens/primary", response_model=EnrollmentTokenRead)
+def create_primary_enrollment_token(
+    payload: PrimaryEnrollmentTokenCreate,
+    session: Session = Depends(get_db),
+    vault: TokenVault = Depends(get_token_vault),
+    identity: AdminIdentity = Depends(admin_required),
+) -> EnrollmentToken:
+    """Retire the current primary (if any) and create its replacement.
+
+    Never returns a secret. Nothing needs one: the primary is never displayed or
+    typed in by hand, only 15-minute QR derivatives of it are —
+    `POST /enrollment-tokens/primary/qr`.
+    """
+    token = retire_and_create_primary(
+        session,
+        name=payload.name,
+        group_ids=payload.group_ids,
+        tag_ids=payload.tag_ids,
+        created_by=None if identity.is_anonymous else identity.username,
+        vault=vault,
+    )
+    session.commit()
+    return token
+
+
+@router.post("/enrollment-tokens/primary/qr", response_model=PrimaryEnrollmentQrIssued)
+def issue_primary_enrollment_qr(
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    storage: ArtifactStorage = Depends(get_storage),
+    guard: EnrollmentQrGuard = Depends(get_enrollment_qr_guard),
+) -> PrimaryEnrollmentQrIssued:
+    """Mint a fresh, time-boxed secret and its provisioning payloads.
+
+    No database row is created — see `app/security/enrollment_qr.py`. This can be
+    called as often as an operator wants without the enrollment-token table
+    growing; only the primary itself, created once per retire-and-replace, is
+    ever a row.
+    """
+    try:
+        primary, secret = mint_qr_secret(session, guard)
+    except EnrollmentError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+    return PrimaryEnrollmentQrIssued(
+        token=EnrollmentTokenRead.model_validate(primary),
+        secret=secret,
+        expires_at=datetime.now(timezone.utc)
+        + timedelta(seconds=settings.enrollment_qr_ttl_seconds),
+        provisioning=_provisioning_bundle(
+            settings,
+            secret,
+            wifi=None,
+            declared_receivers=package_service.declared_receivers(
+                session, storage, settings.agent_package_name
+            ),
+        ),
+    )
+
+
 @router.post("/enrollment-tokens/{token_id}/revoke", response_model=EnrollmentTokenRead)
 def revoke_enrollment_token(
     token_id: uuid.UUID, session: Session = Depends(get_db)
@@ -153,16 +246,17 @@ def render_provisioning_payloads(
     payload: ProvisioningRequest,
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
+    guard: EnrollmentQrGuard = Depends(get_enrollment_qr_guard),
 ) -> dict[str, Any]:
     """Re-render payloads for a secret the operator still holds.
 
     The secret is verified against a live token so this cannot be used to mint a
-    provisioning payload for an arbitrary string.
+    provisioning payload for an arbitrary string. Accepts a QR-derived secret as
+    well as an ordinary one, so adding Wi-Fi to an already-generated QR does not
+    need a second one minted.
     """
-    from app.services.enrollment import resolve_token
-
     try:
-        resolve_token(session, payload.secret)
+        resolve_token(session, payload.secret, qr_guard=guard)
     except EnrollmentError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
@@ -216,8 +310,14 @@ def enroll(
     settings: Settings = Depends(get_settings),
     ca: CertificateAuthority = Depends(get_ca),
     signer: BundleSigner = Depends(get_bundle_signer),
+    qr_guard: EnrollmentQrGuard = Depends(get_enrollment_qr_guard),
 ) -> EnrollResponse:
-    """Device-facing. The enrollment token is the credential; no mTLS yet."""
+    """Device-facing. The enrollment token is the credential; no mTLS yet.
+
+    ``payload.token`` may be an ordinary token's secret or a 15-minute QR-derived
+    one (Chunk 14) — `enroll_device` tries the latter first and falls through to
+    the former, so this endpoint's contract is unchanged for every existing caller.
+    """
     try:
         result = enroll_device(
             session,
@@ -231,6 +331,7 @@ def enroll(
             os_version=payload.os_version,
             agent_version=payload.agent_version,
             identifiers=[i.model_dump() for i in payload.identifiers],
+            qr_guard=qr_guard,
         )
     except EnrollmentError as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc)) from exc

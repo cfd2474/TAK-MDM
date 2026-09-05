@@ -633,3 +633,101 @@ def test_rollback_does_not_wake_devices(client: TestClient, enrolled, session_fa
         session.rollback()
 
         assert "takmdm_wake_devices" not in session.info
+
+
+# --------------------------------------------------------------------------- #
+# Force check-in from the console (W23)
+# --------------------------------------------------------------------------- #
+
+
+def _park(client, url, headers, out):
+    out["body"] = client.get(url, headers=headers).json()
+
+
+def test_force_checkin_wakes_a_parked_device(client: TestClient, enrolled, mtls_headers):
+    device = enrolled()
+    headers = mtls_headers(device["certificate_pem"])
+    settled = client.post("/api/v1/device/checkin", json={}, headers=headers).json()
+    did = uuid.UUID(device["device_id"])
+
+    captured: dict = {}
+    waiter = threading.Thread(
+        target=_park,
+        args=(client, f"/api/v1/device/wait?state_version={settled['state_version']}&timeout=30",
+              headers, captured),
+        daemon=True,
+    )
+    waiter.start()
+    deadline = time.monotonic() + 5
+    while notifications.bus.waiter_count(did) == 0:
+        if time.monotonic() > deadline:
+            pytest.fail("waiter never registered")
+        time.sleep(0.02)
+
+    started = time.monotonic()
+    body = client.post(f"/api/v1/devices/{device['device_id']}/checkin").json()
+    waiter.join(timeout=15)
+
+    assert body["woken"] is True
+    assert not waiter.is_alive()
+    assert captured["body"]["should_checkin"] is True
+    assert time.monotonic() - started < 5
+
+
+def test_force_checkin_of_an_offline_device_is_a_noop(client: TestClient, enrolled):
+    device = enrolled()
+    body = client.post(f"/api/v1/devices/{device['device_id']}/checkin").json()
+    assert body["woken"] is False
+
+
+def test_force_checkin_button_and_banner(client: TestClient, enrolled):
+    device = enrolled()
+    page = client.get(f"/devices/{device['device_id']}").text
+    assert f'action="/devices/{device["device_id"]}/checkin"' in page
+
+    r = client.post(f"/devices/{device['device_id']}/checkin", follow_redirects=False)
+    assert r.headers["location"] == f"/devices/{device['device_id']}?checkin=queued"
+
+
+def test_a_lost_doorbell_ring_still_releases_the_wait(
+    client: TestClient, enrolled, mtls_headers, assign, monkeypatch
+):
+    """The ring can be lost in the gap between check-ins. The endpoint sub-parks
+    and re-checks, so a lost ring costs one slice, not the whole timeout."""
+    device = enrolled()
+    headers = mtls_headers(device["certificate_pem"])
+    settled = client.post("/api/v1/device/checkin", json={}, headers=headers).json()
+    policy = client.post(
+        "/api/v1/policies",
+        json={"name": "PW L", "policy_type": "PASSWORD", "spec": {"min_length": 9}},
+    ).json()
+    did = uuid.UUID(device["device_id"])
+
+    # Simulate a lost ring: the notification never reaches the waiter.
+    monkeypatch.setattr(notifications.bus, "notify", lambda *_a, **_k: None)
+
+    captured: dict = {}
+    waiter = threading.Thread(
+        target=_park,
+        args=(client, f"/api/v1/device/wait?state_version={settled['state_version']}&timeout=30",
+              headers, captured),
+        daemon=True,
+    )
+    waiter.start()
+    deadline = time.monotonic() + 5
+    while notifications.bus.waiter_count(did) == 0:
+        if time.monotonic() > deadline:
+            pytest.fail("waiter never registered")
+        time.sleep(0.02)
+
+    started = time.monotonic()
+    client.put(
+        f"/api/v1/policies/{policy['id']}/targets",
+        json={"device_ids": [device["device_id"]], "rank": 5},
+    )
+    waiter.join(timeout=20)
+    elapsed = time.monotonic() - started
+
+    assert not waiter.is_alive(), "the wait never recovered from the lost ring"
+    assert captured["body"]["should_checkin"] is True
+    assert elapsed < 15, f"recovery took {elapsed:.1f}s — longer than a park slice"

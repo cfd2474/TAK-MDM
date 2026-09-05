@@ -221,6 +221,36 @@ def test_device_reports_the_version_it_applied(client: TestClient, enrolled, mtl
     assert device["compliance_status"] == "compliant"
 
 
+def test_checkin_echoes_the_device_name(client: TestClient, enrolled, mtls_headers):
+    """The on-device console (W19) shows the operator-assigned name, so the
+    check-in response carries it — null until the device is named."""
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+
+    assert checkin(client, headers)["name"] is None
+
+    client.patch(f"/api/v1/devices/{result['device_id']}", json={"name": "Ops Tablet 3"})
+
+    assert checkin(client, headers)["name"] == "Ops Tablet 3"
+
+
+def test_checkin_lists_the_policy_names_reaching_the_device(
+    client: TestClient, enrolled, mtls_headers
+):
+    """The DPC app's Policies tab (W24) shows names, not content — so the check-in
+    carries them (the desired-state bundle deliberately has no policy names)."""
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    assert checkin(client, headers)["policy_names"] == []
+
+    a = make_policy(client, "Baseline Passcode", 8)
+    b = make_policy(client, "Field Hardening", 12)
+    assign_to_device(client, a["id"], result["device_id"])
+    assign_to_device(client, b["id"], result["device_id"])
+
+    assert checkin(client, headers)["policy_names"] == ["Baseline Passcode", "Field Hardening"]
+
+
 def test_apply_errors_mark_the_device_degraded(client: TestClient, enrolled, mtls_headers):
     result = enrolled()
     headers = mtls_headers(result["certificate_pem"])

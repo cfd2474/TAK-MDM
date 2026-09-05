@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import fetch_or_404, get_db, get_storage, require_device
-from app.api.schemas import FileSelectionRead, ManagedFileRead
+from app.api.schemas import FileSelectionRead, ManagedFileRead, ManagedFileUpdate
 from app.artifacts.storage import ArtifactStorage
 from app.config import Settings, get_settings
 from app.db.models import Device, ManagedFile
@@ -68,12 +68,35 @@ def upload_file(
 
 @router.get("", response_model=list[ManagedFileRead])
 def list_files(session: Session = Depends(get_db)) -> list[ManagedFile]:
-    return list(session.scalars(select(ManagedFile).order_by(ManagedFile.name)))
+    # The library only. A policy-editor upload (W46) is reachable by id but is
+    # not catalogued content.
+    return list(
+        session.scalars(
+            select(ManagedFile).where(ManagedFile.in_library).order_by(ManagedFile.name)
+        )
+    )
 
 
 @router.get("/{file_id}", response_model=ManagedFileRead)
 def get_file(file_id: uuid.UUID, session: Session = Depends(get_db)) -> ManagedFile:
     return fetch_or_404(session, ManagedFile, file_id, "file")
+
+
+@router.patch("/{file_id}", response_model=ManagedFileRead)
+def update_file(
+    file_id: uuid.UUID,
+    payload: ManagedFileUpdate,
+    session: Session = Depends(get_db),
+) -> ManagedFile:
+    """Edit a file's name/description and its suggested deployment defaults. The
+    file's bytes and detected archive status are not editable."""
+    managed: ManagedFile = fetch_or_404(session, ManagedFile, file_id, "file")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        if field == "name" and not value:
+            continue
+        setattr(managed, field, value)
+    session.commit()
+    return managed
 
 
 @router.delete(

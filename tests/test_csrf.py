@@ -72,8 +72,8 @@ def test_a_form_post_without_a_token_is_refused(guarded: TestClient):
     load_console(guarded)  # the browser now holds the cookie
 
     response = guarded.post(
-        "/enrollment",
-        data={"name": "forged", "ttl_hours": "24"},
+        "/enrollment/primary",
+        data={"name": "forged"},
         headers={**ADMIN, "origin": ORIGIN},
     )
 
@@ -86,8 +86,8 @@ def test_a_cross_site_origin_is_refused(guarded: TestClient):
     token, _ = make_token(guarded)
 
     response = guarded.post(
-        "/enrollment",
-        data={"name": "evil", "ttl_hours": "24", "csrf_token": token},
+        "/enrollment/primary",
+        data={"name": "evil", "csrf_token": token},
         headers={**ADMIN, "origin": "https://attacker.example"},
     )
 
@@ -98,13 +98,15 @@ def test_a_legitimate_submission_succeeds(guarded: TestClient):
     token, headers = make_token(guarded)
 
     response = guarded.post(
-        "/enrollment",
-        data={"name": "genuine", "ttl_hours": "24", "csrf_token": token},
+        "/enrollment/primary",
+        data={"name": "genuine", "csrf_token": token},
         headers=headers,
         follow_redirects=False,
     )
 
-    assert response.status_code in (302, 303, 307)
+    # create_primary renders the new token's QR directly rather than
+    # redirecting — there is no per-token URL to redirect to any more.
+    assert response.status_code == 200
 
 
 # --------------------------------------------------------------------------- #
@@ -116,8 +118,8 @@ def test_a_forged_token_is_refused(guarded: TestClient):
     load_console(guarded)
 
     response = guarded.post(
-        "/enrollment",
-        data={"name": "x", "ttl_hours": "24", "csrf_token": "made.123456.up"},
+        "/enrollment/primary",
+        data={"name": "x", "csrf_token": "made.123456.up"},
         headers={**ADMIN, "origin": ORIGIN},
     )
 
@@ -128,8 +130,8 @@ def test_another_administrators_token_is_refused(guarded: TestClient):
     stolen = load_console(guarded)
 
     response = guarded.post(
-        "/enrollment",
-        data={"name": "x", "ttl_hours": "24", "csrf_token": stolen},
+        "/enrollment/primary",
+        data={"name": "x", "csrf_token": stolen},
         headers={**OTHER_ADMIN, "origin": ORIGIN},
     )
 
@@ -143,8 +145,8 @@ def test_the_token_must_match_its_cookie(guarded: TestClient):
     guarded.cookies.set(csrf.COOKIE_NAME, "a-different-value")
 
     response = guarded.post(
-        "/enrollment",
-        data={"name": "x", "ttl_hours": "24", "csrf_token": token},
+        "/enrollment/primary",
+        data={"name": "x", "csrf_token": token},
         headers=headers,
     )
 
@@ -185,8 +187,8 @@ def test_a_script_sending_no_origin_still_works(guarded: TestClient):
     token = load_console(guarded)
 
     response = guarded.post(
-        "/enrollment",
-        data={"name": "from-a-script", "ttl_hours": "24", "csrf_token": token},
+        "/enrollment/primary",
+        data={"name": "from-a-script", "csrf_token": token},
         headers=ADMIN,  # no Origin, as curl sends none
         follow_redirects=False,
     )
@@ -194,7 +196,7 @@ def test_a_script_sending_no_origin_still_works(guarded: TestClient):
     # Browsers always send Origin on the cross-origin requests this defends
     # against. Refusing requests without one would break every deployment script
     # while closing no hole.
-    assert response.status_code in (302, 303, 307)
+    assert response.status_code == 200
 
 
 def test_protection_is_inert_when_authentication_is_disabled(client: TestClient):
@@ -202,10 +204,10 @@ def test_protection_is_inert_when_authentication_is_disabled(client: TestClient)
     # simply be made directly. Enforcing here would cost every local script a
     # round trip and protect nothing.
     response = client.post(
-        "/enrollment", data={"name": "local-dev", "ttl_hours": "24"},
+        "/enrollment/primary", data={"name": "local-dev"},
         follow_redirects=False,
     )
-    assert response.status_code in (302, 303, 307)
+    assert response.status_code == 200
 
 
 def test_the_device_surface_is_untouched(guarded: TestClient, enrolled, mtls_headers):

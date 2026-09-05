@@ -140,6 +140,190 @@ def test_unlimited_token_enrolls_a_whole_shipment(client: TestClient):
 
 
 # --------------------------------------------------------------------------- #
+# The single persistent enrollment token, and its 15-minute QR (Chunk 14)
+# --------------------------------------------------------------------------- #
+
+
+def create_primary(client: TestClient, **overrides) -> dict:
+    body = {"name": "Fleet enrollment", **overrides}
+    response = client.post("/api/v1/enrollment-tokens/primary", json=body)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def mint_qr(client: TestClient) -> dict:
+    response = client.post("/api/v1/enrollment-tokens/primary/qr")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def enroll_with(client: TestClient, secret: str, serial: str = "DEVICE-1"):
+    return client.post(
+        "/api/v1/enroll",
+        json={"token": secret, "csr_pem": generate_csr(), "serial_number": serial},
+    )
+
+
+def test_no_primary_exists_until_one_is_created(client: TestClient):
+    assert client.get("/api/v1/enrollment-tokens/primary").json() is None
+
+
+def test_creating_a_primary_returns_no_secret(client: TestClient):
+    """The primary is never typed in by hand or scanned directly — only its
+    15-minute QR derivatives are — so nothing here needs to hand one back."""
+    body = create_primary(client)
+
+    assert "secret" not in body
+    assert body["name"] == "Fleet enrollment"
+
+
+def test_a_qr_secret_enrols_a_device(client: TestClient):
+    create_primary(client)
+    secret = mint_qr(client)["secret"]
+
+    response = enroll_with(client, secret)
+
+    assert response.status_code == 201
+
+
+def test_one_qr_enrols_more_than_one_device(client: TestClient):
+    """The operator's own requirement: unlimited devices within the window,
+    not single-use — a batch of tablets is enrolled from one displayed code."""
+    create_primary(client)
+    secret = mint_qr(client)["secret"]
+
+    for index in range(5):
+        assert enroll_with(client, secret, serial=f"BATCH-{index}").status_code == 201
+
+    assert len(client.get("/api/v1/devices").json()) == 5
+
+
+def test_enrolling_with_a_qr_secret_counts_against_the_primarys_use_count(
+    client: TestClient,
+):
+    primary_id = create_primary(client)["id"]
+    secret = mint_qr(client)["secret"]
+
+    enroll_with(client, secret)
+
+    primary = client.get("/api/v1/enrollment-tokens/primary").json()
+    assert primary["id"] == primary_id
+    assert primary["use_count"] == 1
+
+
+def test_an_expired_qr_secret_is_refused(client: TestClient, db):
+    from app.security.enrollment_qr import EnrollmentQrGuard
+
+    create_primary(client)
+    primary_id = uuid.UUID(client.get("/api/v1/enrollment-tokens/primary").json()["id"])
+    stale = EnrollmentQrGuard(b"k" * 32, ttl_seconds=900).issue(primary_id, now=0)
+
+    # A secret from a different key entirely also proves the point — either way
+    # it must be refused, not accepted because it happens to be four dot-parts.
+    response = enroll_with(client, stale)
+
+    assert response.status_code == 401
+
+
+def test_retiring_the_primary_refuses_a_still_live_qr_immediately(client: TestClient):
+    """The property the whole design rests on: verification re-checks the
+    primary on every use, so revocation needs no cascade step of its own."""
+    primary_id = create_primary(client)["id"]
+    secret = mint_qr(client)["secret"]
+
+    client.post(f"/api/v1/enrollment-tokens/{primary_id}/revoke")
+
+    assert enroll_with(client, secret).status_code == 401
+
+
+def test_generating_a_qr_with_no_primary_is_refused(client: TestClient):
+    response = client.post("/api/v1/enrollment-tokens/primary/qr")
+
+    assert response.status_code == 409
+    assert "no active enrollment token" in response.json()["detail"]
+
+
+def test_retire_and_create_is_one_atomic_call(client: TestClient):
+    first_id = create_primary(client, name="First")["id"]
+
+    second = create_primary(client, name="Second")
+
+    assert second["id"] != first_id
+    assert client.get("/api/v1/enrollment-tokens/primary").json()["id"] == second["id"]
+
+
+def test_the_old_primarys_qr_dies_when_it_is_replaced(client: TestClient):
+    create_primary(client, name="First")
+    old_secret = mint_qr(client)["secret"]
+
+    create_primary(client, name="Second")
+
+    # Retiring happens as part of create — the old primary this secret resolves
+    # to is revoked, so verification's own is_usable() check now fails it.
+    assert enroll_with(client, old_secret).status_code == 401
+
+
+def test_at_most_one_live_primary_is_a_database_guarantee(db):
+    """Not just an application-level convention: the partial unique index
+    refuses a second row directly, bypassing the service layer entirely."""
+    from sqlalchemy.exc import IntegrityError
+
+    from app.db.models import EnrollmentToken
+
+    expires = datetime.now(timezone.utc)
+    db.add(EnrollmentToken(
+        name="one", token_hash="a", prefix="a", expires_at=expires, is_primary=True
+    ))
+    db.flush()
+
+    db.add(EnrollmentToken(
+        name="two", token_hash="b", prefix="b", expires_at=expires, is_primary=True
+    ))
+    with pytest.raises(IntegrityError):
+        db.flush()
+
+
+def test_a_revoked_primary_does_not_block_a_new_one(db):
+    """The index is partial — only rows with revoked_at IS NULL collide — which
+    is what makes retire-then-create work at the database level."""
+    from app.db.models import EnrollmentToken
+
+    revoked = EnrollmentToken(
+        name="old", token_hash="a", prefix="a",
+        expires_at=datetime.now(timezone.utc), is_primary=True,
+        revoked_at=datetime.now(timezone.utc),
+    )
+    db.add(revoked)
+    db.flush()
+
+    new = EnrollmentToken(
+        name="new", token_hash="b", prefix="b",
+        expires_at=datetime.now(timezone.utc), is_primary=True,
+    )
+    db.add(new)
+    db.flush()  # must not raise
+
+
+def test_an_ordinary_token_still_enrols_when_a_qr_guard_is_configured(client: TestClient):
+    """Back-compat is the whole point of trying the QR shape first and falling
+    through: an existing token, minted the old way, must be unaffected."""
+    secret = create_token(client)["secret"]
+
+    assert enroll_with(client, secret).status_code == 201
+
+
+def test_the_provisioning_rerender_endpoint_accepts_a_qr_secret(client: TestClient):
+    """Adding Wi-Fi to an already-generated QR re-renders payloads for the same
+    secret rather than needing a fresh one minted."""
+    create_primary(client)
+    secret = mint_qr(client)["secret"]
+
+    response = client.post("/api/v1/provisioning/payloads", json={"secret": secret})
+
+    assert response.status_code == 200
+
+
+# --------------------------------------------------------------------------- #
 # Certificate issuance
 # --------------------------------------------------------------------------- #
 

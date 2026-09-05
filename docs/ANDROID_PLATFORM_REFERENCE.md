@@ -19,6 +19,13 @@ Two kinds of statement appear, and they are labelled:
 Where the two disagree, the observation wins and the disagreement is called out.
 One already exists: see [Signature checksum](#signature-checksum).
 
+⚠️ **The old package name `org.takmdm.agent` still appears below, on purpose.** The
+DPC was renamed to `com.taksolutions.atlasmdm` (W34). Instructions and current
+values were updated; **captured log output and `dumpsys` excerpts were not**, because
+they record what a device actually printed at the time. Rewriting them would make
+the evidence say something that never happened. Any `org.takmdm.*` remaining here is
+history, not a stale value.
+
 **Why this file exists.** Three factory resets were spent on a failure whose cause
 is stated plainly in Android's documentation. Reasoning from symptoms lost to
 reading the spec, twice in one session. Platform contracts fail vaguely on purpose
@@ -57,7 +64,7 @@ The ADB form, which is what to reach for when provisioning misbehaves:
 
 ```
 adb install -r app-debug.apk
-adb shell dpm set-device-owner org.takmdm.agent/.admin.MdmDeviceAdminReceiver
+adb shell dpm set-device-owner com.taksolutions.atlasmdm/.admin.MdmDeviceAdminReceiver
 ```
 
 ---
@@ -141,12 +148,12 @@ It is the component named in `PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME`.
 ### Component name expansion
 
 ✅ **A leading dot expands against the package root, not the declaring class's
-package.** `org.takmdm.agent/.MdmDeviceAdminReceiver` means
-`org.takmdm.agent.MdmDeviceAdminReceiver`. Our receiver is in the `.admin`
+package.** `com.taksolutions.atlasmdm/.MdmDeviceAdminReceiver` means
+`com.taksolutions.atlasmdm.MdmDeviceAdminReceiver`. Our receiver is in the `.admin`
 sub-package, so the correct value is:
 
 ```
-org.takmdm.agent/.admin.MdmDeviceAdminReceiver
+com.taksolutions.atlasmdm/.admin.MdmDeviceAdminReceiver
 ```
 
 Getting this wrong installs the APK and then fails, indistinguishably from every
@@ -260,6 +267,148 @@ about background execution limits.
 management on every device in the fleet, and the symptom at the server is
 indistinguishable from a device that lost coverage.
 
+### ✅ A Device Owner can update **itself** through `PackageInstaller`
+
+Verified on `SM-X520` (2026-09-02): the agent was added to a policy's
+`required_apps` and pushed its own newer build. The whole sequence:
+
+```
+13:01:34.490  Reconciler: upgrading org.takmdm.agent from versionCode 37 to 38
+13:02:10.620  base part verified (23 303 571 bytes)          ← 36 s download
+13:02:10.623  AppInstaller: session opened for org.takmdm.agent
+              ← process killed at commit; no further logs from that PID
+13:02:15.047  BootReceiver: restarting after MY_PACKAGE_REPLACED   ← new PID, +4.4 s
+13:02:15.403  org.takmdm.agent already at versionCode 38 (want 38); skipping
+13:02:15.474  sync: state=53 applied=53 errors=1               ← the 1 was unrelated
+```
+
+Four facts worth keeping:
+
+* **The commit survives the caller's death.** Android kills the installing process
+  at commit, and the install still completes.
+* **The install-result callback never arrives** — the process that registered it is
+  gone. So the agent records **no error** for its own upgrade; silence is success.
+  Confirm by comparing `versionCode` after restart, never by waiting on the result.
+* **`MY_PACKAGE_REPLACED` brings it back in ~4.4 s.** That is the whole management
+  outage.
+* **No update loop.** After restart the reconciler sees itself already at the
+  wanted version and skips.
+
+⚠️ **There is no rollback.** Android refuses a downgrade, so a bad agent build
+cannot be reverted by re-pushing the old version — only by shipping a *new* build
+with a higher `versionCode` containing the old code. And a build that crashes on
+start takes remote management with it. Nothing in the platform will stop this;
+the gate has to be operational.
+
+### ✅ The same sequence through the dedicated agent-update channel
+
+Re-verified on `SM-X520` (2026-09-02) with W27's `agent_update` offer rather than
+a policy's `required_apps`. v40 → v41, no ADB:
+
+```
+14:31:19.564  Reconciler: agent update: replacing 40 with 41 (0.10.1);
+                          this process is about to be killed        ← pid 18431
+14:31:19.570  AppInstaller: session 124265146 opened (1 part)
+14:31:20.057  VerificationCheck: Verification finished for org.takmdm.agent.
+                          Result: Fail(reason=DEVELOPER_FAULT)      ← see below
+14:31:22.783  Finsky VerifyApps: chooseScanResult returning verdict 0
+14:31:23.149  ActivityManager: Start proc 19100 … BootReceiver      ← new PID, +3.6 s
+14:31:23.556  ActivityManager: Background started FGS … code:DEVICE_OWNER
+```
+
+Server side: the device reported `agent_version_code=41`, `COMPLIANT`, with no
+`compliance_detail`. Exactly **one** `agent update: replacing` line exists in the
+buffer — the offer stopped on its own once the device reported the new code, with
+no acknowledgement protocol.
+
+⚠️ **`VerificationCheck … Result: Fail(reason=DEVELOPER_FAULT)` is a red herring.**
+It appears mid-install and the install proceeds anyway; Play Protect's own verdict
+two seconds later is `0` (allow). It reflects the debug signing key on a sideloaded
+build, not a rejection. Do not treat this line as a failure — the only evidence
+that matters is the `versionCode` on the next check-in.
+
+⚠️ **A device on a pre-`agent_update` build can never be updated over the air.**
+It reports no `agent_version_code`, so the gate refuses it by design. Reaching the
+channel costs exactly one manual install per device, which is a one-time
+migration cost and not a recurring one.
+
+### ⚠️ The signing certificate is a one-way commitment for the life of a device
+
+📖 Android refuses to install an update whose signing certificate differs from the
+installed app's. There is no override, and Device Owner privilege does not help —
+this is the check that stops an attacker replacing a privileged app.
+
+Verified on this project (2026-09-02) at both ends:
+
+* **The APK.** `apksigner verify --print-certs -v` on the debug and release builds
+  gives different certificate digests, `8794055894dbeb2e…` (debug keystore) and
+  `2094bccc054c681f…` (`CN=Michael Leckliter`, RSA-2048, v2 scheme).
+* **The server refuses the upload**, before any device is involved:
+
+  > signing certificate for org.takmdm.agent does not match the stored one
+  > (have 8794055894dbeb2e…, got 2094bccc054c681f…). Android would reject this
+  > update on device; upload it under a different package or remove the existing
+  > package first.
+
+Two consequences worth internalising before choosing a key:
+
+* **Switching keys strands every device already running the old one.** The agent
+  is Device Owner, so it cannot simply be uninstalled and replaced — clearing
+  Device Owner requires a **factory reset**. Migration cost is a reset and
+  re-enrol per device, not a re-install.
+* **`EXTRA_PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM` changes with the key.**
+  It is `base64url(SHA-256(signing certificate DER))`, unpadded — the same bytes
+  `apksigner` prints as "certificate SHA-256 digest". Confirmed by deriving the
+  deployed debug value from the debug APK and getting a byte-exact match:
+
+  ```
+  debug    8794055894dbeb2e…  →  h5QFWJTb6y5MX0kxuTiEeP7-wzHaSizE5zgAT-PzWA4
+  release  2094bccc054c681f…  →  IJS8zAVMaB9G2MgSN4wHZXzzOd19ToC1RgJrd6_yxkQ
+  ```
+
+  A provisioning QR carrying the wrong checksum fails during setup with a generic
+  message, so this must be changed in the same breath as the signing key.
+
+---
+
+### ❌ A Device Owner cannot configure the mobile hotspot
+
+Checked against the Android 36 SDK stub and probed on `SM-X520` (2026-09-03),
+because "set a default hotspot SSID and password" is an entirely reasonable thing
+to expect an MDM to do.
+
+**It is not available.** Three independent confirmations:
+
+* **`WifiManager.setSoftApConfiguration` is not in the public SDK.** `javap` on
+  `android.jar` shows only `startLocalOnlyHotspotWithConfiguration` — a temporary,
+  app-scoped hotspot that shares no internet connection and dies with the caller —
+  and `validateSoftApConfiguration`, which validates without setting. The real
+  setter needs `NETWORK_SETTINGS` (signature|privileged).
+* **`DevicePolicyManager` has nothing for it.** Its only Wi-Fi surface is the
+  provisioning extras (`EXTRA_PROVISIONING_WIFI_*`, for joining a network during
+  setup) and `getMinimumRequiredWifiSecurityLevel`. No tethering or SoftAP API at
+  any level.
+* **It is not a writable setting either.** `settings list global` on the device
+  shows only `tethered_config_state`; the SSID, passphrase and band are held in
+  the Wi-Fi stack's own store, not in `Settings.Global`, so the Device Owner's
+  three-key `setGlobalSetting` allowance cannot reach them.
+
+**What a Device Owner *can* do is allow or forbid it**, via user restrictions:
+
+| Restriction | Effect |
+|---|---|
+| `DISALLOW_WIFI_TETHERING` | No Wi-Fi hotspot at all (API 33+) |
+| `DISALLOW_CONFIG_TETHERING` | The user cannot change tethering settings |
+| `DISALLOW_SHARING_ADMIN_CONFIGURED_WIFI` | The user cannot share an admin-provisioned network |
+| `DISALLOW_CHANGE_WIFI_STATE`, `DISALLOW_CONFIG_WIFI`, `DISALLOW_WIFI_DIRECT`, `DISALLOW_ADD_WIFI_CONFIG`, `DISALLOW_NETWORK_RESET` | Adjacent Wi-Fi controls |
+
+⚠️ So "set the hotspot SSID/password/band/timeout" is **not a policy this project
+can implement on AOSP**. It belongs with VPN profiles and the all-files app-op in
+the set of things that need a vendor layer. Samsung's `WifiPolicy` is the plausible
+home — ⚠️ **unverified**, and not to be promised until the Knox SDK is in hand
+(three Knox capability claims in this project have already turned out to be wrong
+when checked).
+
 ---
 
 ## 5a. Removing and suppressing apps
@@ -308,6 +457,36 @@ must pass **`MATCH_UNINSTALLED_PACKAGES`**, or the agent cannot see the app it h
 
 Observed: Gmail stayed hidden after being taken off the blocklist, with nothing
 logged, because the loop that would have unhidden it could not find it.
+
+### ✅ `setPackagesSuspended` enforces the allowlist (`allowed_packages`)
+
+📖 `DevicePolicyManager.setPackagesSuspended(admin, String[], boolean)` (API 24)
+suspends packages for the user — a suspended app shows a "paused" dialog on tap,
+its notifications are hidden, and it cannot run. Reversible. It returns the
+package names it **refused**: the DPC itself, the active launcher, the package
+installer / uninstaller / verifier, the default dialer and the permission
+controller are all protected regardless of what is asked.
+
+**What the agent does (W16):** `allowed_packages` ("only these may run") suspends
+every **non-system user app** not on the list. System apps (launcher, dialer,
+settings) are out of scope — the blocklist is for those. Required apps and the
+agent are implicitly allowed. Suspensions are tracked in
+`AgentConfig.suspendedByPolicy` (mirrors `hiddenByPolicy`) and released when the
+allowlist changes or goes away. An **empty** resolved allowlist (an INTERSECT of
+two policies that do not overlap, R4) is reported and **ignored** — not read as
+"suspend everything".
+
+✅ **Verified on `SM-X520`, full cycle:**
+```
+allowlist excludes org.takmdm.testapp
+  → Reconciler: allowlist: suspending / dumpsys → testapp suspended=true
+  → agent, ATAK, GoodNotes, the launcher and clouddpc all suspended=false
+allowlist removed
+  → Reconciler: allowlist: un-suspending org.takmdm.testapp / testapp suspended=false
+```
+Also confirmed incidentally: a **required** app is not suspended even when absent
+from `allowed_packages` — `testapp` stayed usable until it was dropped from
+`required_apps`, then the allowlist caught it.
 
 ---
 
@@ -392,6 +571,61 @@ against the destination root.
 ⚠️ Archives built on macOS carry `__MACOSX` resource forks and `.DS_Store`, which
 extract alongside the data unless filtered. Most ATAK data packages are zipped on a
 Mac, so this is the normal case rather than the exception.
+
+### ❌ Verified: the agent cannot write another app's `Android/obb/` (R2)
+
+The [Manage all files](https://developer.android.com/training/data-storage/manage-all-files)
+doc says `MANAGE_EXTERNAL_STORAGE` does **not** grant access to "`/Android/data/`,
+`/sdcard/Android`, and most subdirectories of `/sdcard/Android`" — without naming
+`Android/obb` either way, and it has flip-flopped across releases. A `probe_obb`
+debug action (`DebugConfigReceiver`) settled it on `SM-X520`:
+
+```
+I DebugConfigReceiver: obb probe /sdcard/Android/obb/org.takmdm.testapp ->
+  FAILED: FileNotFoundException: .../atlas_obb_probe.txt: open failed: EACCES (Permission denied)
+```
+
+The agent had all-files access — the same grant that makes `/sdcard/atak` writable
+(✅ above). Writing **another app's** `Android/obb/<pkg>/` is still blocked. There
+is no all-files route around it; the remaining routes are Knox or root, neither of
+which a normally-installed Device Owner has.
+
+**Consequence for XAPKs:** an XAPK unpacks server-side into base + splits + OBB,
+but the agent can only place the APK parts. It installs, then the app fails at
+runtime with its expansion assets missing. `Reconciler.reconcileApps` raises an
+apply_error naming the package rather than skipping the OBB silently, and the Apps
+page flags a package that carries one.
+
+✅ **The apply_error path is verified on `SM-X520`** (2026-09-02): an XAPK carrying
+an OBB was assigned, the agent logged `errors=2` and raised *"…needs an OBB
+expansion file, which a Device Owner cannot place on this device…"*, and the
+device went **DEGRADED** with that text in `compliance_detail`. ⚠️ That test used a
+**synthetic** XAPK from `tests/apk_fixtures.py::build_xapk(with_obb=True)`. It
+proves the error path, not that any real package needs it — see below.
+
+⚠️ **No package this project deploys actually carries an OBB** (checked
+2026-09-02, by reading the files rather than assuming):
+
+* **ATAK** (`ATAK-5.8.0.4-174b425-civSmall-release.apk`) is one self-contained
+  APK — 112 MB, 4 637 entries, **no** OBB and no trace of Google's expansion-file
+  downloader library. Its bulk is native geospatial code: `lib/` 128 MB
+  (`libgdal.so` 35 MB, `libtakengine.so` 25 MB, `libspatialite.so` 18 MB),
+  `assets/` 38 MB, `res/` 17 MB, three dex files 22 MB. Native libraries *must*
+  live inside the APK, so an OBB was never available to them. The map and imagery
+  data that would be expansion content in a consumer app is pushed at runtime into
+  `/sdcard/atak/…` instead — the path a Device Owner **can** write (✅ R1 above).
+* **`butterfly-iq-2.49.0.xapk`** has no OBB either. It is base + splits, three of
+  them large *feature* splits (`dltools` 112 MB, `quicktips` 76 MB, `firmware`
+  45 MB). Splits install normally.
+
+So R2 is a real platform limitation with, so far, **no known package that
+triggers it**. Failing loudly stays correct — an app installing "successfully"
+and then failing at runtime on missing assets looks like an app bug, not an MDM
+one — but this is not blocking any current deployment, and it is a weak argument
+for Knox on its own.
+
+Re-run `probe_obb` on the Qualcomm (`SM-G736U1`) and MediaTek (`SM-X828U`) devices
+before assuming the underlying EACCES holds there (R5).
 
 ---
 
@@ -556,9 +790,337 @@ compiled**.
 | `clearApplicationUserData(ComponentName, String, Executor, listener)` | **31** | Asynchronous — await the callback. Returns `false` for a package that is not installed, which is exactly the case an operator is checking. |
 | `WIPE_EXTERNAL_STORAGE` | 14 | Separate act on Samsung devices with a card. |
 | `WIPE_RESET_PROTECTION_DATA` | 26 | Also clears factory reset protection. |
+| `setPasswordHistoryLength(admin, n)` | 8 | ⚠️ **Not deprecated** with the `setPasswordMinimum*` family at API 31 — history length has no complexity-bucket equivalent, so it still applies directly. ✅ Verified on `SM-X520`: policy `history_length: 6` → `dumpsys device_policy` shows `passwordHistoryLength=6`. |
+| `setSystemSetting(admin, key, value)` | 28 | Device Owner only. **Exactly three keys** allowed: `Settings.System.SCREEN_BRIGHTNESS`, `SCREEN_BRIGHTNESS_MODE`, `SCREEN_OFF_TIMEOUT` — anything else throws. Value is a string; `SCREEN_OFF_TIMEOUT` is milliseconds. Applies even under `DISALLOW_CONFIG_SCREEN_TIMEOUT`. ✅ Verified on `SM-X520`: policy `screen_timeout_seconds: 45` → `settings get system screen_off_timeout` returns `45000`. |
+| `setGlobalSetting(admin, key, value)` | 21 | Device Owner only, **mostly deprecated**. Fixed whitelist: `ADB_ENABLED`, `USB_MASS_STORAGE_ENABLED`, `STAY_ON_WHILE_PLUGGED_IN`, `WIFI_DEVICE_OWNER_CONFIGS_LOCKDOWN` — anything else throws `SecurityException`. |
 
 All of the above except `lockNow` require **device owner**, and the failure without
 it is a `SecurityException` whose message does not mention device ownership.
+
+### ❌ A Device Owner cannot set the OS "Device name" (W24)
+
+`Settings > About phone > Device name` is `Settings.Global.DEVICE_NAME`.
+
+* `dpm.setGlobalSetting(admin, "device_name", …)` — **`DEVICE_NAME` is not on the
+  whitelist**, so it throws.
+* A direct `contentResolver` write needs `WRITE_SECURE_SETTINGS`
+  (`signature|privileged|development`) — a Device Owner **cannot self-grant** it
+  (`setPermissionGrantState` reaches only `dangerous` runtime permissions). Only
+  `adb shell settings put global device_name …` works, because adb shell holds it.
+* Commercial MDMs (ManageEngine, Hexnode) hit the same wall — their "device name"
+  shows only in their own console, not in Android Settings.
+
+The nearest achievable thing is `BluetoothAdapter.setName()` (needs
+`BLUETOOTH_CONNECT`, which a DO *can* grant) — it changes the Bluetooth broadcast
+name, not the About-phone name.
+
+⚠️ **Correction (2026-09-02): Knox does not fix this either.** W24 recorded this as
+"deferred to Knox"; a read of the Knox SDK reference says otherwise. There is no
+`setDeviceName` anywhere in the SDK, `RestrictionPolicy` has no device-name setter,
+and `custom.SettingsManager` is an allow-list of ~40 predefined toggles that
+**cannot write arbitrary secure/global settings**. Device naming and branding are a
+**Knox Configure** feature — a separate Samsung provisioning product, not KPE or the
+SDK. See [KNOX.md](KNOX.md). The ATLAS friendly name therefore lives in the console
+and on the ATLAS MDM app's Device tab, and that is the end state unless Knox
+Configure is ever brought in.
+
+### Network data usage: read freely, enforce not at all (W43)
+
+Assessed against the SDK source before building the category, because an MDM
+screen full of "block mobile data" controls is worth nothing if the platform has
+no such call. The answer splits cleanly, and the two halves are worth keeping
+apart in your head.
+
+#### ✅ Reading usage is free for a Device Owner — no grant, no prompt
+
+📖 `NetworkStatsManager`'s class javadoc, verbatim:
+
+> Calling `querySummaryForDevice` or accessing stats for apps other than the
+> calling app requires the permission `PACKAGE_USAGE_STATS`, which is a
+> system-level permission and will not be granted to third-party apps. […]
+> Profile owner apps are automatically granted permission to query data on the
+> profile they manage […] **Device owner apps and carrier-privileged apps
+> likewise get access to usage data for all users on the device.**
+
+This is the rare case that goes *our* way. A normal app has to send the user into
+Settings → Special access for `PACKAGE_USAGE_STATS`; our agent is a Device Owner
+and simply gets it, for every app on the device. Total and per-UID usage, split by
+transport (mobile vs Wi-Fi) and by time bucket, is all available.
+
+✅ **Verified on `SM-X520` (One UI 8 / Android 16, agent v51), 2026-09-05.** The
+agent read **552.5 MB** of device total data with `PACKAGE_USAGE_STATS`
+**never granted** — no prompt, no Settings visit, no Usage-access toggle:
+
+```
+I/DataUsage: data usage warning raised: device total_data monthly 1MB at 552.5 MB
+I/SyncService: sync: state=3 applied=3 errors=0
+```
+
+So the Device Owner exemption is real on Samsung's firmware, not just in AOSP's
+javadoc. `querySummaryForDevice` returned a live bucket rather than the null that
+would have meant "you may not have this". The `PACKAGE_USAGE_STATS` declaration in
+the manifest is therefore belt-and-braces, not load-bearing.
+
+#### ❌ Enforcing a data restriction is not available at all
+
+There is **no** Device Owner API to block Wi-Fi data, block mobile data, block all
+connections, or cut one app off the network.
+
+| Candidate | Why it is not the answer |
+|---|---|
+| `UserManager.DISALLOW_CONFIG_WIFI`, `DISALLOW_CHANGE_WIFI_STATE`, `DISALLOW_CONFIG_MOBILE_NETWORKS` | These govern **configuration** — whether the *user* may change the setting. Data keeps flowing. |
+| `DISALLOW_DATA_ROAMING` | Genuinely blocks data, but **only while roaming**. Not a general lever. |
+| `NetworkPolicyManager.setUidPolicy(uid, POLICY_REJECT_METERED_BACKGROUND)` | **The exact API Settings uses** for per-app "restrict background data" — and it is `@hide` plus `@SystemApi(client = MODULE_LIBRARIES)`. Unreachable by a normally-installed DO, Device Owner privilege included. |
+| `setPackagesSuspended` | Suspends the whole app, not its network. A blunt instrument for a different job. |
+| `setAlwaysOnVpnPackage(..., lockdownEnabled = true)` | Can black-hole *all* traffic, but needs a VPN client app and cannot tell Wi-Fi from mobile. |
+
+**The answer is Knox `net.firewall.Firewall`** — per-app and device-wide
+allow/deny, already assessed in [KNOX.md](KNOX.md) §4.1 as "the single biggest
+win" and already scheduled as Chunk 7 step 4. Commercial MDMs showing per-app data
+blocking on Samsung are doing it there, not in AOSP.
+
+**Consequence for the console:** the NETWORK_DATA_USE spec carries the blocking
+fields, renders them disabled with a "needs Knox" badge, and **refuses to store a
+value for them**. A control that saves and does nothing is worse than one that is
+visibly unavailable.
+
+#### How to actually call the stats API (W44)
+
+⚠️ **The non-deprecated overloads are not available to us.** `querySummaryForDevice`
+and `queryDetailsForUid` each have a `NetworkTemplate` form and an `int networkType`
+form. The `NetworkTemplate` ones are `@SystemApi(client = MODULE_LIBRARIES)`, so an
+ordinary app — Device Owner included — **must** use the `int` form, whose
+`ConnectivityManager.TYPE_MOBILE` / `TYPE_WIFI` constants are themselves marked
+deprecated. Deprecated *and* mandatory at the same time. Do not "modernise" these
+calls to the template overloads; they will not compile against the public SDK.
+
+| Rule | Source |
+|---|---|
+| `subscriberId` is *"guarded by additional restrictions"* from API 29. Callers without privileged access *"can provide a `null` value when querying for the mobile network type to receive usage for all mobile networks"*. | `querySummaryForDevice` javadoc |
+| Both queries are `@WorkerThread` — *"This may take a long time, and apps should avoid calling this on their main thread."* | same |
+| Returns *"Bucket object or **null** if permissions are insufficient or error happened during statistics collection."* | same |
+| Iteration is `hasNextBucket()` / `getNextBucket(bucket)` and the `NetworkStats` must be `close()`d. | `NetworkStats` |
+
+⚠️ **A `null` return is not zero bytes.** It is the API saying "you may not have
+this", which is exactly what would happen if the Device-Owner-gets-it-free claim
+above turned out to be wrong on Samsung's firmware. The agent reports a null as an
+apply error rather than recording 0 MB used — a data cap that silently reads zero
+forever would never fire, and would look identical to a device using no data.
+
+### ⚠️ A notification channel's importance cannot be raised (W44)
+
+📖 `createNotificationChannel`, verbatim:
+
+> This can also be used to restore a deleted channel and to update an existing
+> channel's name, description, group, and/or importance.
+> […]
+> **The importance of an existing channel will only be changed if the new
+> importance is lower than the current value** and the user has not altered any
+> settings on this channel.
+
+So importance ratchets **downwards only**. Shipping a channel too quiet and fixing
+it later is not a code change — the fix is a no-op on precisely the devices that
+already ran the old build.
+
+📖 Deleting it first does not help either:
+
+> If you create a new channel with this same id, the deleted channel will be
+> **un-deleted with all of the same settings** it had before it was deleted.
+
+✅ **The only route is a new channel id**, then deleting the old one so the app's
+notification settings do not show a dead duplicate.
+
+**Cost us a real diagnosis.** v51 posted data-usage warnings to an
+`IMPORTANCE_DEFAULT` channel. That does not raise a heads-up over a fullscreen
+app, so the warning went straight to the shade and was reported as "no
+notification" — with the agent log proving it had posted correctly all along.
+v52 moved to `takmdm_data_usage_v2` at `IMPORTANCE_HIGH`.
+
+⚠️ **Pick the importance when the channel is born**, and assume you get one
+chance. A warning nobody sees is the same as no warning.
+
+### Operator-facing text: support messages and lock-screen info (W42)
+
+📖 Read from `sources/android-36.1/android/app/admin/DevicePolicyManager.java`
+(the SDK source shipped with the platform), not from a summary. All three are
+API 24+, so far below this project's `minSdk 33`.
+
+| API | What it does, verbatim from the javadoc | Limits |
+|---|---|---|
+| `setShortSupportMessage(admin, message)` | *"This will be displayed to the user in settings screens where functionality has been disabled by the admin."* The doc's own example is *"This setting is disabled by your administrator. Contact someone@example.com for support."* | *"If the message is longer than 200 characters it may be truncated."* `null` clears. `SecurityException` if `admin` is not an active administrator. |
+| `setLongSupportMessage(admin, message)` | *"This will be displayed to the user in the device administrators settings screen."* | *"If the message is longer than 20000 characters it may be truncated."* `null` clears. |
+| `setDeviceOwnerLockScreenInfo(admin, info)` | *"Sets the device owner information to be shown on the lock screen."* | Device owner only (or PO of an org-owned device); `SecurityException` otherwise. |
+
+⚠️ **`setDeviceOwnerLockScreenInfo` takes the field away from the user**, which
+the other two do not: *"Device owner information set using this method overrides
+any owner information manually set by the user and **prevents the user from
+further changing it**."* Its clearing behaviour is correspondingly particular:
+
+* `null` **or empty** → *"the device owner info is cleared and the user owner info
+  is shown on the lock screen if it is set"* — i.e. the user gets the field back.
+* **whitespace only** → *"the message on the lock screen will be blank and the
+  user will not be allowed to change it."*
+
+So "" and " " are **not** the same instruction: one hands the field back, the
+other holds it blank. The agent normalises a blank spec value to `null` for
+exactly this reason — an operator clearing a text box means "stop managing it",
+never "hold it blank forever".
+
+⚠️ **All three latch** and belong to the family below: whatever was last written
+stays until something writes over it, and survives the policy that set it being
+unassigned. So `applyCustomizations` runs even when the section is absent, pushing
+`null`. Unlike the `setPasswordMinimumLength` trap (W41), all three accept `null`
+in any state, so there is no quality-style gate to satisfy first.
+
+📖 Localization is the DPC's job for all three: *"it is the responsibility of the
+DeviceAdminReceiver to listen to the ACTION_LOCALE_CHANGED broadcast and set a new
+version of this string accordingly."* ATLAS does not do this — the operator's
+message is stored and pushed as written, in whatever language they typed it.
+Recorded so it is a known omission rather than a surprise.
+
+### Passcode: the granular `setPasswordMinimum*` family (W18)
+
+📖 `setPasswordQuality`, `setPasswordMinimumLength`, `setPasswordMinimumLetters`,
+`setPasswordMinimumNumeric`, `setPasswordMinimumSymbols` are all marked
+`@Deprecated` (Android 12) in favour of `setRequiredPasswordComplexity`, which
+offers only four buckets (NONE / LOW / MEDIUM / HIGH) with **no per-character-class
+control**. But the deprecation note is explicit:
+
+> Company-owned devices (fully-managed and organization-owned managed profile
+> devices) are able to continue using this method.
+
+So a Device Owner may still use the granular family, and the agent does (W18) —
+it maps 1:1 onto the `PASSWORD` spec, which the complexity buckets do not.
+
+| Rule | Source |
+|---|---|
+| `setPasswordMinimum{Letters,Numeric,Symbols}` **throw `IllegalStateException`** for an app targeting API 30+ unless `setPasswordQuality(PASSWORD_QUALITY_COMPLEX)` was called first. Default value of each is 1. | `setPasswordMinimumLetters` reference |
+| ✅ **`setPasswordMinimumLength` throws too — the reference docs above don't say so, but the platform does.** It requires quality **at least `NUMERIC`** (`131072`), **even when the value being set is 0.** Hit on a freshly imaged `SM-X520` with *no policy ever applied*: `IllegalStateException("password quality should be at least NUMERIC for setPasswordMinimumLenght")` (AOSP's own typo, not ours) — thrown by the agent's own R14 release-to-permissive call, on the very first sync, because quality was still `UNSPECIFIED`. Fixed by gating the call the same way the char-class family is gated, just at `NUMERIC` instead of `COMPLEX` (`PasswordPlan.minLengthApplies`). Not yet re-verified on hardware — next enrolment of a fresh device should confirm the error is gone. | Observed on-device, 2026-09-05; not in the setter's own reference page |
+| `setPasswordQuality` **clears** any complexity set via `setRequiredPasswordComplexity` (on the primary instance, for a DO, it just clears — no throw). Don't mix the two APIs. | `setPasswordQuality` reference |
+| `setPasswordQuality` on the **parent** `DevicePolicyManager` instance throws `IllegalArgumentException` for an app targeting API 31+ (except a PO on an org-owned device). The agent only ever calls the primary instance. | `setPasswordQuality` reference |
+| The calling admin needs `USES_POLICY_LIMIT_PASSWORD` in its `device_admin.xml` (`<limit-password />`). Already declared. | `setPasswordMinimumLetters` reference |
+
+**What the agent does** (`PasswordPlan.effectiveQuality` + `PolicyApplier.applyPassword`):
+derives the quality to enforce as the strictest of the `quality` field, `NUMERIC`
+if a `min_length` is set, and `COMPLEX` if any `min_letters`/`min_digits`/
+`min_symbols` is set; calls `setPasswordQuality` first, then the length and
+per-character-class setters. `history_length` / expiry / lockout are unchanged.
+
+### Forcing an exact passcode: `resetPasswordWithToken` (W20)
+
+📖 A Device Owner sets a specific screen-lock passcode with
+`resetPasswordWithToken(admin, password, token, flags)` (API 26+). The token
+comes from `setResetPasswordToken(admin, token)` — **≥32 bytes, from a CSRNG**.
+
+| Rule | Source |
+|---|---|
+| The token **activates immediately only if the device has no passcode.** If one is already set, the user must complete a confirm-credential operation (`KeyguardManager.createConfirmDeviceCredentialIntent`) before it works — this **cannot be forced**. | `setResetPasswordToken` reference |
+| An un-activated token is **held in memory only and lost on reboot**; a fresh one must be provisioned. An activated token survives reboots and password changes. | `setResetPasswordToken` reference |
+| The new passcode must satisfy the active `getPasswordQuality` / `getPasswordMinimumLength` or `resetPasswordWithToken` **returns `false`**. So set the quality/length constraints first. | `resetPasswordWithToken` reference |
+| **There is no AOSP API to stop the user changing the passcode.** "Once provisioned and activated, the token will remain effective even if the user changes or clears the lockscreen password" — the DPC's only remedy is to set it back. | `setResetPasswordToken` reference |
+| `flags`: `RESET_PASSWORD_REQUIRE_ENTRY` locks the device so the user must enter the new passcode; `0` sets it silently. | `resetPasswordWithToken` reference |
+| The token is credential-grade — "NEVER store this token on device in plaintext". | `setResetPasswordToken` reference |
+
+**What the agent does** (`PolicyApplier.ensurePasswordSet`, W20): generates a
+32-byte token, keeps its base64 in the agent's private prefs (same store as the
+enrolment secret — the pragmatic choice for a normally-installed DO; noted as an
+exposure alongside R8/R12), `setResetPasswordToken` when not already active,
+reports the confirm-credential requirement rather than working around it, then
+`resetPasswordWithToken(admin, desired, token, 0)`. **Re-asserted on every
+reconcile** — since the user can change it, setting it back each sync is the
+enforcement. Flags `0`: a kiosk device in use is not kicked to the lock screen
+when the agent re-applies an unchanged passcode.
+
+✅ **Verified on `SM-X520` (agent v36), full cycle:**
+* Fresh device (no passcode) + `set_password: atlas1234` → `PolicyApplier: passcode
+  set from policy (9 chars)`, `sync … errors=0`, `locksettings verify --old
+  atlas1234` → *"Lock credential verified successfully"*. The token activated
+  immediately (no existing passcode), as documented.
+* User changed the passcode (`locksettings set-password`) → the next sync
+  re-asserted it: `atlas1234` verified again, the user's value rejected.
+* `set_password` removed from the policy → the agent stopped re-asserting and
+  **did not clear** the passcode (scalars are not reverted — W15). Clearing a
+  forced passcode still needs the constraints relaxed first; noted as a gap.
+
+⚠️ The internal `resetPasswordWithToken` call logs a full stack trace under
+`ActivityManager E` / `LsLogVerify W` — this is the platform's own audit logging
+of the reset, **not** an agent error.
+
+### ⚠️ These setters latch — absent must be pushed as permissive
+
+There is no "unset" call in the granular family. Whatever was last written stays
+in force until something writes over it, and it survives the policy that put it
+there being removed entirely.
+
+✅ **This caused a real failure on `SM-X520`** (2026-09-02): a `min_length: 13`
+from a policy that no longer applied kept `minimumPasswordLength=13` latched, so
+a later policy's 4-digit `set_password` was rejected by `resetPasswordWithToken`
+— and nothing in the console could clear it.
+
+**The rule:** a DPC must drive every one of these to a definite value on every
+reconcile, pushing the permissive value when the field is absent —
+`setPasswordQuality(UNSPECIFIED)`, `setPasswordMinimumLength(0)`,
+`setPasswordHistoryLength(0)`, `setPasswordExpirationTimeout(0)`,
+`setMaximumTimeToLock(0)`, `setMaximumFailedPasswordsForWipe(0)`. That last one
+matters most: a stale attempt limit means a device can wipe itself to satisfy a
+policy nobody has assigned to it for months.
+
+The per-character-class minimums are the exception — they throw below
+`PASSWORD_QUALITY_COMPLEX`, so only touch them when the effective quality *is*
+COMPLEX. Below it they are inert, so nothing latched there can bite.
+
+✅ Verified both ways on `SM-X520` (agent v39): adding `min_length: 4` set
+`minimumPasswordLength=4`; removing it returned the device to `0`.
+
+⚠️ **Correction, 2026-09-05: `setPasswordMinimumLength(0)` is not safe to push
+unconditionally either.** It turns out to belong with "the per-character-class
+minimums are the exception" above, just at a lower bar — it throws below
+`NUMERIC` rather than below `COMPLEX`, for a release-to-0 exactly as much as for
+a real value. A freshly imaged device with no policy at all is `UNSPECIFIED`, so
+the R14 release call was itself throwing on the very first sync a device ever
+did. Same fix shape as the char-class family: only call it when quality is at
+least `NUMERIC` (`PasswordPlan.minLengthApplies`); below that a stale length is
+inert, so nothing latched there can bite either. Not yet re-verified on
+hardware.
+
+#### ⚠️ `setSystemSetting(SCREEN_OFF_TIMEOUT)` latches too, and has **no permissive
+value** to push
+
+Verified on `SM-X520` (2026-09-03). The device sat at its default `1800000`; a
+policy set `45000`; **removing that policy left it at `45000`**, with the device
+converged and compliant. Nothing but a re-push or a manual
+`adb shell settings put system screen_off_timeout` moves it back.
+
+Same latch as the password minimums, **different fix**. A password minimum has a
+permissive value — `0` — so writing it on every reconcile is both correct and
+complete. A screen timeout does not: what "no policy" should mean is *the user's
+own setting*, which the platform will not hand back and which nothing records
+before the first overwrite.
+
+So an MDM that writes this setting has to capture the prior value itself, before
+its first write, if it ever intends to release it. Driving it to a fixed default
+instead would silently overwrite a user preference the operator never asked to
+change.
+
+⚠️ **And the release has to run when no policy is present at all.** The obvious
+shape — apply a section only when the desired state carries one — means the code
+that undoes a latched setting never executes, because removing the last policy of
+that type removes the section too. Verified the hard way on `SM-X520`: an agent
+that remembered the displaced value correctly still failed to restore it, for this
+reason alone. A section whose setters latch must be applied with an empty document
+rather than skipped.
+
+### ✅ Verified on `SM-X520` (agent v34), both directions:
+
+| Policy | `dumpsys device_policy` for `org.takmdm.agent` |
+|---|---|
+| `{min_length: 13}` | `passwordQuality=0x20000` (NUMERIC), `minimumPasswordLength=13` |
+| `{min_length: 13, quality: 6, min_digits: 2}` | `passwordQuality=0x60000` (COMPLEX), `minimumPasswordLength=13`, `minimumPasswordNumeric=2` |
+| back to `{min_length: 13}` | `passwordQuality` fell to `0x20000`, `minimumPasswordNumeric` back to the `1` default |
+
+`sync: … applied=N errors=0` on every step. The pre-W18 path set
+`mPasswordComplexity` (a bucket) and left `minimumPasswordLength=0`; the granular
+path leaves `mPasswordComplexity=0` and sets the real minimums, as expected.
 
 ### Screenshot is not available to a Device Owner
 
@@ -568,6 +1130,55 @@ a remote command on an unattended device. The agent registers a handler that
 **reports this as unsupported** rather than leaving the type unhandled — an
 unregistered type is retried until the queue expires and reads as a device fault
 (D89).
+
+## 6d. Wi-Fi configuration by a Device Owner
+
+📖 `WifiManager.addNetwork(WifiConfiguration)` and the sibling config methods
+(`updateNetwork`, `removeNetwork`, `enableNetwork`, `getConfiguredNetworks`) are
+**deprecated at API 29** for ordinary apps — a normal app gets `-1` back from
+`addNetwork` and an empty list from `getConfiguredNetworks`. The deprecation note
+carves out an exception: **"except for Device Owner (DO), Profile Owner (PO) and
+system apps"**, which retain access and may modify or remove only the networks
+they themselves created.
+
+**What the agent does (W14):** `PolicyApplier.applyNetworks` builds one
+`WifiConfiguration` per `wifi_networks` entry, security mapped from the policy
+enum (`NONE` / `WEP` / `WPA_PSK` / `SAE`), calls `addNetwork` then
+`enableNetwork(id, false)`. SSIDs it added and the policy later dropped are
+`removeNetwork`'d — a network the user set up by hand is never touched.
+
+✅ **`addNetwork` works for the Device Owner on `SM-X520` (One UI 8 / Android 16).**
+A `NETWORKS` policy pushed a `wpa_psk` network and the agent logged
+`wifi: configured ATLAS-Test (wpa_psk, id=1)`; `cmd wifi list-networks` then
+listed it. So the deprecation carve-out is real on this Samsung build — no need
+for the weaker `addNetworkSuggestions` fallback. A `-1` return is still reported
+(`wifi <ssid>: addNetwork returned -1 …`) rather than swallowed, in case another
+OEM behaves differently (R5).
+
+⚠️ **`getConfiguredNetworks()` returns nothing for the Device Owner** on this
+build, even though `addNetwork` works — so the network id handed back at add time
+is the only reliable handle for `removeNetwork` later. The agent stores it
+(`AgentConfig.wifiNetworkId`); a first version that looked the id up via
+`getConfiguredNetworks` logged a successful removal while the network stayed
+configured.
+
+✅ **The full cycle is verified on `SM-X520`.** Assigning the policy:
+`wifi: configured ATLAS-Test (wpa_psk, id=2)`, network listed. Unassigning it:
+`wifi: removing ATLAS-Test (id=2, removed=true)`, network gone. The device's own
+Wi-Fi (`LeckliterFIOS`) was untouched throughout. `errors=0` on both syncs.
+
+**MAC randomization** (`WifiConfiguration.macRandomizationSetting`) is `@SystemApi`
+— not settable by a DO. **Per-network auto-join** has no public toggle for a DO
+either (`WifiManager.allowAutojoin` is `@SystemApi`). W18 removed both fields
+(`mac_randomization`, `auto_join`) from `NetworksSpec` rather than keep accepting
+values the agent can never honour. A configured network auto-joins by default and
+the platform picks the randomization mode.
+
+**VPN** is deliberately absent. Android's built-in VPN profile
+(`com.android.internal.net.VpnProfile` + `IVpnManager`) is private and
+unavailable to a DO, and PPTP was removed from Android in Android 12. The only
+DO-supported VPN is `setAlwaysOnVpnPackage(admin, vpnAppPackage, lockdown)` —
+pointing at an installed VPN client app. Deferred until one is in the deployment.
 
 ## 7. Kiosk and lock task
 
@@ -676,6 +1287,8 @@ AndroidDownloadManager/16 (Linux; U; Android 16; SM-X520 Build/BP4A.251205.006)
 * [Build a DPC](https://developer.android.com/work/dpc/build-dpc)
 * [DevicePolicyManager reference](https://developer.android.com/reference/android/app/admin/DevicePolicyManager)
 * [Manage all files on a storage device](https://developer.android.com/training/data-storage/manage-all-files)
+* [WifiManager.addNetwork — deprecation note](https://developer.android.com/reference/android/net/wifi/WifiManager#addNetwork(android.net.wifi.WifiConfiguration)) — the DO/PO/system-app carve-out
+* [DevicePolicyManager.setAlwaysOnVpnPackage](https://developer.android.com/reference/android/app/admin/DevicePolicyManager#setAlwaysOnVpnPackage(android.content.ComponentName,%20java.lang.String,%20boolean))
 * [Android minimum targetSdk matrix — Jason Bayton](https://bayton.org/android/android-minimum-targetsdk-matrix/)
 * [Advanced Protection Mode](https://developer.android.com/privacy-and-security/advanced-protection-mode)
 * [Knox SDK deprecation policy](https://docs.samsungknox.com/dev/knox-sdk/faq/general/)

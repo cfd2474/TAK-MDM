@@ -1,0 +1,638 @@
+/* Copyright 2026 TAK-Solutions LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * ATLAS console design system. One stylesheet for the whole console, served from
+ * /static so it is cached and edited in one place. Colours are taken from the
+ * ATLAS banner: a deep navy ground, a chrome-silver wordmark, an electric-blue
+ * accent, and a cyan highlight (the "MDM" badge).
+ *
+ * Light is the default palette; the dark palette redefines the same tokens inside
+ * a prefers-color-scheme block, matching the pattern the console already used.
+ * Every legacy class name from the old inline <style> is preserved so existing
+ * templates keep rendering unchanged.
+ */
+
+/* The `hidden` attribute must win, everywhere.
+ *
+ * The browser's own rule is `[hidden] { display: none }`, which any class setting
+ * `display` outranks — so an element toggled with `el.hidden = true` in JS stays
+ * on screen if its class happens to set `display: flex`. That has bitten this
+ * stylesheet three times already (`.tab-panel`, `.modal-backdrop`, filtered TPC
+ * rows each carry their own `[hidden]` patch) and a fourth time on
+ * `.wallpaper-preview`, whose empty frames rendered whenever no image was chosen.
+ * One rule instead of a fifth patch. */
+[hidden] { display: none !important; }
+
+:root {
+  --bg: #eef2f7;
+  --bg-2: #e6ecf4;
+  --panel: #ffffff;
+  --panel-2: #f4f7fb;
+  --ink: #14202e;
+  --muted: #5a6b7d;
+  --line: #d8e0ea;
+  --accent: #1c63c4;
+  --accent-ink: #ffffff;
+  --accent-2: #0f7fac;
+  --silver: #33475c;
+  --warn: #a8611a;
+  --bad: #b4341f;
+  --good: #1d7a4d;
+  --code: #f0f3f7;
+
+  /* The brand bar is dark in both themes — it is the one piece of fixed ATLAS
+     identity on the page. Near-black so the logo lockup (which carries its own
+     dark ground) sits on it without a visible seam. */
+  --brandbar: #05090f;
+  --brandbar-line: #23384f;
+  --brandbar-ink: #e8eef6;
+  --brandbar-muted: #8fa6be;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0a1420;
+    --bg-2: #0d1a29;
+    --panel: #13243b;
+    --panel-2: #182f4a;
+    --ink: #e8eef6;
+    --muted: #8fa6be;
+    --line: #24384f;
+    --accent: #2f7fe0;
+    --accent-ink: #ffffff;
+    --accent-2: #3fc8f0;
+    --silver: #c9d4e0;
+    --warn: #d99a4e;
+    --bad: #e8705a;
+    --good: #5cc48d;
+    --code: #0c1928;
+
+    --brandbar: #04070c;
+    --brandbar-line: #1c2f43;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* --------------------------------------------------------------------------- */
+/* Brand bar + navigation                                                       */
+/* --------------------------------------------------------------------------- */
+
+header {
+  background: var(--brandbar);
+  border-bottom: 1px solid var(--brandbar-line);
+  color: var(--brandbar-ink);
+  padding: 0 20px;
+  display: flex;
+  gap: 26px;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  min-height: 52px;
+  flex-wrap: wrap;
+}
+
+header .brand {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+  padding: 5px 0;
+}
+
+header .brand .brand-logo {
+  display: block;
+  height: 46px;
+  width: auto;
+}
+
+@media (max-width: 720px) {
+  header .brand .brand-logo { height: 34px; }
+}
+
+header nav {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  align-self: stretch;
+}
+
+header nav a {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  color: var(--brandbar-muted);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 550;
+  border-bottom: 2px solid transparent;
+}
+
+header nav a:hover { color: var(--brandbar-ink); }
+
+header nav a.on {
+  color: #fff;
+  border-bottom-color: var(--accent-2);
+}
+
+header .who {
+  margin-left: auto;
+  color: var(--brandbar-muted);
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 64px; }
+main.wide { max-width: 1440px; }
+
+h1 { font-size: 20px; margin: 0 0 4px; }
+h2 { font-size: 15px; margin: 28px 0 10px; }
+h3 { font-size: 13px; margin: 20px 0 8px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+.sub { color: var(--muted); margin: 0 0 20px; }
+
+a { color: var(--accent); }
+
+/* --------------------------------------------------------------------------- */
+/* Panels, tables, code                                                         */
+/* --------------------------------------------------------------------------- */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  margin-bottom: 18px;
+}
+
+.panel > h2:first-child, .panel > h3:first-child { margin-top: 0; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+tr:last-child td { border-bottom: none; }
+tbody tr:hover td { background: var(--panel-2); }
+
+code, pre, .mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+pre {
+  background: var(--code);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  margin: 0;
+}
+
+.logdump {
+  max-height: 70vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* --------------------------------------------------------------------------- */
+/* Forms and buttons                                                            */
+/* --------------------------------------------------------------------------- */
+
+input, select, textarea, button {
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 9px;
+}
+textarea { width: 100%; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
+
+button, .btn {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  cursor: pointer;
+  font-weight: 550;
+  padding: 8px 16px;
+  text-decoration: none;
+  display: inline-block;
+}
+button:hover, .btn:hover { filter: brightness(1.08); }
+
+button.ghost, .btn.ghost {
+  background: transparent;
+  color: var(--accent);
+}
+
+/* Destructive actions read as destructive before they are clicked, not after. */
+button.danger, .btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+
+button:disabled { opacity: .5; cursor: not-allowed; filter: none; }
+
+label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 12.5px; }
+
+.row { display: flex; gap: 16px; flex-wrap: wrap; }
+.row > * { flex: 1 1 320px; min-width: 0; }
+
+.field-full { width: 100%; }
+
+/* An input paired with a button, e.g. the Wi-Fi password's show/hide toggle. */
+.input-group { display: flex; gap: 8px; align-items: stretch; }
+.input-group input { flex: 1 1 auto; min-width: 0; }
+.input-group .btn { flex: 0 0 auto; white-space: nowrap; }
+
+/* --------------------------------------------------------------------------- */
+/* Pills, banners, stats                                                        */
+/* --------------------------------------------------------------------------- */
+
+.pill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 20px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+}
+.pill.good { color: var(--good); border-color: var(--good); }
+.pill.warn { color: var(--warn); border-color: var(--warn); }
+.pill.bad { color: var(--bad); border-color: var(--bad); }
+.pill.accent { color: var(--accent); border-color: var(--accent); }
+
+.muted { color: var(--muted); }
+
+.banner {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  padding: 8px 14px;
+  border-radius: 6px;
+  margin-bottom: 18px;
+  font-size: 13px;
+}
+.banner.bad { background: color-mix(in srgb, var(--bad) 12%, transparent); border-color: var(--bad); color: var(--bad); }
+.banner.good { background: color-mix(in srgb, var(--good) 12%, transparent); border-color: var(--good); color: var(--good); }
+.banner.info { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: var(--accent); color: var(--accent); }
+
+.checks {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: var(--code);
+}
+.checks label { display: flex; gap: 8px; align-items: center; margin: 4px 0; color: var(--ink); }
+.checks input { width: auto; }
+
+.stat { display: flex; gap: 28px; flex-wrap: wrap; }
+.stat div span { display: block; font-size: 22px; font-weight: 600; }
+.stat div small { color: var(--muted); }
+
+/* --------------------------------------------------------------------------- */
+/* Tabs                                                                         */
+/* --------------------------------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.tabs a, .tabs button.tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  padding: 8px 14px;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 550;
+  font-size: 13px;
+  text-decoration: none;
+}
+.tabs a:hover, .tabs button.tab:hover { color: var(--ink); }
+.tabs a.on, .tabs button.tab.on {
+  color: var(--ink);
+  border-color: var(--line);
+  background: var(--panel);
+  margin-bottom: -1px;
+}
+
+.tab-panel[hidden] { display: none; }
+
+/* --------------------------------------------------------------------------- */
+/* Modal                                                                        */
+/* --------------------------------------------------------------------------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 10, 18, .55);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 8vh 16px 16px;
+  z-index: 50;
+}
+.modal-backdrop[hidden] { display: none; }
+
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 22px;
+  width: 100%;
+  max-width: 560px;
+  max-height: 84vh;
+  overflow-y: auto;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .35);
+}
+.modal h2 { margin-top: 0; }
+.modal h3 { margin: 16px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.modal ul.checks { margin: 4px 0 0; padding-left: 18px; }
+.modal ul.checks li { list-style: disc; }
+.modal .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+
+.choice-grid { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+.choice-grid a {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  text-decoration: none;
+  color: var(--ink);
+  background: var(--panel-2);
+}
+.choice-grid a:hover { border-color: var(--accent); }
+.choice-grid strong { display: block; margin-bottom: 4px; color: var(--accent); }
+
+/* --------------------------------------------------------------------------- */
+/* Toolbar (search / filter above a table)                                      */
+/* --------------------------------------------------------------------------- */
+
+.toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.toolbar input[type="search"] { min-width: 240px; }
+.toolbar .spacer { flex: 1; }
+
+.stack-name { display: flex; flex-direction: column; }
+.stack-name .mono { font-size: 12px; color: var(--muted); }
+
+.inline-rename { display: flex; gap: 4px; align-items: center; margin: 4px 0 0; }
+.inline-rename input[type="text"] { width: 15ch; padding: 2px 6px; font-size: 12px; }
+.inline-rename button { padding: 2px 8px; font-size: 11px; }
+
+/* --------------------------------------------------------------------------- */
+/* Section stub (pages not built yet)                                           */
+/* --------------------------------------------------------------------------- */
+
+.stub {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--muted);
+}
+.stub .big { font-size: 15px; color: var(--ink); margin-bottom: 6px; }
+
+/* --------------------------------------------------------------------------- */
+/* Form-driven policy editor (W10)                                              */
+/* --------------------------------------------------------------------------- */
+
+.pf-group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 16px 14px;
+  margin: 0 0 14px;
+}
+.pf-group legend {
+  padding: 0 8px;
+  font-weight: 650;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--muted);
+}
+.pf-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 14px;
+  align-items: start;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+.pf-field:last-child { border-bottom: none; }
+.pf-label label { margin: 0; color: var(--ink); font-size: 13.5px; }
+.pf-control { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pf-control select, .pf-control input[type="text"], .pf-control input[type="number"] { max-width: 100%; }
+.pf-preview { margin-top: 14px; }
+.pf-preview pre { margin-top: 8px; }
+
+/* Readable spec summary (a version's stored fields), instead of a JSON dump. */
+dl.kv { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; }
+dl.kv dt { color: var(--muted); font-size: 12px; }
+dl.kv dd { margin: 0; font-size: 13px; }
+
+.rowset { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.rs-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+@media (max-width: 720px) {
+  .pf-field { grid-template-columns: 1fr; gap: 6px; }
+}
+
+/* --------------------------------------------------------------------------- */
+/* Rendered Markdown (Guides)                                                    */
+/* --------------------------------------------------------------------------- */
+
+.prose { max-width: 760px; }
+.prose h1 { font-size: 20px; margin: 0 0 12px; }
+.prose h2 { font-size: 15px; margin: 22px 0 8px; text-transform: none; letter-spacing: 0; color: var(--ink); }
+.prose h3 { font-size: 13.5px; margin: 18px 0 6px; text-transform: none; letter-spacing: 0; color: var(--ink); }
+.prose p { margin: 10px 0; }
+.prose ul, .prose ol { margin: 10px 0; padding-left: 22px; }
+.prose li { margin: 4px 0; }
+.prose code { background: var(--code); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; font-size: 12.5px; }
+.prose pre { margin: 12px 0; }
+.prose pre code { background: none; border: none; padding: 0; }
+.prose blockquote {
+  margin: 12px 0; padding: 4px 14px; border-left: 3px solid var(--line); color: var(--muted);
+}
+.prose hr { border: none; border-top: 1px solid var(--line); margin: 20px 0; }
+
+/* --------------------------------------------------------------------------- */
+/* Left-rail layout (policy creator, admin)                                     */
+/* --------------------------------------------------------------------------- */
+
+.railed { display: flex; gap: 24px; align-items: flex-start; }
+.rail {
+  flex: 0 0 240px;
+  position: sticky;
+  top: 68px;
+  max-height: calc(100vh - 90px);
+  overflow-y: auto;
+}
+.rail ul { list-style: none; margin: 0; padding: 0; }
+.rail a {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  border-radius: 6px;
+}
+.rail a:hover { background: var(--panel-2); }
+.rail a.on { background: var(--accent); color: #fff; }
+.rail a.on .rail-check { color: #fff; border-color: rgba(255,255,255,.6); }
+
+/* Category header */
+.rail-cat-head {
+  padding: 7px 10px;
+  color: var(--ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+.rail-cat-head.active-cat { color: var(--accent); }
+.rail-cat-head::before {
+  content: "▸";
+  font-size: 10px;
+  color: var(--muted);
+  transition: transform .12s;
+}
+.rail-cat.open > .rail-cat-head::before { transform: rotate(90deg); }
+/* a leaf category (its head is itself a page link) needs no disclosure triangle */
+.rail-cat-head[data-page]::before { content: ""; }
+
+/* Sub-pages */
+.rail-sub { display: none; margin: 2px 0 6px !important; }
+.rail-cat.open > .rail-sub { display: block; }
+.rail-sub a {
+  padding: 4px 10px 4px 26px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Green check when a page / category has data */
+.rail-check {
+  margin-left: auto;
+  width: 15px; height: 15px;
+  border: 1px solid var(--good);
+  border-radius: 50%;
+  color: var(--good);
+  font-size: 10px;
+  line-height: 13px;
+  text-align: center;
+  flex: none;
+}
+
+.rail .placeholder .rail-cat-head::after {
+  content: "soon";
+  font-size: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 5px;
+  margin-left: 6px;
+  color: var(--muted);
+}
+.rail-body { flex: 1; min-width: 0; }
+
+@media (max-width: 780px) {
+  .railed { flex-direction: column; }
+  .rail { position: static; flex-basis: auto; max-height: none; width: 100%; }
+}
+
+/* --- TPC plugin catalog ----------------------------------------------------
+   Fixed layout with percentages that sum to 100. In `ch` the three narrow
+   columns under-claimed, the Plugin column absorbed all the slack, and the
+   Import button overflowed a cell too small to hold it. Percentages keep the
+   proportions stable at any panel width. */
+.tpc-table { table-layout: fixed; }
+.tpc-table th:nth-child(1), .tpc-table td:nth-child(1) { width: 50%; }
+.tpc-table th:nth-child(2), .tpc-table td:nth-child(2) { width: 22%; }
+.tpc-table th:nth-child(3), .tpc-table td:nth-child(3) { width: 12%; text-align: right; }
+.tpc-table th:nth-child(4), .tpc-table td:nth-child(4) { width: 16%; text-align: right; }
+.tpc-table td { overflow-wrap: anywhere; vertical-align: top; }
+/* Spelled out rather than trusting the UA default: a filtered-out row that still
+   occupies a line is the kind of failure that looks like the filter is broken. */
+.tpc-table tbody tr[hidden] { display: none; }
+/* Sized by its label rather than stretched to the column: a full-width button
+   in a narrow cell is what pushed it past the table edge. */
+.tpc-table td:nth-child(4) button { white-space: nowrap; padding: 6px 14px; }
+
+/* Determinate progress bar for a running import. */
+.progress {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.progress > span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent, #387aff);
+  transition: width .25s ease;
+}
+
+/* --- Wallpaper preview -----------------------------------------------------
+   `cover`, not `contain`: Android fills the screen with a wallpaper and crops
+   the overflow, so a tidier `contain` preview would misrepresent what the
+   device actually shows. The frames carry each form factor's real aspect
+   ratio. */
+.wallpaper-preview { display: flex; gap: 18px; margin-top: 12px; flex-wrap: wrap; }
+.wallpaper-preview figure { margin: 0; }
+.wallpaper-preview figcaption {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  margin-top: 4px;
+  text-align: center;
+}
+.wallpaper-preview .frame {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel-2);
+}
+.wallpaper-preview .frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Phone: 9:19.5. Tablet: 3:4. Heights fixed so the two orientations sit level. */
+[data-form-factor="phone"] .frame.portrait  { height: 190px; aspect-ratio: 9 / 19.5; }
+[data-form-factor="phone"] .frame.landscape { height: 190px; aspect-ratio: 19.5 / 9; }
+[data-form-factor="tablet"] .frame.portrait  { height: 190px; aspect-ratio: 3 / 4; }
+[data-form-factor="tablet"] .frame.landscape { height: 190px; aspect-ratio: 4 / 3; }

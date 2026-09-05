@@ -156,4 +156,9 @@ class FilesSpec(PolicySpec):
             note="Stacked FILES policies union by file; the highest-ranked entry "
             "wins a collision on the same file.",
         ),
-    ] = None
+    ] = Field(
+        default=None,
+        title="Files",
+        description="Files placed on the device. Pick from uploaded content.",
+        json_schema_extra={"ui_group": "Files", "ui_control": "file_list"},
+    )

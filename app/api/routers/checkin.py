@@ -40,7 +40,9 @@ from app.security.bundle import BundleSigner
 from app.services import commands as command_service
 from app.services import desired_state as desired_state_service
 from app.services import effective_policy as eff
+from app.services import agent_update as agent_update_service
 from app.services import files as file_service
+from app.services import fleet as fleet_service
 
 router = APIRouter(prefix="/api/v1/device", tags=["device"])
 
@@ -91,6 +93,20 @@ def checkin(
     device.last_checkin_at = datetime.now(timezone.utc)
     device.agent_version = payload.agent_version or device.agent_version
     device.os_version = payload.os_version or device.os_version
+    # Only overwritten when reported. An agent too old to send these would
+    # otherwise erase a perfectly good record on every check-in.
+    if payload.atak_version:
+        device.atak_package = payload.atak_package
+        device.atak_version = payload.atak_version
+
+    # "Settled" means this device has already checked in at least once on the
+    # agent build it is running. Computed *before* the column is overwritten, so
+    # the first check-in after an update never counts — which is what stops a
+    # crash-looping build being handed another update on every relaunch (W27).
+    reported_code = payload.agent_version_code
+    agent_settled = reported_code is not None and device.agent_version_code == reported_code
+    if reported_code is not None:
+        device.agent_version_code = reported_code
 
     # Results first: a command finished this cycle should not be handed back below.
     _, unknown_command_ids = command_service.record_results(session, device, payload.results)
@@ -111,6 +127,12 @@ def checkin(
         desired_state_service.build_signed(session, device, signer) if send_bundle else None
     )
     live_commands = command_service.claim_for_delivery(session, device)
+    policy_names = fleet_service.policy_names_for_device(session, device)
+    # After _record_convergence, so the eligibility gate sees the compliance this
+    # very check-in reported rather than the previous one's.
+    agent_offer = agent_update_service.offer_for(
+        session, device, package_name=settings.agent_package_name, settled=agent_settled
+    )
 
     session.commit()
 
@@ -119,6 +141,9 @@ def checkin(
         state_version=device.state_version,
         generated_at=datetime.now(timezone.utc),
         policy_changed=policy_changed,
+        name=device.name,
+        policy_names=policy_names,
+        agent_update=agent_offer,
         desired_state=bundle["desired_state"] if bundle else None,
         signature=bundle["signature"] if bundle else None,
         commands=[

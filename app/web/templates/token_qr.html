@@ -1,22 +1,18 @@
 {% extends "base.html" %}
-{% set nav = 'enrollment' %}
-{% block title %}{{ token.name }} — Enrollment QR{% endblock %}
+{% set nav = 'enroll' %}
+{% block title %}Enrollment QR — ATLAS{% endblock %}
 
 {% block content %}
-<h1>{{ token.name }}</h1>
+<h1>{{ primary.name if primary else 'Enrollment QR' }}</h1>
 <p class="sub">
-  <span class="pill">{{ token.prefix }}…</span>
-  used {{ token.use_count }}{% if token.max_uses %} of {{ token.max_uses }}{% endif %} ·
-  expires {{ token.expires_at.strftime('%Y-%m-%d %H:%M') }}
-  {% if token.groups %}· joins {{ token.groups | map(attribute='name') | join(', ') }}{% endif %}
-  {% if token.tags %}· tagged {{ token.tags | map(attribute='name') | join(', ') }}{% endif %}
-  · <a href="/enrollment">back to tokens</a>
+  <a href="/enrollment">← back to enrollment</a>
 </p>
 
 {% if problem %}
   <div class="banner bad">{{ problem }}</div>
 {% endif %}
 
+{% if primary %}
 <div class="row">
   <div>
     <h2>Wi-Fi for provisioning</h2>
@@ -25,15 +21,18 @@
         A factory-reset tablet has no network. Embedding credentials lets it join
         Wi-Fi and download the agent without anyone touching the setup wizard.
       </p>
-      <form method="post" action="/enrollment/{{ token.id }}/qr">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <form method="post" action="/enrollment/qr">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label for="wifi_ssid">Network name (SSID)</label>
         <input id="wifi_ssid" name="wifi_ssid" style="width:100%"
-               value="{{ wifi_ssid or '' }}" placeholder="TAK-Field">
+               value="{{ wifi_ssid or '' }}" placeholder="Enter Network Name">
 
         <label for="wifi_password">Password</label>
-        <input id="wifi_password" name="wifi_password" type="password"
-               style="width:100%" placeholder="leave blank for an open network">
+        <div class="input-group">
+          <input id="wifi_password" name="wifi_password" type="password"
+                 placeholder="leave blank for an open network">
+          <button type="button" class="btn ghost" data-toggle-password="wifi_password">Show</button>
+        </div>
 
         <label for="wifi_security">Security</label>
         <select id="wifi_security" name="wifi_security" style="width:100%">
@@ -42,16 +41,13 @@
           {% endfor %}
         </select>
 
-        <button type="submit" style="margin-top:14px">OK — embed in QR</button>
-        {% if wifi_ssid %}
-          <a href="/enrollment/{{ token.id }}/qr" style="margin-left:12px">remove Wi-Fi</a>
-        {% endif %}
+        <button type="submit" style="margin-top:14px">OK — new QR with Wi-Fi</button>
       </form>
 
       <p class="muted" style="font-size:12px; margin-top:14px">
-        Not stored. The password is used for this QR only — keeping it in the
-        database would be a second recoverable secret, and the tablet needs it just
-        once, to reach the server during provisioning.
+        Not stored. Submitting mints a fresh QR — there is no standing record to
+        re-render — so the one on screen now keeps working until its own 15
+        minutes run out; nothing revokes it.
       </p>
     </div>
   </div>
@@ -64,6 +60,10 @@
           On a <strong>factory-reset</strong> tablet, tap the welcome screen six
           times in the same spot to open the scanner, then scan this.
           Device Owner can only be established during initial setup.
+        </p>
+        <p>
+          <span class="pill warn">expires {{ qr_expires_at.strftime('%H:%M:%S') }} UTC</span>
+          <span class="muted">— good for any number of devices until then.</span>
         </p>
         {% if wifi_ssid %}
           <p><span class="pill good">Wi-Fi embedded: {{ wifi_ssid }}</span></p>
@@ -81,7 +81,7 @@
           <pre style="margin-top:8px">{{ payload | pretty_json }}</pre>
         </details>
         <details style="margin-top:8px">
-          <summary class="muted">Token secret</summary>
+          <summary class="muted">QR secret (expires {{ qr_expires_at.strftime('%H:%M:%S') }} UTC)</summary>
           <pre style="margin-top:8px">{{ secret }}</pre>
         </details>
       {% elif not problem %}
@@ -90,4 +90,5 @@
     </div>
   </div>
 </div>
+{% endif %}
 {% endblock %}

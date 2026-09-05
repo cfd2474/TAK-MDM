@@ -1,0 +1,376 @@
+{#
+  Copyright 2026 TAK-Solutions LLC — Apache 2.0.
+
+  Form-driven policy editor (W10), sub-paged (W12). No JSON typing (DW6). Import:
+    {% from "_policy_form.html" import policy_subform, resulting_spec, app_group_buttons %}
+  `policy_subform(page.fields, spec, app_packages, managed_files)` renders one
+  ui_group's controls; the caller places each sub-page in a rail. All sub-pages of
+  a category share one <form>, so `parse_form(type, whole_form)` reads every field
+  whether or not its page is on screen. Field names are globally unique across the
+  wired types, so the profile creator can carry several in one <form>.
+#}
+
+{% macro _bool(f, value, name) %}
+  <select name="{{ name }}">
+    <option value="" {{ 'selected' if value is none }}>Not managed</option>
+    <option value="true" {{ 'selected' if value is true }}>{{ f.true_label }}</option>
+    <option value="false" {{ 'selected' if value is false }}>{{ f.false_label }}</option>
+  </select>
+{% endmacro %}
+
+{% macro _int(f, value, name) %}
+  <input type="number" name="{{ name }}" value="{{ '' if value is none else value }}"
+         {% if f.minimum is not none %}min="{{ f.minimum }}"{% endif %}
+         {% if f.maximum is not none %}max="{{ f.maximum }}"{% endif %}
+         placeholder="not managed" style="width:160px">
+  {% if f.unit %}<span class="muted">{{ f.unit }}</span>{% endif %}
+  {% if f.minimum is not none or f.maximum is not none %}
+    <span class="muted" style="font-size:11px">({{ f.minimum }}–{{ f.maximum }})</span>
+  {% endif %}
+{% endmacro %}
+
+{% macro _enum(f, value, name) %}
+  <select name="{{ name }}">
+    <option value="" {{ 'selected' if value is none }}>Not managed</option>
+    {% for c in f.choices %}
+      <option value="{{ c.value }}" {{ 'selected' if value is not none and (value | string) == c.value }}>{{ c.label }}</option>
+    {% endfor %}
+  </select>
+{% endmacro %}
+
+{% macro _str(f, value, name) %}
+  <input type="text" name="{{ name }}" value="{{ value or '' }}"
+         {% if f.pattern %}pattern="{{ f.pattern }}"{% endif %}
+         placeholder="not managed" style="min-width:280px">
+{% endmacro %}
+
+{% macro _text(f, value, name) %}
+  {# Multi-line, for operator-authored prose rather than an identifier. The
+     character counter is the point: Android silently truncates a support message
+     past its limit, so the console has to be where an over-long one is noticed. #}
+  <textarea name="{{ name }}" rows="3" class="field-full"
+            {% if f.maximum %}maxlength="{{ f.maximum }}"{% endif %}
+            placeholder="not managed">{{ value or '' }}</textarea>
+  {% if f.maximum %}
+    <div class="muted" style="font-size:12px">
+      <span data-char-count-for="{{ name }}">{{ (value or '') | length }}</span> / {{ f.maximum }}
+    </div>
+  {% endif %}
+{% endmacro %}
+
+{% macro _password(f, value, name) %}
+  {# Shown in the clear on the admin console — an operator setting the device
+     passcode needs to see it. It is masked only on the on-device app. #}
+  <input type="text" name="{{ name }}" value="{{ value or '' }}"
+         autocomplete="off" spellcheck="false"
+         {% if f.minimum %}minlength="{{ f.minimum }}"{% endif %}
+         {% if f.maximum %}maxlength="{{ f.maximum }}"{% endif %}
+         placeholder="not set" style="min-width:220px">
+{% endmacro %}
+
+{% macro _package_list(f, items, name) %}
+  <div class="rowset" data-rowset>
+    {% for item in items or [] %}
+      <div class="rs-row"><input type="text" name="{{ name }}" value="{{ item }}" placeholder="com.example.app">
+        <button type="button" class="ghost" data-remove-row>Remove</button></div>
+    {% endfor %}
+    <template data-row-template>
+      <div class="rs-row"><input type="text" name="{{ name }}" placeholder="com.example.app">
+        <button type="button" class="ghost" data-remove-row>Remove</button></div>
+    </template>
+    <button type="button" class="ghost" data-add-row>Add package</button>
+  </div>
+{% endmacro %}
+
+{% macro _app_list(f, items, name, app_packages) %}
+  <div class="rowset" data-rowset="{{ name }}">
+    {% for entry in items or [] %}
+      {{ _app_row(name, app_packages, entry) }}
+    {% endfor %}
+    <template data-row-template>{{ _app_row(name, app_packages, none) }}</template>
+    <button type="button" class="ghost" data-add-row>Add app</button>
+  </div>
+{% endmacro %}
+
+{% macro _app_row(name, app_packages, entry) %}
+  <div class="rs-row">
+    <select name="{{ name }}__package_name">
+      <option value="">— pick an uploaded app —</option>
+      {% for p in app_packages %}
+        <option value="{{ p.package_name }}" {{ 'selected' if entry and entry.package_name == p.package_name }}>
+          {{ p.label or p.package_name }} ({{ p.package_name }})
+        </option>
+      {% endfor %}
+    </select>
+    {#
+      One select rather than a number box. The three intents are mutually
+      exclusive, and an operator could not previously see which builds exist —
+      let alone pin an older one, which had no control at all.
+    #}
+    <select name="{{ name }}__version_choice" style="min-width:280px">
+      <option value="">Latest published</option>
+      {% for p in app_packages %}
+        {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
+          <option value="min:{{ v.version_code }}"
+                  data-package="{{ p.package_name }}"
+                  {{ 'selected' if entry and entry.min_version_code == v.version_code and not entry.artifact_sha256 }}>
+            At least {{ v.version_code }}{% if v.version_name %} ({{ v.version_name }}){% endif %}
+          </option>
+        {% endfor %}
+      {% endfor %}
+      {% for p in app_packages %}
+        {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
+          {% set base = (v.files | selectattr('role.value', 'equalto', 'base') | list | first) %}
+          {% if base %}
+            <option value="pin:{{ base.artifact_sha256 }}"
+                    data-package="{{ p.package_name }}"
+                    {{ 'selected' if entry and entry.artifact_sha256 == base.artifact_sha256 }}>
+              Exactly {{ v.version_code }}{% if v.version_name %} ({{ v.version_name }}){% endif %}{% if v.plugin_api | atak_target %} — for ATAK {{ v.plugin_api | atak_target }}{% endif %}{{ ' — held' if not v.published }}
+            </option>
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+    </select>
+    <button type="button" class="ghost" data-remove-row>Remove</button>
+    {# Filled by atlas.js when the selection implies a mismatch. Warn, never
+       forbid — and always on the plugin, since ATAK is the fixed point. #}
+    <div class="app-compat-warning banner" hidden></div>
+  </div>
+{% endmacro %}
+
+{#
+  One uploaded image, with a preview.
+
+  The frames use `object-fit: cover`, which is what Android does to a wallpaper —
+  it fills the screen and crops the overflow. A `contain` preview would look
+  tidier and would lie about what the device shows.
+#}
+{% macro _image_file(f, value, name) %}
+  {#
+    Upload straight into the policy (W46). No Content dropdown: the operator is
+    choosing a picture for this policy, not publishing an asset to the library, and
+    making them go and do that first was two clicks in the wrong place.
+    The id lives in a hidden input, set by the upload before the policy is saved.
+  #}
+  {% set is_tablet = 'tablet' in name %}
+  <div class="image-slot" data-image-slot data-form-factor="{{ 'tablet' if is_tablet else 'phone' }}">
+    <input type="hidden" name="{{ name }}" value="{{ value or '' }}" data-image-select>
+
+    <div class="toolbar" style="gap:8px; align-items:center">
+      <input type="file" accept="image/*" data-image-upload style="max-width:260px">
+      <span class="muted" data-image-status style="font-size:12px">
+        {% if value %}current image{% else %}no image chosen{% endif %}
+      </span>
+      <button type="button" class="ghost" data-image-clear {{ 'hidden' if not value }}>Remove</button>
+    </div>
+    <div class="wallpaper-preview" data-image-preview hidden>
+      <figure>
+        <div class="frame portrait"><img alt="Portrait preview"></div>
+        <figcaption>Portrait</figcaption>
+      </figure>
+      <figure>
+        <div class="frame landscape"><img alt="Landscape preview"></div>
+        <figcaption>Landscape</figcaption>
+      </figure>
+    </div>
+  </div>
+{% endmacro %}
+
+{% macro _file_list(f, items, name, managed_files) %}
+  <div class="rowset" data-rowset>
+    {% for entry in items or [] %}{{ _file_row(name, managed_files, entry) }}{% endfor %}
+    <template data-row-template>{{ _file_row(name, managed_files, none) }}</template>
+    <button type="button" class="ghost" data-add-row>Add file</button>
+  </div>
+{% endmacro %}
+
+{% macro _file_row(name, managed_files, entry) %}
+  <div class="rs-row" style="flex-wrap:wrap">
+    <select name="{{ name }}__file_id">
+      <option value="">— pick an uploaded file —</option>
+      {% for mf in managed_files %}
+        <option value="{{ mf.id }}" {{ 'selected' if entry and (entry.file_id | string) == (mf.id | string) }}>{{ mf.name }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" name="{{ name }}__dest_path" style="min-width:220px"
+           value="{{ entry.dest_path if entry else '' }}" placeholder="/sdcard/atak/imagery">
+    <select name="{{ name }}__availability">
+      <option value="required" {{ 'selected' if not entry or entry.availability != 'optional' }}>required</option>
+      <option value="optional" {{ 'selected' if entry and entry.availability == 'optional' }}>optional (marketplace)</option>
+    </select>
+    <select name="{{ name }}__persist">
+      <option value="inherit" {{ 'selected' if not entry or entry.persist is none }}>persist: from tier</option>
+      <option value="yes" {{ 'selected' if entry and entry.persist is true }}>persist: yes</option>
+      <option value="no" {{ 'selected' if entry and entry.persist is false }}>persist: no</option>
+    </select>
+    <label class="muted" style="display:flex;gap:4px;align-items:center;margin:0">
+      <input type="checkbox" name="{{ name }}__extract" style="width:auto" {{ 'checked' if entry and entry.extract }}> extract
+    </label>
+    <input type="text" name="{{ name }}__extract_to" style="width:180px"
+           value="{{ entry.extract_to if entry and entry.extract_to else '' }}" placeholder="extract to (opt)">
+    <select name="{{ name }}__overwrite">
+      {% for o in ['if_newer', 'always', 'if_absent'] %}
+        <option value="{{ o }}" {{ 'selected' if entry and entry.overwrite == o }}>{{ o }}</option>
+      {% endfor %}
+    </select>
+    <button type="button" class="ghost" data-remove-row>Remove</button>
+  </div>
+{% endmacro %}
+
+{% macro _yesno(name, on) %}
+  <select name="{{ name }}">
+    <option value="yes" {{ 'selected' if on }}>Yes</option>
+    <option value="no" {{ 'selected' if not on }}>No</option>
+  </select>
+{% endmacro %}
+
+{% macro _wifi_list(f, items, name) %}
+  <div class="rowset" data-rowset>
+    {% for e in items or [] %}{{ _wifi_row(name, e) }}{% endfor %}
+    <template data-row-template>{{ _wifi_row(name, none) }}</template>
+    <button type="button" class="ghost" data-add-row>Add Wi-Fi network</button>
+  </div>
+{% endmacro %}
+
+{% macro _wifi_row(name, e) %}
+  <div class="rs-row" style="flex-wrap:wrap; align-items:flex-end">
+    <div><label>SSID</label>
+      <input type="text" name="{{ name }}__ssid" value="{{ e.ssid if e else '' }}" placeholder="Network name" style="min-width:180px"></div>
+    <div><label>Security</label>
+      <select name="{{ name }}__security">
+        {% for v, lbl in [('open','Open'),('wep','WEP'),('wpa_psk','WPA/WPA2 PSK'),('wpa3_sae','WPA3 SAE')] %}
+          <option value="{{ v }}" {{ 'selected' if (e.security if e else 'wpa_psk') == v }}>{{ lbl }}</option>
+        {% endfor %}
+      </select></div>
+    <div><label>Password</label>
+      <input type="password" name="{{ name }}__password" value="{{ e.password if e and e.password else '' }}" placeholder="min 8" style="width:130px"></div>
+    <div><label>Hidden</label>{{ _yesno(name ~ '__hidden', (e.hidden if e else false)) }}</div>
+    <button type="button" class="ghost" data-remove-row>Remove</button>
+  </div>
+{% endmacro %}
+
+{% macro _usage_rule_row(name, e, app_packages) %}
+  {# One "when <metric> over <period> exceeds <n> MB" line. The app-wise variant
+     is the same line with a package picker in front, so both share this row. #}
+  <div class="rs-row">
+    {% if app_packages is not none %}
+      <select name="{{ name }}__package_name">
+        <option value="">— pick an uploaded app —</option>
+        {% for p in app_packages %}
+          <option value="{{ p.package_name }}" {{ 'selected' if e and e.package_name == p.package_name }}>
+            {{ p.label or p.package_name }} ({{ p.package_name }})
+          </option>
+        {% endfor %}
+      </select>
+    {% endif %}
+    <select name="{{ name }}__period">
+      {% for v, label in [(0, 'Daily'), (1, 'Weekly'), (2, 'Monthly')] %}
+        <option value="{{ v }}" {{ 'selected' if e and e.period == v or (not e and v == 2) }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <span class="muted">when</span>
+    <select name="{{ name }}__metric">
+      {% for v, label in [(0, 'Mobile data'), (1, 'Wi-Fi data'), (2, 'Total data')] %}
+        <option value="{{ v }}" {{ 'selected' if e and e.metric == v or (not e and v == 0) }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <span class="muted">exceeds</span>
+    <input type="number" name="{{ name }}__threshold_mb" min="1"
+           value="{{ e.threshold_mb if e else '' }}" placeholder="0" style="width:110px">
+    <span class="muted">MB</span>
+    <button type="button" class="ghost" data-remove-row>Remove</button>
+  </div>
+{% endmacro %}
+
+{% macro _usage_rules(f, items, name, app_packages) %}
+  <div class="rowset" data-rowset="{{ name }}">
+    {% for entry in items or [] %}
+      {{ _usage_rule_row(name, entry, app_packages) }}
+    {% endfor %}
+    <template data-row-template>{{ _usage_rule_row(name, none, app_packages) }}</template>
+    <button type="button" class="ghost" data-add-row>Add rule</button>
+  </div>
+{% endmacro %}
+
+{% macro _control(f, spec, name, app_packages, managed_files) %}
+  {% set value = spec.get(f.name) %}
+  {% if f.requires %}
+    {#
+      The platform has no route to this control yet (Android reference §W43).
+      Shown rather than hidden, and disabled rather than merely labelled: a
+      disabled input submits nothing, so an operator cannot save a restriction
+      that would never be enforced. The spec refuses the value too — this is the
+      polite half of that, not the guard.
+    #}
+    <fieldset disabled style="border:0; padding:0; margin:0; opacity:.55">
+      {{ _live_control(f, value, name, app_packages, managed_files) }}
+    </fieldset>
+    <div class="muted" style="font-size:12px; margin-top:4px">
+      <span class="pill warn">needs {{ f.requires }}</span>
+      No AOSP Device Owner API can do this, so it cannot be saved yet.
+    </div>
+  {% else %}
+    {{ _live_control(f, value, name, app_packages, managed_files) }}
+  {% endif %}
+{% endmacro %}
+
+{% macro _live_control(f, value, name, app_packages, managed_files) %}
+  {% if f.control == 'bool' %}{{ _bool(f, value, name) }}
+  {% elif f.control == 'int' %}{{ _int(f, value, name) }}
+  {% elif f.control == 'enum' %}{{ _enum(f, value, name) }}
+  {% elif f.control == 'str' %}{{ _str(f, value, name) }}
+  {% elif f.control == 'text' %}{{ _text(f, value, name) }}
+  {% elif f.control == 'password' %}{{ _password(f, value, name) }}
+  {% elif f.control == 'package_list' %}{{ _package_list(f, value, name) }}
+  {% elif f.control == 'app_list' %}{{ _app_list(f, value, name, app_packages) }}
+  {% elif f.control == 'file_list' %}{{ _file_list(f, value, name, managed_files) }}
+  {% elif f.control == 'image_file' %}{{ _image_file(f, value, name) }}
+  {% elif f.control == 'wifi_list' %}{{ _wifi_list(f, value, name) }}
+  {% elif f.control == 'usage_rules' %}{{ _usage_rules(f, value, name, none) }}
+  {% elif f.control == 'app_usage_rules' %}{{ _usage_rules(f, value, name, app_packages) }}
+  {% endif %}
+{% endmacro %}
+
+{% macro app_group_buttons(app_groups) %}
+  {% if app_groups %}
+  <div class="toolbar" style="margin-bottom:10px">
+    <span class="muted" style="font-size:12px">Add an app group to Required apps:</span>
+    {% for grp in app_groups %}
+      <button type="button" class="ghost"
+              onclick='atlasAddAppGroup("required_apps", {{ grp.packages | tojson }})'>
+        {{ grp.name }} ({{ grp.packages | length }})
+      </button>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endmacro %}
+
+{#
+  One sub-page's worth of controls (W12) — the fields of a single ui_group.
+  `fields` is a SubPage.fields list; `spec` is the whole section spec dict (only
+  this page's names are read, but hidden pages' inputs stay in the same <form>).
+#}
+{#
+  Emitted once per page rather than inside a macro: Jinja macros do not inherit the
+  page context, and threading one more argument through every call site to carry
+  data the browser reads globally is worse than a named block.
+#}
+{% macro app_compat_blob(app_compat) %}
+<script type="application/json" data-app-compat>{{ app_compat | tojson }}</script>
+{% endmacro %}
+
+{% macro policy_subform(fields, spec, app_packages, managed_files) %}
+  {% for f in fields %}
+  <div class="pf-field">
+    <div class="pf-label">
+      <label>{{ f.label }}</label>
+      {% if f.help %}<div class="muted" style="font-size:12px">{{ f.help }}</div>{% endif %}
+      {% if f.merge_hint %}<div class="muted" style="font-size:11px">↳ {{ f.merge_hint }}</div>{% endif %}
+    </div>
+    <div class="pf-control">
+      {{ _control(f, spec, f.name, app_packages, managed_files) }}
+    </div>
+  </div>
+  {% endfor %}
+{% endmacro %}
+

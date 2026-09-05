@@ -78,6 +78,12 @@ class Settings(BaseSettings):
     # --- Enrollment ----------------------------------------------------------
     enrollment_token_ttl_hours: int = 168  # 7 days
 
+    # How long a QR minted from the persistent enrollment token stays scannable.
+    # Deliberately short: this is the only form of the token ever displayed, so a
+    # leaked QR image (a photo, a screenshot left on a shared screen) is bounded by
+    # this window rather than by the persistent token's own lifetime.
+    enrollment_qr_ttl_seconds: int = 900  # 15 minutes
+
     # --- Check-in ------------------------------------------------------------
     # WorkManager's periodic floor is 15 minutes, so anything lower is wishful.
     checkin_interval_seconds: int = 900
@@ -86,13 +92,13 @@ class Settings(BaseSettings):
     checkin_jitter_ratio: float = 0.2
 
     # --- Agent APK, for provisioning payloads --------------------------------
-    agent_package_name: str = "org.takmdm.agent"
+    agent_package_name: str = "com.taksolutions.atlasmdm"
     # Must match the receiver the APK actually declares. The leading dot expands
     # against the package root, so the `.admin` segment is required — omitting it
     # points at a class that does not exist, and Android reports only "something
     # went wrong" after installing. Validated against the uploaded APK at QR
     # generation so it cannot drift again.
-    agent_admin_receiver: str = "org.takmdm.agent/.admin.MdmDeviceAdminReceiver"
+    agent_admin_receiver: str = "com.taksolutions.atlasmdm/.admin.MdmDeviceAdminReceiver"
     agent_apk_url: str = "https://mdm.example.org/static/agent.apk"
     # base64url SHA-256 of the agent's signing certificate. Android refuses to
     # provision if this does not match the downloaded APK.

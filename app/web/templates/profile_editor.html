@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf_field, empty_state %}
+{% from "_policy_form.html" import policy_subform, app_group_buttons, app_compat_blob %}
+{% set nav = 'policies' %}
+{% block title %}{{ (profile.name if profile else 'New policy') }} — ATLAS{% endblock %}
+{% block main_class %}wide{% endblock %}
+
+{% macro rail_item(row) %}
+  {% set cat = row.category %}
+  {% set leaf = (not cat.wired) or (row.pages | length <= 1) %}
+  {% set leaf_key = cat.key ~ ':' ~ (row.pages[0].page.slug if row.pages else '_') %}
+  <li class="rail-cat {{ 'placeholder' if not cat.wired }}" data-cat-group="{{ cat.key }}">
+    {% if leaf %}
+      <a class="rail-cat-head" data-page="{{ leaf_key }}">
+        {{ cat.label }}<span class="rail-check" {{ '' if row.has_data else 'hidden' }}>✓</span>
+      </a>
+    {% else %}
+      <a class="rail-cat-head" data-cat-toggle>
+        {{ cat.label }}<span class="rail-check" {{ '' if row.has_data else 'hidden' }}>✓</span>
+      </a>
+      <ul class="rail-sub">
+        {% for pg in row.pages %}
+          <li><a data-page="{{ cat.key }}:{{ pg.page.slug }}">
+            {{ pg.page.label }}<span class="rail-check" {{ '' if pg.has_data else 'hidden' }}>✓</span>
+          </a></li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </li>
+{% endmacro %}
+
+{% macro page_body(row, pg) %}
+  <h2>{{ row.category.label }}{% if row.pages | length > 1 %} <span class="muted">· {{ pg.page.label }}</span>{% endif %}</h2>
+  {% if row.category.key == 'app_management' and pg.page.slug == 'required-apps' %}
+    {{ app_group_buttons(app_groups) }}
+  {% endif %}
+  {{ policy_subform(pg.page.fields, row.spec, app_packages, managed_files) }}
+{% endmacro %}
+
+{% block content %}
+{{ app_compat_blob(app_compat) }}
+{% if mode == 'new' %}
+  {{ page_header('New policy', 'A policy bundles single-concern settings into one unit, organised by category. Fill in the categories you need and leave the rest — an empty category is simply not part of the policy.') }}
+  <p class="sub"><a href="/policies">← policies</a></p>
+{% else %}
+  {{ page_header(profile.name, profile.description or 'Composite policy — edit each category, then assign it from the Assign section.') }}
+  <p class="sub">
+    <a href="/policies">← policies</a>
+    {% if profile.archived_at %}· <span class="pill bad">archived</span>{% endif %}
+  </p>
+  {% if request.query_params.get('saved') %}
+    <div class="banner good">Saved “{{ request.query_params.get('saved') }}”.</div>
+  {% endif %}
+{% endif %}
+
+<form method="post"
+      action="{{ '/profiles' if mode == 'new' else '/profiles/' ~ profile.id }}"
+      data-policy-form>
+  {{ csrf_field(csrf_token) }}
+{% if mode == 'new' %}
+  <div class="panel">
+    <div class="row">
+      <div>
+        <label for="name">Policy name</label>
+        <input id="name" name="name" required class="field-full" placeholder="Field Tablet Baseline">
+      </div>
+      <div>
+        <label for="description">Description</label>
+        <input id="description" name="description" class="field-full">
+      </div>
+    </div>
+  </div>
+{% endif %}
+
+<div class="railed">
+  <nav class="rail" data-rail data-rail-panels="cat-panels">
+    <ul>
+      {% for row in catalog %}{{ rail_item(row) }}{% endfor %}
+    </ul>
+  </nav>
+
+  <div class="rail-body" id="cat-panels">
+    {% for row in catalog %}
+      {% if not row.category.wired %}
+        <section class="tab-panel" data-page-panel="{{ row.category.key }}:_" hidden>
+          <h2>{{ row.category.label }}</h2>
+          <div class="panel stub">
+            <div class="big">Not available yet.</div>
+            <div>
+              {{ row.category.blurb or 'This category needs backend support before it can be configured.' }}
+              {% if row.category.subtopics %}<br>Will cover: {{ row.category.subtopics | join(' · ') }}.{% endif %}
+            </div>
+          </div>
+        </section>
+
+      {% else %}
+        {% for pg in row.pages %}
+        <section class="tab-panel" data-page-panel="{{ row.category.key }}:{{ pg.page.slug }}" hidden>
+          <div class="panel">
+            <p class="sub">Leave controls at <em>Not managed</em> to skip them. Every category is here — fill in what this policy should manage.</p>
+            {{ page_body(row, pg) }}
+            {% if mode == 'edit' and row.section and row.section.latest_version %}
+              <p class="muted" style="font-size:12px; margin-top:10px">
+                {{ row.category.label }} · v{{ row.section.latest_version.version }} ·
+                set every control to “Not managed” and save to remove this category
+              </p>
+            {% endif %}
+          </div>
+        </section>
+        {% endfor %}
+      {% endif %}
+    {% endfor %}
+  </div>
+</div>
+
+<div class="panel">
+  <button type="submit">{{ 'Create policy' if mode == 'new' else 'Save policy' }}</button>
+</div>
+</form>
+
+{% if mode != 'new' %}
+  <h2>Assign to devices</h2>
+  <div class="panel">
+    {% if request.query_params.get('assigned') %}
+      <div class="banner good">Targets updated: {{ request.query_params.get('assigned') }} assignment(s).</div>
+    {% endif %}
+    {% if not profile.sections %}
+      <p class="muted">This policy has no sections yet — assigning it would apply nothing.</p>
+    {% endif %}
+    <p class="sub">
+      Assigning the policy applies every one of its sections at this rank.
+      Unticking removes the assignment — this form is the complete target set.
+    </p>
+    <form method="post" action="/profiles/{{ profile.id }}/targets">
+      {{ csrf_field(csrf_token) }}
+      <label for="rank">Rank (higher wins; scope only breaks ties)</label>
+      <input id="rank" name="rank" type="number" value="{{ current_rank }}" style="width:120px">
+      <div class="row" style="margin-top:14px">
+        <div>
+          <label>Devices</label>
+          <div class="checks">
+            {% for d in devices %}
+              <label>
+                <input type="checkbox" name="device_ids" value="{{ d.id }}"
+                       {% if d.id in assigned.device %}checked{% endif %}>
+                <span class="mono">{{ d.name or d.serial_number }}</span>
+              </label>
+            {% else %}<p class="muted">No devices enrolled.</p>{% endfor %}
+          </div>
+        </div>
+        <div>
+          <label>Groups</label>
+          <div class="checks">
+            {% for g in groups %}
+              <label>
+                <input type="checkbox" name="group_ids" value="{{ g.id }}"
+                       {% if g.id in assigned.group %}checked{% endif %}>
+                {{ g.name }}
+              </label>
+            {% else %}<p class="muted">No groups.</p>{% endfor %}
+          </div>
+        </div>
+        <div>
+          <label>Tags</label>
+          <div class="checks">
+            {% for t in tags %}
+              <label>
+                <input type="checkbox" name="tag_ids" value="{{ t.id }}"
+                       {% if t.id in assigned.tag %}checked{% endif %}>
+                {{ t.name }}
+              </label>
+            {% else %}<p class="muted">No tags.</p>{% endfor %}
+          </div>
+        </div>
+      </div>
+      <button type="submit" style="margin-top:14px">Apply</button>
+    </form>
+  </div>
+
+  <h2>Manage</h2>
+  <div class="panel">
+    <div class="toolbar">
+      {% if profile.archived_at %}
+        <form method="post" action="/profiles/{{ profile.id }}/restore" style="margin:0">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit">Restore</button>
+        </form>
+        <span class="muted">Un-archive this policy.</span>
+        <form method="post" action="/profiles/{{ profile.id }}/delete" style="margin:0"
+              data-confirm="Permanently delete {{ profile.name }}? Its categories and every version they ever published go with it. This cannot be undone.">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit" class="danger">Delete permanently</button>
+        </form>
+      {% else %}
+        <form method="post" action="/profiles/{{ profile.id }}/archive" style="margin:0"
+              data-confirm="Archive {{ profile.name }}? It stops applying to every device but its history is kept.">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit" class="danger">Archive</button>
+        </form>
+        <span class="muted">Stops applying everywhere; its history is kept (D20).</span>
+      {% endif %}
+    </div>
+    {% if profile.archived_at %}
+    <p class="muted" style="margin-top:8px">
+      Deleting destroys this policy, every category it holds and all their
+      versions — there is no undo and no record left of what it once set. Keep it
+      archived unless it never reached a device.
+    </p>
+    {% endif %}
+  </div>
+{% endif %}
+{% endblock %}

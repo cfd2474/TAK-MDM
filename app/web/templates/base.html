@@ -3,108 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}TAK MDM{% endblock %}</title>
-  <style>
-    :root {
-      --bg: #f7f8fa; --panel: #fff; --ink: #16202c; --muted: #5b6b7c;
-      --line: #dde3ea; --accent: #1b6ac9; --warn: #a8611a; --bad: #b4341f;
-      --good: #1d7a4d; --code: #f0f3f7;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #12171d; --panel: #1a2129; --ink: #e6ecf2; --muted: #93a3b4;
-        --line: #2a343f; --accent: #63a8f0; --warn: #d99a4e; --bad: #e8705a;
-        --good: #5cc48d; --code: #141a21;
-      }
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; background: var(--bg); color: var(--ink);
-      font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
-    }
-    header {
-      background: var(--panel); border-bottom: 1px solid var(--line);
-      padding: 12px 20px; display: flex; gap: 20px; align-items: baseline;
-      position: sticky; top: 0; z-index: 5;
-    }
-    header .brand { font-weight: 650; letter-spacing: .2px; }
-    header nav a { margin-right: 16px; color: var(--muted); text-decoration: none; }
-    header nav a:hover, header nav a.on { color: var(--accent); }
-    main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 64px; }
-    h1 { font-size: 20px; margin: 0 0 4px; }
-    h2 { font-size: 15px; margin: 28px 0 10px; }
-    .sub { color: var(--muted); margin: 0 0 20px; }
-    .panel {
-      background: var(--panel); border: 1px solid var(--line);
-      border-radius: 8px; padding: 18px; margin-bottom: 18px;
-    }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
-    th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
-    tr:last-child td { border-bottom: none; }
-    a { color: var(--accent); }
-    code, pre, .mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
-    pre {
-      background: var(--code); border: 1px solid var(--line); border-radius: 6px;
-      padding: 12px; overflow-x: auto; font-size: 12.5px; margin: 0;
-    }
-    /* A collected log runs to hundreds of KB. Cap the height so the page stays
-       navigable, and wrap rather than scroll sideways: stack traces are long and
-       reading one a line at a time through a horizontal scrollbar is miserable. */
-    .logdump {
-      max-height: 70vh; overflow-y: auto;
-      white-space: pre-wrap; word-break: break-word;
-    }
-    input, select, textarea, button {
-      font: inherit; color: inherit; background: var(--panel);
-      border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px;
-    }
-    textarea { width: 100%; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
-    button {
-      background: var(--accent); border-color: var(--accent); color: #fff;
-      cursor: pointer; font-weight: 550; padding: 8px 16px;
-    }
-    button:hover { filter: brightness(1.08); }
-    /* Destructive actions read as destructive before they are clicked, not after. */
-    button.danger { background: var(--bad, #b3261e); border-color: var(--bad, #b3261e); }
-    label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 12.5px; }
-    .row { display: flex; gap: 16px; flex-wrap: wrap; }
-    .row > * { flex: 1 1 320px; min-width: 0; }
-    .pill {
-      display: inline-block; padding: 1px 8px; border-radius: 20px;
-      font-size: 12px; border: 1px solid var(--line);
-    }
-    .pill.good { color: var(--good); border-color: var(--good); }
-    .pill.warn { color: var(--warn); border-color: var(--warn); }
-    .pill.bad { color: var(--bad); border-color: var(--bad); }
-    .muted { color: var(--muted); }
-    .banner {
-      background: color-mix(in srgb, var(--warn) 12%, transparent);
-      border: 1px solid var(--warn); color: var(--warn);
-      padding: 8px 14px; border-radius: 6px; margin-bottom: 18px; font-size: 13px;
-    }
-    .banner.bad { background: color-mix(in srgb, var(--bad) 12%, transparent); border-color: var(--bad); color: var(--bad); }
-    .checks {
-      max-height: 240px; overflow-y: auto; border: 1px solid var(--line);
-      border-radius: 6px; padding: 8px 12px; background: var(--code);
-    }
-    .checks label { display: flex; gap: 8px; align-items: center; margin: 4px 0; color: var(--ink); }
-    .checks input { width: auto; }
-    .stat { display: flex; gap: 28px; flex-wrap: wrap; }
-    .stat div span { display: block; font-size: 22px; font-weight: 600; }
-    .stat div small { color: var(--muted); }
-  </style>
+  <title>{% block title %}ATLAS{% endblock %}</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <link rel="stylesheet" href="/static/atlas.css">
 </head>
 <body>
+{% set sections = [
+  ('enroll',   'Enroll',   '/enrollment'),
+  ('manage',   'Manage',   '/'),
+  ('policies', 'Policies', '/policies'),
+  ('apps',     'Apps',     '/apps'),
+  ('content',  'Content',  '/content'),
+  ('reports',  'Reports',  '/reports'),
+  ('admin',    'Admin',    '/admin'),
+  ('guides',   'Guides',   '/guides'),
+] %}
 <header>
-  <span class="brand">TAK MDM</span>
+  <a class="brand" href="/">
+    <img class="brand-logo" src="/static/atlas-logo.png"
+         alt="ATLAS MDM — ATAK Tactical Lifecycle &amp; Administration System">
+  </a>
   <nav>
-    <a href="/" class="{{ 'on' if nav == 'devices' }}">Devices</a>
-    <a href="/policies" class="{{ 'on' if nav == 'policies' }}">Policies</a>
-    <a href="/enrollment" class="{{ 'on' if nav == 'enrollment' }}">Enrollment</a>
-    <a href="/docs">API</a>
+    {% for key, label, href in sections %}
+      <a href="{{ href }}" class="{{ 'on' if nav == key }}">{{ label }}</a>
+    {% endfor %}
   </nav>
-  <span style="margin-left:auto" class="muted">
+  <span class="who">
     {% if identity and not identity.is_anonymous %}
       {{ identity.label }}
       {% if identity.groups %}<span class="pill">{{ identity.groups | join(', ') }}</span>{% endif %}
@@ -113,7 +37,7 @@
     {% endif %}
   </span>
 </header>
-<main>
+<main class="{% block main_class %}{% endblock %}">
   {% if not identity or identity.is_anonymous %}
   <div class="banner">
     Admin authentication is disabled. This console is bound to loopback and blocked
@@ -127,5 +51,6 @@
   {% endif %}
   {% block content %}{% endblock %}
 </main>
+<script src="/static/atlas.js" defer></script>
 </body>
 </html>

@@ -1,0 +1,380 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf_field, tabs, empty_state %}
+{% set nav = 'apps' %}
+{% block title %}Apps — ATLAS{% endblock %}
+
+{% block content %}
+{{ page_header('Apps', 'Application packages on the server: what has been uploaded, what the ATLAS store offers, and app groups for assigning several at once.') }}
+
+{{ tabs([
+  ('local', 'Local apps'),
+  ('store', 'ATLAS store'),
+  ('tpc', 'TPC Plugins'),
+  ('groups', 'App groups'),
+], active=(request.query_params.get('tab') if request.query_params.get('tab') in ['local','store','tpc','groups'] else 'local'), scope='apps-tabs') }}
+
+<div id="apps-tabs">
+  <div class="tab-panel" data-tab-panel="local">
+    <div class="panel">
+      <h2>Upload a package</h2>
+      <form method="post" action="/apps/upload" enctype="multipart/form-data" class="toolbar">
+        {{ csrf_field(csrf_token) }}
+        <input type="file" name="file" accept=".apk,.xapk,.apks,.apkm" required>
+        <input type="text" name="label" placeholder="Label (optional)">
+        <input type="hidden" name="publish" value="auto">
+        <button type="submit">Upload</button>
+      </form>
+      <p class="muted" style="font-size:12px">
+        The server reads the package name, version, and signing certificate from the
+        file. An XAPK is unpacked into base + splits + OBB server-side (D13).
+        A package that carries an <span class="pill">OBB</span> expansion file is
+        flagged below: a Device Owner cannot place OBB files on the device
+        (Android scoped storage), so the APK installs <strong>without</strong> it
+        and the app will be missing the assets it expects.
+      </p>
+    </div>
+
+    <div class="panel">
+      {% if request.query_params.get('uploaded') %}
+        <div class="banner good">{{ request.query_params.get('uploaded') }}</div>
+      {% endif %}
+      {% if not packages %}
+        {{ empty_state('No packages uploaded yet.') }}
+      {% else %}
+      <table data-sortable>
+        <thead><tr>
+          <th data-sort>App name</th><th data-sort>Latest version</th>
+          <th data-sort>Parts</th><th>Store</th><th></th>
+        </tr></thead>
+        <tbody>
+        {% for p in packages %}
+          <tr>
+            <td>
+              {# The package name is the identity that has to match the device, so
+                 it keeps its place under the name even without its own column. An
+                 unlabelled upload falls back to it rather than showing a bare
+                 dash — and then does not repeat it underneath. #}
+              {% if p.label %}
+                {{ p.label }}
+                <div class="mono muted" style="font-size:11px">{{ p.package_name }}</div>
+              {% else %}
+                <span class="mono">{{ p.package_name }}</span>
+              {% endif %}
+            </td>
+            <td class="mono">
+              {% set deployed = p.versions | selectattr('published') | sort(attribute='version_code') | last %}
+              {% if deployed %}
+                {{ deployed.version_code }}{% if deployed.version_name %} ({{ deployed.version_name }}){% endif %}
+              {% else %}
+                <span class="pill warn">none published</span>
+              {% endif %}
+              {% if (p.versions | length) > 1 %}
+                <div class="muted" style="font-size:11px">
+                  <a href="?versions={{ p.id }}#tab-local">{{ p.versions | length }} versions in the library</a>
+                </div>
+              {% endif %}
+            </td>
+            <td class="muted">
+              {{ (p.latest_version.files | length) if p.latest_version else 0 }}
+              {% if p.latest_version and p.latest_version.has_obb %}
+                <span class="pill" title="This package ships an OBB expansion file. A Device Owner cannot place OBB files on the device, so the APK installs WITHOUT it and the app will be missing the assets it expects. Assigning this package will mark a device degraded.">OBB</span>
+              {% endif %}
+            </td>
+            <td>
+              <form method="post" action="/apps/{{ p.id }}/store" style="margin:0">
+                {{ csrf_field(csrf_token) }}
+                <input type="hidden" name="listed" value="{{ 'false' if p.store_listed else 'true' }}">
+                <button type="submit" class="ghost">
+                  {{ 'In store — remove' if p.store_listed else 'Add to store' }}
+                </button>
+              </form>
+            </td>
+            <td>
+              <form method="post" action="/apps/{{ p.id }}/delete" style="margin:0"
+                    data-confirm="Delete {{ p.package_name }} and all its versions?">
+                {{ csrf_field(csrf_token) }}
+                <button type="submit" class="danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% if request.query_params.get('versions') == (p.id | string) %}
+          <tr>
+            <td colspan="5" style="background:var(--panel-2)">
+              <strong>Versions of {{ p.label or p.package_name }}</strong>
+              <p class="muted" style="font-size:12px; margin:4px 0 8px">
+                Only a <em>published</em> build is chosen automatically by a policy
+                asking for "latest" or "at least X". A held build stays available and
+                can still be pinned to exactly by a policy.
+              </p>
+              <table>
+                <thead><tr><th>versionCode</th><th>Version</th><th>Uploaded</th><th>State</th><th></th></tr></thead>
+                <tbody>
+                {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
+                  <tr>
+                    <td class="mono">{{ v.version_code }}</td>
+                    <td>{{ v.version_name or '—' }}</td>
+                    <td class="muted">{{ v.uploaded_at.strftime('%Y-%m-%d %H:%M') if v.uploaded_at else '—' }}</td>
+                    <td>
+                      {% if v.published %}<span class="pill good">published</span>
+                      {% else %}<span class="pill">held</span>{% endif %}
+                    </td>
+                    <td>
+                      <form method="post" action="/apps/versions/{{ v.id }}/publish" style="margin:0"
+                            data-confirm="{{ 'Hold ' ~ v.version_code ~ '? Policies asking for latest will fall back to the newest published build.' if v.published else 'Publish ' ~ v.version_code ~ '? Every policy asking for latest will deploy it at the next check-in.' }}">
+                        {{ csrf_field(csrf_token) }}
+                        <input type="hidden" name="published" value="{{ 'false' if v.published else 'true' }}">
+                        <button type="submit" class="ghost">{{ 'Hold' if v.published else 'Publish' }}</button>
+                      </form>
+                    </td>
+                  </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+              <p style="margin-top:8px"><a href="?#tab-local" class="muted">Close</a></p>
+            </td>
+          </tr>
+          {% endif %}
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="store" hidden>
+    <div class="panel">
+      <p class="sub">
+        The curated set that ships with a deployment. Being in the store is a hint
+        to operators that a package is ready to assign — it does not install
+        anything on its own.
+      </p>
+      {% if not store_packages %}
+        {{ empty_state('Nothing in the store. Add a package from the Local apps tab.') }}
+      {% else %}
+      <table>
+        <thead><tr><th>Package</th><th>Label</th><th>Latest version</th><th></th></tr></thead>
+        <tbody>
+        {% for p in store_packages %}
+          <tr>
+            <td>
+              {# The package name is the identity that has to match the device, so
+                 it keeps its place under the name even without its own column. An
+                 unlabelled upload falls back to it rather than showing a bare
+                 dash — and then does not repeat it underneath. #}
+              {% if p.label %}
+                {{ p.label }}
+                <div class="mono muted" style="font-size:11px">{{ p.package_name }}</div>
+              {% else %}
+                <span class="mono">{{ p.package_name }}</span>
+              {% endif %}
+            </td>
+            <td class="mono">{{ p.latest_version.version_code if p.latest_version else '—' }}</td>
+            <td>
+              <form method="post" action="/apps/{{ p.id }}/store" style="margin:0">
+                {{ csrf_field(csrf_token) }}
+                <input type="hidden" name="listed" value="false">
+                <button type="submit" class="ghost">Remove from store</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="tpc" hidden>
+    <div class="panel">
+      <h2>TAK.gov plugin catalog</h2>
+
+      {% if not tpc.linked %}
+        <p class="sub">
+          This server is <strong>not linked to a TAK.gov account</strong>, so
+          there is no catalog to show.
+        </p>
+        <p>
+          Link one under <a href="/admin#tab-takgov">Admin → TAK.gov</a>. It takes
+          entering a short code at tak.gov while signed in; the catalog then
+          reflects whatever that account is entitled to see.
+        </p>
+        {% if tpc.status == 'broken' %}
+          <div class="banner bad">
+            A link existed and stopped working. Re-link under Admin → TAK.gov.
+          </div>
+        {% endif %}
+
+      {% else %}
+        <p class="sub">
+          Plugins <span class="mono">{{ tpc.account_label or 'the linked account' }}</span>
+          is entitled to, for {{ tpc.product }} {{ tpc.product_version }}.
+          Listing only — nothing here is on a device until you assign it.
+        </p>
+        <form method="get" action="/apps" class="toolbar">
+          <input type="hidden" name="tab" value="tpc">
+          <label for="tpc-product" class="muted">Product</label>
+          <select id="tpc-product" name="product">
+            {% for p in tpc.products %}
+              <option value="{{ p }}" {{ 'selected' if p == tpc.product }}>{{ p }}</option>
+            {% endfor %}
+          </select>
+          <label for="tpc-version" class="muted">ATAK version</label>
+          <select id="tpc-version" name="product_version">
+            {% for v in tpc.product_versions %}
+              <option value="{{ v }}" {{ 'selected' if v == tpc.product_version }}>{{ v }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit">Show</button>
+        </form>
+        {% if tpc.product != 'ATAK-CIV' %}
+          <div class="banner">
+            <strong>{{ tpc.product }}.</strong> ATAK-CIV object code carries a
+            distribution grant; GOV and MIL do not, and their plugins carry access
+            and export controls. Mirroring these into a fleet is the kind of thing
+            worth clearing in writing before you rely on it.
+          </div>
+        {% endif %}
+
+        {% if tpc.error %}
+          <div class="banner bad">{{ tpc.error }}</div>
+        {% endif %}
+        {% if request.query_params.get('imported') %}
+          <div class="banner good">
+            Imported <span class="mono">{{ request.query_params.get('imported') }}</span>
+            into the local library. It is on the <a href="/apps">Local apps</a> tab;
+            nothing is on a device until you assign it.
+          </div>
+        {% endif %}
+
+        {% if not tpc.loaded %}
+          <p class="muted">
+            Press <strong>Show</strong> to fetch the catalog. It is not loaded
+            automatically — that would put a call to tak.gov, and a token refresh,
+            in front of every visit to this page.
+          </p>
+        {% elif tpc.plugins %}
+        <div class="toolbar" style="margin-bottom:10px">
+          <input type="search" id="tpc-filter" data-plugin-filter
+                 placeholder="Filter by name, package or description"
+                 style="min-width:340px" autocomplete="off">
+          {# Filters what is already on the page. The catalog is fetched once and
+             every row is present, so there is nothing to ask the server for and
+             no reason to make the operator wait between keystrokes. #}
+          <span class="muted" id="tpc-filter-count" data-plugin-filter-count></span>
+        </div>
+        <p data-plugin-total>
+          <strong>{{ tpc.plugins | length }}</strong>
+          plugin{{ '' if tpc.plugins | length == 1 else 's' }}
+          for {{ tpc.product }} {{ tpc.product_version }}.
+        </p>
+        <table data-sortable class="tpc-table">
+          <thead><tr>
+            <th data-sort>Plugin</th>
+            <th data-sort>Version</th>
+            <th data-sort>Size</th>
+            <th>Import</th>
+          </tr></thead>
+          <tbody>
+          {% for p in tpc.plugins %}
+            <tr>
+              <td>
+                {{ p.display_name or p.package_name }}
+                <div class="mono muted" style="font-size:11px">{{ p.package_name }}</div>
+                {% if p.description %}<div class="muted" style="font-size:12px">{{ p.description[:200] }}</div>{% endif %}
+              </td>
+              <td class="mono">{{ p.version or '—' }}</td>
+              <td class="muted mono">{{ p.apk_size_bytes | filesizeformat if p.apk_size_bytes else '—' }}</td>
+              <td>
+                {% if (p.package_name, p.revision_code) in tpc.imported %}
+                  <span class="pill good">imported</span>
+                {% elif not p.apk_url %}
+                  <span class="muted">no download</span>
+                {% else %}
+                  <button type="button" class="ghost" data-tpc-import
+                          data-identifier="{{ p.identifier }}"
+                          data-product="{{ tpc.product }}"
+                          data-product-version="{{ tpc.product_version }}"
+                          data-label="{{ p.display_name or p.package_name }}">Import</button>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% elif not tpc.error %}
+          {{ empty_state('The catalog returned no plugins for this product and version.') }}
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+
+  <div id="tpc-import-modal" class="modal-backdrop" hidden>
+    <div class="modal">
+      <h2 id="tpc-import-title">Importing</h2>
+      <p class="muted" id="tpc-import-detail">Contacting tak.gov…</p>
+      <div class="progress"><span id="tpc-import-bar"></span></div>
+      <p class="mono muted" id="tpc-import-bytes" style="font-size:12px; margin-top:8px"></p>
+      <div class="toolbar" style="margin-top:12px">
+        <button type="button" class="ghost" id="tpc-import-close" hidden>Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="groups" hidden>
+    <div class="panel">
+      <h2>New app group</h2>
+      <form method="post" action="/app-groups">
+        {{ csrf_field(csrf_token) }}
+        <div class="row">
+          <div>
+            <label for="group_name">Name</label>
+            <input id="group_name" name="name" required class="field-full" placeholder="ATAK bundle">
+            <label for="group_desc">Description</label>
+            <input id="group_desc" name="description" class="field-full">
+          </div>
+          <div>
+            <label>Packages</label>
+            <div class="checks">
+              {% for p in packages %}
+                <label><input type="checkbox" name="package_ids" value="{{ p.id }}"> <span class="mono">{{ p.package_name }}</span></label>
+              {% else %}<p class="muted">Upload a package first.</p>{% endfor %}
+            </div>
+          </div>
+        </div>
+        <button type="submit" style="margin-top:12px">Create group</button>
+      </form>
+    </div>
+
+    {% for g in groups %}
+    <div class="panel">
+      <div class="toolbar">
+        <strong>{{ g.name }}</strong>
+        <span class="muted">{{ g.description or '' }}</span>
+        <span class="spacer"></span>
+        <form method="post" action="/app-groups/{{ g.id }}/delete" style="margin:0"
+              data-confirm="Delete the app group {{ g.name }}?">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit" class="danger">Delete</button>
+        </form>
+      </div>
+      <form method="post" action="/app-groups/{{ g.id }}/members">
+        {{ csrf_field(csrf_token) }}
+        {% set member_ids = g.packages | map(attribute='id') | list %}
+        <div class="checks">
+          {% for p in packages %}
+            <label>
+              <input type="checkbox" name="package_ids" value="{{ p.id }}"
+                     {% if p.id in member_ids %}checked{% endif %}>
+              <span class="mono">{{ p.package_name }}</span>
+            </label>
+          {% else %}<p class="muted">No packages to add.</p>{% endfor %}
+        </div>
+        <button type="submit" class="ghost" style="margin-top:8px">Save members</button>
+      </form>
+    </div>
+    {% else %}
+    <div class="panel">{{ empty_state('No app groups yet.') }}</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

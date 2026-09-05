@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dark navy field with a faint survey grid, echoing the ATLAS icon tile. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="#0B1E37"
+        android:pathData="M0,0h108v108h-108z" />
+
+    <path
+        android:strokeColor="#1E4E86"
+        android:strokeWidth="0.4"
+        android:strokeAlpha="0.45"
+        android:pathData="M18,0V108 M36,0V108 M54,0V108 M72,0V108 M90,0V108 M0,18H108 M0,36H108 M0,54H108 M0,72H108 M0,90H108" />
+</vector>

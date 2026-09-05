@@ -308,7 +308,7 @@ def test_upload_records_identity_read_from_the_file(client: TestClient):
 
 def test_upload_returns_the_provisioning_checksum(client: TestClient):
     """Closes the Chunk 2 gap: QR payloads were blocked on this value."""
-    body = upload(client, build_apk("org.takmdm.agent", 1))
+    body = upload(client, build_apk("com.taksolutions.atlasmdm", 1))
 
     assert body["provisioning_checksum"]
     assert len(body["provisioning_checksum"]) > 20
@@ -610,7 +610,14 @@ def test_required_app_with_nothing_uploaded_is_flagged(client: TestClient, enrol
     state = client.get(f"/api/v1/devices/{device['device_id']}/desired-state").json()
 
     assert state["desired_state"]["apps"] == [
-        {"package_name": "com.notyet.uploaded", "available": False}
+        {
+            "package_name": "com.notyet.uploaded",
+            "available": False,
+            # The reason travels with the failure: an unresolvable pin and an
+            # unsatisfied floor are also `available: false`, and reading all three
+            # as "nothing uploaded" is wrong for two of them (R17/R18).
+            "reason": "nothing uploaded for it",
+        }
     ]
 
 

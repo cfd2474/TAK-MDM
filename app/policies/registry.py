@@ -29,10 +29,14 @@ from pydantic import ValidationError
 
 from app.policies.specs import (
     AppCatalogSpec,
+    CustomizationsSpec,
     FilesSpec,
+    NetworkDataUseSpec,
+    NetworksSpec,
     PasswordSpec,
     PolicySpec,
     RestrictionsSpec,
+    WallpaperSpec,
 )
 from app.policies.strategies import Merge, MergeStrategy
 
@@ -114,8 +118,26 @@ class PolicyTypeRegistry:
         try:
             model = definition.spec_class.model_validate(dict(raw_spec))
         except ValidationError as exc:
-            raise PolicyTypeError(f"invalid {policy_type} spec: {exc}") from exc
+            raise PolicyTypeError(_readable(policy_type, exc)) from exc
         return model.to_stored()
+
+
+def _readable(policy_type: str, exc: ValidationError) -> str:
+    """A validation failure an operator can act on.
+
+    `str(ValidationError)` carries the model name, a `[type=value_error, ...]`
+    suffix and a repr of the whole input. That is useful in a stack trace and
+    hostile in a console banner, where it is also the thing most likely to be
+    truncated — losing the sentence that says what to do while keeping the noise.
+    """
+    parts = []
+    for error in exc.errors():
+        location = ".".join(str(piece) for piece in error.get("loc", ()) if piece != "__root__")
+        message = error.get("msg", "").removeprefix("Value error, ")
+        parts.append(f"{location}: {message}" if location else message)
+
+    joined = "; ".join(dict.fromkeys(parts))  # de-duped, order kept
+    return f"invalid {policy_type} spec — {joined}" if joined else f"invalid {policy_type} spec"
 
 
 registry = PolicyTypeRegistry()
@@ -130,4 +152,24 @@ registry.register(
     "FILES",
     FilesSpec,
     "Files placed on the device, required or offered in the marketplace.",
+)
+registry.register(
+    "WALLPAPER",
+    WallpaperSpec,
+    "Home and lock screen wallpaper, per form factor.",
+)
+registry.register(
+    "NETWORKS",
+    NetworksSpec,
+    "Wi-Fi networks and built-in VPN profiles.",
+)
+registry.register(
+    "NETWORK_DATA_USE",
+    NetworkDataUseSpec,
+    "Data usage tracking, thresholds, and (with Knox) network restrictions.",
+)
+registry.register(
+    "CUSTOMIZATIONS",
+    CustomizationsSpec,
+    "Support messages and the lock screen message shown on the device.",
 )

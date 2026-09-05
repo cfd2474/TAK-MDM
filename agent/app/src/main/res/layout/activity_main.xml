@@ -1,67 +1,141 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:padding="24dp">
+    android:background="@color/atlas_navy_deep"
+    android:orientation="vertical">
 
+    <!-- Header -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:background="@drawable/bg_header"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="14dp"
+        android:paddingBottom="14dp">
+
+        <ImageView
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:contentDescription="@string/app_name"
+            android:src="@drawable/ic_atlas_fg" />
 
         <TextView
-            android:id="@+id/status"
-            android:layout_width="match_parent"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:paddingBottom="24dp"
-            android:textIsSelectable="true" />
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:fontFamily="sans-serif-condensed"
+            android:letterSpacing="0.08"
+            android:text="@string/app_name"
+            android:textColor="@color/atlas_text"
+            android:textSize="19sp"
+            android:textStyle="bold" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/sync_now"
-            android:layout_width="match_parent"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/action_sync_now" />
-
-        <Button
-            android:id="@+id/open_marketplace"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/action_open_marketplace" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingTop="16dp"
-            android:text="@string/storage_rationale"
-            android:textSize="12sp" />
-
-        <Button
-            android:id="@+id/grant_storage"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/action_review_permissions" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingTop="24dp"
-            android:text="@string/reenroll_rationale"
-            android:textSize="12sp" />
-
-        <EditText
-            android:id="@+id/reenroll_token"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:autofillHints=""
-            android:hint="@string/reenroll_hint"
-            android:inputType="textNoSuggestions"
-            android:textSize="12sp" />
-
-        <Button
-            android:id="@+id/reenroll"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/action_reenroll" />
+            android:text="@string/action_sync_now"
+            app:icon="@drawable/ic_sync"
+            app:iconGravity="textStart" />
     </LinearLayout>
-</ScrollView>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/atlas_navy_line" />
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <ScrollView
+            android:id="@+id/section_device"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:padding="16dp">
+
+            <LinearLayout
+                android:id="@+id/container_device"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
+
+        <ScrollView
+            android:id="@+id/section_permissions"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:padding="16dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/container_permissions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
+
+        <ScrollView
+            android:id="@+id/section_apps"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:padding="16dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/container_apps"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
+
+        <ScrollView
+            android:id="@+id/section_files"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:padding="16dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/container_files"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
+
+        <ScrollView
+            android:id="@+id/section_policies"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:padding="16dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/container_policies"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
+    </FrameLayout>
+
+    <com.google.android.material.bottomnavigation.BottomNavigationView
+        android:id="@+id/bottom_nav"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/atlas_navy"
+        app:labelVisibilityMode="labeled"
+        app:menu="@menu/bottom_nav" />
+</LinearLayout>
