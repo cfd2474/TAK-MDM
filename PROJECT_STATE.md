@@ -4667,7 +4667,56 @@ get materially worse on a machine other people can log into.
 cleaner given the package rename and the reset, but loses the policies, profiles,
 content and TAK.gov link built up here. Not assumed either way.
 
-##### Status: planned, blocked on SSH access to the host.
+##### Status: ✅ deployed and reachable. Awaiting the operator's enrolment.
+
+**Host.** Ubuntu 24.04, 4 cores / 16 GB / 293 GB free, Docker 29.6.2, Compose
+5.3.1, UFW active. Was **completely empty** — no containers, no compose projects,
+nothing in `/root`, `/opt`, `/srv`. A `cachetrak-deploy` key and open 9443/8501
+rules are leftovers from something long gone, so nothing was disturbed.
+
+**Access.** `root@209.182.235.108`, key auth. ⚠️ The existing `id_ed25519` is
+**passphrase-protected** and there is no ssh-agent, so `BatchMode` could never
+unlock it — which is why key auth kept failing despite the key being installed. A
+dedicated passphrase-less **`~/.ssh/id_ed25519_atlas_deploy`** was generated for
+this host and added to `~/.ssh/config` as **`atlas-prod`**.
+
+**Deployed** to `/opt/atlas`: fresh database, fresh PKI, migrations at
+`m3o5q7s9u1w3` (head). Server certificate issued `CN=209.182.235.108` with SANs
+`localhost, 127.0.0.1, 209.182.235.108` — the agent pins this at provisioning.
+
+✅ **Verified across the public internet, from a different machine:**
+
+| Check | Result |
+|---|---|
+| `https://…:8443/healthz` | **200** |
+| `https://…:8443/` (console) | **403** — correctly not exposed |
+| `http://…:8080/api/v1/provisioning/agent.apk` | **200**, 24 358 090 bytes; parsed back as `com.taksolutions.atlasmdm` 48 declaring the admin receiver |
+| `http://…:8080/` (anything else) | **403** — correctly refused |
+| QR payload | 6 provisioning keys, carrying `209.182.235.108`, `com.taksolutions.atlasmdm/.admin.MdmDeviceAdminReceiver`, and the checksum |
+
+Agent **48** uploaded and published; primary enrollment token active.
+
+##### 🐛 Two traps hit while deploying, both worth keeping
+
+* **`--exclude='artifacts'` in `tar` is not anchored.** It matched `app/artifacts/`
+  as well as the top-level data directory, so the API booted into
+  `ModuleNotFoundError: No module named 'app.artifacts'`. Anchored excludes
+  (`./artifacts`) fix it; the fix was confirmed by comparing a hash of the package
+  tree on both sides rather than by eye.
+* **Bind-mounted directories must exist and be owned by uid 1000.** `./pki` and
+  `./artifacts` were excluded from the copy, so Docker created them root-owned and
+  the unprivileged container died on `PermissionError: '/pki/ca.crt'`.
+
+##### ⚠️ Security posture of a public host
+
+* **Root login with a password is enabled**, on a public IP, which is
+  continuously brute-forced. The password was also shared in chat. Worth rotating
+  it and setting `PasswordAuthentication no` now that key auth works.
+* The console is loopback-only and unauthenticated — reach it with
+  `ssh -L 8000:127.0.0.1:8000 atlas-prod`. **Anyone with a shell on that box has
+  full control of the fleet**, and R8 (`pki/ca.key` mints any device identity) and
+  R12 (`token_vault.key` decrypts every enrollment secret) are both materially
+  worse here than on a laptop.
 
 ---
 
