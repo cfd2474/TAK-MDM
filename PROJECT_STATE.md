@@ -4612,6 +4612,65 @@ of two.
 
 ---
 
+#### 🔻 W35 — Deploy to a reachable server (`209.182.235.108`)
+
+**Why:** the device is no longer on the LAN, and both provisioning URLs are private
+addresses (W34 step 6). A device that cannot reach the server fails at the APK
+download, and a failed provisioning costs another factory reset before the next try.
+
+⚠️ `209.182.235.108` is **not this machine** — this box's public address is
+`47.146.244.101`. Probed: **port 22 open, 80/443/8080/8443 closed**. So it is a
+remote host with nothing deployed, and reaching it needs SSH credentials the
+project does not have.
+
+##### ✅ The architecture is already built for public exposure
+
+Checked rather than assumed. `docker/nginx/nginx.conf` **default-denies** on the
+device port and opts back in per-location:
+
+* **:8443** — `location / { return 403 "not exposed on the device port" }`. Only
+  `/api/v1/enroll`, the provisioning APK, `/healthz`, and `/api/v1/device/*`
+  (the last two behind a client certificate) are reachable.
+* **:8080** — serves **only** `/api/v1/provisioning/agent.apk`; everything else
+  403s. It is plain HTTP on purpose: the setup wizard downloads the APK against the
+  **system trust store**, before the DPC exists, so a self-signed HTTPS URL fails
+  there (§4 of the Android reference).
+* **The admin console is on neither.** It binds `127.0.0.1:8000` only.
+
+That last point is what makes `TAKMDM_ADMIN_AUTH_MODE=disabled` survivable on a
+public host: the console is not reachable from outside and would be used over an
+SSH tunnel. ⚠️ It is still worth stating plainly — **anyone with a shell on that
+box has full control of the fleet**, and R8 (`pki/ca.key` unencrypted, mints any
+device identity) and R12 (`token_vault.key` decrypts every enrollment secret) both
+get materially worse on a machine other people can log into.
+
+##### Plan (6 steps) — blocked on access
+
+1. **Access + host survey.** SSH in; confirm OS, Docker and Compose, and that
+   nothing else wants 8080/8443.
+2. **Fresh PKI for the new address.** The device CA and server certificate are
+   issued for `192.168.68.89`; the agent pins the CA it is handed at provisioning
+   (`server_ca_pem` in the admin extras), so both must be regenerated with
+   `--hostname 209.182.235.108`. ⚠️ A regenerated CA invalidates every existing
+   device certificate — which is moot here, since the one device is being factory
+   reset anyway.
+3. **Config**: `TAKMDM_SERVER_URL=https://209.182.235.108:8443`,
+   `TAKMDM_AGENT_APK_URL=http://209.182.235.108:8080/api/v1/provisioning/agent.apk`,
+   `TAKMDM_LAN_ADDRESS=209.182.235.108`.
+4. **Firewall**: open 8080 and 8443 inbound; leave 8000 closed.
+5. **Deploy**: repo across, `docker compose up -d --build`, migrations to head,
+   upload and publish agent 48, mint an enrollment token.
+6. **Verify from outside**: `/healthz` over 8443, the APK over 8080, and a QR whose
+   component validates — then the operator enrols the reset tablet against it.
+
+⚠️ **Open decision: fresh database or migrate the existing one.** A fresh start is
+cleaner given the package rename and the reset, but loses the policies, profiles,
+content and TAK.gov link built up here. Not assumed either way.
+
+##### Status: planned, blocked on SSH access to the host.
+
+---
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |
