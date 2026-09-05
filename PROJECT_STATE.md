@@ -4709,9 +4709,18 @@ Agent **48** uploaded and published; primary enrollment token active.
 
 ##### ⚠️ Security posture of a public host
 
-* **Root login with a password is enabled**, on a public IP, which is
-  continuously brute-forced. The password was also shared in chat. Worth rotating
-  it and setting `PasswordAuthentication no` now that key auth works.
+* ✅ **Password login disabled, root password rotated** (2026-09-05). Verified
+  both directions: key auth still works, and a password attempt is refused with
+  *"No supported authentication methods available (server sent: publickey)"*. The
+  operator's own key was confirmed present **before** the change, so nobody was
+  locked out. Rescue password is in the session scratchpad for provider-console use.
+
+  ⚠️ **Ubuntu trap worth keeping:** `sshd_config.d/50-cloud-init.conf` ships
+  `PasswordAuthentication yes`, and OpenSSH takes the **first** occurrence of a
+  keyword — so a `99-`-prefixed hardening file is read *after* it and silently
+  loses. `sshd -T` reported `passwordauthentication yes` while the drop-in plainly
+  said `no`. Renamed to `00-atlas-hardening.conf`. Always confirm with `sshd -T`
+  rather than by reading the file you just wrote.
 * The console is loopback-only and unauthenticated — reach it with
   `ssh -L 8000:127.0.0.1:8000 atlas-prod`. **Anyone with a shell on that box has
   full control of the fleet**, and R8 (`pki/ca.key` mints any device identity) and
