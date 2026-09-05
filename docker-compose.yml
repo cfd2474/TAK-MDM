@@ -82,6 +82,9 @@ services:
       # Android's setup wizard cannot trust a self-signed certificate, and the
       # signature checksum is what guarantees integrity here.
       - "8080:8080"
+      # Admin console, Basic auth over TLS (W36). Separate from the device port:
+      # 8443 authenticates devices by certificate, 9443 authenticates people.
+      - "9443:9443"
     volumes:
       # ./pki is a bind mount rather than a named volume so the host can read the
       # CA and the dev TLS certificate directly — scripts/dev_enroll.py needs both.

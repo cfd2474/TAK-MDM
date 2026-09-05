@@ -4729,6 +4729,92 @@ Agent **48** uploaded and published; primary enrollment token active.
 
 ---
 
+#### 🔻 W36 — The console, reachable from a browser
+
+**Ask:** reach the admin console directly on the web rather than through an SSH
+tunnel.
+
+##### ⚠️ Why it cannot simply be exposed
+
+The console is `admin_auth_mode=disabled` — **no authentication whatsoever**.
+Publishing it as-is hands anyone who port-scans the address: enrollment tokens
+(enrol their own devices), remote **wipe** of every device, arbitrary policy, the
+app library, and the TAK.gov credential. Exposure and authentication have to land
+in the same change; there is no safe interim.
+
+##### The design
+
+`forward_auth` already exists for exactly this shape — it trusts a proxy to
+identify the caller — and Authentik is not needed to satisfy it. **nginx does the
+authenticating** on a console-only TLS port and passes the result inward:
+
+* A new **9443** server block (already open in UFW from the host's previous life),
+  TLS with the same certificate, **HTTP Basic** over it.
+* nginx injects `X-Authentik-Username: $remote_user` and the required group.
+* ⚠️ **The whole design rests on those headers being unforgeable.** The app fails
+  closed without them, but it trusts them absolutely when present — so if the app
+  were reachable directly, anyone could send `X-Authentik-Username: admin` and be
+  an administrator. Two things prevent it: the app binds `127.0.0.1:8000` and is
+  published on no external interface, and `proxy_set_header` **overwrites** any
+  client-supplied value rather than appending. This must be tested by forging the
+  header, not assumed.
+* `console_origin` set so the CSRF guard and the `Secure` cookie work over HTTPS.
+
+The device ports are untouched: **8443** stays mTLS-only for devices and **8080**
+stays the single-file APK endpoint.
+
+##### Plan (6 steps)
+
+1. nginx console block on 9443: TLS, `auth_basic`, header injection, and an
+   explicit clear of every inbound `X-Authentik-*`.
+2. Generate the htpasswd credential.
+3. `.env`: `TAKMDM_ADMIN_AUTH_MODE=forward_auth`,
+   `TAKMDM_CONSOLE_ORIGIN=https://209.182.235.108:9443`.
+4. Deploy and confirm the console answers over 9443 and **401s without credentials**.
+5. **Forge `X-Authentik-Username` from outside and confirm it is refused.** The
+   single test that decides whether this is safe.
+6. Confirm a form still submits (CSRF + `Secure` cookie over HTTPS) and that 8443
+   and 8080 are unchanged.
+
+##### Status: ✅ done and verified from outside.
+
+**Console:** `https://209.182.235.108:9443` — Basic auth over TLS, user `atlas`.
+Credential in the session scratchpad. The certificate is self-signed, so a browser
+warns once; that is the same certificate the agent pins, not a problem to fix by
+weakening anything.
+
+✅ **Verified across the internet, from a different machine:**
+
+| Check | Result |
+|---|---|
+| no credentials | **401** |
+| wrong password | **401** |
+| correct credentials | **200** |
+| **forged `X-Authentik-Username: attacker` + valid Basic auth** | app reports **`atlas` / `takmdm-admins`** — the forgery is overwritten, not honoured |
+| app reachable directly on `:8000` | **unreachable** (published on no external interface) |
+| form POST with CSRF over HTTPS | **200**, `Secure` cookie set |
+| 8443 healthz / console / 8080 non-APK | **200 / 403 / 403** — device ports untouched |
+
+The forgery test is the one that decides this is safe: `forward_auth` trusts the
+header absolutely, so the guard is entirely "only nginx can set it". Two things
+hold it up and both were checked rather than assumed — the app is published on no
+external interface, and `proxy_set_header` **overwrites** a client-supplied value
+instead of appending.
+
+##### 🐛 Trap: nginx could not read its own password file
+
+The htpasswd file was written `640` owned by uid 1000 (the API user), but **nginx
+workers run as uid 101**, so every request 500'd on
+`open() "/pki/console.htpasswd" failed (13: Permission denied)`. Wrong passwords
+returned 500 as well, which reads like a broken hash rather than a permissions
+problem — the error log was the only thing that said so. Fixed by giving the file
+to uid 101 rather than widening the mode; the API never reads it.
+
+⚠️ That ownership is coupled to the `nginx:alpine` image's uid. If the base image
+ever changes it, the console 500s again with the same misleading symptom.
+
+---
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |
