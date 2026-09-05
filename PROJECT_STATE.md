@@ -4849,6 +4849,40 @@ ever changes it, the console 500s again with the same misleading symptom.
 
 ---
 
+#### 🔻 Enrolment stuck at "Getting your tablet ready" — 2026-09-05
+
+**Evidence first, before changing anything.** The proxy log shows **zero requests
+for `agent.apk`, ever**, and `select count(*) from device` is **0**. The only
+traffic was the operator's browser on 9443, this machine's `curl`, and two internet
+scanners. So the tablet **never reached the server at all** — it is stuck *before*
+the download, not during it.
+
+That rules out the server: the APK, the checksum, the admin component and the QR
+were all verified end to end from a different machine minutes earlier.
+
+**Most likely cause: the device's network, not ours.** The download URL was
+`http://209.182.235.108:8080/…`, and **outbound 8080 is exactly what guest Wi-Fi,
+hotel, and corporate networks block**. The setup wizard cannot say so; it sits on
+"Getting your tablet ready".
+
+**Change made:** the APK-only endpoint now also listens on **port 80**, and
+`TAKMDM_AGENT_APK_URL` points there. Nothing else is served on that listener —
+every other path still 403s — so widening the port widens no surface. Verified over
+the internet: **200, 24 358 090 bytes** on both 80 and 8080, and a freshly generated
+QR carries the port-80 URL.
+
+⚠️ **Still to confirm by the operator**, because it cannot be tested from here:
+that the tablet's network reaches the box at all. From a phone **on the same Wi-Fi
+as the tablet**, opening
+`http://209.182.235.108/api/v1/provisioning/agent.apk` should download 24 MB. If
+that fails, the network is the problem and no server change will fix it.
+
+⚠️ A failed provisioning costs another factory reset before the next attempt
+(§1 of the Android reference), so the download is worth proving from that network
+*before* re-scanning.
+
+---
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |
