@@ -114,15 +114,17 @@
   <div class="tab-panel" data-tab-panel="archived" hidden>
     <div class="panel">
       <p class="sub">
-        Archived policies stop applying and are taken off every device, but they
-        are never deleted — what a device once had stays answerable (D20).
-        Restoring one brings it back assigned to nothing.
+        Archived policies stop applying and are taken off every device. Restoring
+        one brings it back assigned to nothing. Keeping a policy here is the
+        normal answer — what a device once had stays answerable — so
+        <strong>delete only the ones that never reached a device</strong>: it is
+        permanent and takes the whole version history with it.
       </p>
       {% if not archived_profiles and not archived %}
         {{ empty_state('Nothing archived.') }}
       {% else %}
       <table>
-        <thead><tr><th>Name</th><th>Categories</th><th>Archived</th><th>Restore</th></tr></thead>
+        <thead><tr><th>Name</th><th>Categories</th><th>Archived</th><th>Restore</th><th>Delete</th></tr></thead>
         <tbody>
         {% for pr in archived_profiles %}
           <tr>
@@ -133,6 +135,13 @@
               <form method="post" action="/profiles/{{ pr.id }}/restore" style="margin:0">
                 {{ csrf_field(csrf_token) }}
                 <button type="submit" class="ghost">Restore</button>
+              </form>
+            </td>
+            <td>
+              <form method="post" action="/profiles/{{ pr.id }}/delete" style="margin:0"
+                    data-confirm="Permanently delete {{ pr.name }}? Its categories and every version they ever published go with it. This cannot be undone.">
+                {{ csrf_field(csrf_token) }}
+                <button type="submit" class="danger">Delete</button>
               </form>
             </td>
           </tr>
@@ -146,6 +155,13 @@
               <form method="post" action="/policies/{{ p.id }}/restore" style="margin:0">
                 {{ csrf_field(csrf_token) }}
                 <button type="submit" class="ghost">Restore</button>
+              </form>
+            </td>
+            <td>
+              <form method="post" action="/policies/{{ p.id }}/delete" style="margin:0"
+                    data-confirm="Permanently delete {{ p.name }}? Every version it ever published goes with it. This cannot be undone.">
+                {{ csrf_field(csrf_token) }}
+                <button type="submit" class="danger">Delete</button>
               </form>
             </td>
           </tr>

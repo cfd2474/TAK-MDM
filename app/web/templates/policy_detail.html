@@ -172,15 +172,27 @@
         <button type="submit">Restore</button>
       </form>
       <span class="muted">Un-archive. It may reach devices again immediately.</span>
+      <form method="post" action="/policies/{{ policy.id }}/delete" style="margin:0"
+            data-confirm="Permanently delete {{ policy.name }}? Every version it ever published goes with it. This cannot be undone.">
+        {{ csrf_field(csrf_token) }}
+        <button type="submit" class="danger">Delete permanently</button>
+      </form>
     {% else %}
       <form method="post" action="/policies/{{ policy.id }}/archive" style="margin:0"
             data-confirm="Archive {{ policy.name }}? It stops applying to every device but its history is kept.">
         {{ csrf_field(csrf_token) }}
         <button type="submit" class="danger">Archive</button>
       </form>
-      <span class="muted">Stops applying everywhere; never deleted (D20).</span>
+      <span class="muted">Stops applying everywhere; its history is kept (D20).</span>
     {% endif %}
   </div>
+  {% if policy.archived_at %}
+  <p class="muted" style="margin-top:8px">
+    Deleting destroys this policy and every version it ever published — there is
+    no undo and no record left of what it once set. Keep it archived unless it
+    never reached a device.
+  </p>
+  {% endif %}
 
   {% if not policy.is_template %}
   <form method="post" action="/policies/clone" class="toolbar" style="margin-top:8px">

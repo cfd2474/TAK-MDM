@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import Policy, PolicyVersion
+from app.db.models import Assignment, Policy, PolicyVersion
 from app.services import effective_policy as eff
 
 
@@ -105,3 +105,55 @@ def restore(session: Session, policy_id: uuid.UUID) -> Policy:
         # It may reach devices again the moment it is un-archived.
         eff.invalidate_for_policy(session, policy.id)
     return policy
+
+
+def drop_assignments(session: Session, policy_id: uuid.UUID) -> None:
+    """Remove every assignment of a policy, ahead of deleting the policy itself.
+
+    The database would cascade these away on its own, but not safely:
+    ``Assignment.pinned_version_id`` references ``policy_version`` with ON DELETE
+    **RESTRICT**, while both ``Assignment.policy_id`` and
+    ``PolicyVersion.policy_id`` are ON DELETE CASCADE. Deleting a policy therefore
+    fans out into two tables in an order no database promises, and if the versions
+    go first the RESTRICT fires. Clearing the referencing rows here removes the
+    race rather than betting on it.
+    """
+    for assignment in session.scalars(
+        select(Assignment).where(Assignment.policy_id == policy_id)
+    ):
+        session.delete(assignment)
+    session.flush()
+
+
+def delete(session: Session, policy_id: uuid.UUID) -> None:
+    """Destroy an archived policy and its entire version history, permanently.
+
+    A deliberate exception to D20, which says archived policies are never deleted.
+    That still holds as the default — archiving is the one-click action and this is
+    only reachable from an already-archived policy — but it does not serve the
+    policies that were never on a device and whose history answers nothing.
+
+    Gating on ``archived_at`` does two jobs. It makes deletion two deliberate acts
+    rather than one misplaced click, the same shape as retire-before-delete for a
+    device; and it makes the delete *inert for the fleet*, because an archived
+    policy is already skipped by the resolver. No device's effective state can
+    move, so there is nothing to invalidate and no one to wake.
+    """
+    policy = session.get(Policy, policy_id)
+    if policy is None:
+        raise PolicyAdminError("policy not found")
+    if policy.archived_at is None:
+        raise PolicyAdminError(
+            "archive the policy before deleting it: deletion is permanent and "
+            "destroys its version history, so it is deliberately two steps"
+        )
+    if policy.profile_id is not None:
+        # A section is part of a whole. Deleting one on its own would leave the
+        # profile with a hole in it that the editor has no way to show.
+        raise PolicyAdminError(
+            "this policy is a section of a policy profile; delete the profile instead"
+        )
+
+    drop_assignments(session, policy.id)
+    session.delete(policy)  # versions follow by cascade
+    session.flush()

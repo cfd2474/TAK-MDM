@@ -31,6 +31,7 @@ from app.db.models import Policy, PolicyProfile, PolicyVersion, ProfileAssignmen
 from app.policies import creator_catalog
 from app.policies.registry import PolicyTypeError, registry
 from app.services import effective_policy as eff
+from app.services import policy_admin
 
 
 class ProfileError(Exception):
@@ -194,3 +195,26 @@ def restore(session: Session, profile: PolicyProfile) -> None:
     profile.archived_at = None
     session.flush()
     eff.invalidate_for_profile(session, profile.id)
+
+
+def delete(session: Session, profile: PolicyProfile) -> None:
+    """Destroy an archived profile, every section it owns, and all their history.
+
+    Gated on ``archived_at`` for the same two reasons as
+    :func:`app.services.policy_admin.delete`: deletion becomes two deliberate acts,
+    and an archived profile is already off the fleet — :func:`archive` dropped its
+    assignments — so nothing a device sees can change when it goes.
+
+    Sections and their versions follow by cascade. Their *assignments* do not go
+    that way on purpose; see :func:`app.services.policy_admin.drop_assignments`
+    for why leaving that to the database is unsafe.
+    """
+    if profile.archived_at is None:
+        raise ProfileError(
+            "archive the policy before deleting it: deletion is permanent and "
+            "destroys its version history, so it is deliberately two steps"
+        )
+    for section in list(profile.sections):
+        policy_admin.drop_assignments(session, section.id)
+    session.delete(profile)
+    session.flush()

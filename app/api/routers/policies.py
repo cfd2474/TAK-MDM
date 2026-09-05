@@ -146,6 +146,33 @@ def restore_policy(policy_id: uuid.UUID, session: Session = Depends(get_db)) -> 
     return policy
 
 
+@router.delete(
+    "/{policy_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    # Explicit: FastAPI would otherwise infer a response model from the `-> None`
+    # return annotation, and a 204 is not allowed to carry a body.
+    response_model=None,
+)
+def delete_policy(policy_id: uuid.UUID, session: Session = Depends(get_db)) -> None:
+    """Permanently remove an archived policy and every version it ever published.
+
+    **Archiving is the normal answer** — the standing instinct is to archive
+    rather than delete (D20), because what a device once had stays answerable.
+    This exists for policies that never reached a device: a mis-clicked clone, or
+    something built while learning the console.
+
+    Requires the policy to be archived first, which makes deletion two deliberate
+    acts rather than one misplaced click — and means no device's effective state
+    can move, since the resolver already skips an archived policy.
+    """
+    fetch_or_404(session, Policy, policy_id, "policy")
+    try:
+        policy_admin.delete(session, policy_id)
+    except policy_admin.PolicyAdminError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    session.commit()
+
+
 @router.post(
     "/{policy_id}/clone",
     response_model=PolicyRead,

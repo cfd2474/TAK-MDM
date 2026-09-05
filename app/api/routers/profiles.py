@@ -226,3 +226,30 @@ def restore_profile(profile_id: uuid.UUID, session: Session = Depends(get_db)) -
     profile_service.restore(session, profile)
     session.commit()
     return profile
+
+
+@router.delete(
+    "/{profile_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    # Explicit: FastAPI would otherwise infer a response model from the `-> None`
+    # return annotation, and a 204 is not allowed to carry a body.
+    response_model=None,
+)
+def delete_profile(profile_id: uuid.UUID, session: Session = Depends(get_db)) -> None:
+    """Permanently remove an archived policy, its sections and all their history.
+
+    **Archiving is the normal answer** — the project's standing instinct is to
+    archive rather than delete (D20), and an archived policy is already off every
+    device. This is for the ones that never reached a device and whose history
+    answers nothing.
+
+    Requires the policy to be archived first. That makes deletion two deliberate
+    acts, and it also means nothing a device sees can change here: archiving
+    already dropped the assignments and the resolver already skips it.
+    """
+    profile = _get(session, profile_id)
+    try:
+        profile_service.delete(session, profile)
+    except profile_service.ProfileError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    session.commit()
