@@ -4729,7 +4729,7 @@ Agent **48** uploaded and published; primary enrollment token active.
 
 ---
 
-#### 🔻 W36 — The console, reachable from a browser
+#### 🔻 W36 — The console, reachable from a browser (+ two console refinements)
 
 **Ask:** reach the admin console directly on the web rather than through an SSH
 tunnel.
@@ -4801,6 +4801,21 @@ hold it up and both were checked rather than assumed — the app is published on
 external interface, and `proxy_set_header` **overwrites** a client-supplied value
 instead of appending.
 
+##### ✅ Incidentally proved: the identity plumbing records who acted
+
+The operator linked TAK.gov through the new web console, and the row came back
+`linked_by = 'atlas'` — the Basic-auth username, carried inward as
+`X-Authentik-Username` and stored by the app. On a fresh database with 0 devices
+and 0 policies that was briefly alarming; it is in fact `forward_auth` working end
+to end, attributing an action to the person who took it rather than to "anonymous".
+
+⚠️ **A consequence worth stating:** the TAK.gov **offline refresh token now lives
+on an internet-facing host**. It is a durable bearer credential to a named person's
+TAK.gov account that does not idle out (W29/D36). It is sealed with
+`pki/token_vault.key` — which sits beside it on the same disk, so the sealing
+protects against a stolen database dump, not against someone with a shell. R12
+applies here with more force than it did on a laptop.
+
 ##### 🐛 Trap: nginx could not read its own password file
 
 The htpasswd file was written `640` owned by uid 1000 (the API user), but **nginx
@@ -4812,6 +4827,25 @@ to uid 101 rather than widening the mode; the API never reads it.
 
 ⚠️ That ownership is coupled to the `nginx:alpine` image's uid. If the base image
 ever changes it, the console 500s again with the same misleading symptom.
+
+##### Console refinements shipped alongside
+
+* **Enrollment SSID placeholder** → *"Enter Network Name"*. ⚠️ There were **two**
+  fields with the old `TAK-Field` placeholder — `enroll.html` and `token_qr.html`
+  — and only the first was obvious. A value-shaped placeholder reads as something
+  to keep rather than an example of what to type.
+* **TPC plugin filter**, live as typed, matching across plugin name, package name
+  and description together: an operator hunting "video" should not have to know
+  which of the three the word lives in. Multiple words all have to match, so
+  "uas 5.8" narrows rather than widening. It filters rows already on the page —
+  the catalog is fetched once, so there is nothing to ask the server for between
+  keystrokes — and renders only when there is something to filter.
+* 🐛 **Fixed while there: a test was calling the real tak.gov on every run.** The
+  import route starts a genuine background thread, so
+  `test_starting_an_import_returns_a_job_to_poll` reached out to somebody else's
+  server each time the suite ran. Stubbed. Its assertion also pinned the job to
+  `state == "running"`, which was a race the stub exposed — the contract is *202
+  with a job id*, not how far the job got.
 
 ---
 

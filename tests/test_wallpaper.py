@@ -224,3 +224,20 @@ def test_an_assigned_wallpaper_travels_with_both_slots(
     assert wallpaper["phone"]["available"] is True
     assert wallpaper["tablet"]["sha256"] == "ab" * 32
     assert wallpaper["tablet"]["url"].endswith("ab" * 32)
+
+
+def test_the_enrollment_page_prompts_for_a_network_name(client: TestClient):
+    """"TAK-Field" read as a value to keep rather than an example of one.
+
+    The field only renders once a primary token exists, so the token has to be
+    minted first — asserting against the tokenless page would pass vacuously.
+    """
+    client.post(
+        "/enrollment/primary", data={"name": "T"}, headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+    body = client.get("/enrollment", headers=ADMIN_HEADERS).text
+
+    assert 'name="wifi_ssid"' in body, "the SSID field should be on the page"
+    assert 'placeholder="Enter Network Name"' in body
+    assert "TAK-Field" not in body

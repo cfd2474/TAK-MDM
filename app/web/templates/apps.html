@@ -253,7 +253,16 @@
             in front of every visit to this page.
           </p>
         {% elif tpc.plugins %}
-        <p>
+        <div class="toolbar" style="margin-bottom:10px">
+          <input type="search" id="tpc-filter" data-plugin-filter
+                 placeholder="Filter by name, package or description"
+                 style="min-width:340px" autocomplete="off">
+          {# Filters what is already on the page. The catalog is fetched once and
+             every row is present, so there is nothing to ask the server for and
+             no reason to make the operator wait between keystrokes. #}
+          <span class="muted" id="tpc-filter-count" data-plugin-filter-count></span>
+        </div>
+        <p data-plugin-total>
           <strong>{{ tpc.plugins | length }}</strong>
           plugin{{ '' if tpc.plugins | length == 1 else 's' }}
           for {{ tpc.product }} {{ tpc.product_version }}.

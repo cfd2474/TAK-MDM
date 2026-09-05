@@ -867,10 +867,20 @@ def test_an_unknown_job_says_the_server_may_have_restarted(client: TestClient):
 
 
 def test_starting_an_import_returns_a_job_to_poll_rather_than_blocking(
-    client: TestClient, db, token_vault
+    client: TestClient, db, token_vault, monkeypatch
 ):
+    """The route must hand back a job rather than blocking on the download.
+
+    The import is stubbed because the route starts a real background thread: left
+    alone this test reached out to tak.gov on every run, which is both flaky and
+    rude to somebody else's server.
+    """
     _link_with(db, token_vault, refresh="r", access="access-1", ttl=300)
     db.commit()
+    monkeypatch.setattr(
+        tak_gov_link, "import_plugin",
+        lambda *a, **k: (_ for _ in ()).throw(tak_gov.TakGovError("stubbed")),
+    )
 
     response = client.post(
         "/apps/tpc/import",
@@ -878,6 +888,36 @@ def test_starting_an_import_returns_a_job_to_poll_rather_than_blocking(
         headers=ADMIN_HEADERS,
     )
 
+    # 202 with a job id is the whole contract: the request returned instead of
+    # waiting on a download. The state is deliberately not asserted — the stub
+    # finishes almost instantly, so pinning it to "running" would be a race, and
+    # whether it has finished by now is not what this test is about.
     assert response.status_code == 202
     assert response.json()["id"]
-    assert response.json()["state"] == "running"
+
+
+def test_the_plugin_list_offers_a_live_filter(client, db, token_vault, monkeypatch):
+    """Filtering happens in the browser over rows already present — the catalog is
+    fetched once, so there is nothing to ask the server for between keystrokes.
+
+    The control only renders when there is something to filter, so the catalog is
+    stubbed; a filter box above an empty table would be noise.
+    """
+    _link_with(db, token_vault, refresh="r", access="access-1", ttl=300)
+    db.commit()
+    monkeypatch.setattr(
+        tak_gov_link, "catalog",
+        lambda *a, **k: ([tak_gov.parse_plugin(FULL_PLUGIN)], None),
+    )
+
+    body = client.get("/apps?tab=tpc", headers=ADMIN_HEADERS).text
+
+    assert "data-plugin-filter" in body
+    # The placeholder names all three things it searches, because an operator
+    # hunting a word should not have to guess which field it lives in.
+    assert "Filter by name, package or description" in body
+
+
+def test_no_filter_is_offered_when_there_is_nothing_to_filter(client, db, token_vault):
+    body = client.get("/apps", headers=ADMIN_HEADERS).text
+    assert "data-plugin-filter" not in body

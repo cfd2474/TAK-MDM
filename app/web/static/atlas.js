@@ -467,3 +467,50 @@
     refresh();
   });
 })();
+
+/* --- TPC plugin filter ------------------------------------------------------
+   Filters rows already on the page. The catalog is fetched once and every row is
+   present, so there is nothing to ask the server for — and nothing to make the
+   operator wait for between keystrokes.
+
+   Matches across the whole row's text, which is the plugin name, its package name
+   and its description: an operator hunting "video" should not have to know which
+   of the three the word lives in. */
+(function () {
+  var box = document.querySelector("[data-plugin-filter]");
+  var table = document.querySelector(".tpc-table");
+  if (!box || !table) return;
+
+  var body = table.tBodies[0];
+  if (!body) return;
+
+  var count = document.querySelector("[data-plugin-filter-count]");
+  var total = document.querySelector("[data-plugin-total]");
+  var rows = Array.from(body.rows).map(function (row) {
+    return { row: row, text: (row.textContent || "").toLowerCase() };
+  });
+
+  function apply() {
+    // Every whitespace-separated word must appear somewhere in the row, so
+    // "uas 5.8" narrows rather than widening the way a single substring would.
+    var terms = box.value.toLowerCase().split(/\s+/).filter(Boolean);
+    var shown = 0;
+
+    rows.forEach(function (entry) {
+      var hit = terms.every(function (t) { return entry.text.indexOf(t) !== -1; });
+      entry.row.hidden = !hit;
+      if (hit) shown++;
+    });
+
+    if (total) total.hidden = terms.length > 0;
+    if (count) {
+      count.textContent = terms.length
+        ? shown + " of " + rows.length + " plugin" + (rows.length === 1 ? "" : "s")
+        : "";
+    }
+  }
+
+  box.addEventListener("input", apply);
+  // A browser restoring the field on back/reload must not leave a stale list.
+  apply();
+})();

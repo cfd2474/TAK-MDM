@@ -569,6 +569,9 @@ dl.kv dd { margin: 0; font-size: 13px; }
 .tpc-table th:nth-child(3), .tpc-table td:nth-child(3) { width: 12%; text-align: right; }
 .tpc-table th:nth-child(4), .tpc-table td:nth-child(4) { width: 16%; text-align: right; }
 .tpc-table td { overflow-wrap: anywhere; vertical-align: top; }
+/* Spelled out rather than trusting the UA default: a filtered-out row that still
+   occupies a line is the kind of failure that looks like the filter is broken. */
+.tpc-table tbody tr[hidden] { display: none; }
 /* Sized by its label rather than stretched to the column: a full-width button
    in a narrow cell is what pushed it past the table edge. */
 .tpc-table td:nth-child(4) button { white-space: nowrap; padding: 6px 14px; }
