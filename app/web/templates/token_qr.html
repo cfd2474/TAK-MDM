@@ -28,8 +28,11 @@
                value="{{ wifi_ssid or '' }}" placeholder="Enter Network Name">
 
         <label for="wifi_password">Password</label>
-        <input id="wifi_password" name="wifi_password" type="password"
-               style="width:100%" placeholder="leave blank for an open network">
+        <div class="input-group">
+          <input id="wifi_password" name="wifi_password" type="password"
+                 placeholder="leave blank for an open network">
+          <button type="button" class="btn ghost" data-toggle-password="wifi_password">Show</button>
+        </div>
 
         <label for="wifi_security">Security</label>
         <select id="wifi_security" name="wifi_security" style="width:100%">

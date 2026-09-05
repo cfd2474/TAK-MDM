@@ -12,16 +12,16 @@
   <li class="rail-cat {{ 'placeholder' if not cat.wired }}" data-cat-group="{{ cat.key }}">
     {% if leaf %}
       <a class="rail-cat-head" data-page="{{ leaf_key }}">
-        {{ cat.label }}{% if row.has_data %}<span class="rail-check">✓</span>{% endif %}
+        {{ cat.label }}<span class="rail-check" {{ '' if row.has_data else 'hidden' }}>✓</span>
       </a>
     {% else %}
       <a class="rail-cat-head" data-cat-toggle>
-        {{ cat.label }}{% if row.has_data %}<span class="rail-check">✓</span>{% endif %}
+        {{ cat.label }}<span class="rail-check" {{ '' if row.has_data else 'hidden' }}>✓</span>
       </a>
       <ul class="rail-sub">
         {% for pg in row.pages %}
           <li><a data-page="{{ cat.key }}:{{ pg.page.slug }}">
-            {{ pg.page.label }}{% if pg.has_data %}<span class="rail-check">✓</span>{% endif %}
+            {{ pg.page.label }}<span class="rail-check" {{ '' if pg.has_data else 'hidden' }}>✓</span>
           </a></li>
         {% endfor %}
       </ul>
@@ -186,15 +186,27 @@
           <button type="submit">Restore</button>
         </form>
         <span class="muted">Un-archive this policy.</span>
+        <form method="post" action="/profiles/{{ profile.id }}/delete" style="margin:0"
+              data-confirm="Permanently delete {{ profile.name }}? Its categories and every version they ever published go with it. This cannot be undone.">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit" class="danger">Delete permanently</button>
+        </form>
       {% else %}
         <form method="post" action="/profiles/{{ profile.id }}/archive" style="margin:0"
               data-confirm="Archive {{ profile.name }}? It stops applying to every device but its history is kept.">
           {{ csrf_field(csrf_token) }}
           <button type="submit" class="danger">Archive</button>
         </form>
-        <span class="muted">Stops applying everywhere; never deleted (D20).</span>
+        <span class="muted">Stops applying everywhere; its history is kept (D20).</span>
       {% endif %}
     </div>
+    {% if profile.archived_at %}
+    <p class="muted" style="margin-top:8px">
+      Deleting destroys this policy, every category it holds and all their
+      versions — there is no undo and no record left of what it once set. Keep it
+      archived unless it never reached a device.
+    </p>
+    {% endif %}
   </div>
 {% endif %}
 {% endblock %}

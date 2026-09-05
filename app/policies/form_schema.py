@@ -71,6 +71,12 @@ class FormField:
     choices: list[EnumChoice] = field(default_factory=list)
     #: A value not to echo in previews or the read-only detail view.
     secret: bool = False
+    #: An OEM capability this control needs before it can do anything (e.g.
+    #: "Knox"). Set means the platform has no route to it yet: the form renders
+    #: the control disabled and says why, and the spec refuses a value for it.
+    #: Showing it greyed beats hiding it — an operator looking for a data cap
+    #: should find out it needs Knox, not conclude the feature was forgotten.
+    requires: str | None = None
 
 
 def _unwrap(annotation: object) -> object:
@@ -89,6 +95,13 @@ def _extra(field_info) -> dict:
 
 
 def _bounds(field_info) -> tuple[int | None, int | None, str | None]:
+    """Numeric bounds for an int field; character counts for a string one.
+
+    A string's `min_length` / `max_length` arrive as `annotated_types.MinLen` /
+    `MaxLen`, which carry neither `ge` nor `le` — so reading only the numeric
+    comparisons dropped them, and every `minlength` / `maxlength` the templates
+    render off these was a silent no-op.
+    """
     lo = hi = pattern = None
     for meta in field_info.metadata:
         if hasattr(meta, "ge") and meta.ge is not None:
@@ -99,6 +112,10 @@ def _bounds(field_info) -> tuple[int | None, int | None, str | None]:
             hi = int(meta.le)
         if hasattr(meta, "lt") and meta.lt is not None:
             hi = int(meta.lt) - 1
+        if getattr(meta, "min_length", None) is not None:
+            lo = int(meta.min_length)
+        if getattr(meta, "max_length", None) is not None:
+            hi = int(meta.max_length)
         if hasattr(meta, "pattern") and meta.pattern:
             pattern = meta.pattern
     return lo, hi, pattern
@@ -153,6 +170,7 @@ def form_fields(policy_type: str) -> list[FormField]:
                 false_label=extra.get("ui_false", "No"),
                 choices=choices,
                 secret=bool(extra.get("ui_secret", False)),
+                requires=extra.get("ui_requires"),
             )
         )
     return fields

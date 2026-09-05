@@ -90,7 +90,11 @@ def _references_by_file(session: Session) -> dict[uuid.UUID, list[FileReference]
 def content_rows(session: Session) -> list[ContentRow]:
     refs = _references_by_file(session)
     rows: list[ContentRow] = []
-    for managed in session.scalars(select(ManagedFile).order_by(ManagedFile.name)):
+    # Policy-editor uploads (a wallpaper) are deliberately absent: the operator
+    # picked an image for one policy, not published an asset to the library (W46).
+    for managed in session.scalars(
+        select(ManagedFile).where(ManagedFile.in_library).order_by(ManagedFile.name)
+    ):
         size = managed.artifact.size_bytes if managed.artifact else 0
         rows.append(ContentRow(file=managed, size_bytes=size, references=refs.get(managed.id, [])))
     return rows

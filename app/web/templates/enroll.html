@@ -74,8 +74,11 @@
       </div>
       <div>
         <label for="wifi_password">Wi-Fi password</label>
-        <input id="wifi_password" name="wifi_password" type="password" class="field-full"
-               placeholder="leave blank for an open network">
+        <div class="input-group">
+          <input id="wifi_password" name="wifi_password" type="password" class="field-full"
+                 placeholder="leave blank for an open network">
+          <button type="button" class="btn ghost" data-toggle-password="wifi_password">Show</button>
+        </div>
       </div>
       <div>
         <label for="wifi_security">Wi-Fi security</label>

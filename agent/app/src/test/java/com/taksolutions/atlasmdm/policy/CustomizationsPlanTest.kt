@@ -1,0 +1,64 @@
+/*
+ * Copyright 2026 TAK-Solutions LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.taksolutions.atlasmdm.policy
+
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+class CustomizationsPlanTest {
+
+    @Test
+    fun `a message comes back as written`() {
+        val spec = JSONObject().put("lock_screen_message", "Property of 3rd Bde.")
+        assertEquals("Property of 3rd Bde.", CustomizationsPlan.message(spec, "lock_screen_message"))
+    }
+
+    @Test
+    fun `a missing key is null, so the applier clears the field`() {
+        // The whole section is absent when no policy sets one, and these setters
+        // latch — so "no key" has to mean "clear it", not "skip it".
+        assertNull(CustomizationsPlan.message(JSONObject(), "lock_screen_message"))
+    }
+
+    @Test
+    fun `an explicit JSON null does not become the literal word null`() {
+        // JSONObject.optString returns the literal "null" here. Unguarded, that
+        // paints the word null across the lock screen of every device it reaches.
+        val spec = JSONObject().put("lock_screen_message", JSONObject.NULL)
+        assertNull(CustomizationsPlan.message(spec, "lock_screen_message"))
+    }
+
+    @Test
+    fun `empty and whitespace both collapse to null`() {
+        // Android treats these two differently — empty hands the lock screen field
+        // back to the user, whitespace holds it blank and keeps them locked out of
+        // it. An operator who cleared a box means the former either way.
+        assertNull(CustomizationsPlan.message(JSONObject().put("k", ""), "k"))
+        assertNull(CustomizationsPlan.message(JSONObject().put("k", "   "), "k"))
+        assertNull(CustomizationsPlan.message(JSONObject().put("k", "\n\t "), "k"))
+    }
+
+    @Test
+    fun `internal whitespace and newlines are preserved`() {
+        // Only wholly-blank collapses. A support message is prose and may be
+        // multi-line; trimming it would silently rewrite what the operator typed.
+        val spec = JSONObject().put("k", "Line one.\nLine two.")
+        assertEquals("Line one.\nLine two.", CustomizationsPlan.message(spec, "k"))
+    }
+}

@@ -830,6 +830,15 @@ class ManagedFile(Base):
     )
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
 
+    # False for a file uploaded from inside a policy editor — a wallpaper, say.
+    # It is an ordinary managed file in every way that matters to the device; it
+    # simply is not part of the browsable Content library, because an operator who
+    # picked an image for one policy did not mean to publish an asset to the fleet's
+    # catalogue. Listings filter on this; nothing in the delivery path reads it.
+    in_library: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default=sa_text("true")
+    )
+
     # Suggested deployment, set on the Content page. These are *defaults* the
     # policy editor pre-fills — the authoritative destination/persist/extract for a
     # given placement still live on the FILES policy entry that places the file.

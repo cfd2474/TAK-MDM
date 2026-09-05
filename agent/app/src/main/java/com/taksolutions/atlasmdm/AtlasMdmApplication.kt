@@ -24,6 +24,7 @@ import com.taksolutions.atlasmdm.core.AgentConfig
 import com.taksolutions.atlasmdm.diag.AgentLog
 import com.taksolutions.atlasmdm.diag.Redactor
 import com.taksolutions.atlasmdm.diag.RingFileLogSink
+import com.taksolutions.atlasmdm.policy.DataUsageTracker
 import com.taksolutions.atlasmdm.sync.Reconciler
 import com.taksolutions.atlasmdm.sync.SyncScheduler
 
@@ -43,14 +44,33 @@ class AtlasMdmApplication : Application() {
 
         AgentLog.i(TAG, "agent starting (v${Reconciler.AGENT_VERSION})")
 
-        val channel = NotificationChannel(
-            SyncScheduler.NOTIFICATION_CHANNEL,
-            getString(R.string.sync_channel_name),
-            // Low: the agent should be visible, as a foreground service must be, but
-            // it has nothing to interrupt anyone about.
-            NotificationManager.IMPORTANCE_LOW
+        val notifications = getSystemService(NotificationManager::class.java)
+
+        notifications.createNotificationChannel(
+            NotificationChannel(
+                SyncScheduler.NOTIFICATION_CHANNEL,
+                getString(R.string.sync_channel_name),
+                // Low: the agent should be visible, as a foreground service must be, but
+                // it has nothing to interrupt anyone about.
+                NotificationManager.IMPORTANCE_LOW
+            )
         )
-        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+
+        // High, unlike the sync channel: a data cap being reached is the one thing
+        // this agent has to say to whoever is holding the device, and DEFAULT does
+        // not raise a heads-up over a fullscreen app — v51's warning posted
+        // correctly and was never seen. See DataUsageTracker.CHANNEL for why this
+        // needed a new id rather than an importance bump.
+        notifications.createNotificationChannel(
+            NotificationChannel(
+                DataUsageTracker.CHANNEL,
+                getString(R.string.data_usage_channel_name),
+                NotificationManager.IMPORTANCE_HIGH
+            )
+        )
+        // Nothing posts to v51's channel any more; leaving it would show a second,
+        // dead "Data usage" entry in the app's notification settings.
+        notifications.deleteNotificationChannel(DataUsageTracker.LEGACY_CHANNEL)
 
         SyncScheduler.schedulePeriodic(this)
     }

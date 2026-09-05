@@ -72,4 +72,15 @@ object PasswordPlan {
      * and the values are inert anyway (Android reference §6c).
      */
     fun charClassMinimumsApply(effective: PwQuality): Boolean = effective == PwQuality.COMPLEX
+
+    /**
+     * `setPasswordMinimumLength` only applies once quality is at least NUMERIC —
+     * below it the platform throws `IllegalStateException("password quality
+     * should be at least NUMERIC for setPasswordMinimumLenght")`, **even when
+     * setting it to 0**. Not documented alongside the per-character-class family
+     * (Android reference §6c lists only Letters/Numeric/Symbols); found the hard
+     * way on a freshly imaged device with no policy at all, where quality is
+     * UNSPECIFIED and the R14 "release to 0" call itself was the thing that threw.
+     */
+    fun minLengthApplies(effective: PwQuality): Boolean = effective >= PwQuality.NUMERIC
 }

@@ -42,6 +42,7 @@ import com.taksolutions.atlasmdm.net.DeviceIdentity
 import com.taksolutions.atlasmdm.permissions.PermissionRequirement
 import com.taksolutions.atlasmdm.policy.AllowlistPlan
 import com.taksolutions.atlasmdm.policy.AppUpdatePlan
+import com.taksolutions.atlasmdm.policy.DataUsageTracker
 import com.taksolutions.atlasmdm.policy.PolicyApplier
 import com.taksolutions.atlasmdm.policy.WallpaperPlan
 
@@ -470,6 +471,12 @@ class Reconciler(private val context: Context) {
         )
         errors += reconcileFiles(desired.optJSONObject("files") ?: JSONObject())
         errors += reconcileWallpaper(desired.optJSONObject("wallpaper") ?: JSONObject())
+        // Last, and reading-only: usage thresholds describe what the device has
+        // already done, so nothing else in the reconcile depends on the answer.
+        // Runs unconditionally — with no section, tracking is off and the tracker's
+        // job is to forget any warnings it was remembering (W44).
+        errors += DataUsageTracker(context)
+            .reconcile(policy.optJSONObject("NETWORK_DATA_USE") ?: JSONObject())
         return errors
     }
 

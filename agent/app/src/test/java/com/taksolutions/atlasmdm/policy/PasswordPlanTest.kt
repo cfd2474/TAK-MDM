@@ -72,6 +72,17 @@ class PasswordPlanTest {
     }
 
     @Test
+    fun `minLengthApplies only at NUMERIC or above`() {
+        // A freshly imaged device with no policy at all is UNSPECIFIED, and the
+        // platform throws IllegalStateException on setPasswordMinimumLength there
+        // — even for a release to 0 — so the applier must not call it below NUMERIC.
+        assertFalse(PasswordPlan.minLengthApplies(PwQuality.UNSPECIFIED))
+        assertFalse(PasswordPlan.minLengthApplies(PwQuality.SOMETHING))
+        assertTrue(PasswordPlan.minLengthApplies(PwQuality.NUMERIC))
+        assertTrue(PasswordPlan.minLengthApplies(PwQuality.COMPLEX))
+    }
+
+    @Test
     fun `R14 the exact case that broke on hardware`() {
         // A policy asking only for a numeric passcode must resolve to NUMERIC —
         // and because the applier now also pushes min_length 0, a 4-digit PIN is

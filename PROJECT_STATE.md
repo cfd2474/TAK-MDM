@@ -3,7 +3,7 @@
 Running state file per [CLAUDE.md](CLAUDE.md). Read before starting any step;
 update after every completed step.
 
-**Last updated:** 2026-09-01
+**Last updated:** 2026-09-05
 
 ---
 
@@ -362,7 +362,7 @@ source, conflicts are reported, and preview diffs a change before publish.
 | D17 | `state_version` compares **values only**, excluding provenance | A policy rename changes provenance but nothing the device should act on. |
 | D18 | Explicit `null` in a spec is treated as unset | A null must not drag a merged value down to nothing. |
 | D19 | Registry raises at import time if a field lacks exactly one `Merge` annotation | Adding a field and forgetting its merge rule would otherwise silently produce a field that never composes. |
-| D20 | Archived policies and disabled assignments stop applying but are never deleted | Preserves the history of what a device once had. |
+| D20 | Archived policies and disabled assignments stop applying but are never deleted | Preserves the history of what a device once had. ⚠️ **Narrowed by D124 (W48):** an *archived* policy can now be deleted deliberately, from the archive only. Archiving is still the one-click default and still never deletes. |
 
 ### ✅ Chunk 2 — Enrollment and device identity (COMPLETE)
 
@@ -4931,6 +4931,1041 @@ then **403** because the CSRF guard compares `Origin` against
 `TAKMDM_CONSOLE_ORIGIN`, which names the public address. Automation has to fetch a
 token with a cookie jar and post to the real origin. Worth knowing before assuming
 a write silently failed.
+
+---
+
+#### 🔻 W38 — Deploy to a freshly reimaged `209.182.235.108`
+
+**Why:** the operator handed over a new root password for this address, calling it
+a fresh dev server, and said security is not a concern here. This is the **same
+address** W35 deployed to and W37 later pruned (`docker compose down -v`,
+`/opt/atlas` removed, SSH hardening left in place, deploy key removed) — so the
+first job is confirming this is genuinely a clean reimage and not that hardened
+box answering differently than expected.
+
+**Survey (2026-09-04), password auth via `plink -pw`:** hostname `taksolutions`,
+Ubuntu 24.04.3 LTS, **uptime 4 minutes**, only `sshd` listening (no 8080/8443/9443,
+no ufw installed), no Docker installed, 15 GB RAM / 297 GB free disk. This is a
+clean reimage, not the old hardened host — confirmed rather than assumed.
+
+Because the operator explicitly waived security for this box, this deployment
+**deliberately skips** the hardening W35 did on the same address last time:
+staying on root **password** auth throughout (no dedicated deploy key), and not
+touching `sshd_config` (password login stays open, root password left as given).
+`docker-compose.yml`'s 9443 console block still hard-requires `auth_basic` against
+`/pki/console.htpasswd` regardless of app-level `TAKMDM_ADMIN_AUTH_MODE` — that
+file still has to exist or nginx 500s every console request — so a Basic-auth
+credential is created anyway, just not treated as a real security boundary here.
+
+Not touching `atlas-demo` (`208.87.130.181`) — this is a separate target, not a
+move.
+
+##### Plan (6 steps) — ✅ all done
+
+1. ✅ **Access + host survey** (above).
+2. ✅ Docker 29.8.0 + Compose plugin installed from `get.docker.com`, clean run.
+3. ✅ Repo copied to `/opt/atlas` via `tar`/`pscp` with anchored excludes (verified
+   `app/artifacts/` survived and top-level `./pki`, `./artifacts` did not — no
+   repeat of W35's unanchored-exclude trap). `pki/` and `artifacts/` created and
+   `chown 1000:1000` **before** first `compose up`, so Docker never auto-created
+   them root-owned (W35's other trap). Console credential `atlas` / (rotate before
+   any real use) written to `/pki/console.htpasswd`, owned `101:101` for the nginx
+   image (W36's permission trap).
+4. ✅ `.env` written exactly as planned.
+5. ✅ `docker compose up -d --build` — clean build, `init` issued a dev cert for
+   `localhost, 127.0.0.1, 209.182.235.108`, migrations ran unattended to
+   `m3o5q7s9u1w3` (head), all four ports (`80, 8080, 8443, 9443`) bound on first try.
+6. ✅ **Verified from this machine over the public internet:**
+
+   | Check | Result |
+   |---|---|
+   | `https://…:8443/healthz` | **200** |
+   | `https://…:8443/` (console) | **403** — correctly not exposed |
+   | `https://…:9443/` no credentials | **401** |
+   | `https://…:9443/` with `atlas` credentials | **200** |
+   | `http://…/api/v1/provisioning/agent.apk` (port 80) | **404** — route matches, nothing uploaded yet |
+   | `http://…:8080/api/v1/provisioning/agent.apk` | **404** — same |
+   | `http://…/` (anything else, port 80) | **403** |
+
+   No firewall step was needed — the box had no ufw/iptables rules, and every
+   port was reachable on the first check.
+
+**Deliberately out of scope this pass:** uploading an agent build and minting an
+enrollment token. The checked-in release APK at
+`agent/app/build/outputs/apk/release/app-release.apk` predates the
+`com.taksolutions.atlasmdm` package rename (925c941) and several feature commits
+since; publishing it would silently ship a stale, pre-rename agent. No device
+enrollment is imminent, so this is left for a follow-up chunk once a current
+release build exists (`cd agent && .\gradlew.bat assembleRelease` at the JDK 17
+toolchain) rather than shipping something known-stale now.
+
+---
+
+#### 🔻 W39 — Decommissioned the demo host `208.87.130.181`
+
+**Why:** ATLAS now lives on freshly reimaged `209.182.235.108` (W38); the operator
+asked to break down the demo host deployment. Full removal, confirmed with the
+operator given it permanently destroys the DB (enrolled devices, policies, the
+TAK.gov link) with no stated backup — same shape as W37's decommission of the
+previous `209.182.235.108` instance.
+
+**Survey before touching anything** (rule: gather evidence, don't assume on a
+shared box): `docker ps -a` showed exactly ATLAS's 4 containers
+(`takmdm-proxy-1`, `takmdm-api-1`, `takmdm-db-1`, `takmdm-init-1` exited) under
+compose project `takmdm` at `/opt/atlas`. Everything else on this box is
+non-Docker: system `nginx` (`evan.leckliter.net`, 80/443), `evan-api.service`,
+`gamenight-backend.service`, a bare `node` on 3001, a bare `python3` on 8787 —
+all systemd/host-managed, none touched by anything below.
+
+##### Plan (5 steps) — ✅ all done, 2026-09-05
+
+1. ✅ Host survey (above) — confirms Docker on this box is ATLAS-only.
+2. ✅ `docker compose down -v` — all 4 containers, `takmdm_default` network, and
+   the `pgdata` volume removed.
+3. ✅ `docker system prune -af --volumes` — reclaimed 1.04 GB. Incidentally
+   removed one unrelated dangling `httpd:alpine` image found already sitting
+   unused on the box; consistent with `-af`'s documented scope and harmless
+   since nothing referenced it.
+4. ✅ `/opt/atlas` removed.
+5. ✅ **Verified:** `ss -ltnp` shows 8080/8081/8443/9443 gone entirely; `8443`
+   and `9443` externally refuse connections. `evan-api`, `gamenight-backend`,
+   `nginx` all still `active`, and `https://evan.leckliter.net/` still answers
+   **200**.
+
+`208.87.130.181` is now exactly as it was before ATLAS ever touched it.
+
+---
+
+#### 🔻 W40 — Fixed QR generation on `209.182.235.108`: no agent build was ever uploaded
+
+**Symptom:** the operator hit `agent_signature_checksum is not configured; Android
+will reject provisioning without the base64url SHA-256 of the agent signing
+certificate` when generating a QR.
+
+**Root cause, not assumed — traced in code.** `app/services/provisioning.py`
+raises exactly this string when `settings.agent_signature_checksum` is empty.
+`app/config.py` shows this is a **pure env-var setting** (`TAKMDM_AGENT_SIGNATURE_CHECKSUM`,
+no DB-backed override) — nothing sets it automatically when a build is uploaded.
+W38's `.env` for this host never included it, deliberately: no current release APK
+existed (the checked-in one predates the `com.taksolutions.atlasmdm` rename), so
+agent upload was explicitly deferred. This is that deferred work, now needed.
+
+⚠️ **[docs/ANDROID_PLATFORM_REFERENCE.md](docs/ANDROID_PLATFORM_REFERENCE.md)
+§Signature checksum records two different values for two different keys** — the
+debug keystore's `h5QFWJTb6y5MX0kxuTiEeP7-wzHaSizE5zgAT-PzWA4` (this is what sits
+in the local dev `.env`) and the release keystore's
+`IJS8zAVMaB9G2MgSN4wHZXzzOd19ToC1RgJrd6_yxkQ`. Copying the dev `.env` value here
+would have "fixed" the error message while shipping a checksum for the wrong key —
+exactly the trap that doc section warns about. The value actually deployed must be
+re-verified against whatever APK gets uploaded, not assumed from either recorded
+constant.
+
+##### Plan (6 steps)
+
+1. Build a current release APK from source (`cd agent && .\gradlew.bat
+   assembleRelease`, JDK 17), signed with the local `agent/keystore.properties`
+   key — reflects the package rename and every feature commit since the stale
+   checked-in build.
+2. Verify the built APK's signing certificate SHA-256 (`apksigner verify
+   --print-certs`) before trusting it — confirms which of the two documented
+   checksums (or a third, if the key ever changed) actually applies.
+3. Copy the APK to `209.182.235.108` and upload it through the admin API/console
+   so the server records it as an agent build and returns `provisioning_checksum`.
+4. Cross-check step 3's returned checksum against step 2's independently-derived
+   one — they must match byte-for-byte.
+5. Add `TAKMDM_AGENT_SIGNATURE_CHECKSUM` (the confirmed value) to `/opt/atlas/.env`
+   and `docker compose up -d` to recreate `api` with it.
+6. Publish the build, mint an enrollment token, and confirm a QR generates
+   without error.
+
+##### Status: ✅ done, 2026-09-05
+
+1. ✅ Built `app-release.apk` at `versionCode 48` / `versionName 0.13.0`
+   (`com.taksolutions.atlasmdm`) from current source.
+2. ✅ `apksigner verify --print-certs` → cert SHA-256
+   `2094bccc054c681f46d8c812378c07657cf339dd7d4e80b546026b77aff2c644` — the
+   documented **release** key, not the debug one.
+3. ✅ Uploaded via `POST /api/v1/packages`, hitting the app directly on the box's
+   own `127.0.0.1:8000` with hand-set `X-Authentik-Username`/`X-Authentik-Groups`
+   headers rather than real Basic auth over 9443 — legitimate here since a root
+   shell on this box already has that trust level (documented in W35's security
+   posture), and it sidesteps re-deriving Basic auth just for a one-off upload.
+   Server independently reported `provisioning_checksum:
+   "IJS8zAVMaB9G2MgSN4wHZXzzOd19ToC1RgJrd6_yxkQ"`.
+4. ✅ Cross-checked: `base64url(SHA-256(cert DER))` computed independently from
+   the digest in step 2 gives the same string. Matches
+   [docs/ANDROID_PLATFORM_REFERENCE.md](docs/ANDROID_PLATFORM_REFERENCE.md)'s
+   recorded release-key value byte-for-byte.
+5. ✅ Appended `TAKMDM_AGENT_SIGNATURE_CHECKSUM=IJS8zAVMaB9G2MgSN4wHZXzzOd19ToC1RgJrd6_yxkQ`
+   to `/opt/atlas/.env`; `docker compose up -d` recreated `api` with it.
+6. ✅ Published build 48 (`POST /admin/agent/publish`), created the primary
+   enrollment token (`POST /enrollment/primary`) — none existed yet, W38 having
+   deliberately deferred this. The returned page renders a QR `<svg>` carrying
+   the correct checksum and **no trace of the earlier error.**
+
+Handled the console's CSRF requirement (W36/W37: form-shaped POSTs need a
+matching cookie + `x-csrf-token`) by `curl -c cookiejar` against a GET page first,
+then replaying that cookie's value as both the cookie and the token on each
+subsequent POST — same double-submit shape the browser does automatically.
+
+`209.182.235.108` is now fully enrollment-ready: a device scanning the current
+primary QR gets `com.taksolutions.atlasmdm` build 48, correctly checksummed.
+
+---
+
+#### 🔻 W41 — Removed the on-device re-enrol escape hatch; fixed a first-sync password crash on fresh devices
+
+**Two operator reports, both in the DPC app.**
+
+**1. Remove "Discard identity and re-enrol."** The Device tab's re-enrol card
+(`MainActivity.renderDevice`, `reEnroll()`, and the `action_reenroll` /
+`reenroll_rationale` / `reenroll_hint` strings) let anyone with the device in hand
+wipe its identity and enter an arbitrary token, no server-side gate. Removed the
+card, the handler, and the strings; dropped the now-unused `EditText` and
+`DeviceIdentity` imports from `MainActivity.kt`. `DebugConfigReceiver`'s adb-only
+`reset_identity` broadcast extra is untouched — that is a bench tool reached over
+`adb shell am broadcast`, not a control an operator or device holder can tap.
+
+**2. Password crash on a freshly imaged tablet with no policy at all.**
+`password min length: password quality should be at least 131072 for
+setPasswordMinimumLenght, but i have no policies applied`.
+
+**Root cause, traced in code before touching anything (rule 4).**
+`PolicyApplier.applyPassword` calls `dpm.setPasswordMinimumLength(admin, ... ?: 0)`
+**unconditionally** — the R14/W26 "release absent fields to permissive" design.
+On a device that has never had a policy, effective quality is `UNSPECIFIED`
+(`PasswordPlan.effectiveQuality`), and the platform throws
+`IllegalStateException` calling `setPasswordMinimumLength` at *any* quality below
+`NUMERIC` — **including a release to 0.** Not the same throw as the documented
+Letters/Numeric/Symbols-require-COMPLEX rule (Android reference §6c); a
+previously-unknown sibling constraint, found live because it fired on the very
+first sync a device ever does.
+
+⚠️ **[docs/ANDROID_PLATFORM_REFERENCE.md](docs/ANDROID_PLATFORM_REFERENCE.md)
+updated** in both places this touches: the setter table (new row) and the
+"setters latch" section, which had stated the unconditional-push rule as safe —
+correction added alongside the original text rather than silently rewritten (per
+CLAUDE.md §6), marked **not yet re-verified on hardware**.
+
+**Fix:** new `PasswordPlan.minLengthApplies(quality) = quality >= NUMERIC`,
+mirroring the existing `charClassMinimumsApply` gate at `COMPLEX`; `PolicyApplier`
+now only calls `setPasswordMinimumLength` when it holds. Below `NUMERIC` a stale
+length is inert — same reasoning already accepted for the char-class fields — so
+nothing is lost by leaving it latched there. Added
+`minLengthApplies only at NUMERIC or above` to `PasswordPlanTest`. Full agent
+`testDebugUnitTest` suite passes.
+
+**Shipped:** bumped `versionCode 48 → 49` (`0.13.1`) — 48 was already uploaded to
+`209.182.235.108` in W40, and the server refuses a duplicate versionCode. Built,
+verified the signing certificate is still the same release key (no re-derivation
+of the checksum needed — that only changes with the key, not the version),
+uploaded, and published 49 so the tablet's next check-in self-updates onto the
+fix. The password error will keep recurring each sync **until that self-update
+lands** — it is cosmetic/re-asserted, not a stuck state, and does not block
+check-in or the update decision itself.
+
+✅ **Done, 2026-09-05:** v49 uploaded to `209.182.235.108` (`provisioning_checksum`
+unchanged, `IJS8zAVMaB9G2MgSN4wHZXzzOd19ToC1RgJrd6_yxkQ` — same key, only the
+version moved) and published via `/admin/agent/publish`. Not yet confirmed on the
+tablet itself — that needs its next check-in/self-update cycle, which was not
+triggered from here.
+
+##### 🐛 Follow-up: the operator hit "Sync now" and nothing happened
+
+**Not a fluke — traced to a real deadlock, confirmed against the live DB before
+acting (rule 4).** `select ... from device` showed
+`compliance_status = DEGRADED`, `agent_version_code = 48`, `compliance_detail`
+exactly the password error. `app/services/agent_update.py:decide()` explicitly
+refuses to offer an update when `compliance in (DEGRADED, FAILED)` ("never stack
+an agent swap on a device already failing to apply what it has"). Sound rule in
+general — but here it deadlocks: the bug that degrades the device is the same bug
+v49 fixes, so every sync re-confirms DEGRADED and re-blocks the very update that
+would clear it. `settled` was not the blocker; compliance was.
+
+**Unblocked without touching the safety gate** (operator's choice over a raw DB
+edit): created profile `93c3e6b8-ceda-4e2e-bf03-03f70c6e4446` ("Temp: unblock v49
+self-update") with a `password` section (`{"quality": 2}` — NUMERIC, no
+length/complexity floor) and assigned it to `R5GL40MMHRN`
+(`85a69e0f-51a7-43c0-92a4-e5f2cb09a24b`). This alone stops the **v48** crash too:
+once quality is actually NUMERIC on-device, `setPasswordMinimumLength` satisfies
+Android's own requirement without needing the code fix present, so the next sync
+should report zero apply errors, flip to COMPLIANT, and unblock the self-update
+gate for v49 on the sync after that. ⚠️ **Not yet confirmed** — needs the
+operator's next "Sync now" (twice: once to clear DEGRADED, once more to actually
+receive v49) to verify. Visible side effect while this profile is assigned: the
+tablet now requires *some* numeric lock-screen PIN be set. Worth removing this
+profile once v49 is confirmed running, since v49 no longer needs it.
+
+**Caught along the way:** the profile-creator API takes the catalog's lowercase
+key (`"password"`), not the registry policy type (`"PASSWORD"`) used everywhere
+else in specs/payloads — `POST /api/v1/profiles` silently drops an unrecognized
+section key rather than rejecting it (`creator_catalog.get(key)` returns `None`,
+`profile_service.create_profile` just skips it), so the first attempt returned
+`201` with `"sections": []` and no error at all. Worth a look: `PolicyProfile`
+creation raising or warning on an unmatched section key would have caught this in
+one round trip instead of two.
+
+✅ **Confirmed, 2026-09-05:** DB shows `agent_version_code 49`, `agent_version
+0.13.1`, `compliance_status COMPLIANT`, no `compliance_detail` — the tablet
+self-updated cleanly and the crash is gone. Archived the temporary unblock
+profile (`93c3e6b8…`); per W22, archiving deletes the assignment outright, so the
+forced numeric PIN requirement leaves with it, and this time the device's next
+reconcile releases the quality back to `UNSPECIFIED` under the **fixed** v49 code
+path, which no longer throws.
+
+**Open design question, not acted on:** the DEGRADED-blocks-update gate has no
+escape hatch for "the operator knows this specific build fixes this specific
+degradation." Worth an admin override (e.g., "offer this build to this device
+regardless of compliance") if this pattern recurs — not built now since it is a
+real design decision (how does an operator assert that, and should it be
+per-device or per-build), not a bug fix.
+
+---
+
+#### 🔻 W42 — Wire the Customizations category: support message + lock screen
+
+**Ask:** build out the `customizations` category and its two sub-sections.
+*Support message* carries **"Disabled setting message"** and **"Admin app custom
+description"**; *Lock screen* carries a **custom message shown on the device's
+lock screen**. The category already exists in `creator_catalog.py` as a
+**placeholder** (`Category("customizations", ..., None, subtopics=("support
+message", "lock screen"))`) — this lights it up.
+
+##### Platform contracts, read from the SDK source before writing anything (rule 6)
+
+The Android reference had **nothing** on these three, so they were read from
+`sources/android-36.1/android/app/admin/DevicePolicyManager.java` — the same
+authority §hotspot used — rather than from recollection:
+
+| API | Contract |
+|---|---|
+| `setShortSupportMessage(admin, msg)` | *"displayed to the user in settings screens where functionality has been disabled by the admin"* — **exactly** the operator's "Disabled setting message". **>200 chars may be truncated.** `null` clears. `SecurityException` if not an active admin. |
+| `setLongSupportMessage(admin, msg)` | *"displayed to the user in the device administrators settings screen"* — the operator's "Admin app custom description". **>20000 chars may be truncated.** `null` clears. |
+| `setDeviceOwnerLockScreenInfo(admin, info)` | Owner info on the lock screen. ⚠️ *"overrides any owner information manually set by the user and **prevents the user from further changing it**"*. `null`/empty clears **and restores the user's own info**; whitespace-only blanks it *and still locks the user out of it*. DO only. |
+
+⚠️ **All three latch**, so `applyCustomizations` must run **even when the section
+is absent** and push `null` — the same rule as PASSWORD/RESTRICTIONS/NETWORKS in
+`PolicyApplier.apply()` (R14/R19). Unlike the W41 min-length trap, all three
+accept `null` unconditionally, so there is no gating hazard here.
+
+##### Plan (6 steps)
+
+1. Record the three contracts in
+   [docs/ANDROID_PLATFORM_REFERENCE.md](docs/ANDROID_PLATFORM_REFERENCE.md).
+2. **Server spec** — `app/policies/specs/customizations.py`: `CustomizationsSpec`
+   with `disabled_setting_message` + `admin_app_description` (`ui_group`
+   "Support message") and `lock_screen_message` (`ui_group` "Lock screen"), all
+   `HIGHEST_RANK` (two stacked policies cannot concatenate a message; one has to
+   win, and rank is how this project already breaks that tie). Register
+   `CUSTOMIZATIONS`; flip the catalog `Category` from placeholder to wired. The
+   `ui_group`s *are* the sub-pages — W12 derives them, so no separate wiring.
+3. **Console** — add a `text` (textarea) control to `form_schema` /
+   `_policy_form.html`; a 200-character support message in a single-line input is
+   the wrong shape. `max_length` on the fields so the operator is stopped at the
+   console rather than silently truncated on the device.
+4. **Agent** — `PolicyApplier.applyCustomizations`, dispatched unconditionally
+   from `apply()` alongside the other latching families.
+5. **Tests** — server: registry/spec validation, HIGHEST_RANK stacking, the
+   generated form's two sub-pages. Agent: the pure blank/absent → `null`
+   normalisation.
+6. Build both, run both suites, bump the agent version, ship to
+   `209.182.235.108`, and confirm on `SM-X520`.
+
+##### Status: ✅ built and shipped, 2026-09-05 — hardware confirmation outstanding
+
+1. ✅ Contracts recorded in the Android reference (§"Operator-facing text").
+2. ✅ `CustomizationsSpec` + `CUSTOMIZATIONS` registered; catalog entry flipped
+   from placeholder to wired.
+3. ✅ New `text` (textarea) control with a live character counter.
+4. ✅ `PolicyApplier.applyCustomizations`, dispatched unconditionally; the
+   blank/null rule extracted to `CustomizationsPlan` (the codebase's `*Plan`
+   convention) so it is unit-testable.
+5. ✅ **654 server tests** (10 new) and the full agent suite (5 new) pass.
+6. ✅ Agent **v50 (`0.14.0`)** built, signature re-verified as the same release
+   key, uploaded and published; server rebuilt on `209.182.235.108` with
+   `CUSTOMIZATIONS` confirmed live in `/api/v1/policy-types`.
+
+**Verified on the running server, not just locally:** a profile carrying all
+three fields round-trips through `POST /api/v1/profiles`, and the editor renders
+**two sub-pages** (`customizations:support-message`, `customizations:lock-screen`)
+with three textareas carrying `maxlength` 200 / 20000 / 200 and their counters.
+
+⚠️ **Not yet hardware-proven.** `SM-X520` is `COMPLIANT` on **v49** and will take
+v50 on its next check-in (the compliance gate that deadlocked W41 is clear this
+time). No CUSTOMIZATIONS policy was assigned from here — the messages are the
+operator's own words to write, and inventing text to push onto their device is not
+this chunk's call to make. The DPM calls are proven the moment a policy carrying
+them lands and the device checks in `COMPLIANT`; a failure would surface as an
+`apply_error` naming the exact field.
+
+##### 🐛 Fixed in passing: string length bounds never reached any form control
+
+`form_schema._bounds` read only the numeric comparisons (`ge`/`gt`/`le`/`lt`).
+Pydantic delivers a string's `min_length`/`max_length` as `annotated_types.MinLen`
+/ `MaxLen`, which carry neither — so `FormField.minimum`/`maximum` were always
+`None` for strings, and **every `minlength`/`maxlength` the templates rendered off
+them was a silent no-op**. Visible now: the passcode field's `maxlength="16"`
+started working the moment the fix landed, having never worked before. Found only
+because the 200-character support-message cap depended on it.
+
+---
+
+#### 🔻 W43 — Network data use management: the half AOSP can actually do
+
+**Ask:** build the `network_data_use` category with two sub-sections — *Data usage
+restrictions* and *App-wise restrictions* — modelled on Hexnode's screens
+(tracking toggles, network-blocking radios, threshold notification/restriction
+rows, daily/monthly reset windows, and per-app rules).
+
+##### ⚠️ Researched before writing anything — the ask splits cleanly in two
+
+| Hexnode control | Reachable by a normally-installed AOSP Device Owner? |
+|---|---|
+| Enable data usage tracking, per-app + total, mobile vs Wi-Fi | ✅ **Yes, and with no grant to beg for.** `NetworkStatsManager`'s own javadoc: *"Device owner apps and carrier-privileged apps likewise get access to usage data for all users on the device."* No `PACKAGE_USAGE_STATS` prompt, unlike a third-party app. |
+| Threshold notifications, daily/monthly reset windows | ✅ Yes — our own accounting on top of those stats. |
+| **Block Wi-Fi data / mobile data / all connections** | ❌ **No such API.** The `DISALLOW_*` family governs *configuration* (`no_config_wifi`, `no_change_wifi_state`, `no_config_mobile_networks`), not data flow. `DISALLOW_DATA_ROAMING` blocks roaming only. |
+| **Per-app network restriction** ("app-wise") | ❌ **No.** The API Settings itself uses for per-app metered-data policy, `NetworkPolicyManager.setUidPolicy`, is `@hide` + `@SystemApi(client = MODULE_LIBRARIES)` — unreachable by a DO. |
+
+Hexnode reaches the blocking half through **Knox** on Samsung, which their own
+sidebar gives away ("Knox Configurations", "APN (Knox)"). [docs/KNOX.md](docs/KNOX.md)
+§4.1 had already landed in the same place independently: `net.firewall.Firewall`
+is *"per-app and device-wide allow/deny… **The single biggest win**"*, and Chunk 7
+step 4 is already written as *"Firewall first — the highest-value capability with
+no AOSP equivalent."* So the blocking controls in the screenshots **are** the Knox
+work, not a gap in this implementation.
+
+**Operator's call (2026-09-05): build the tracking half now; render the blocking
+controls disabled and labelled as needing Knox** — rather than shipping controls
+that save cleanly and change nothing, which is the failure mode this codebase
+already refuses elsewhere (`test_a_policy_with_no_image_is_refused`).
+
+##### Plan (6 steps) — server + console only
+
+1. Record the capability finding in
+   [docs/ANDROID_PLATFORM_REFERENCE.md](docs/ANDROID_PLATFORM_REFERENCE.md), both
+   halves: the free-for-a-DO stats access and the two walls.
+2. `NetworkDataUseSpec` — enforceable fields (`track_usage`, notification rules,
+   reset window) and Knox-gated ones (`network_restriction`, restriction rules,
+   per-app blocking), split across the two `ui_group`s that become the sub-pages.
+3. A general **`ui_requires`** marker: `FormField.requires` surfaces it, the form
+   renders that control **disabled with a badge**, and the spec **refuses** a value
+   for it with a message naming Knox. Gated-but-inert is the one outcome not
+   allowed — an operator must never save something that does nothing.
+4. A repeatable-row control for the threshold rules (`period` / `metric` /
+   `threshold_mb`), and an app-wise variant whose first column picks from the
+   uploaded application list.
+5. Register the type, flip the catalog `Category` from placeholder to wired, and
+   test: spec validation, the Knox refusal, both sub-pages, row parsing, stacking.
+6. Full suite + deploy the server. **The agent applier is deliberately its own
+   chunk** — querying `NetworkStatsManager`, holding accounting windows across
+   reboots, evaluating thresholds and raising notifications is a 5-7 step piece of
+   Android work in its own right, and it is the half that needs hardware proof.
+
+##### Status: ✅ server + console done and deployed, 2026-09-05
+
+**668 server tests** (14 new). `NETWORK_DATA_USE` live in
+`/api/v1/policy-types` on `209.182.235.108`. Verified on a real profile through
+the running console: both sub-pages render
+(`network_data_use:data-usage-restrictions`,
+`network_data_use:app-wise-restrictions`), all four rule row-sets are present, the
+app-wise rows carry the uploaded-app picker, saved values round-trip into the
+rows, and the three Knox-gated controls render inside `<fieldset disabled>` with a
+"needs Knox" badge — **3 disabled controls, 3 badges**, matching exactly the
+fields marked `ui_requires`.
+
+The gate is enforced twice on purpose: a disabled fieldset submits nothing, and
+the spec's validator refuses the value anyway for a request that bypasses the
+form. Its message names every offending field at once and says "needs Knox", so
+one save produces one actionable error rather than three round trips.
+
+##### 🐛 Fixed in passing: `UNION` crashed on a list of objects
+
+`_merge_union` de-duplicated via a `set` of the items themselves, typed
+`Sequence[Hashable]` — written for lists of scalars (package names, SSIDs). The
+first spec to union a list of *objects* (a usage-threshold row) hit
+`TypeError: unhashable type: 'dict'` **from inside the merge**, which surfaces as
+a server fault rather than a policy problem. Now de-duplicates on sorted-key JSON
+for unhashable items, so two identical rules written in a different field order
+collapse to one. Scalars keep their old fast path.
+
+##### ⚠️ Nothing reaches the device yet — by design, and worth stating plainly
+
+The agent has **no `NETWORK_DATA_USE` applier**, so `PolicyApplier.apply()` never
+reads the section. Assigning one of these policies today is silent: no apply
+error, device stays `COMPLIANT`, and no data is tracked. That is the same
+"saves cleanly, does nothing" shape this chunk refused for the *blocking* fields —
+tolerated here only because the applier is the very next chunk rather than a
+capability that may never arrive. **It should not be left in this state**, and an
+operator should not be told tracking works until W44 lands.
+
+---
+
+#### 🔻 W44 — The data-usage tracker on the device
+
+**Approved 2026-09-05.** Makes W43's tracking half real: the agent reads usage,
+holds accounting windows, and warns the device user when a threshold is crossed.
+
+##### API contracts, read from the SDK source first (rule 6)
+
+| Fact | Consequence |
+|---|---|
+| The `NetworkTemplate` overloads of `querySummaryForDevice` / `queryDetailsForUid` are **`@SystemApi(MODULE_LIBRARIES)`** | We are **required** to use the `int networkType` overloads, whose `ConnectivityManager.TYPE_MOBILE` / `TYPE_WIFI` constants are themselves deprecated. Deprecated-but-mandatory; not a smell to clean up. |
+| `subscriberId` is *"guarded by additional restrictions"* from API 29 | Pass **`null`** — documented to mean "all mobile networks", and avoids needing privileged subscriber access. |
+| `querySummaryForDevice` is `@WorkerThread` and *"may take a long time"* | Only ever called from the sync worker, never the UI thread. |
+| Returns *"Bucket object or **null** if permissions are insufficient"* | A null return is the signal that the DO-gets-it-free claim is wrong on this hardware — reported as an apply error, not treated as zero bytes. **Zero and unknown must not look alike.** |
+| Existing notification channel is `IMPORTANCE_LOW` (foreground-service sync) | A data-usage warning needs its own **`IMPORTANCE_DEFAULT`** channel, or it lands silently in a tray nobody opens. |
+| `POST_NOTIFICATIONS` already in the manifest | Nothing new to request; a DO can self-grant it (it is a `dangerous` runtime permission). |
+
+##### Plan (6 steps)
+
+1. Record those contracts in the Android reference under §W43.
+2. **`DataUsagePlan`** (pure, tested): the accounting window for a period given
+   `reset_daily_at` / `reset_monthly_on_day` and "now"; which rules a usage figure
+   crosses; and a stable **once-per-window key** so a crossed threshold warns once
+   rather than at every sync.
+3. **`DataUsageTracker`** (hardware): per-transport device totals and per-UID
+   figures via the int-overload queries, package→UID through `PackageManager`, and
+   a null return surfaced as an error rather than a zero.
+4. A `IMPORTANCE_DEFAULT` notification channel and the warning itself.
+5. Wire into `Reconciler` alongside the other reconcile steps, failures collected
+   the same way.
+6. Build, both suites, ship **v51**, and prove on `SM-X520` — including the claim
+   §W43 records as documented-but-unverified: that a Device Owner reads other
+   apps' usage with no grant.
+
+##### Status: ✅ **hardware-proven on `SM-X520`, 2026-09-05**
+
+```
+I/Application:      agent starting (v0.15.0)
+I/BootReceiver:     restarting after android.intent.action.MY_PACKAGE_REPLACED
+I/DataUsage:        data usage warning raised: device total_data monthly 1MB at 552.5 MB
+I/SyncService:      sync: state=3 applied=3 errors=0
+I/SyncService:      sync: state=3 applied=3 errors=0     ← no repeat warning
+I/SyncService:      sync: state=3 applied=3 errors=0     ← nor here
+```
+
+Four things proven in six lines:
+
+1. **The Device Owner stats exemption is real on One UI 8** — 552.5 MB read with
+   `PACKAGE_USAGE_STATS` never granted. §W43's documented-but-unverified note is
+   now ✅ verified; the manifest declaration is a fallback nobody needed.
+2. **v51 arrived by self-update** (`MY_PACKAGE_REPLACED`), not by sideload.
+3. **The threshold fired**, and `errors=0` on that sync and every one since.
+4. **The once-per-window dedupe works on hardware** — warned once at 07:49:10 and
+   stayed silent across the syncs at 07:51, 07:53 and onward. Without it this
+   would have re-warned every two minutes.
+
+##### 🐛 Diagnosis note: apply errors lag one check-in
+
+Chasing "no notification appeared" produced a false reading first. `Reconciler`
+puts `config.lastApplyErrors` on the **check-in request** and only *then* applies
+the new desired state, so a check-in reports the *previous* cycle's errors. A
+COMPLIANT status read immediately after assigning a policy therefore says nothing
+about that policy — the first reading was quoted as proof and had to be retracted.
+Wait for the *second* check-in after an assignment before believing a verdict.
+
+##### ⚠️ What was actually wrong: nothing. The notification was invisible, not missing.
+
+The warning posted correctly; the operator was watching a fullscreen video and an
+`IMPORTANCE_DEFAULT` channel does not raise a heads-up banner over one — it landed
+silently in the shade.
+
+##### 🔧 v52 — raised to `IMPORTANCE_HIGH`, which needed a **new channel id**
+
+Operator asked for high importance. Editing the constant would have been a no-op:
+`createNotificationChannel` documents that *"the importance of an existing channel
+will only be changed if the new importance is **lower** than the current value"*,
+and deleting first does not help — *"if you create a new channel with this same
+id, the deleted channel will be un-deleted with all of the same settings"*. So the
+one build that mattered, the one already on the tablet, would have ignored the fix
+entirely. Checked against the SDK source before editing rather than after shipping.
+
+`takmdm_data_usage` → **`takmdm_data_usage_v2`** at `IMPORTANCE_HIGH`, created in
+`AtlasMdmApplication.onCreate` beside the sync channel, with the legacy id deleted
+so the app's settings do not show a dead duplicate. Recorded in the Android
+reference as its own trap — importance ratchets downwards only, so **pick it when
+the channel is born**.
+
+✅ **v52 re-verified on `SM-X520`, 2026-09-05.** Fresh policy at a **2 MB**
+threshold (deliberately different from v51's 1 MB, so the once-per-window key
+could not collide with the old one and produce a false silence):
+
+```
+09:57:43 I/DataUsage:   data usage warning raised: device total_data monthly 2MB at 854.4 MB
+09:57:43 I/SyncService: sync: state=5 applied=5 errors=0
+09:59:43 I/SyncService: sync: state=5 applied=5 errors=0     ← still no repeat
+```
+
+The reading moved **552.5 MB → 854.4 MB** across the two runs, which is worth
+noting on its own: the figures are live from the platform, not a cached or stubbed
+number that happened to look plausible once.
+
+⚠️ **The banner itself remains operator-confirmed only.** The log proves `warn()`
+ran and posted to the new `IMPORTANCE_HIGH` channel; whether Android actually drew
+a heads-up over the foreground app is a visual fact no log records. Do not mark
+the heads-up "verified" on the strength of these lines alone — that conflation is
+exactly what produced the false "no notification" diagnosis in the first place.
+
+##### 🧹 Test policy archived
+
+Profile `62609ee3-…` ("W44 data usage proof", 1 MB threshold) archived at the
+operator's request now that it has served its purpose; `profile_assignment` is
+back to **0 rows**, so nothing is assigned to `R5GL40MMHRN`. No data-usage policy
+is live, and none should be until the operator writes one with a real threshold.
+
+1. ✅ Contracts recorded in the Android reference (§W43, "How to actually call
+   the stats API").
+2. ✅ `DataUsagePlan` — windows, threshold crossing, once-per-window keys.
+   **15 unit tests**, including the ones that catch the off-by-ones: a daily reset
+   at 10:00 read *before* 10:00 belongs to yesterday's window; a monthly cycle
+   pinned to the 31st lands on Feb 28 rather than skipping the month; consecutive
+   windows are half-open so no byte is counted twice.
+3. ✅ `DataUsageTracker` — per-transport device totals, per-UID app figures,
+   `package → uid` via `PackageManager`.
+4. ✅ Its own `IMPORTANCE_DEFAULT` notification channel (the sync channel is
+   `LOW` and deliberately silent, so a warning on it would never be seen).
+5. ✅ Wired into `Reconciler` after the other steps, unconditionally.
+6. ✅ **95 agent tests** pass; **v51 (`0.15.0`)** built, signature re-verified,
+   uploaded and published.
+
+**The decisive test is set up and waiting.** Profile
+`62609ee3-d351-4968-a284-6fbcd5a0bd6a` ("W44 data usage proof") is assigned to
+`R5GL40MMHRN` with `track_usage` on and a **1 MB monthly total-data** threshold —
+low enough that it must trip immediately on a tablet that has been downloading
+20 MB APKs.
+
+⚠️ **The compliance status *is* the experiment.** §W43 records the Device Owner
+stats exemption as documented-but-unverified, and the tracker deliberately raises
+an apply error rather than reading a null bucket as "0 bytes used". So:
+
+* **COMPLIANT** → the exemption holds on One UI 8, and a usage warning should be
+  on the tablet's screen.
+* **DEGRADED**, detail *"querySummaryForDevice returned null — the Device Owner
+  stats exemption does not apply on this firmware"* → it does not, and the
+  fallback is the `PACKAGE_USAGE_STATS` grant now declared in the manifest.
+
+At the time of writing the device is on **v50**, `COMPLIANT`, and was not parked
+on the long-poll (`woken: false`), so it takes v51 on its next ordinary poll.
+`PACKAGE_USAGE_STATS` was added to the manifest as that fallback — declared, not
+required, and harmless if the exemption holds.
+
+**Deferred to W45 on purpose:** reporting usage *back to the console*. It needs a
+migration, a check-in field and a console view, and this chunk is already the
+device half. Hardware proof here comes from the agent log via the existing
+`collect_logs` command, which is already proven, so nothing is blocked by the
+deferral. Until W45, the operator sees thresholds fire on the device, not in the
+console.
+
+---
+
+##### Original W44 sketch
+
+1. `NetworkStatsManager` read path (`querySummary` per transport, `queryDetails`
+   per UID), proving the DO-gets-it-free claim on `SM-X520` first — §W43 records
+   it as documented-but-unverified.
+2. Accounting windows that survive reboot (daily at HH:MM, monthly on day N),
+   stored the way `ScreenTimeoutPlan` stores displaced state.
+3. Threshold evaluation as a pure `DataUsagePlan` + tests, per the `*Plan`
+   convention.
+4. Notification channel on the device for a crossed threshold.
+5. Report usage back on check-in so the console can show it.
+6. Hardware proof on `SM-X520`, then unblock the tracking fields' claim.
+
+---
+
+#### 🔻 W45 — A full-screen alert the operator's user cannot miss
+
+**Ask:** the heads-up banner works (v52, confirmed on `SM-X520` — the operator saw
+it pop) but is *"very small"*. Wanted: something aggressive and large.
+
+##### The permission is already there, and already dishonest
+
+`SYSTEM_ALERT_WINDOW` is declared, and `PermissionRequirement.DisplayOverOtherApps`
+is in the setup wizard with the rationale *"Lets the agent show lockdown and
+compliance messages over whatever is on screen."* **Nothing in the tree has ever
+drawn an overlay** — `Settings.canDrawOverlays` is read only to tick the wizard's
+box. So the agent asks every operator for a capability it never uses. This chunk
+makes that ask honest.
+
+✅ **Already granted on `SM-X520`.** `Reconciler` turns every ungranted
+requirement into an apply error, and the device reports `errors=0`, so the
+permission is live and no user action is needed to start using it.
+
+##### Platform contract (`WindowManager.LayoutParams`, SDK source)
+
+> Application overlay windows are displayed above all activity windows […] but
+> below critical system windows like the status bar or IME.
+> […]
+> **The system may change the position, size, or visibility of these windows at
+> anytime** to reduce visual clutter to the user and also manage resources.
+
+⚠️ That last sentence is why the notification **stays**. An overlay is a
+best-effort attention grab the platform may move or hide at will; the notification
+is the durable record that survives in the shade. Replacing one with the other
+would trade a small-but-reliable message for a large-but-revocable one.
+
+##### Plan (5 steps)
+
+1. `AlertOverlay` — a large centred card over a dimmed scrim via
+   `TYPE_APPLICATION_OVERLAY`, shown on the main looper (the tracker runs on a
+   worker thread).
+2. **Dismissible, deliberately.** An un-clearable overlay on a device running ATAK
+   in the field could obscure the map at the worst possible moment; the alert
+   demands one tap rather than trapping the user. That is the aggression the
+   operator asked for without the failure mode they did not.
+3. Fall back to notification-only when `canDrawOverlays` is false, so the message
+   is never simply lost on a device where the grant was skipped.
+4. Keep posting the notification as well — see the contract note above.
+5. Ship **v53**, verify on `SM-X520`, and only then call the delivery settled.
+
+##### Status: ✅ **hardware-proven on `SM-X520`, 2026-09-05**
+
+Operator confirmed at agent **v53 (`0.16.0`)**: *"large card over a dimmed
+background with acknowledge button"*. The full chain — read → threshold → overlay
+— now works end to end on real hardware, and the `SYSTEM_ALERT_WINDOW` grant the
+wizard has always asked for is finally spent on something.
+
+Test profile archived; `profile_assignment` is back to **0 rows**, so no
+data-usage policy is live on the tablet.
+
+`AlertOverlay` draws a centred card on a dimmed scrim with an **Acknowledge**
+button; `DataUsageTracker.warn` posts the notification *and* the overlay, logging
+`(overlay=true|false)` so the log says which delivery actually happened. Falls
+back to notification-only when `canDrawOverlays` is false. v53 confirmed installed
+on `SM-X520`; a fresh **4 MB** threshold is armed for the test.
+
+##### 📓 What the banner episode actually taught
+
+Two corrections were needed before this was understood, both from reading absence
+as evidence:
+
+1. **"COMPLIANT means the policy applied cleanly"** — false. Apply errors lag one
+   check-in, so the first status after an assignment describes the *previous*
+   state.
+2. **"No banner appeared, so IMPORTANCE_HIGH failed"** — false. A heads-up shows
+   for about five seconds; the operator looked minutes later and found it in the
+   shade, which is what a *successful* banner also looks like after the fact. A
+   controlled re-test (fresh threshold, operator watching, manual sync) showed the
+   banner working. **v52 was never broken** — only unobserved.
+
+The rule both point at: an on-device UI claim needs someone watching at the moment
+it fires. A log line proves the code ran; it says nothing about what a person saw.
+
+---
+
+#### 🔻 W46 — Upload a wallpaper from inside the policy builder
+
+**Ask:** upload the image in the wallpaper policy itself. Not via the Content
+page first, and the picker should not be a list of Content files either.
+
+##### The shape of the change
+
+Today `WallpaperSpec.tablet_file_id` / `phone_file_id` use the `image_file`
+control: a `<select>` over every `image/*` row in the Content library, with the
+operator expected to have uploaded there first. Two clicks in the wrong place and
+a mental model ("content" vs "policy asset") the operator does not share.
+
+⚠️ **What must not change: the delivery path.** `resolve_wallpaper` turns a file
+id into a sha the agent downloads, and that is hardware-proven. So an inline
+upload still creates an ordinary `ManagedFile` + content-addressed `Artifact` —
+the *only* new idea is that it does not belong to the browsable library.
+
+##### Plan (6 steps)
+
+1. **Migration + model:** `ManagedFile.in_library` (bool, NOT NULL,
+   `server_default=true`). ⚠️ The server default is load-bearing — the operational
+   notes record that autogenerate never infers one, so a NOT NULL column fails on
+   Postgres against a table that already has rows. Existing content stays
+   `in_library`.
+2. `ingest_file(..., in_library=True)`, so the one ingest path serves both callers
+   rather than growing a second.
+3. `POST /policies/image` — ingest an `image/*` upload as `in_library=False` and
+   return its id as JSON, for the form to hold until the policy is saved.
+4. **Exclude non-library rows from every listing**, not just the Content page:
+   the files API, the dashboard count, and the policy form's own file pickers.
+   Missing one would leak wallpapers into the FILES picker as deployable content.
+5. New `image_upload` control — hidden id input, file picker, live preview, no
+   Content dropdown. `WallpaperSpec` switches to it and the dead `image_file`
+   macro goes. An id already set still renders its preview, so **existing
+   wallpaper policies keep working** whichever way their image arrived.
+6. Tests, then deploy. No agent change: the device cannot tell the difference,
+   which is the point.
+
+##### Status: ✅ done and deployed, 2026-09-05
+
+**675 server tests** (7 new). Migration `n4p6r8t0v2x4` applied on
+`209.182.235.108`; `in_library boolean not null default true` confirmed on the
+live column.
+
+Verified end to end against a running console, not just in tests:
+
+| Check | Result |
+|---|---|
+| `POST /policies/image` | `{"id": …, "name": "w_test"}` — named from the filename, not a uuid |
+| Wallpaper form | the `<select>` over Content is **gone**; hidden id + file picker + Remove in its place |
+| Saving a policy with the uploaded id | **200**, and the editor re-renders with the image |
+| `GET /api/v1/files` (the library) | **absent** — 0 matches |
+| `GET /content/{id}/raw` | **200** — still previewable by id, just not catalogued |
+| `resolve_wallpaper` on the uploaded id | `available: true` with a sha — reaches a device exactly like Content did |
+
+The last two rows are the pair that matters: **hidden from the library, identical
+to the device.** Filtering the delivery path by mistake would have broken
+wallpapers; filtering nothing would have leaked them into the FILES picker as
+deployable content.
+
+⚠️ **One listing was deliberately *not* filtered.** `_managed_file_names` maps id
+→ name for policy summaries, and it is exactly where a policy-uploaded wallpaper
+needs to be found; filtering it "for consistency" would put a raw uuid back on the
+screen this feature exists to keep it off.
+
+##### 🐛 The empty preview frames were a four-year-old CSS bug, not new
+
+Operator asked for the preview panels to be hidden with nothing selected. They
+already carried `hidden`, and the JS already set `preview.hidden = true` — but
+`.wallpaper-preview { display: flex }` is a **class** selector, which outranks the
+browser's own `[hidden] { display: none }`. The attribute had never worked there,
+so two empty frames rendered whenever a slot was empty.
+
+The stylesheet had already been patched for this **three times** —
+`.tab-panel[hidden]`, `.modal-backdrop[hidden]`, `.tpc-table tbody tr[hidden]` —
+each a local fix for the same root cause. Rather than add a fourth, a single
+global `[hidden] { display: none !important; }` now sits at the top of
+`atlas.css`. The three older patches are left in place: they are harmless and
+subsumed, and ripping them out would be an untested change to modals and tabs for
+no behavioural gain.
+
+Also removed the "not added to the Content library" note under the picker, as
+asked — the behaviour is right, the explanation was just noise on the form.
+
+🐛 **Not a bug, but it cost a diagnosis:** the first live upload attempt returned
+`000` with *no request in the API log at all*. Windows `curl` cannot resolve an
+MSYS `/tmp/...` path, so the request was never made. When a call fails with no
+server-side trace, suspect the client before the server.
+
+---
+
+#### 🔻 W47 — Category checkmarks that reflect what you have actually typed
+
+**Ask:** a green check beside a category in the policy maker's rail when that
+category has content.
+
+##### The markers already existed — and could never appear where it mattered
+
+W12 built them; `profile_editor.html` renders `row.has_data` on both category
+heads and sub-pages. The reason the operator had never seen one:
+
+* `/policies/new` — **the policy maker** — renders the rail with
+  `_catalog_view()` and **no profile**, so every spec is `{}` and `has_data` is
+  false for every category. While building a new policy the checks were
+  structurally unreachable.
+* In the editor they only ever refreshed on save-and-reload, so they were stale
+  the moment anyone typed.
+
+So the fix is not "add a checkmark" but "make it reflect the live form".
+
+##### What was built
+
+The server still decides the *initial* state; the marker is now always rendered
+and toggled with `hidden` (which only works at all because W46 added the global
+`[hidden]` rule — the previous element-by-element patches would not have covered
+it). `atlas.js` then recomputes on every `input` / `change` / `click`.
+
+"Has content" mirrors what `parse_form` keeps, so a check promises a field that
+will really be saved:
+
+* a control outside a repeatable row counts when non-empty — every "Not managed"
+  option is the empty string, so untouched fields score zero;
+* a row rendered by the server always counts (it came from saved data);
+* a row the operator just added counts only when something in it is **non-empty
+  and changed from its default**. Without that last clause the pre-selected
+  "Monthly / Mobile data" on a blank threshold row would claim content that
+  saving is about to discard.
+
+##### ✅ Verified by running the real script against the real page
+
+No JS test harness exists in this project, and the last few chunks have shown
+what assuming-instead-of-checking costs — so `atlas.js` was loaded into `jsdom`
+against the live `/policies/new` HTML (throwaway, in the session scratchpad, no
+dependency added to the repo):
+
+| Case | Check visible |
+|---|---|
+| At load, nothing typed | `false` |
+| After typing a Password `min_length` | **`true`** |
+| An untouched category, same moment | `false` |
+| After clearing the field again | `false` |
+| After "Add rule" — blank row, non-empty `period`/`metric` defaults | **`false`** — the false positive this was designed against |
+| After typing `500` into that row's threshold | **`true`** |
+
+**676 server tests.** Two existing tests were updated rather than deleted: the
+contract changed shape (the span is now always present, `hidden` when empty) but
+not meaning, so `_VISIBLE_CHECK` / `_HIDDEN_CHECK` assert the same intent
+precisely. Added `test_the_policy_maker_starts_with_every_check_hidden` to pin the
+case that made the feature look missing in the first place.
+
+---
+
+#### 🔻 W48 — Delete an archived policy permanently
+
+**Ask:** archived policies should be deletable from the archive — a button in the
+Archived list and one on the archived policy's own detail page, with warnings that
+it is permanent.
+
+**This is a deliberate carve-out from D20** ("archived policies are never
+deleted"). D20's rationale — preserving the record of what a device once had —
+still holds as the *default*, which is why archiving stays the one-click action
+and deleting is gated behind it. What D20 did not anticipate is the operator's
+real bin problem: policies created while learning the console, or by a
+mis-clicked template clone, that never reached a device and whose history answers
+nothing.
+
+⚠️ **Two traps found by reading the schema before writing anything:**
+
+1. `Assignment.pinned_version_id` → `policy_version` is **ON DELETE RESTRICT**,
+   while `Assignment.policy_id` and `PolicyVersion.policy_id` are both ON DELETE
+   CASCADE. Deleting a policy therefore cascades into two tables whose order the
+   database does not promise; if `policy_version` goes first, the RESTRICT fires
+   and the delete raises. The fix is to clear the assignment rows explicitly in
+   the service, before the policy row goes.
+2. A *profile section* is a `Policy` row too. It must not be deletable on its own
+   — that would leave a profile with a hole in it — so the standalone delete
+   refuses any row with a `profile_id`.
+
+**The gate is also what makes the delete inert for the fleet.** An archived
+policy is already skipped by the resolver, so no device's effective state can
+change when it goes; there is nothing to invalidate and no reason to wake
+anybody. Deleting a *live* policy would have needed all of that, which is a
+second argument for the gate beyond "two deliberate acts".
+
+##### Plan (7 steps)
+
+1. `policy_admin.delete()` — refuse unless archived, refuse a profile section,
+   clear assignments, then delete (versions go by ORM cascade).
+2. `profiles.delete()` — refuse unless archived; clear every section's
+   assignments, then delete the profile (sections and their versions go by
+   cascade). Profile archiving already dropped the *profile* assignments.
+3. Console routes `POST /policies/{id}/delete` and `POST /profiles/{id}/delete`,
+   redirecting back to the Archived tab.
+4. REST `DELETE /api/v1/policies/{id}` and `DELETE /api/v1/profiles/{id}`, 409 on
+   a policy that is not archived — same shape and same wording as the existing
+   retire-before-delete refusal on devices.
+5. Archived-tab list view: a Delete column for both profile and standalone rows,
+   `confirm()`-guarded and naming what is destroyed.
+6. Detail pages: a delete action on `policy_detail.html` and `profile_editor.html`
+   shown **only when archived**, next to Restore.
+7. Tests, then update this file. No agent change and no migration — nothing about
+   the device contract moves.
+
+##### Status: ✅ done, 2026-09-05
+
+**694 server tests** (18 new, in [tests/test_archive_delete.py](tests/test_archive_delete.py)).
+No migration, no agent change.
+
+| # | Decision | Rationale |
+|---|---|---|
+| D124 | **Deleting an archived policy is permitted — a scoped exception to D20** | D20's reason (what a device once had stays answerable) is real for a policy that ran, and worthless for one that never left the console. The dev instance had 13 archived test profiles and 6 `ZZ …` probe policies whose history answers nothing. Archiving stays the one-click default; deleting is reachable only from the archive. |
+| D125 | **Delete is gated on `archived_at`, the same shape as retire-before-delete on a device** | Two jobs, not one. It makes deletion two deliberate acts, **and** it makes the delete inert for the fleet — the resolver already skips an archived policy, so no device's effective state can move and there is nothing to invalidate or wake. Deleting a live policy would have needed all of that. |
+| D126 | **Assignments are deleted in the service, not left to the database cascade** | `Assignment.pinned_version_id` → `policy_version` is ON DELETE **RESTRICT** while `Assignment.policy_id` and `PolicyVersion.policy_id` are both CASCADE, so one `DELETE FROM policy` fans out into two tables in an order no database promises. |
+| D127 | **A profile section refuses to be deleted on its own** | A section is a `Policy` row, so the endpoint would otherwise accept one and leave the profile with a hole its editor cannot render. Delete the profile instead. |
+
+**The RESTRICT trap was found by reading the schema, not by a failing test.** The
+test that covers it (`test_a_pinned_assignment_does_not_block_the_delete`) was
+written to prove the reading was right, and it does: with the `drop_assignments`
+call removed it fails with `sqlite3.IntegrityError: FOREIGN KEY constraint
+failed` on `DELETE FROM policy_version`.
+
+##### Verified against the running Docker stack, not just the suite
+
+Real Postgres, because the cascade-ordering hazard is a live-database concern
+SQLite can only approximate:
+
+| Check | Result |
+|---|---|
+| `DELETE /api/v1/policies/{id}` on a **live** policy | **409**, policy still there |
+| Same on an archived policy | **204**, then **404** on re-read |
+| Archived policy with an assignment **pinned to v1** and a published v2 | **204** — the RESTRICT path, clean |
+| Console `POST /policies/{id}/delete` (real CSRF double-submit) | **303 → `/policies#tab-archived`**, gone from the page |
+| Console `POST /profiles/{id}/delete` | **303**, gone from the page |
+| Archived tab markup | Delete column present for both profile and standalone rows, each with its own `data-confirm` naming the policy |
+| A live policy's detail page | offers Archive, and contains no `/delete` at all |
+
+⚠️ **Deleting a device group is still not possible** — there is no
+`DELETE /api/v1/groups/{id}` endpoint at all. Noticed while clearing test data
+(the group had to go out of `psql` by hand). Out of scope here, but it is the
+same gap this work just closed for policies.
+
+---
+
+#### 🔻 W48 — The DPC's Apps section, split into Available / Installed / Updates
+
+**Ask:** three tabs on the device app's Apps section. *Available* = offered by
+policy but not installed; *Installed* = installed by policy; *Updates* = installed
+with a newer build waiting.
+
+##### The data is already there — this is a sorting problem, not a plumbing one
+
+`renderApps` already computes exactly these states for its status pill, from the
+desired state's `apps` array and `installer.installedVersionCode(pkg)`:
+
+| Condition | Tab |
+|---|---|
+| `available` and not installed | **Available** |
+| installed `>=` wanted | **Installed** |
+| installed `<` wanted | **Updates** |
+| `available == false` | **Available**, keeping its loud error pill |
+
+That last row is a judgement call worth stating: an app whose policy resolves to
+**no published build** ("nothing uploaded for it") is not installable at all. It
+belongs in Available rather than being hidden, because the current UI shouts about
+it and dropping it would quietly lose the only signal the device gives that a
+policy is broken.
+
+⚠️ Every entry is a **required** app (`APP_CATALOG.required_apps` — the marketplace
+tier is files, not apps), so "Available" means *"policy wants this here and it is
+not here yet"*, i.e. pending install rather than an opt-in catalogue. Worth being
+precise about in the empty-state wording so it does not read as a shop.
+
+##### Plan (5 steps)
+
+1. An `AppsTab` enum plus a selected-tab field, following the section pattern
+   already in `MainActivity` (`currentNav` + `render()`), rather than introducing
+   a `TabLayout` and a second navigation idiom.
+2. A segmented control of three buttons carrying **live counts** — the count is
+   the part that is useful at a glance, and it is what makes "Updates" worth
+   looking at before tapping it.
+3. Bucket the existing per-app card rendering behind the filter; keep the card
+   itself unchanged so the status pill, version and size still read the same.
+4. A per-tab empty state, each saying something true about *that* tab rather than
+   one generic "no apps".
+5. Build, ship **v54**, and confirm on `SM-X520`.
+
+##### Status: ✅ shipped as v54 (`0.17.0`), ⏳ awaiting the operator's eyes
+
+**102 agent tests** (7 new). Uploaded and published; the tablet takes it on its
+next poll.
+
+The bucketing lives in **`AppsTabPlan`**, not in `MainActivity`, for the reason
+the `*Plan` convention exists: misfiling an app is a *silent* failure — it simply
+is not where someone looked — and an Activity cannot be unit-tested. The rendering
+stayed in the Activity; only the decision moved.
+
+Two decisions the tests pin down, both of which could reasonably have gone the
+other way:
+
+* **An app installed at a *newer* build than the policy wants counts as
+  Installed, not an Update.** There is nothing to fetch, and Android refuses a
+  downgrade regardless — filing it under Updates would advertise an action that
+  cannot be taken.
+* **An app with no publishable build stays in Available**, carrying its existing
+  "nothing uploaded for this app" error pill, rather than being filtered out for
+  tidiness. It is the only place the device admits a policy is broken, and the
+  three tabs are now the whole surface: anything filed nowhere is invisible, and
+  invisible is indistinguishable from not deployed.
+
+⚠️ Wording matters here and is easy to get wrong: every managed app is
+**required** by policy (the marketplace tier is files, not apps), so *Available*
+is a **queue, not a shop** — "nothing waiting to install", not "browse apps". The
+empty states say so.
 
 ---
 

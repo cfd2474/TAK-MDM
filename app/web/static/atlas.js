@@ -155,6 +155,97 @@
     if (start) showPage(start);
   });
 
+  /* --- Live "this category has content" checks -------------------------------
+     The rail's green checks are rendered from the *saved* spec, which means they
+     are always absent while building a new policy (nothing is saved yet) and go
+     stale the moment anyone types. This recomputes them from the form itself, so
+     the rail answers "what have I filled in?" at a glance — the only question it
+     is there to answer.
+
+     "Has content" deliberately mirrors what `parse_form` keeps, so a check
+     promises a field that will actually be saved:
+       * a control outside a repeatable row counts when it is non-empty — every
+         "Not managed" option is the empty string, so untouched fields score zero;
+       * a row that came from saved data always counts;
+       * a row the operator just added counts only once something in it is both
+         non-empty and changed from its default — otherwise the pre-selected
+         "Monthly / Mobile data" on a blank threshold row would claim content that
+         saving is about to discard. */
+
+  (function () {
+    var rail = document.querySelector("[data-rail]");
+    if (!rail) return;
+    var panelsRoot = document.getElementById(rail.getAttribute("data-rail-panels")) || document;
+
+    // Rows present at load came from the server, i.e. from saved policy content.
+    panelsRoot.querySelectorAll(".rs-row").forEach(function (row) {
+      row.setAttribute("data-saved-row", "");
+    });
+
+    function nonEmpty(el) {
+      if (el.type === "checkbox" || el.type === "radio") return el.checked;
+      return (el.value || "").trim() !== "";
+    }
+
+    function changed(el) {
+      if (el.tagName === "SELECT") {
+        return Array.prototype.some.call(el.options, function (o) {
+          return o.selected !== o.defaultSelected;
+        });
+      }
+      if (el.type === "checkbox" || el.type === "radio") return el.checked !== el.defaultChecked;
+      return el.value !== el.defaultValue;
+    }
+
+    function controls(scope) {
+      // `disabled` skips the Knox-gated controls, which cannot hold content and
+      // are not submitted either.
+      return Array.prototype.filter.call(
+        scope.querySelectorAll("input, select, textarea"),
+        function (el) { return !el.disabled && el.name !== "csrf_token" && el.type !== "file"; }
+      );
+    }
+
+    function hasContent(scope) {
+      var loose = controls(scope).filter(function (el) { return !el.closest(".rs-row"); });
+      if (loose.some(nonEmpty)) return true;
+
+      return Array.prototype.some.call(scope.querySelectorAll(".rs-row"), function (row) {
+        if (row.hasAttribute("data-saved-row")) return true;
+        return controls(row).some(function (el) { return nonEmpty(el) && changed(el); });
+      });
+    }
+
+    function mark(anchor, on) {
+      var check = anchor && anchor.querySelector(".rail-check");
+      if (check) check.hidden = !on;
+    }
+
+    function refresh() {
+      rail.querySelectorAll(".rail-cat").forEach(function (item) {
+        var key = item.getAttribute("data-cat-group");
+        var panels = panelsRoot.querySelectorAll('[data-page-panel^="' + key + ':"]');
+        var any = false;
+
+        panels.forEach(function (panel) {
+          var filled = hasContent(panel);
+          any = any || filled;
+          var slug = panel.getAttribute("data-page-panel");
+          mark(item.querySelector('[data-page="' + slug + '"]'), filled);
+        });
+
+        mark(item.querySelector(".rail-cat-head"), any);
+      });
+    }
+
+    panelsRoot.addEventListener("input", refresh);
+    panelsRoot.addEventListener("change", refresh);
+    // A removed row fires no event of its own, and an added one is empty until
+    // typed into; both still need the rail to catch up.
+    panelsRoot.addEventListener("click", function () { setTimeout(refresh, 0); });
+    refresh();
+  })();
+
   /* --- Table filter --------------------------------------------------------
      <input type="search" data-filter="#device-table">
      Rows whose text does not contain the query are hidden. Case-insensitive. */
@@ -261,6 +352,36 @@
   document.addEventListener("submit", function (e) {
     var msg = e.target.getAttribute && e.target.getAttribute("data-confirm");
     if (msg && !window.confirm(msg)) e.preventDefault();
+  });
+
+  /* --- Character counter -------------------------------------------------------
+     <textarea name="x" maxlength="200"> + <span data-char-count-for="x">
+     Keeps the count honest as the operator types. maxlength already stops them at
+     the limit; this says how close they are before they hit it. */
+
+  document.querySelectorAll("[data-char-count-for]").forEach(function (out) {
+    var field = document.querySelector(
+      '[name="' + CSS.escape(out.getAttribute("data-char-count-for")) + '"]'
+    );
+    if (!field) return;
+    field.addEventListener("input", function () {
+      out.textContent = field.value.length;
+    });
+  });
+
+  /* --- Show/hide password ----------------------------------------------------
+     <button type="button" data-toggle-password="wifi_password">Show</button>
+     Toggles the named field between type="password" and type="text". */
+
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-toggle-password]");
+    if (!btn) return;
+    e.preventDefault();
+    var input = document.getElementById(btn.getAttribute("data-toggle-password"));
+    if (!input) return;
+    var reveal = input.type === "password";
+    input.type = reveal ? "text" : "password";
+    btn.textContent = reveal ? "Hide" : "Show";
   });
 
   /* --- Unsaved-change guard --------------------------------------------------
@@ -451,19 +572,74 @@
    ratio, cropped the way Android crops it. */
 (function () {
   document.querySelectorAll("[data-image-slot]").forEach(function (slot) {
-    var select = slot.querySelector("[data-image-select]");
+    var field = slot.querySelector("[data-image-select]");
     var preview = slot.querySelector("[data-image-preview]");
-    if (!select || !preview) return;
+    var picker = slot.querySelector("[data-image-upload]");
+    var status = slot.querySelector("[data-image-status]");
+    var clear = slot.querySelector("[data-image-clear]");
+    if (!field || !preview) return;
 
     function refresh() {
-      var id = select.value;
+      var id = field.value;
+      if (clear) clear.hidden = !id;
       if (!id) { preview.hidden = true; return; }
-      var src = "/content/" + encodeURIComponent(id) + "/raw";
+      // Cache-buster: replacing an image reuses the <img>, and without this the
+      // browser shows the previous picture for the new id.
+      var src = "/content/" + encodeURIComponent(id) + "/raw?v=" + encodeURIComponent(id);
       preview.querySelectorAll("img").forEach(function (img) { img.src = src; });
       preview.hidden = false;
     }
 
-    select.addEventListener("change", refresh);
+    function say(message) {
+      if (status) status.textContent = message;
+    }
+
+    // Upload immediately on choosing a file, rather than at policy save: the
+    // operator gets the preview — and any rejection — while they are still
+    // looking at the picture they picked.
+    if (picker) {
+      picker.addEventListener("change", function () {
+        var file = picker.files && picker.files[0];
+        if (!file) return;
+
+        var body = new FormData();
+        body.append("file", file);
+        var token = document.querySelector('input[name="csrf_token"]');
+        if (token) body.append("csrf_token", token.value);
+
+        say("uploading " + file.name + "…");
+        fetch("/policies/image", { method: "POST", body: body })
+          .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+          .then(function (res) {
+            if (!res.ok || !res.body.id) {
+              say(res.body.error || "upload failed");
+              picker.value = "";
+              return;
+            }
+            field.value = res.body.id;
+            say(file.name);
+            refresh();
+          })
+          .catch(function () {
+            say("upload failed — could not reach the server");
+            picker.value = "";
+          });
+      });
+    }
+
+    if (clear) {
+      clear.addEventListener("click", function () {
+        // Clears the slot on this policy only. The uploaded file is left alone:
+        // another policy version may still point at it, and orphan cleanup is a
+        // decision for the server, not a side effect of a click here.
+        field.value = "";
+        if (picker) picker.value = "";
+        say("no image chosen");
+        refresh();
+      });
+    }
+
+    field.addEventListener("change", refresh);
     refresh();
   });
 })();

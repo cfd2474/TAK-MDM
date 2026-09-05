@@ -243,7 +243,9 @@ def dashboard(
             "devices": len(rows),
             "policies": len(list(session.scalars(select(Policy).where(Policy.archived_at.is_(None))))),
             "packages": len(list(session.scalars(select(AppPackage)))),
-            "files": len(list(session.scalars(select(ManagedFile)))),
+            "files": len(
+                list(session.scalars(select(ManagedFile).where(ManagedFile.in_library)))
+            ),
         },
     )
 
@@ -508,7 +510,12 @@ def _catalog_view(profile=None) -> list[dict[str, Any]]:
 
 
 def _managed_file_names(session: Session) -> dict[str, str]:
-    """id -> display name, so a spec summary shows the picture, not its uuid."""
+    """id -> display name, so a spec summary shows the picture, not its uuid.
+
+    Deliberately *not* filtered to the library: a wallpaper uploaded inside the
+    policy editor (W46) is exactly the case this exists for, and hiding it here
+    would put a uuid back on the screen it was written to keep it off.
+    """
     return {
         str(managed.id): managed.name
         for managed in session.scalars(select(ManagedFile))
@@ -520,8 +527,12 @@ def _form_catalogs(session: Session) -> dict[str, Any]:
     packages = list(session.scalars(select(AppPackage).order_by(AppPackage.package_name)))
     return {
         "app_packages": packages,
+        # Library only: a policy-editor upload must not show up in the FILES
+        # picker as something to deploy to a device (W46).
         "managed_files": list(
-            session.scalars(select(ManagedFile).order_by(ManagedFile.name))
+            session.scalars(
+                select(ManagedFile).where(ManagedFile.in_library).order_by(ManagedFile.name)
+            )
         ),
         "app_compat": _app_compat_map(packages),
         "file_names": _managed_file_names(session),
@@ -852,6 +863,24 @@ def restore_profile_form(
     return _redirect(f"/profiles/{profile_id}")
 
 
+@router.post("/profiles/{profile_id}/delete")
+def delete_profile_form(
+    profile_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Destroy an archived policy permanently. Refused unless it is archived."""
+    profile = profile_service.get_profile(session, profile_id)
+    if profile is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
+    try:
+        profile_service.delete(session, profile)
+    except profile_service.ProfileError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    session.commit()
+    return _redirect("/policies#tab-archived")
+
+
 @router.post("/policies")
 def create_policy(
     request: Request,
@@ -919,6 +948,31 @@ def restore_policy_form(
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     session.commit()
     return _redirect(f"/policies/{policy_id}")
+
+
+@router.post("/policies/{policy_id}/delete")
+def delete_policy_form(
+    policy_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Destroy an archived policy and its version history permanently.
+
+    Archiving is the normal answer (D20); this is for policies that never reached
+    a device and whose history answers nothing. Refused unless already archived,
+    which is what makes it two deliberate acts.
+    """
+    try:
+        policy_admin.delete(session, policy_id)
+    except policy_admin.PolicyAdminError as exc:
+        status_code = (
+            status.HTTP_404_NOT_FOUND
+            if str(exc) == "policy not found"
+            else status.HTTP_409_CONFLICT
+        )
+        raise HTTPException(status_code, str(exc)) from exc
+    session.commit()
+    return _redirect("/policies#tab-archived")
 
 
 @router.post("/policies/clone")
@@ -1350,6 +1404,59 @@ def _already_imported(session: Session, plugins: list) -> set[tuple[str, int]]:
         .where(AppPackage.package_name.in_(wanted))
     )
     return {(name, code) for name, code in rows}
+
+
+@router.post("/policies/image")
+def upload_policy_image_form(
+    file: UploadFile = File(...),
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+    settings: Settings = Depends(get_settings),
+    identity: AdminIdentity = Depends(admin_required),
+) -> JSONResponse:
+    """Take an image chosen inside a policy editor and hand back its id (W46).
+
+    The operator picking a wallpaper is choosing a picture for *this policy*, not
+    publishing an asset to the fleet's Content library — so the file is ingested
+    with ``in_library=False`` and never appears there. Everything downstream is
+    unchanged: it is an ordinary managed file with a content-addressed artifact,
+    and the device cannot tell how it arrived.
+
+    Returns the id rather than redirecting because the policy has not been saved
+    yet; the form holds the id until the operator commits the whole policy.
+    """
+    data = file.file.read()
+    if not data:
+        return JSONResponse({"error": "the uploaded file is empty"}, status_code=422)
+    if len(data) > settings.max_upload_bytes:
+        return JSONResponse(
+            {"error": f"upload exceeds {settings.max_upload_bytes} bytes"}, status_code=413
+        )
+
+    media_type = file.content_type or ""
+    if not media_type.startswith("image/"):
+        # Refused here rather than on the device, where a wallpaper that is not an
+        # image fails as a generic apply error with nothing to act on.
+        return JSONResponse(
+            {"error": f"expected an image, got {media_type or 'an unknown type'}"},
+            status_code=422,
+        )
+
+    try:
+        managed = file_service.ingest_file(
+            session,
+            storage,
+            data,
+            name=(file.filename or "wallpaper").rsplit(".", 1)[0][:255],
+            original_filename=file.filename or "wallpaper",
+            media_type=media_type,
+            in_library=False,
+        )
+        session.commit()
+    except file_service.FileError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+
+    return JSONResponse({"id": str(managed.id), "name": managed.name})
 
 
 @router.post("/apps/tpc/import")

@@ -3,6 +3,14 @@
     <string name="app_name">ATLAS MDM</string>
     <string name="marketplace_title">Available downloads</string>
     <string name="sync_channel_name">Device management</string>
+
+    <!-- W44: data usage warnings. Separate channel from the sync one, which is
+         deliberately silent, so a threshold warning is actually seen. -->
+    <string name="data_usage_channel_name">Data usage</string>
+    <string name="data_usage_warning_title">Data usage limit reached</string>
+    <string name="data_usage_subject_device">This device</string>
+    <string name="data_usage_warning_text">%1$s has used %2$s, passing the %3$s MB limit set by your administrator.</string>
+    <string name="alert_dismiss">Acknowledge</string>
     <string name="sync_notification_title">Device management active</string>
     <string name="sync_notification_text">Keeping this device up to date.</string>
     <string name="status_not_enrolled">Not enrolled</string>
@@ -25,9 +33,6 @@
     <string name="compliance_finish">Finish setup</string>
     <string name="compliance_skip_rest">Continue without the rest</string>
     <string name="action_review_permissions">Review permissions</string>
-    <string name="action_reenroll">Discard identity and re-enrol</string>
-    <string name="reenroll_rationale">If this device cannot reach the server because its certificate or key is unusable, paste a new enrollment token to start over. This does not require a factory reset.</string>
-    <string name="reenroll_hint">Enrollment token</string>
 
     <!-- W19: DPC console -->
     <string name="nav_device">Device</string>
@@ -77,6 +82,17 @@
     <string name="file_tag_optional">Optional</string>
 
     <string name="empty_apps">No managed apps.</string>
+
+    <!-- W48: Apps tabs. Counts are part of the label because "Updates" is only
+         worth opening when it has something in it. -->
+    <string name="apps_tab_available">Available (%1$d)</string>
+    <string name="apps_tab_installed">Installed (%1$d)</string>
+    <string name="apps_tab_updates">Updates (%1$d)</string>
+    <!-- Every managed app is required by policy, so "available" means waiting to
+         install, not an opt-in catalogue. The wording says so. -->
+    <string name="empty_apps_available">Nothing waiting to install. Every app your policy requires is already on this device.</string>
+    <string name="empty_apps_installed">No policy apps are installed on this device yet.</string>
+    <string name="empty_apps_updates">Everything installed is up to date.</string>
     <string name="empty_files">Nothing is offered for this device.</string>
     <string name="empty_policies">No policy is applied to this device.</string>
 </resources>

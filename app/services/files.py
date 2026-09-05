@@ -56,7 +56,14 @@ def ingest_file(
     original_filename: str,
     description: str | None = None,
     media_type: str = "application/octet-stream",
+    in_library: bool = True,
 ) -> ManagedFile:
+    """Store bytes and catalogue them.
+
+    ``in_library`` false marks a file uploaded from inside a policy editor (W46):
+    identical in every way the device cares about, but kept out of the Content
+    listings so a wallpaper does not turn up as deployable content.
+    """
     if not data:
         raise FileError("uploaded file is empty")
 
@@ -72,6 +79,7 @@ def ingest_file(
         media_type=media_type,
         is_archive=is_archive(data),
         artifact_sha256=digest,
+        in_library=in_library,
     )
     session.add(managed)
     session.flush()

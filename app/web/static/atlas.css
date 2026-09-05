@@ -23,6 +23,17 @@
  * templates keep rendering unchanged.
  */
 
+/* The `hidden` attribute must win, everywhere.
+ *
+ * The browser's own rule is `[hidden] { display: none }`, which any class setting
+ * `display` outranks — so an element toggled with `el.hidden = true` in JS stays
+ * on screen if its class happens to set `display: flex`. That has bitten this
+ * stylesheet three times already (`.tab-panel`, `.modal-backdrop`, filtered TPC
+ * rows each carry their own `[hidden]` patch) and a fourth time on
+ * `.wallpaper-preview`, whose empty frames rendered whenever no image was chosen.
+ * One rule instead of a fifth patch. */
+[hidden] { display: none !important; }
+
 :root {
   --bg: #eef2f7;
   --bg-2: #e6ecf4;
@@ -247,6 +258,11 @@ label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 12.5
 .row > * { flex: 1 1 320px; min-width: 0; }
 
 .field-full { width: 100%; }
+
+/* An input paired with a button, e.g. the Wi-Fi password's show/hide toggle. */
+.input-group { display: flex; gap: 8px; align-items: stretch; }
+.input-group input { flex: 1 1 auto; min-width: 0; }
+.input-group .btn { flex: 0 0 auto; white-space: nowrap; }
 
 /* --------------------------------------------------------------------------- */
 /* Pills, banners, stats                                                        */

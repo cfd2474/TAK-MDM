@@ -29,7 +29,9 @@ from pydantic import ValidationError
 
 from app.policies.specs import (
     AppCatalogSpec,
+    CustomizationsSpec,
     FilesSpec,
+    NetworkDataUseSpec,
     NetworksSpec,
     PasswordSpec,
     PolicySpec,
@@ -160,4 +162,14 @@ registry.register(
     "NETWORKS",
     NetworksSpec,
     "Wi-Fi networks and built-in VPN profiles.",
+)
+registry.register(
+    "NETWORK_DATA_USE",
+    NetworkDataUseSpec,
+    "Data usage tracking, thresholds, and (with Knox) network restrictions.",
+)
+registry.register(
+    "CUSTOMIZATIONS",
+    CustomizationsSpec,
+    "Support messages and the lock screen message shown on the device.",
 )

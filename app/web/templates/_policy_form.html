@@ -44,6 +44,20 @@
          placeholder="not managed" style="min-width:280px">
 {% endmacro %}
 
+{% macro _text(f, value, name) %}
+  {# Multi-line, for operator-authored prose rather than an identifier. The
+     character counter is the point: Android silently truncates a support message
+     past its limit, so the console has to be where an over-long one is noticed. #}
+  <textarea name="{{ name }}" rows="3" class="field-full"
+            {% if f.maximum %}maxlength="{{ f.maximum }}"{% endif %}
+            placeholder="not managed">{{ value or '' }}</textarea>
+  {% if f.maximum %}
+    <div class="muted" style="font-size:12px">
+      <span data-char-count-for="{{ name }}">{{ (value or '') | length }}</span> / {{ f.maximum }}
+    </div>
+  {% endif %}
+{% endmacro %}
+
 {% macro _password(f, value, name) %}
   {# Shown in the clear on the admin console — an operator setting the device
      passcode needs to see it. It is masked only on the on-device app. #}
@@ -131,21 +145,24 @@
   it fills the screen and crops the overflow. A `contain` preview would look
   tidier and would lie about what the device shows.
 #}
-{% macro _image_file(f, value, name, managed_files) %}
+{% macro _image_file(f, value, name) %}
+  {#
+    Upload straight into the policy (W46). No Content dropdown: the operator is
+    choosing a picture for this policy, not publishing an asset to the library, and
+    making them go and do that first was two clicks in the wrong place.
+    The id lives in a hidden input, set by the upload before the policy is saved.
+  #}
   {% set is_tablet = 'tablet' in name %}
   <div class="image-slot" data-image-slot data-form-factor="{{ 'tablet' if is_tablet else 'phone' }}">
-    <select name="{{ name }}" data-image-select>
-      <option value="">— none —</option>
-      {% for m in managed_files if (m.media_type or '').startswith('image/') %}
-        <option value="{{ m.id }}" {{ 'selected' if value and (value | string) == (m.id | string) }}>
-          {{ m.name }} ({{ m.original_filename }})
-        </option>
-      {% endfor %}
-    </select>
-    <p class="muted" style="font-size:12px; margin:6px 0 0">
-      Images come from the <a href="/content">Content</a> page. Only uploads with an
-      image media type are listed.
-    </p>
+    <input type="hidden" name="{{ name }}" value="{{ value or '' }}" data-image-select>
+
+    <div class="toolbar" style="gap:8px; align-items:center">
+      <input type="file" accept="image/*" data-image-upload style="max-width:260px">
+      <span class="muted" data-image-status style="font-size:12px">
+        {% if value %}current image{% else %}no image chosen{% endif %}
+      </span>
+      <button type="button" class="ghost" data-image-clear {{ 'hidden' if not value }}>Remove</button>
+    </div>
     <div class="wallpaper-preview" data-image-preview hidden>
       <figure>
         <div class="frame portrait"><img alt="Portrait preview"></div>
@@ -232,18 +249,85 @@
   </div>
 {% endmacro %}
 
+{% macro _usage_rule_row(name, e, app_packages) %}
+  {# One "when <metric> over <period> exceeds <n> MB" line. The app-wise variant
+     is the same line with a package picker in front, so both share this row. #}
+  <div class="rs-row">
+    {% if app_packages is not none %}
+      <select name="{{ name }}__package_name">
+        <option value="">— pick an uploaded app —</option>
+        {% for p in app_packages %}
+          <option value="{{ p.package_name }}" {{ 'selected' if e and e.package_name == p.package_name }}>
+            {{ p.label or p.package_name }} ({{ p.package_name }})
+          </option>
+        {% endfor %}
+      </select>
+    {% endif %}
+    <select name="{{ name }}__period">
+      {% for v, label in [(0, 'Daily'), (1, 'Weekly'), (2, 'Monthly')] %}
+        <option value="{{ v }}" {{ 'selected' if e and e.period == v or (not e and v == 2) }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <span class="muted">when</span>
+    <select name="{{ name }}__metric">
+      {% for v, label in [(0, 'Mobile data'), (1, 'Wi-Fi data'), (2, 'Total data')] %}
+        <option value="{{ v }}" {{ 'selected' if e and e.metric == v or (not e and v == 0) }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <span class="muted">exceeds</span>
+    <input type="number" name="{{ name }}__threshold_mb" min="1"
+           value="{{ e.threshold_mb if e else '' }}" placeholder="0" style="width:110px">
+    <span class="muted">MB</span>
+    <button type="button" class="ghost" data-remove-row>Remove</button>
+  </div>
+{% endmacro %}
+
+{% macro _usage_rules(f, items, name, app_packages) %}
+  <div class="rowset" data-rowset="{{ name }}">
+    {% for entry in items or [] %}
+      {{ _usage_rule_row(name, entry, app_packages) }}
+    {% endfor %}
+    <template data-row-template>{{ _usage_rule_row(name, none, app_packages) }}</template>
+    <button type="button" class="ghost" data-add-row>Add rule</button>
+  </div>
+{% endmacro %}
+
 {% macro _control(f, spec, name, app_packages, managed_files) %}
   {% set value = spec.get(f.name) %}
+  {% if f.requires %}
+    {#
+      The platform has no route to this control yet (Android reference §W43).
+      Shown rather than hidden, and disabled rather than merely labelled: a
+      disabled input submits nothing, so an operator cannot save a restriction
+      that would never be enforced. The spec refuses the value too — this is the
+      polite half of that, not the guard.
+    #}
+    <fieldset disabled style="border:0; padding:0; margin:0; opacity:.55">
+      {{ _live_control(f, value, name, app_packages, managed_files) }}
+    </fieldset>
+    <div class="muted" style="font-size:12px; margin-top:4px">
+      <span class="pill warn">needs {{ f.requires }}</span>
+      No AOSP Device Owner API can do this, so it cannot be saved yet.
+    </div>
+  {% else %}
+    {{ _live_control(f, value, name, app_packages, managed_files) }}
+  {% endif %}
+{% endmacro %}
+
+{% macro _live_control(f, value, name, app_packages, managed_files) %}
   {% if f.control == 'bool' %}{{ _bool(f, value, name) }}
   {% elif f.control == 'int' %}{{ _int(f, value, name) }}
   {% elif f.control == 'enum' %}{{ _enum(f, value, name) }}
   {% elif f.control == 'str' %}{{ _str(f, value, name) }}
+  {% elif f.control == 'text' %}{{ _text(f, value, name) }}
   {% elif f.control == 'password' %}{{ _password(f, value, name) }}
   {% elif f.control == 'package_list' %}{{ _package_list(f, value, name) }}
   {% elif f.control == 'app_list' %}{{ _app_list(f, value, name, app_packages) }}
   {% elif f.control == 'file_list' %}{{ _file_list(f, value, name, managed_files) }}
-  {% elif f.control == 'image_file' %}{{ _image_file(f, value, name, managed_files) }}
+  {% elif f.control == 'image_file' %}{{ _image_file(f, value, name) }}
   {% elif f.control == 'wifi_list' %}{{ _wifi_list(f, value, name) }}
+  {% elif f.control == 'usage_rules' %}{{ _usage_rules(f, value, name, none) }}
+  {% elif f.control == 'app_usage_rules' %}{{ _usage_rules(f, value, name, app_packages) }}
   {% endif %}
 {% endmacro %}
 

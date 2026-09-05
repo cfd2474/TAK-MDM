@@ -69,7 +69,12 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
             if raw:
                 spec[name] = raw
 
-        elif field.control in ("str", "password"):
+        elif field.control in ("str", "password", "text"):
+            # The strip matters for `text`: a box holding only whitespace means the
+            # operator cleared it, so the field goes absent ("stop managing this")
+            # rather than being pushed as a blank string — which for the lock screen
+            # message is a materially different instruction to the device, holding
+            # it blank and keeping the user locked out of it (Android reference W42).
             raw = (form.get(name) or "").strip()
             if raw:
                 spec[name] = raw
@@ -137,6 +142,37 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
                         row["extract_to"] = et
                 if i < len(overwrites) and overwrites[i]:
                     row["overwrite"] = overwrites[i]
+                rows.append(row)
+            if rows:
+                spec[name] = rows
+
+        elif field.control in ("usage_rules", "app_usage_rules"):
+            # A disabled fieldset submits nothing, so a Knox-gated control simply
+            # produces no rows here — and the spec refuses one anyway if a request
+            # bypasses the form entirely.
+            periods = form.getlist(f"{name}__period")
+            metrics = form.getlist(f"{name}__metric")
+            thresholds = form.getlist(f"{name}__threshold_mb")
+            packages = form.getlist(f"{name}__package_name")
+            rows = []
+            for i, raw_threshold in enumerate(thresholds):
+                threshold = _int_or_none(raw_threshold)
+                # The threshold is the row: an empty one is a blank template row
+                # the operator added and never filled in, not a rule to enforce.
+                if threshold is None:
+                    continue
+                row: dict[str, Any] = {"threshold_mb": threshold}
+                period = _int_or_none(periods[i] if i < len(periods) else None)
+                if period is not None:
+                    row["period"] = period
+                metric = _int_or_none(metrics[i] if i < len(metrics) else None)
+                if metric is not None:
+                    row["metric"] = metric
+                if field.control == "app_usage_rules":
+                    package = (packages[i] if i < len(packages) else "").strip()
+                    if not package:
+                        continue  # a per-app rule naming no app restricts nothing
+                    row["package_name"] = package
                 rows.append(row)
             if rows:
                 spec[name] = rows

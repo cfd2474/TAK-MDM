@@ -767,6 +767,14 @@ def test_creator_rail_shows_subpages(client: TestClient):
     assert 'data-page="restrictions:device-functionality"' in body
 
 
+# The marker is now always in the markup and shown or hidden by the `hidden`
+# attribute, because atlas.js toggles it live as the operator types — the server
+# only decides the *initial* state (W47). "No check" therefore means present and
+# hidden, not absent.
+_VISIBLE_CHECK = 'class="rail-check" >'
+_HIDDEN_CHECK = 'class="rail-check" hidden>'
+
+
 def test_subpage_and_category_show_a_check_when_a_field_is_set(client: TestClient):
     # allow_camera lives on the "Device functionality" sub-page of Restrictions
     pid = _make_profile(client, "Locked", {"restrictions": {"allow_camera": False}})
@@ -774,10 +782,10 @@ def test_subpage_and_category_show_a_check_when_a_field_is_set(client: TestClien
     body = client.get(f"/profiles/{pid}").text
     # the sub-page link carries the check
     link = body[body.index('data-page="restrictions:device-functionality"'):]
-    assert "rail-check" in link[: link.index("</a>")]
+    assert _VISIBLE_CHECK in link[: link.index("</a>")]
     # and the category header does too
     head = body[body.index('data-cat-group="restrictions"'):]
-    assert "rail-check" in head[: head.index("</a>")]
+    assert _VISIBLE_CHECK in head[: head.index("</a>")]
 
 
 def test_a_pristine_subpage_has_no_check(client: TestClient):
@@ -785,7 +793,17 @@ def test_a_pristine_subpage_has_no_check(client: TestClient):
     body = client.get(f"/profiles/{pid}").text
     # "Display" (screen_timeout_seconds) was not set
     link = body[body.index('data-page="restrictions:display"'):]
-    assert "rail-check" not in link[: link.index("</a>")]
+    assert _HIDDEN_CHECK in link[: link.index("</a>")]
+
+
+def test_the_policy_maker_starts_with_every_check_hidden(client: TestClient):
+    """A brand-new policy has no saved spec, so the server can only ever render
+    them hidden — this is the case that made the feature look missing entirely,
+    since `/policies/new` builds its rail with no profile at all."""
+    body = client.get("/policies/new").text
+
+    assert _HIDDEN_CHECK in body
+    assert _VISIBLE_CHECK not in body
 
 
 def test_networks_wifi_subpage(client: TestClient):

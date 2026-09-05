@@ -86,8 +86,16 @@ CATALOG: tuple[Category, ...] = (
         "configurations", "Configurations", None,
         subtopics=("fonts", "boot/shutdown animation"),
     ),
-    Category("customizations", "Customizations", None, subtopics=("support message", "lock screen")),
-    Category("network_data_use", "Network data use management", None),
+    Category(
+        "customizations", "Customizations", "CUSTOMIZATIONS",
+        subtopics=("support message", "lock screen"),
+        blurb="Support messages and the lock screen message shown on the device.",
+    ),
+    Category(
+        "network_data_use", "Network data use management", "NETWORK_DATA_USE",
+        subtopics=("data usage restrictions", "app-wise restrictions"),
+        blurb="Data usage tracking and thresholds. Blocking needs Knox.",
+    ),
     Category("app_usage", "App usage management", None),
     Category(
         "file_management", "File management", "FILES",

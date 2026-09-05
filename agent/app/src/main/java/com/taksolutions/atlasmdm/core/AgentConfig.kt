@@ -221,6 +221,29 @@ class AgentConfig(context: Context) {
         prefs.edit { remove("$KEY_FILE_PREFIX$key") }
     }
 
+    /**
+     * Data-usage thresholds already warned about (W44).
+     *
+     * Keyed by rule *and* accounting window (see `DataUsagePlan.notifiedKey`), so a
+     * device sitting over its limit warns once rather than at every sync, and warns
+     * again when the next period starts. Kept small by [forgetDataUsageWarningsExcept],
+     * which drops keys from windows that have rolled over — otherwise this set grows
+     * by one entry per threshold per month, forever.
+     */
+    var dataUsageWarned: Set<String>
+        get() = prefs.getStringSet(KEY_DATA_USAGE_WARNED, emptySet()) ?: emptySet()
+        set(value) = prefs.edit { putStringSet(KEY_DATA_USAGE_WARNED, value) }
+
+    fun recordDataUsageWarning(key: String) {
+        dataUsageWarned = dataUsageWarned + key
+    }
+
+    /** Drop remembered warnings that no longer belong to a live window. */
+    fun forgetDataUsageWarningsExcept(live: Set<String>) {
+        val kept = dataUsageWarned intersect live
+        if (kept.size != dataUsageWarned.size) dataUsageWarned = kept
+    }
+
     val isEnrolled: Boolean
         get() = deviceId != null
 
@@ -256,6 +279,7 @@ class AgentConfig(context: Context) {
         private const val KEY_SUSPENDED_BY_POLICY = "suspended_by_policy"
         private const val KEY_WIFI_BY_POLICY = "wifi_by_policy"
         private const val KEY_WIFI_ID_PREFIX = "wifi_id:"
+        private const val KEY_DATA_USAGE_WARNED = "data_usage_warned"
 
         // Keys inside PROVISIONING_ADMIN_EXTRAS_BUNDLE, matching the server's
         // provisioning payload generator.

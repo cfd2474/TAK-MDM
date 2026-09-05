@@ -22,7 +22,6 @@ import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -42,7 +41,6 @@ import com.taksolutions.atlasmdm.admin.PolicyComplianceActivity
 import com.taksolutions.atlasmdm.core.AgentConfig
 import com.taksolutions.atlasmdm.files.FileDeployer
 import com.taksolutions.atlasmdm.install.AppInstaller
-import com.taksolutions.atlasmdm.net.DeviceIdentity
 import com.taksolutions.atlasmdm.permissions.PermissionRequirement
 import com.taksolutions.atlasmdm.sync.Reconciler
 import com.taksolutions.atlasmdm.sync.SyncScheduler
@@ -180,34 +178,6 @@ class MainActivity : AppCompatActivity() {
             })
         }
         root.addView(syncCard)
-
-        // Re-enrol — the escape hatch for a device whose key or certificate is
-        // unusable, so recovery does not need a factory reset.
-        val reCard = ConsoleViews.card(this)
-        ConsoleViews.body(reCard).apply {
-            addView(TextView(this@MainActivity).apply {
-                text = getString(R.string.reenroll_rationale)
-                setTextAppearance(R.style.TextAppearance_Atlas_Value)
-                textSize = 13f
-            })
-            val input = EditText(this@MainActivity).apply {
-                hint = getString(R.string.reenroll_hint)
-                setSingleLine()
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = ConsoleViews.dp(this@MainActivity, 8) }
-            }
-            addView(input)
-            addView(MaterialButton(this@MainActivity,
-                null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-                text = getString(R.string.action_reenroll)
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = ConsoleViews.dp(this@MainActivity, 8) }
-                setOnClickListener { reEnroll(input.text.toString().trim()) }
-            })
-        }
-        root.addView(reCard)
     }
 
     // --------------------------------------------------------------------- //
@@ -282,6 +252,9 @@ class MainActivity : AppCompatActivity() {
     // Available app downloads
     // --------------------------------------------------------------------- //
 
+    /** Which slice of the managed apps the Apps section is showing (W48). */
+    private var appsTab = AppsTabPlan.AppsTab.AVAILABLE
+
     private fun renderApps(root: LinearLayout, desired: JSONObject?) {
         root.addView(ConsoleViews.sectionTitle(this, getString(R.string.section_apps_title)))
         val apps = desired?.optJSONArray("apps") ?: JSONArray()
@@ -290,8 +263,44 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        // Bucket first, so the tab labels can carry counts. A count is the point:
+        // "Updates" is only worth opening when it has something in it.
+        val buckets = linkedMapOf(
+            AppsTabPlan.AppsTab.AVAILABLE to mutableListOf<JSONObject>(),
+            AppsTabPlan.AppsTab.INSTALLED to mutableListOf(),
+            AppsTabPlan.AppsTab.UPDATES to mutableListOf(),
+        )
         for (i in 0 until apps.length()) {
             val app = apps.optJSONObject(i) ?: continue
+            val tab = AppsTabPlan.tabFor(
+                available = app.optBoolean("available", false),
+                installedVersionCode = installer.installedVersionCode(app.optString("package_name")),
+                wantedVersionCode = app.optLong("version_code", -1),
+            )
+            buckets.getValue(tab).add(app)
+        }
+
+        root.addView(appsTabBar(buckets))
+
+        val shown = buckets.getValue(appsTab)
+        if (shown.isEmpty()) {
+            root.addView(
+                ConsoleViews.emptyNote(
+                    this,
+                    getString(
+                        when (appsTab) {
+                            AppsTabPlan.AppsTab.AVAILABLE -> R.string.empty_apps_available
+                            AppsTabPlan.AppsTab.INSTALLED -> R.string.empty_apps_installed
+                            AppsTabPlan.AppsTab.UPDATES -> R.string.empty_apps_updates
+                        }
+                    ),
+                )
+            )
+            root.addView(hintSync())
+            return
+        }
+
+        for (app in shown) {
             val pkg = app.optString("package_name")
             val wanted = app.optLong("version_code", -1)
             val available = app.optBoolean("available", false)
@@ -337,6 +346,55 @@ class MainActivity : AppCompatActivity() {
         }
 
         root.addView(hintSync())
+    }
+
+    /**
+     * The Available / Installed / Updates selector.
+     *
+     * Three buttons rather than a `TabLayout`: the section switcher already works
+     * by re-rendering off a field, and adding a second navigation idiom for three
+     * options would cost more than it explains.
+     */
+    private fun appsTabBar(buckets: Map<AppsTabPlan.AppsTab, List<JSONObject>>): LinearLayout {
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = ConsoleViews.dp(this@MainActivity, 8) }
+        }
+
+        for (tab in AppsTabPlan.AppsTab.entries) {
+            val count = buckets[tab]?.size ?: 0
+            val label = getString(
+                when (tab) {
+                    AppsTabPlan.AppsTab.AVAILABLE -> R.string.apps_tab_available
+                    AppsTabPlan.AppsTab.INSTALLED -> R.string.apps_tab_installed
+                    AppsTabPlan.AppsTab.UPDATES -> R.string.apps_tab_updates
+                },
+                count,
+            )
+            val selected = tab == appsTab
+            bar.addView(
+                MaterialButton(
+                    this,
+                    null,
+                    if (selected) com.google.android.material.R.attr.materialButtonStyle
+                    else com.google.android.material.R.attr.materialButtonOutlinedStyle,
+                ).apply {
+                    text = label
+                    textSize = 12f
+                    isAllCaps = false
+                    layoutParams = LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+                    ).apply { marginEnd = ConsoleViews.dp(this@MainActivity, 6) }
+                    setOnClickListener {
+                        appsTab = tab
+                        render()
+                    }
+                }
+            )
+        }
+        return bar
     }
 
     // --------------------------------------------------------------------- //
@@ -480,7 +538,7 @@ class MainActivity : AppCompatActivity() {
     )
 
     // --------------------------------------------------------------------- //
-    // Sync + re-enrol
+    // Sync
     // --------------------------------------------------------------------- //
 
     private fun syncNow() {
@@ -505,18 +563,6 @@ class MainActivity : AppCompatActivity() {
             }
             render()
         }
-    }
-
-    private fun reEnroll(token: String) {
-        if (token.isEmpty()) {
-            Toast.makeText(this, "Paste an enrollment token first", Toast.LENGTH_LONG).show()
-            return
-        }
-        DeviceIdentity.deleteIdentity()
-        config.deviceId = null
-        config.enrollmentToken = token
-        config.lastError = "re-enrolling…"
-        syncNow()
     }
 
     // --------------------------------------------------------------------- //

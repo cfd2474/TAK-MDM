@@ -68,7 +68,13 @@ def upload_file(
 
 @router.get("", response_model=list[ManagedFileRead])
 def list_files(session: Session = Depends(get_db)) -> list[ManagedFile]:
-    return list(session.scalars(select(ManagedFile).order_by(ManagedFile.name)))
+    # The library only. A policy-editor upload (W46) is reachable by id but is
+    # not catalogued content.
+    return list(
+        session.scalars(
+            select(ManagedFile).where(ManagedFile.in_library).order_by(ManagedFile.name)
+        )
+    )
 
 
 @router.get("/{file_id}", response_model=ManagedFileRead)

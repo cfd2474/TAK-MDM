@@ -82,6 +82,47 @@ class PolicyApplier(private val context: Context) {
         failures += applyRestrictions(policy.optJSONObject("RESTRICTIONS") ?: JSONObject())
         policy.optJSONObject("APP_CATALOG")?.let { failures += applyAppCatalog(it) }
         failures += applyNetworks(policy.optJSONObject("NETWORKS") ?: JSONObject())
+        failures += applyCustomizations(policy.optJSONObject("CUSTOMIZATIONS") ?: JSONObject())
+        return failures
+    }
+
+    // ----------------------------------------------------------------------- //
+    // Operator-authored text shown on the device (W42)
+    // ----------------------------------------------------------------------- //
+
+    /**
+     * Push the support messages and the lock screen message, or clear them.
+     *
+     * All three latch, so this runs even with no CUSTOMIZATIONS section at all and
+     * pushes `null` for whatever the policy does not carry — the same rule as the
+     * passcode and restriction families above. Unlike `setPasswordMinimumLength`
+     * (W41) none of these gate on any other state, so clearing is always safe.
+     *
+     * Blank collapses to `null` rather than `""` — see [CustomizationsPlan], where
+     * that rule lives and is tested, because for the lock screen the two are
+     * genuinely different instructions to the platform.
+     */
+    private fun applyCustomizations(spec: JSONObject): List<String> {
+        val failures = mutableListOf<String>()
+
+        runCatching {
+            dpm.setShortSupportMessage(
+                admin, CustomizationsPlan.message(spec, "disabled_setting_message")
+            )
+        }.onFailure { failures += "disabled setting message: ${it.message}" }
+
+        runCatching {
+            dpm.setLongSupportMessage(
+                admin, CustomizationsPlan.message(spec, "admin_app_description")
+            )
+        }.onFailure { failures += "admin app description: ${it.message}" }
+
+        runCatching {
+            dpm.setDeviceOwnerLockScreenInfo(
+                admin, CustomizationsPlan.message(spec, "lock_screen_message")
+            )
+        }.onFailure { failures += "lock screen message: ${it.message}" }
+
         return failures
     }
 
@@ -120,9 +161,15 @@ class PolicyApplier(private val context: Context) {
             dpm.setPasswordQuality(admin, dpmPasswordQuality(quality))
         }.onFailure { failures += "password quality: ${it.message}" }
 
-        runCatching {
-            dpm.setPasswordMinimumLength(admin, scalar("min_length") ?: 0)
-        }.onFailure { failures += "password min length: ${it.message}" }
+        // Only reachable at NUMERIC or above: below it the platform throws
+        // IllegalStateException even for a release to 0 (PasswordPlan
+        // .minLengthApplies), and the value is inert anyway — so there is
+        // nothing latched that can bite when quality is below NUMERIC.
+        if (PasswordPlan.minLengthApplies(quality)) {
+            runCatching {
+                dpm.setPasswordMinimumLength(admin, scalar("min_length") ?: 0)
+            }.onFailure { failures += "password min length: ${it.message}" }
+        }
 
         // Only reachable at COMPLEX: below it these setters throw for an app
         // targeting API 30+, and the values are inert. So when quality is not

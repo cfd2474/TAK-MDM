@@ -824,6 +824,160 @@ SDK. See [KNOX.md](KNOX.md). The ATLAS friendly name therefore lives in the cons
 and on the ATLAS MDM app's Device tab, and that is the end state unless Knox
 Configure is ever brought in.
 
+### Network data usage: read freely, enforce not at all (W43)
+
+Assessed against the SDK source before building the category, because an MDM
+screen full of "block mobile data" controls is worth nothing if the platform has
+no such call. The answer splits cleanly, and the two halves are worth keeping
+apart in your head.
+
+#### ✅ Reading usage is free for a Device Owner — no grant, no prompt
+
+📖 `NetworkStatsManager`'s class javadoc, verbatim:
+
+> Calling `querySummaryForDevice` or accessing stats for apps other than the
+> calling app requires the permission `PACKAGE_USAGE_STATS`, which is a
+> system-level permission and will not be granted to third-party apps. […]
+> Profile owner apps are automatically granted permission to query data on the
+> profile they manage […] **Device owner apps and carrier-privileged apps
+> likewise get access to usage data for all users on the device.**
+
+This is the rare case that goes *our* way. A normal app has to send the user into
+Settings → Special access for `PACKAGE_USAGE_STATS`; our agent is a Device Owner
+and simply gets it, for every app on the device. Total and per-UID usage, split by
+transport (mobile vs Wi-Fi) and by time bucket, is all available.
+
+✅ **Verified on `SM-X520` (One UI 8 / Android 16, agent v51), 2026-09-05.** The
+agent read **552.5 MB** of device total data with `PACKAGE_USAGE_STATS`
+**never granted** — no prompt, no Settings visit, no Usage-access toggle:
+
+```
+I/DataUsage: data usage warning raised: device total_data monthly 1MB at 552.5 MB
+I/SyncService: sync: state=3 applied=3 errors=0
+```
+
+So the Device Owner exemption is real on Samsung's firmware, not just in AOSP's
+javadoc. `querySummaryForDevice` returned a live bucket rather than the null that
+would have meant "you may not have this". The `PACKAGE_USAGE_STATS` declaration in
+the manifest is therefore belt-and-braces, not load-bearing.
+
+#### ❌ Enforcing a data restriction is not available at all
+
+There is **no** Device Owner API to block Wi-Fi data, block mobile data, block all
+connections, or cut one app off the network.
+
+| Candidate | Why it is not the answer |
+|---|---|
+| `UserManager.DISALLOW_CONFIG_WIFI`, `DISALLOW_CHANGE_WIFI_STATE`, `DISALLOW_CONFIG_MOBILE_NETWORKS` | These govern **configuration** — whether the *user* may change the setting. Data keeps flowing. |
+| `DISALLOW_DATA_ROAMING` | Genuinely blocks data, but **only while roaming**. Not a general lever. |
+| `NetworkPolicyManager.setUidPolicy(uid, POLICY_REJECT_METERED_BACKGROUND)` | **The exact API Settings uses** for per-app "restrict background data" — and it is `@hide` plus `@SystemApi(client = MODULE_LIBRARIES)`. Unreachable by a normally-installed DO, Device Owner privilege included. |
+| `setPackagesSuspended` | Suspends the whole app, not its network. A blunt instrument for a different job. |
+| `setAlwaysOnVpnPackage(..., lockdownEnabled = true)` | Can black-hole *all* traffic, but needs a VPN client app and cannot tell Wi-Fi from mobile. |
+
+**The answer is Knox `net.firewall.Firewall`** — per-app and device-wide
+allow/deny, already assessed in [KNOX.md](KNOX.md) §4.1 as "the single biggest
+win" and already scheduled as Chunk 7 step 4. Commercial MDMs showing per-app data
+blocking on Samsung are doing it there, not in AOSP.
+
+**Consequence for the console:** the NETWORK_DATA_USE spec carries the blocking
+fields, renders them disabled with a "needs Knox" badge, and **refuses to store a
+value for them**. A control that saves and does nothing is worse than one that is
+visibly unavailable.
+
+#### How to actually call the stats API (W44)
+
+⚠️ **The non-deprecated overloads are not available to us.** `querySummaryForDevice`
+and `queryDetailsForUid` each have a `NetworkTemplate` form and an `int networkType`
+form. The `NetworkTemplate` ones are `@SystemApi(client = MODULE_LIBRARIES)`, so an
+ordinary app — Device Owner included — **must** use the `int` form, whose
+`ConnectivityManager.TYPE_MOBILE` / `TYPE_WIFI` constants are themselves marked
+deprecated. Deprecated *and* mandatory at the same time. Do not "modernise" these
+calls to the template overloads; they will not compile against the public SDK.
+
+| Rule | Source |
+|---|---|
+| `subscriberId` is *"guarded by additional restrictions"* from API 29. Callers without privileged access *"can provide a `null` value when querying for the mobile network type to receive usage for all mobile networks"*. | `querySummaryForDevice` javadoc |
+| Both queries are `@WorkerThread` — *"This may take a long time, and apps should avoid calling this on their main thread."* | same |
+| Returns *"Bucket object or **null** if permissions are insufficient or error happened during statistics collection."* | same |
+| Iteration is `hasNextBucket()` / `getNextBucket(bucket)` and the `NetworkStats` must be `close()`d. | `NetworkStats` |
+
+⚠️ **A `null` return is not zero bytes.** It is the API saying "you may not have
+this", which is exactly what would happen if the Device-Owner-gets-it-free claim
+above turned out to be wrong on Samsung's firmware. The agent reports a null as an
+apply error rather than recording 0 MB used — a data cap that silently reads zero
+forever would never fire, and would look identical to a device using no data.
+
+### ⚠️ A notification channel's importance cannot be raised (W44)
+
+📖 `createNotificationChannel`, verbatim:
+
+> This can also be used to restore a deleted channel and to update an existing
+> channel's name, description, group, and/or importance.
+> […]
+> **The importance of an existing channel will only be changed if the new
+> importance is lower than the current value** and the user has not altered any
+> settings on this channel.
+
+So importance ratchets **downwards only**. Shipping a channel too quiet and fixing
+it later is not a code change — the fix is a no-op on precisely the devices that
+already ran the old build.
+
+📖 Deleting it first does not help either:
+
+> If you create a new channel with this same id, the deleted channel will be
+> **un-deleted with all of the same settings** it had before it was deleted.
+
+✅ **The only route is a new channel id**, then deleting the old one so the app's
+notification settings do not show a dead duplicate.
+
+**Cost us a real diagnosis.** v51 posted data-usage warnings to an
+`IMPORTANCE_DEFAULT` channel. That does not raise a heads-up over a fullscreen
+app, so the warning went straight to the shade and was reported as "no
+notification" — with the agent log proving it had posted correctly all along.
+v52 moved to `takmdm_data_usage_v2` at `IMPORTANCE_HIGH`.
+
+⚠️ **Pick the importance when the channel is born**, and assume you get one
+chance. A warning nobody sees is the same as no warning.
+
+### Operator-facing text: support messages and lock-screen info (W42)
+
+📖 Read from `sources/android-36.1/android/app/admin/DevicePolicyManager.java`
+(the SDK source shipped with the platform), not from a summary. All three are
+API 24+, so far below this project's `minSdk 33`.
+
+| API | What it does, verbatim from the javadoc | Limits |
+|---|---|---|
+| `setShortSupportMessage(admin, message)` | *"This will be displayed to the user in settings screens where functionality has been disabled by the admin."* The doc's own example is *"This setting is disabled by your administrator. Contact someone@example.com for support."* | *"If the message is longer than 200 characters it may be truncated."* `null` clears. `SecurityException` if `admin` is not an active administrator. |
+| `setLongSupportMessage(admin, message)` | *"This will be displayed to the user in the device administrators settings screen."* | *"If the message is longer than 20000 characters it may be truncated."* `null` clears. |
+| `setDeviceOwnerLockScreenInfo(admin, info)` | *"Sets the device owner information to be shown on the lock screen."* | Device owner only (or PO of an org-owned device); `SecurityException` otherwise. |
+
+⚠️ **`setDeviceOwnerLockScreenInfo` takes the field away from the user**, which
+the other two do not: *"Device owner information set using this method overrides
+any owner information manually set by the user and **prevents the user from
+further changing it**."* Its clearing behaviour is correspondingly particular:
+
+* `null` **or empty** → *"the device owner info is cleared and the user owner info
+  is shown on the lock screen if it is set"* — i.e. the user gets the field back.
+* **whitespace only** → *"the message on the lock screen will be blank and the
+  user will not be allowed to change it."*
+
+So "" and " " are **not** the same instruction: one hands the field back, the
+other holds it blank. The agent normalises a blank spec value to `null` for
+exactly this reason — an operator clearing a text box means "stop managing it",
+never "hold it blank forever".
+
+⚠️ **All three latch** and belong to the family below: whatever was last written
+stays until something writes over it, and survives the policy that set it being
+unassigned. So `applyCustomizations` runs even when the section is absent, pushing
+`null`. Unlike the `setPasswordMinimumLength` trap (W41), all three accept `null`
+in any state, so there is no quality-style gate to satisfy first.
+
+📖 Localization is the DPC's job for all three: *"it is the responsibility of the
+DeviceAdminReceiver to listen to the ACTION_LOCALE_CHANGED broadcast and set a new
+version of this string accordingly."* ATLAS does not do this — the operator's
+message is stored and pushed as written, in whatever language they typed it.
+Recorded so it is a known omission rather than a surprise.
+
 ### Passcode: the granular `setPasswordMinimum*` family (W18)
 
 📖 `setPasswordQuality`, `setPasswordMinimumLength`, `setPasswordMinimumLetters`,
@@ -841,6 +995,7 @@ it maps 1:1 onto the `PASSWORD` spec, which the complexity buckets do not.
 | Rule | Source |
 |---|---|
 | `setPasswordMinimum{Letters,Numeric,Symbols}` **throw `IllegalStateException`** for an app targeting API 30+ unless `setPasswordQuality(PASSWORD_QUALITY_COMPLEX)` was called first. Default value of each is 1. | `setPasswordMinimumLetters` reference |
+| ✅ **`setPasswordMinimumLength` throws too — the reference docs above don't say so, but the platform does.** It requires quality **at least `NUMERIC`** (`131072`), **even when the value being set is 0.** Hit on a freshly imaged `SM-X520` with *no policy ever applied*: `IllegalStateException("password quality should be at least NUMERIC for setPasswordMinimumLenght")` (AOSP's own typo, not ours) — thrown by the agent's own R14 release-to-permissive call, on the very first sync, because quality was still `UNSPECIFIED`. Fixed by gating the call the same way the char-class family is gated, just at `NUMERIC` instead of `COMPLEX` (`PasswordPlan.minLengthApplies`). Not yet re-verified on hardware — next enrolment of a fresh device should confirm the error is gone. | Observed on-device, 2026-09-05; not in the setter's own reference page |
 | `setPasswordQuality` **clears** any complexity set via `setRequiredPasswordComplexity` (on the primary instance, for a DO, it just clears — no throw). Don't mix the two APIs. | `setPasswordQuality` reference |
 | `setPasswordQuality` on the **parent** `DevicePolicyManager` instance throws `IllegalArgumentException` for an app targeting API 31+ (except a PO on an org-owned device). The agent only ever calls the primary instance. | `setPasswordQuality` reference |
 | The calling admin needs `USES_POLICY_LIMIT_PASSWORD` in its `device_admin.xml` (`<limit-password />`). Already declared. | `setPasswordMinimumLetters` reference |
@@ -916,6 +1071,17 @@ COMPLEX. Below it they are inert, so nothing latched there can bite.
 
 ✅ Verified both ways on `SM-X520` (agent v39): adding `min_length: 4` set
 `minimumPasswordLength=4`; removing it returned the device to `0`.
+
+⚠️ **Correction, 2026-09-05: `setPasswordMinimumLength(0)` is not safe to push
+unconditionally either.** It turns out to belong with "the per-character-class
+minimums are the exception" above, just at a lower bar — it throws below
+`NUMERIC` rather than below `COMPLEX`, for a release-to-0 exactly as much as for
+a real value. A freshly imaged device with no policy at all is `UNSPECIFIED`, so
+the R14 release call was itself throwing on the very first sync a device ever
+did. Same fix shape as the char-class family: only call it when quality is at
+least `NUMERIC` (`PasswordPlan.minLengthApplies`); below that a stale length is
+inert, so nothing latched there can bite either. Not yet re-verified on
+hardware.
 
 #### ⚠️ `setSystemSetting(SCREEN_OFF_TIMEOUT)` latches too, and has **no permissive
 value** to push
