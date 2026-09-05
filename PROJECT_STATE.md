@@ -4883,6 +4883,57 @@ that fails, the network is the problem and no server change will fix it.
 
 ---
 
+#### 🔻 W37 — Moved to the demo host `208.87.130.181`; old host pruned
+
+**`209.182.235.108` is gone.** `docker compose down -v`, `/opt/atlas` removed,
+`docker system prune -af --volumes` — 1.9 GB reclaimed, zero containers, volumes
+and images left. Two deliberate non-reversions: the SSH hardening stayed (pruning
+ATLAS is not a reason to re-open root password login on a public address), and the
+`atlas-deploy` key was removed from a box no longer being managed. The operator's
+own key and the pre-existing `cachetrak-deploy` key are untouched.
+
+⚠️ **The TAK.gov link died with it.** It lived only in that database, and the
+credential is per-instance, so the demo host needs its own link — a fresh
+3-minute device-code flow at Admin → TAK.gov.
+
+##### ⚠️ The new host is *not* empty — it serves a live site
+
+`208.87.130.181` (`evanserver`) already runs **`evan.leckliter.net`** on system
+nginx :80/:443, plus a node app on :3001 and python on :8787. ATLAS takes none of
+those. The plain-HTTP APK endpoint was moved to **8081** and the compose port made
+configurable (`TAKMDM_APK_HTTP_PORT`, still defaulting to 80 for an ordinary host).
+The site was re-checked after deployment and still answers.
+
+##### 🐛 A 56-day hung `apt-get` blocked the Docker install
+
+`apt-get -qq -y update` had been running since **early July** holding the lists
+lock, so `get.docker.com` could not proceed. Killing it left
+`/var/lib/apt/lists/partial` corrupted, which then failed differently
+(`pkgAcqTransactionItem::TransactionState-stat`) — the second error looked
+unrelated to the first and was caused by the fix for it. Clearing the lists
+directory and recreating `partial` resolved it. Docker 29.8.0 / Compose 5.5.1.
+
+##### Deployed and verified from the public internet
+
+| Check | Result |
+|---|---|
+| `https://208.87.130.181:8443/healthz` | **200** |
+| `https://208.87.130.181:8443/` | **403** — console not on the device port |
+| `http://208.87.130.181:8081/…/agent.apk` | **200**, 24 358 090 bytes |
+| `https://208.87.130.181:9443/` without credentials | **401** |
+| `evan.leckliter.net` after deployment | **still serving** |
+
+Agent **48** published, primary enrollment token active, migrations at head.
+
+⚠️ **Console writes now need CSRF *and* an Origin match.** With `forward_auth` on,
+scripted `curl` against `127.0.0.1:9443` fails twice over — 401 without Basic auth,
+then **403** because the CSRF guard compares `Origin` against
+`TAKMDM_CONSOLE_ORIGIN`, which names the public address. Automation has to fetch a
+token with a cookie jar and post to the real origin. Worth knowing before assuming
+a write silently failed.
+
+---
+
 ### Later chunks (sketch — to be detailed at approval time)
 
 | # | Chunk | Notes |
