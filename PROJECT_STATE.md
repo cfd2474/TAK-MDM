@@ -7022,6 +7022,42 @@ gets one whether it asks or not. A custom 3-second splash therefore runs *after*
 it, and two unrelated splashes in a row look like a bug. The system splash is
 themed to the same near-black so the sequence reads as one thing.
 
+##### ✅ Shipped as agent 59 (0.22.0) — and 🐛 a real self-update defect found
+
+The tablet reached **0.22.0 / 59** at 04:48:17, COMPLIANT and fully acked. But the
+operator reported *"agent is not updating"* and they were right at the time: it
+took **five download attempts over ten minutes**.
+
+The agent's own log named it — `agent update 59: download failed verification` ×4
+— and the chain was then checked end to end rather than guessed at:
+
+| Link | Evidence |
+|---|---|
+| The APK built here | `71a70df5…`, 20 779 763 b |
+| Stored on the server | re-hashed from the artifact store: **identical** |
+| Sent by nginx | `200 20779763` — the **complete** file, three separate times |
+| Verified on device | ❌ failed three times, then passed on the fourth |
+
+So the server is blameless and the fault is in the agent's download or hashing.
+Two further clues:
+
+* The one `206` resume asked for `bytes=14171755-` and got exactly the remaining
+  6 608 008 — a correct total length that **still** failed the hash, so the bytes
+  already on disk were wrong, not merely incomplete.
+* Failures come in **pairs seconds apart** (21:38:04 / 21:38:22, 21:41:12 /
+  21:41:26), which looks like two reconcile passes racing on the same cache path
+  `cacheDir/<sha>` — one deleting or truncating while the other writes.
+
+⚠️ **This is not new to W55.** The same signature appears against build 51 (once)
+and build **57 (four times, then success)**. It has been intermittently wasting a
+full 20 MB download per attempt and making every rollout look broken.
+
+**Not yet fixed.** The likely repair is to download to a unique temporary file and
+rename it into place only once it verifies, so concurrent passes cannot corrupt
+each other and a partial can never be resumed onto — plus checking the received
+length against `Content-Length`, so a short read is named as such instead of
+surfacing as a hash mismatch.
+
 ##### Plan (5 steps)
 
 1. Asset: `drawable-nodpi/atlas_wordmark.webp`, downscaled from the 1.8 MB
