@@ -97,7 +97,18 @@ object AppConfigPlan {
         // the type mismatch. The app then uses its own default while the device
         // reports the policy applied: exactly the silent failure this file exists
         // to prevent, which is why it cannot share the `TYPE_CHOICE` branch.
-        TYPE_MULTI_SELECT -> raw.split(*MULTI_SELECT_SEPARATORS)
+        // ⚠️ A **newline-terminated** payload is the console's, and is split on
+        // newlines only. A previous attempt keyed on "contains a newline", which
+        // is right for two or more selections and wrong for exactly one: a
+        // single checked value joins to itself with no newline at all, falls
+        // through to comma-splitting, and an option value containing a comma —
+        // "Smith, John" — is torn into two values the app never offered. The
+        // console now ends every generated list with a newline, so one item is
+        // as unambiguous as ten. Anything else is an operator's hand-typed list,
+        // where commas and newlines are both reasonable separators.
+        TYPE_MULTI_SELECT -> raw.split(
+            *(if (raw.endsWith('\n')) charArrayOf('\n') else MULTI_SELECT_SEPARATORS)
+        )
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .let { selected ->

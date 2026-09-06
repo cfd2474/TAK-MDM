@@ -312,7 +312,18 @@
       {% set config_values = entry['values'] or {} %}
       <div class="rs-row">
         <input type="hidden" name="{{ name }}__package_name" value="{{ entry.package_name }}">
-        <input type="hidden" name="{{ name }}__values" value="{{ config_values | tojson }}">
+        {# ⚠️ **Single quotes.** `tojson` returns Markup, so autoescape does not
+           run over it, and Jinja's `htmlsafe_json_dumps` escapes `<`, `>`, `&`
+           and `'` — but **not** `"`. JSON is made of double quotes, so in a
+           double-quoted attribute the value terminates at the first key and the
+           browser reads `value` as the single character `{`.
+
+           That is not cosmetic: on re-save the row submits `{`, `json.loads`
+           raises, `form_parse` swallows it and drops the row — and the next
+           check-in calls `setApplicationRestrictions` with an empty Bundle,
+           wiping the app's entire configuration off the fleet with no error
+           anywhere. Single quotes close it because `tojson` does escape those. #}
+        <input type="hidden" name="{{ name }}__values" value='{{ config_values | tojson }}'>
         <div style="flex:1">
           <strong>{{ entry.package_name }}</strong>
           <span class="muted" style="font-size:12px">

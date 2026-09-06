@@ -33,11 +33,12 @@ import hashlib
 import io
 import struct
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from cryptography.hazmat.primitives.serialization import Encoding, pkcs7
 
 from app.artifacts.app_icon import AppIcon, extract_icon, read_table
+from app.artifacts.app_restrictions import discover_in
 from app.artifacts.arsc import ResourceTable
 from app.artifacts.axml import AxmlError, parse_elements
 
@@ -75,6 +76,14 @@ class ApkInfo:
     # The launcher icon, when one can be extracted. None for an app whose icon is
     # a vector drawable, which needs a renderer we do not have (W53).
     icon: AppIcon | None = None
+    # `{key: restrictionType}` for the app's declared managed configuration (W49).
+    #
+    # Computed here rather than by a later pass because the resource table is
+    # already parsed at this point, for the icon and the label. Re-opening the zip
+    # to ask a third question cost a further 1.2 s per Outlook-sized upload for a
+    # byte-identical answer — and handing the *table* to that later pass instead
+    # would keep ~186 MB alive for the rest of ingest, which is the worse trade.
+    declared_config: dict[str, int] = field(default_factory=dict)
 
     @property
     def provisioning_checksum(self) -> str | None:
@@ -373,11 +382,16 @@ def inspect_apk(data: bytes) -> ApkInfo:
         # name of its own, and a `config.*` split ships a resource table big enough
         # that parsing one per split is real work for a guaranteed None.
         icon = None
+        declared_config: dict[str, int] = {}
         if split_name is None:
             # One parse, two questions. Outlook's table is 39.6 MB.
             table = read_table(archive)
             icon = extract_icon(archive, table)
             label = _resolve_label(label, table)
+            declared_config = {
+                entry.key: entry.restriction_type
+                for entry in discover_in(archive, package_name, table).keys
+            }
         else:
             label = None
 
@@ -394,6 +408,7 @@ def inspect_apk(data: bytes) -> ApkInfo:
         plugin_api=plugin_api,
         label=label,
         icon=icon,
+        declared_config=declared_config,
     )
 
 

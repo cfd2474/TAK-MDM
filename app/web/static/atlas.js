@@ -339,6 +339,44 @@
               });
               sel.setAttribute("data-config-key", k.key);
               wrap.appendChild(sel);
+            } else if (k.options && k.options.length && k.control === "multi_select") {
+              // A checklist, not a text box: the value Android wants is a
+              // String[] of the selected entries, and asking an operator to type
+              // comma-separated values they cannot see is how wrong ones get sent.
+              var list = document.createElement("div");
+              list.className = "config-options";
+              list.setAttribute("data-config-key", k.key);
+              list.setAttribute("data-config-multi", "1");
+              k.options.forEach(function (o) {
+                var line = document.createElement("label");
+                line.className = "config-option";
+                var box = document.createElement("input");
+                box.type = "checkbox";
+                box.value = o.value;
+                line.appendChild(box);
+                line.appendChild(document.createTextNode(" " + o.label));
+                list.appendChild(line);
+              });
+              wrap.appendChild(list);
+            } else if (k.options && k.options.length) {
+              // The app told us exactly which values it accepts (W54), so offer
+              // those and nothing else.
+              var choice = document.createElement("select");
+              choice.className = "field-full";
+              var blank = document.createElement("option");
+              blank.value = ""; blank.textContent = "Not set";
+              choice.appendChild(blank);
+              k.options.forEach(function (o) {
+                var opt = document.createElement("option");
+                opt.value = o.value;
+                // The label is the app's own wording; the value is what goes to
+                // the device. Both are shown because an operator reading the
+                // app's docs will be looking for the value.
+                opt.textContent = o.label + (o.label === o.value ? "" : "  (" + o.value + ")");
+                choice.appendChild(opt);
+              });
+              choice.setAttribute("data-config-key", k.key);
+              wrap.appendChild(choice);
             } else {
               var input = document.createElement("input");
               input.type = k.control === "int" ? "number" : "text";
@@ -348,19 +386,20 @@
               wrap.appendChild(input);
             }
 
-            // A choice key's options live in a resource array the APK does not
-            // expose in readable form, so say so rather than letting a text box
-            // imply that any value will do. The default is a real clue: Chrome
-            // ships literal ones even where the option list is a reference.
-            if (k.control === "choice" || k.control === "multi_select") {
+            // Only when the option list could NOT be read. An app declares its
+            // choices as resource arrays and most resolve now, but a build whose
+            // arrays are missing still must not show a text box that implies any
+            // value will do.
+            if ((k.control === "choice" || k.control === "multi_select") &&
+                !(k.options && k.options.length)) {
                 var hint = document.createElement("div");
                 hint.className = "muted";
                 hint.style.fontSize = "11px";
                 hint.textContent =
-                  k.control === "multi_select"
-                    ? "Multi-select: the app defines the accepted values; the APK does not carry them in readable form."
-                    : "Choice: the app defines the accepted values; the APK does not carry them in readable form." +
-                      (k.default ? " Its default is " + k.default + "." : "");
+                  (k.control === "multi_select" ? "Multi-select" : "Choice") +
+                  ": the app defines the accepted values, but this build does not" +
+                  " carry them in readable form." +
+                  (k.default ? " Its default is " + k.default + "." : "");
                 wrap.appendChild(hint);
             }
 
@@ -387,10 +426,27 @@
 
       var values = {};
       fields.querySelectorAll("[data-config-key]").forEach(function (el) {
+        var key = el.getAttribute("data-config-key");
+
+        // A multi-select is a container of checkboxes, not an input — it has no
+        // `.value`, and reading one would silently record every such key as unset.
+        if (el.hasAttribute("data-config-multi")) {
+          var picked = [];
+          el.querySelectorAll("input[type=checkbox]").forEach(function (box) {
+            if (box.checked) picked.push(box.value);
+          });
+          // Newline-separated AND newline-terminated. The trailing newline is
+          // what makes a single selection unambiguous: without it a one-item
+          // list is byte-identical to a hand-typed one, and the agent would fall
+          // back to comma-splitting and tear a value like "Smith, John" in half.
+          if (picked.length) values[key] = picked.join("\n") + "\n";
+          return;
+        }
+
         var v = (el.value || "").trim();
         // Only what the operator actually set: an empty control means "leave this
         // key alone", not "send an empty string", which an app would act on.
-        if (v !== "") values[el.getAttribute("data-config-key")] = v;
+        if (v !== "") values[key] = v;
       });
 
       var row = document.createElement("div");

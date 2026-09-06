@@ -159,6 +159,38 @@ class AppConfigPlanTest {
     }
 
     @Test
+    fun `a newline-terminated multi-select keeps commas inside its values`() {
+        assertEquals(
+            Value.AsStringList(listOf("Smith, John", "Doe, Jane")),
+            AppConfigPlan.coerce("Names", "Smith, John\nDoe, Jane\n", AppConfigPlan.TYPE_MULTI_SELECT),
+        )
+    }
+
+    @Test
+    fun `a single selected value containing a comma is not torn in half`() {
+        // ⚠️ The case a "contains a newline" guard got wrong. One checked box joins
+        // to itself with no separator, so a guard keying on "contains" fell through
+        // to comma-splitting and turned one chosen value into two the app never
+        // offered — silently, with the device reporting the policy applied. The
+        // console terminates its lists with a newline so one item is as
+        // unambiguous as ten.
+        assertEquals(
+            Value.AsStringList(listOf("Smith, John")),
+            AppConfigPlan.coerce("Names", "Smith, John\n", AppConfigPlan.TYPE_MULTI_SELECT),
+        )
+    }
+
+    @Test
+    fun `a hand-typed comma list still works`() {
+        // No trailing newline means it did not come from the console, and there a
+        // comma is the separator an operator would reach for.
+        assertEquals(
+            Value.AsStringList(listOf("a.example", "b.example")),
+            AppConfigPlan.coerce("Domains", "a.example, b.example", AppConfigPlan.TYPE_MULTI_SELECT),
+        )
+    }
+
+    @Test
     fun `a numeric-looking multi-select is not turned into an int`() {
         // The bug this replaced: multi-select shared the choice branch, so a value
         // that read as a number became AsInt and the app got the wrong type twice

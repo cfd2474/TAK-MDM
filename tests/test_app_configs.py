@@ -116,15 +116,34 @@ def test_atak_declares_its_enterprise_configuration_keys():
 
 
 @pytest.mark.skipif(not ATAK.exists(), reason="the ATAK APK is not in this checkout")
-def test_an_unresolved_title_falls_back_to_the_key():
-    """ATAK's titles are @string references, which cannot be resolved without
-    resources.arsc. The key is shown rather than a raw `@0x7f0f1488`."""
+def test_a_referenced_title_resolves_through_the_resource_table():
+    """ATAK's titles are `@string` references.
+
+    This test used to assert `title is None` — correct then, because W49 had no
+    `resources.arsc` reader and the key was shown instead. W54 added one, so the
+    *right* answer changed. What has not changed is the guarantee it existed to
+    protect: a raw `@0x7f0f1488` must never reach an operator.
+    """
     found = ar.discover(ATAK.read_bytes(), "com.atakmap.app.civ")
 
     entry = next(k for k in found.keys if k.key == "enterpriseConfigurationPreferences")
-    assert entry.title is None
-    assert entry.label == "enterpriseConfigurationPreferences"
+    assert entry.title
+    assert not entry.title.startswith("@0x")
     assert not entry.label.startswith("@0x")
+
+
+@pytest.mark.skipif(not ATAK.exists(), reason="the ATAK APK is not in this checkout")
+def test_a_title_that_cannot_be_resolved_still_falls_back_to_the_key():
+    """The fallback must survive its own success.
+
+    Resolution is best-effort — an app may reference a string that is not in the
+    table — and the label must then be the key, never the reference.
+    """
+    from app.artifacts.app_restrictions import RestrictionKey
+
+    unresolved = RestrictionKey(key="someKey", restriction_type=ar.TYPE_STRING, title=None)
+
+    assert unresolved.label == "someKey"
 
 
 @pytest.mark.skipif(not BUTTERFLY.exists(), reason="the Butterfly XAPK is not in this checkout")
@@ -194,19 +213,57 @@ def test_chrome_declares_its_whole_enterprise_policy_schema():
 
 
 @pytest.mark.skipif(not CHROME.exists(), reason="the Chrome XAPK is not in this checkout")
-def test_a_choice_key_is_labelled_a_choice_even_though_its_options_are_unreadable():
-    """`entries` / `entryValues` are resource arrays — references we cannot
-    resolve. The control still says "choice" so the editor can tell the operator
-    the app defines the valid values, instead of a bare text box implying that
-    anything is acceptable. The literal `defaultValue` survives and is the clue.
+def test_a_choice_key_offers_the_options_the_app_declares():
+    """`entries` / `entryValues` are resource arrays, and W49 could not read one —
+    so the console offered a text box and hoped the operator typed an accepted
+    value. Both arrays resolve now, paired by index: the label is what the app
+    calls the option, the value is what goes to the device.
     """
     with zipfile.ZipFile(CHROME) as outer:
         found = ar.discover(outer.read("com.android.chrome.apk"), "com.android.chrome")
 
     entry = next(k for k in found.keys if k.key == "AdsSettingForIntrusiveAdsSites")
+
     assert entry.restriction_type == ar.TYPE_CHOICE
     assert entry.control == "choice"
     assert entry.default == "1"
+    assert entry.has_options
+    assert [o.value for o in entry.options] == ["1", "2"]
+    assert entry.options[0].label == "Allow ads on all sites"
+    assert entry.options[1].label == "Do not allow ads on sites with intrusive ads"
+    # The pairing is index-based, so a silent off-by-one would still "work". The
+    # app's own declared default being one of the offered values is independent
+    # evidence that labels and values line up.
+    assert entry.default in [o.value for o in entry.options]
+
+
+@pytest.mark.skipif(not CHROME.exists(), reason="the Chrome XAPK is not in this checkout")
+def test_a_boolean_key_is_not_given_a_dropdown_it_does_not_need():
+    """Chrome declares `entries` on 93 of its **boolean** keys.
+
+    Those already render as a true/false control, and turning them into dropdowns
+    of the app's prose would replace a precise control with a vaguer one.
+    """
+    with zipfile.ZipFile(CHROME) as outer:
+        found = ar.discover(outer.read("com.android.chrome.apk"), "com.android.chrome")
+
+    booleans = [k for k in found.keys if k.restriction_type == ar.TYPE_BOOLEAN]
+
+    assert booleans, "precondition: Chrome declares boolean keys"
+    assert not any(k.has_options for k in booleans)
+
+
+@pytest.mark.skipif(not GBOARD.exists(), reason="the Gboard APK is not in this checkout")
+def test_options_resolve_for_a_second_app_with_a_different_value_vocabulary():
+    """Chrome's choice values are integers; Gboard's are strings. Both are just
+    "what the app said", and neither may be coerced into the other's shape."""
+    found = ar.discover(GBOARD.read_bytes(), "com.google.android.inputmethod.latin")
+
+    entry = next(k for k in found.keys if k.key == "config_default_keyboard_height")
+
+    assert entry.has_options
+    assert entry.options[0].value == "keyboard_height_33_mm"
+    assert "33 mm" in entry.options[0].label
 
 
 @pytest.mark.skipif(not GBOARD.exists(), reason="the Gboard APK is not in this checkout")
@@ -351,18 +408,20 @@ def test_survey123_uses_the_canonical_schema_path():
 
 
 @pytest.mark.skipif(not FIELDMAPS.exists(), reason="the Field Maps APK is not in this checkout")
-def test_fieldmaps_keys_survive_an_obfuscated_schema_with_no_titles():
+def test_fieldmaps_titles_resolve_from_an_obfuscated_schema():
     """The same vendor, the opposite build treatment: Field Maps ships at the
-    obfuscated `res/Kt.xml` with every title stripped to a reference. Its keys are
-    self-describing, so falling back to them costs the operator nothing — and its
-    integer defaults are still literal, which is the useful half."""
+    obfuscated `res/Kt.xml` with every title a reference.
+
+    This asserted `all(title is None)` under W49 — the honest answer when nothing
+    could resolve one. All 11 resolve now, which is the whole point of W54; the
+    literal integer defaults that were "the useful half" are still there.
+    """
     found = ar.discover(FIELDMAPS.read_bytes(), "com.esri.fieldmaps")
     by_key = {k.key: k for k in found.keys}
 
     assert len(found.keys) == 11
-    assert all(k.title is None for k in found.keys), "Field Maps resolves no titles"
-    assert by_key["portalURL"].label == "portalURL"
-    # Defaults are literals even where titles are not.
+    assert all(k.title for k in found.keys), "Field Maps titles no longer resolve"
+    assert not any(k.label.startswith("@0x") for k in found.keys)
     assert by_key["locationSharingUploadLKLFrequency"].control == "int"
     assert by_key["locationSharingUploadLKLFrequency"].default == "60"
 
@@ -515,3 +574,103 @@ def test_several_apps_can_be_configured_in_one_policy():
         "com.atakmap.app.civ",
         "com.example.other",
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Option pairing — the silent-wrong-value cases (W54)
+# --------------------------------------------------------------------------- #
+
+
+class _FakeTable:
+    """A resource table with exactly the arrays a test wants."""
+
+    def __init__(self, arrays):
+        self._arrays = arrays
+
+    def string(self, resource_id, _depth=0):
+        return None
+
+    def has_array(self, resource_id):
+        return resource_id in self._arrays
+
+    def array(self, resource_id):
+        return list(self._arrays.get(resource_id, []))
+
+
+def _choice_element(entries="@0x7f040001", entry_values="@0x7f040002"):
+    from app.artifacts.axml import AxmlElement
+
+    attributes = {"android:key": "K", "android:restrictionType": ar.TYPE_CHOICE}
+    if entries is not None:
+        attributes["android:entries"] = entries
+    if entry_values is not None:
+        attributes["android:entryValues"] = entry_values
+    return AxmlElement(name="restriction", attributes=attributes, depth=1)
+
+
+def test_an_unresolvable_member_drops_its_pair_rather_than_shifting_the_rest():
+    """The silent-wrong-value case.
+
+    If a member is dropped instead of held in place, every later label slides up
+    against the wrong value. Both sides still have equal length, so a length check
+    passes — and the device is sent a value the operator never chose.
+    """
+    table = _FakeTable({
+        0x7F040001: ["Low", "Medium", "High"],
+        0x7F040002: ["1", None, "3"],       # the middle value will not resolve
+    })
+
+    options = ar._options(_choice_element(), table)
+
+    assert [(o.label, o.value) for o in options] == [("Low", "1"), ("High", "3")]
+
+
+def test_equal_length_drops_on_both_sides_do_not_misalign():
+    """Both arrays lose one member, at different indexes.
+
+    Lengths match afterwards, so a length guard alone sees nothing wrong.
+    """
+    table = _FakeTable({
+        0x7F040001: [None, "Medium", "High"],
+        0x7F040002: ["1", "2", None],
+    })
+
+    options = ar._options(_choice_element(), table)
+
+    assert [(o.label, o.value) for o in options] == [("Medium", "2")]
+
+
+def test_an_unreadable_value_array_is_not_replaced_by_the_labels():
+    """`entryValues` declared but unresolvable must NOT fall back to the labels.
+
+    Doing so sends the app the human-readable prose in place of the value it
+    declared — the app ignores it, uses its default, and the console reports the
+    policy applied. "Not declared" and "declared but unreadable" are different
+    facts and must not collapse into one.
+    """
+    table = _FakeTable({0x7F040001: ["Allow ads on all sites", "Block them"]})
+
+    options = ar._options(_choice_element(), table)
+
+    assert options == (), "prose was offered as the value to send"
+
+
+def test_an_app_declaring_only_labels_still_gets_a_dropdown():
+    """The legitimate labels-only case must keep working."""
+    table = _FakeTable({0x7F040001: ["us-east-1", "eu-west-1"]})
+
+    options = ar._options(_choice_element(entry_values=None), table)
+
+    assert [(o.label, o.value) for o in options] == [
+        ("us-east-1", "us-east-1"),
+        ("eu-west-1", "eu-west-1"),
+    ]
+
+
+def test_mismatched_lengths_refuse_rather_than_guess():
+    table = _FakeTable({
+        0x7F040001: ["Low", "Medium", "High"],
+        0x7F040002: ["1", "2"],
+    })
+
+    assert ar._options(_choice_element(), table) == ()

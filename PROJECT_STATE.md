@@ -6760,6 +6760,130 @@ Outlook's and Gboard's **display names** (W51's remaining gap), managed-config
 **titles** and **choice lists** (W49 shows raw keys). All string lookups, no
 rendering — genuinely reachable now.
 
+#### 🔻 W54 — W49 completed: real names and real choices for managed config
+
+W49 shipped managed configuration with **raw keys and free-text choices**, because
+nothing could resolve a resource reference. W53 built the reader; this spends it.
+
+**Measured before building** — every title reference in every fixture resolves:
+
+| App | Keys | Title refs | Resolved | Choice-array refs |
+|---|---|---|---|---|
+| Chrome | 231 | 231 | **231** | 270 |
+| Gboard | 82 | 78 | **78** | 8 |
+| Outlook | 44 | 1 | **1** | 0 |
+| Field Maps | 11 | 11 | **11** | 0 |
+| ATAK | 6 | 6 | **6** | 0 |
+| Messages | 2 | 2 | **2** | 0 |
+| Butterfly / Survey123 | 3 / 10 | 0 | — | 0 |
+
+329 titles, none lost. Choice options need **bag entries**, which the W53 reader
+skips outright (`if entry_flags & _ENTRY_COMPLEX: continue`) — a `<string-array>`
+is a `ResTable_map_entry` holding N `ResTable_map` children. Prototyped: Chrome's
+`AdsSettingForIntrusiveAdsSites` resolves to
+`["Allow ads on all sites", "Do not allow ads on sites with intrusive ads"]` with
+`entryValues` `["0", "1"]` — label and value, which is exactly a `<select>`.
+
+##### ✅ Chunk 1 — resolution — **done**
+
+**383 of 383 keys across all eight fixtures now carry the app's own title**,
+including ATAK, Field Maps, Butterfly and Survey123, which previously showed none.
+No fixture lost a title.
+
+Options resolve for **41 of the 42 eligible choice keys** (one app's arrays are
+themselves unresolvable). The other 93 Chrome keys carrying `entries` are
+**booleans** — they already render as a true/false control, and giving them a
+dropdown of the app's prose would replace a precise control with a vaguer one, so
+they are deliberately left alone.
+
+🔍 **The pairing is index-based, so an off-by-one would be silent and would send
+the device a value the operator never chose.** Verified independently: across 45
+choice keys, 19 declare a `defaultValue`, and **every one of those 19 falls inside
+its own resolved option list**. Zero contradictions. That is evidence the labels
+and values line up which does not depend on the pairing code being right.
+
+##### ✅ Chunk 2 — the console — **done, verified in a real DOM**
+
+`jsdom` against the live `atlas.js`, not an assertion about intent:
+
+| | Result |
+|---|---|
+| Resolved choice | `<select>` with values `["", "1", "2"]` and the app's labels |
+| Multi-select | checklist of 3 checkboxes, not a text box |
+| Choice whose arrays did **not** resolve | falls back to text **plus** the honest hint |
+| Save | `{"AdsSetting…":"2","URLBlocklist":"example.com\nthird.test",…}` |
+| Untouched key | absent from the payload |
+
+⚠️ **Separator collision, found by looking rather than by test failure.** The
+console first joined checked values with a comma, and the agent split on commas —
+so an option value *containing* a comma would be torn into two values the app
+never offered. None of the 133 real option values contains one, but that is luck,
+not a guarantee. The console now joins with **newlines** and the agent prefers
+newlines when present, falling back to commas only for a hand-typed list.
+
+##### ✅ Chunk 3 — a second review, and the worst bug of the lot
+
+16 candidates, 4 verified, **all 4 confirmed**. Two were in W54 code, one was in
+the W53 parser, and the most damaging **predated both**.
+
+🐛 **The one that wipes fleet configuration.** `_policy_form.html` rendered saved
+values as `value="{{ config_values | tojson }}"`. Jinja's `tojson` escapes `<`,
+`>`, `&` and `'` — but **not** `"`, and JSON is made of double quotes. A browser
+parses that attribute as the single character `{`. Re-open a policy, press Save,
+and the row submits `{`, `json.loads` raises, `form_parse` swallows it, the row
+vanishes — and the next check-in calls `setApplicationRestrictions` with an empty
+Bundle, erasing that app's entire configuration from every device. No error
+anywhere. Shipped in W49; the existing test only *rendered* the page and asserted
+substrings, which the broken markup satisfies. Single-quoting the attribute fixes
+it, and a real round-trip test now pins it.
+
+🐛 **Slot count is not work count.** Nothing requires index slots to name distinct
+entries, so a chunk whose every slot holds offset 0 aims all of them at one bag
+declaring the maximum member count: cost is slots × members, gigabytes from a few
+KB. Each entry offset is now read once per chunk, with a chunk-wide member budget.
+
+🐛 **Compaction shifts pairing.** `array()` dropped unresolvable members instead of
+holding their position, so if both sides dropped the *same number* at different
+indexes, the length guard passed and every label sat against the wrong value —
+sending the device a value the operator never chose. Members are now positional
+(`None` where unresolved) and pairs are dropped, never single sides.
+
+🐛 **"Not declared" ≠ "declared but unreadable."** Both returned `[]`, so an
+unresolvable `entryValues` fell back to "the labels are also the values" and sent
+the app prose — *"Allow ads on all sites"* — where it expected `1`.
+
+🐛 **My own separator guard was wrong for exactly one item.** Keying on "contains a
+newline" works for two or more selections; a single checked value joins to itself
+with no newline, falls through to comma-splitting, and `Smith, John` becomes two
+values. The console now **terminates** its lists with a newline, so one is as
+unambiguous as ten. The test I had written covered the case that worked.
+
+**Performance, measured not guessed.** Ingest parsed the table twice (1.53 s → was
+2.79 s on Outlook); `declared_config` is now computed during the pass that already
+holds the table. The app-config schema endpoint went from 0.13 s to 1.40 s and
+~186 MB per request — it fires once per arrow-key press in the picker — so scans
+are memoised by artifact hash (the **result**, never the bytes: an earlier
+`lru_cache` over bytes was removed for pinning a gigabyte).
+
+##### Chunk 1 — resolution (original plan)
+
+1. `arsc.py`: read complex entries; `ResourceTable.array(rid)`.
+2. `app_restrictions.py`: take a `ResourceTable`; resolve title/description, and
+   `entries`/`entryValues` into paired options.
+3. `discover()` parses the table once and passes it (one parse, three questions —
+   Outlook's is 39.6 MB).
+4. Tests across all eight fixtures, including the two that declare no titles.
+
+##### Chunk 2 — the console, and the device
+
+5. Carry options through `AppConfig` / `form_schema`; render a real `<select>`
+   for `choice`, and a checked list for `multi_select`.
+6. The agent already coerces `multi_select` to `String[]` (W53 hardening); the
+   console can now send values the app actually declares rather than typed guesses.
+7. Deploy server **and publish the agent APK** — standing authorisation from the
+   operator, 2026-09-06: *"its always ok to push the agent apk and server updates
+   - we are in development."*
+
 | # | Chunk | Notes |
 |---|---|---|
 | 7 | **Knox layer** | Planned in detail below |

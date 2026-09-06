@@ -47,6 +47,18 @@ _FLAG_OFFSET16 = 0x02
 # ResTable_entry flags
 _ENTRY_COMPLEX = 0x0001
 
+#: A `ResTable_map` is a name reference (4 bytes) plus a `Res_value` (8).
+_MAP_SIZE = 12
+
+#: Ceiling on one bag's members. The longest real option list here is a handful;
+#: `count` is read straight from an attacker-supplied file.
+_MAX_BAG_MEMBERS = 512
+
+#: Ceiling on the bag members one type chunk may yield in total. The per-bag limit
+#: alone is not enough: a chunk can declare thousands of slots, and a chunk-wide
+#: budget is what stops their product becoming the real cost.
+_MAX_BAG_MEMBERS_PER_CHUNK = 20_000
+
 # Res_value data types we care about
 TYPE_REFERENCE = 0x01
 TYPE_STRING = 0x03
@@ -133,8 +145,46 @@ class ResourceValue:
 class ResourceTable:
     """Resource id → the values declared for it, across configurations."""
 
-    def __init__(self, entries: dict[int, list[ResourceValue]]):
+    def __init__(
+        self,
+        entries: dict[int, list[ResourceValue]],
+        arrays: dict[int, list[ResourceValue]] | None = None,
+    ):
         self._entries = entries
+        self._arrays = arrays or {}
+
+    def has_array(self, resource_id: int) -> bool:
+        """True when the id names a bag this reader recorded.
+
+        Distinct from `array()` returning nothing: an id that is *declared* but
+        unreadable is not the same as one that was never declared, and a caller
+        pairing two arrays has to tell those apart.
+        """
+        return resource_id in self._arrays
+
+    def array(self, resource_id: int) -> list[str | None]:
+        """A `<string-array>`'s members, **positionally**, `None` where unresolved.
+
+        Android declares a choice's options as `android:entries` and
+        `android:entryValues`, each pointing at a resource array, and the two are
+        paired **by index**.
+
+        ⚠️ Which is why an unresolvable member is `None` rather than omitted.
+        Compacting the list loses the position, so an array that drops its second
+        member and one that drops its fourth become indistinguishable — and if
+        both sides happen to drop the same number, a length check still passes
+        while every label now sits against the wrong value. The device would then
+        be sent a value the operator never chose, silently.
+        """
+        resolved: list[str | None] = []
+        for member in self._arrays.get(resource_id, []):
+            if member.data_type == TYPE_STRING and member.string is not None:
+                resolved.append(member.string)
+            elif member.is_reference:
+                resolved.append(self.string(member.value))
+            else:
+                resolved.append(None)
+        return resolved
 
     def __len__(self) -> int:
         return len(self._entries)
@@ -182,6 +232,7 @@ def parse(data: bytes) -> ResourceTable:
         raise ArscError(f"could not read the value string pool: {exc}") from exc
 
     entries: dict[int, list[ResourceValue]] = {}
+    arrays: dict[int, list[ResourceValue]] = {}
     position = header_size + pool.chunk_size
 
     while position + 8 <= len(data):
@@ -191,12 +242,14 @@ def parse(data: bytes) -> ResourceTable:
         if chunk_size < 8 or position + chunk_size > len(data):
             break
         if chunk_type == _RES_TABLE_PACKAGE:
-            _read_package(data, position, chunk_header_size, chunk_size, pool, entries)
+            _read_package(
+                data, position, chunk_header_size, chunk_size, pool, entries, arrays
+            )
         position += chunk_size
 
     if not entries:
         raise ArscError("resource table declares no entries")
-    return ResourceTable(entries)
+    return ResourceTable(entries, arrays)
 
 
 def _read_package(
@@ -206,6 +259,7 @@ def _read_package(
     size: int,
     pool: StringPool,
     entries: dict[int, list[ResourceValue]],
+    arrays: dict[int, list[ResourceValue]],
 ) -> None:
     # The outer loop guarantees only 8 bytes; this reads 12.
     if offset + 12 > len(data):
@@ -225,7 +279,10 @@ def _read_package(
         if chunk_size < 8 or position + chunk_size > end:
             break
         if chunk_type == _RES_TABLE_TYPE:
-            _read_type(data, position, chunk_header_size, chunk_size, package_id, pool, entries)
+            _read_type(
+                data, position, chunk_header_size, chunk_size,
+                package_id, pool, entries, arrays,
+            )
         position += chunk_size
 
 
@@ -237,6 +294,7 @@ def _read_type(
     package_id: int,
     pool: StringPool,
     entries: dict[int, list[ResourceValue]],
+    arrays: dict[int, list[ResourceValue]],
 ) -> None:
     # Fixed header is 20 bytes up to and including the config; the caller has only
     # guaranteed 8.
@@ -264,20 +322,45 @@ def _read_type(
     offset16 = bool(flags & _FLAG_OFFSET16)
     index_at = offset + header_size
 
+    # ⚠️ Clamping the slot *count* does not clamp the bag *work*, because nothing
+    # requires slots to point at distinct entries. A type chunk whose every slot
+    # holds offset 0 aims all of them at one `ResTable_map_entry` declaring the
+    # maximum member count — so an 8 KB chunk asks for slots × members parses and
+    # a small file turns into gigabytes. Each entry offset is therefore read at
+    # most once per chunk; a duplicate slot is a malformed table, and the first
+    # reading of an offset is the one Android would use anyway.
+    seen_offsets: set[int] = set()
+    bag_budget = _MAX_BAG_MEMBERS_PER_CHUNK
+
     for slot in range(entry_count):
         located = _entry_offset(data, index_at, slot, sparse=sparse, offset16=offset16)
         if located is None:
             continue
         entry_index, entry_offset = located
 
+        if entry_offset in seen_offsets:
+            continue
+        seen_offsets.add(entry_offset)
+
         at = offset + entries_start + entry_offset
         if at + 8 > len(data):
             continue
 
         entry_size, entry_flags = struct.unpack_from("<HH", data, at)
+        resource_id = (package_id << 24) | (type_id << 16) | entry_index
+
         if entry_flags & _ENTRY_COMPLEX:
-            # A bag (style, array, attr). It has no single value, and nothing here
-            # asks a question a bag could answer.
+            # A bag: style, attr, or — the reason this branch exists — an array.
+            # A choice's option list is a `<string-array>`, so skipping bags meant
+            # the console could only offer free text where the app had declared
+            # exactly which values it accepts.
+            if bag_budget > 0:
+                members = _read_bag(
+                    data, at, entry_size, density, language, pool, bag_budget
+                )
+                bag_budget -= len(members)
+                if members:
+                    arrays.setdefault(resource_id, members)
             continue
 
         value_at = at + entry_size
@@ -286,7 +369,6 @@ def _read_type(
         data_type = data[value_at + 3]
         (datum,) = struct.unpack_from("<I", data, value_at + 4)
 
-        resource_id = (package_id << 24) | (type_id << 16) | entry_index
         entries.setdefault(resource_id, []).append(
             ResourceValue(
                 density=density,
@@ -296,6 +378,51 @@ def _read_type(
                 value=datum,
             )
         )
+
+
+def _read_bag(
+    data: bytes,
+    at: int,
+    entry_size: int,
+    density: int,
+    language: str,
+    pool: StringPool,
+    budget: int,
+) -> list[ResourceValue]:
+    """Members of a complex entry, in declaration order.
+
+    A `ResTable_map_entry` extends the plain entry header with `parent` and
+    `count`, then carries `count` × `ResTable_map` — each a name reference plus a
+    `Res_value`. Order is load-bearing here: `android:entries` and
+    `android:entryValues` are two arrays read **positionally** against each other,
+    so a sort would silently pair the wrong label with the wrong value.
+    """
+    if at + 16 > len(data):
+        return []
+    _parent, count = struct.unpack_from("<II", data, at + 8)
+
+    # `count` is attacker-supplied. Each member costs 12 bytes, so anything past
+    # what the buffer can hold is a lie; clamped rather than trusted.
+    count = min(count, max(0, (len(data) - (at + entry_size))) // _MAP_SIZE)
+    count = min(count, _MAX_BAG_MEMBERS, max(0, budget))
+
+    members: list[ResourceValue] = []
+    for index in range(count):
+        member_at = at + entry_size + index * _MAP_SIZE
+        if member_at + _MAP_SIZE > len(data):
+            break
+        data_type = data[member_at + 4 + 3]
+        (datum,) = struct.unpack_from("<I", data, member_at + 4 + 4)
+        members.append(
+            ResourceValue(
+                density=density,
+                language=language,
+                data_type=data_type,
+                string=pool.get(datum) if data_type == TYPE_STRING else None,
+                value=datum,
+            )
+        )
+    return members
 
 
 def _read_config(data: bytes, offset: int) -> tuple[int, str]:

@@ -216,3 +216,64 @@ def test_an_upload_of_a_hostile_apk_is_refused_not_a_500(client):
     )
 
     assert response.status_code < 500, f"hostile upload produced {response.status_code}"
+
+
+# --------------------------------------------------------------------------- #
+# Bag (resource array) parsing — W54
+# --------------------------------------------------------------------------- #
+
+
+def _bag_entry(count: int) -> bytes:
+    """A ResTable_map_entry declaring `count` members, with none following."""
+    return struct.pack("<HH", 16, 0x0001) + struct.pack("<I", 0) + struct.pack("<II", 0, count)
+
+
+def test_many_slots_pointing_at_one_bag_do_not_multiply_the_work():
+    """The clamp on slot *count* does not clamp bag *work*.
+
+    Nothing requires index slots to name distinct entries. A chunk whose every
+    slot holds offset 0 aims all of them at a single entry declaring the maximum
+    member count, so the cost is slots x members — a few KB of file asking for
+    gigabytes. Each entry offset is now read at most once per chunk.
+    """
+    slots = 4000
+    index = struct.pack("<H", 0) * slots  # offset16: every slot -> offset 0
+    body = (
+        bytes([1, 0x02, 0, 0])  # type 1, FLAG_OFFSET16
+        + struct.pack("<II", slots, _TYPE_HEADER_SIZE + len(index))
+        + _CONFIG
+        + index
+        + _bag_entry(count=0xFFFFFFFF)
+    )
+    chunk = struct.pack("<HHI", RES_TABLE_TYPE, _TYPE_HEADER_SIZE, 8 + len(body)) + body
+    hostile = _table(_package(chunk))
+
+    started = time.perf_counter()
+    try:
+        arsc.parse(hostile)
+    except arsc.ArscError:
+        pass
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 5, f"duplicated slots still cost {elapsed:.1f}s"
+
+
+def test_a_bag_declaring_more_members_than_exist_is_clamped():
+    index = struct.pack("<I", 0)
+    body = (
+        bytes([1, 0, 0, 0])
+        + struct.pack("<II", 1, _TYPE_HEADER_SIZE + len(index))
+        + _CONFIG
+        + index
+        + _bag_entry(count=0xFFFFFFFF)
+    )
+    chunk = struct.pack("<HHI", RES_TABLE_TYPE, _TYPE_HEADER_SIZE, 8 + len(body)) + body
+
+    started = time.perf_counter()
+    try:
+        arsc.parse(_table(_package(chunk)))
+    except arsc.ArscError:
+        pass
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 5, f"a bogus member count cost {elapsed:.1f}s"

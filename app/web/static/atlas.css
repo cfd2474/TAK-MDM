@@ -676,3 +676,30 @@ dl.kv dd { margin: 0; font-size: 13px; }
   color: var(--muted);
   background: var(--panel-2);
 }
+
+/* --- Managed-configuration option lists (W54) ------------------------------
+   A multi-select's accepted values, read out of the APK's resource arrays. A
+   checklist rather than a text box: Android wants a String[] of the selected
+   entries, and asking an operator to type values they cannot see is how the
+   wrong ones get sent. */
+.config-options {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  background: var(--panel);
+}
+
+.config-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 2px 0;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.config-option input { margin: 0; }

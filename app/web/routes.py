@@ -33,6 +33,7 @@ from __future__ import annotations
 import io
 import json
 import uuid
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -637,6 +638,12 @@ def app_config_schema(
                     "control": k.control,
                     "default": k.default,
                     "unsupported_reason": k.unsupported_reason,
+                    # The app's own option list, when it could be resolved (W54).
+                    # Empty means "free text" — the editor must not render an
+                    # empty dropdown, which would offer nothing at all.
+                    "options": [
+                        {"label": o.label, "value": o.value} for o in k.options
+                    ],
                 }
                 for k in declared.keys
             ],
@@ -1449,12 +1456,26 @@ def _already_imported(session: Session, plugins: list) -> set[tuple[str, int]]:
     return {(name, code) for name, code in rows}
 
 
+#: Declared-configuration scans, keyed by the base APK's content hash.
+#:
+#: ⚠️ Caches the **result**, never the APK bytes — a previous `lru_cache` over
+#: bytes was removed for pinning more than a gigabyte. The result is a few
+#: hundred small objects, and a build is immutable at its hash, so it cannot go
+#: stale. Bounded, because an operator's library is not.
+_APP_CONFIG_SCANS: OrderedDict[tuple[str, str], object] = OrderedDict()
+_APP_CONFIG_SCAN_LIMIT = 32
+
+
 def _declared_app_config(session: Session, storage: ArtifactStorage, package: AppPackage):
     """The managed configuration a package's latest published build declares.
 
-    Read from the APK on demand rather than cached in a column: a full scan of a
-    20 MB APK measures ~20 ms, and the alternative is a schema copy that can drift
-    from the build it claims to describe.
+    Scanned from the APK rather than kept in a column, so it cannot drift from the
+    build it describes — but memoised per artifact hash.
+
+    This used to scan on every request, justified by "a full scan of a 20 MB APK
+    measures ~20 ms". W54 invalidated that: `discover` now parses `resources.arsc`
+    first, taking Outlook from 0.13 s to 1.40 s and ~186 MB of transient heap **per
+    request** — and the package picker fires one request per arrow-key press.
     """
     version = package_service.latest_published(session, package)
     if version is None:
@@ -1462,12 +1483,24 @@ def _declared_app_config(session: Session, storage: ArtifactStorage, package: Ap
     base = next((f for f in version.files if f.role is PartRole.BASE), None)
     if base is None:
         return None
+
+    key = (base.artifact_sha256, package.package_name)
+    cached = _APP_CONFIG_SCANS.get(key)
+    if cached is not None:
+        _APP_CONFIG_SCANS.move_to_end(key)
+        return cached
+
     try:
         with storage.open(base.artifact_sha256) as handle:
             data = handle.read()
     except (FileNotFoundError, OSError):
         return None
-    return app_restrictions.discover(data, package.package_name)
+
+    found = app_restrictions.discover(data, package.package_name)
+    _APP_CONFIG_SCANS[key] = found
+    if len(_APP_CONFIG_SCANS) > _APP_CONFIG_SCAN_LIMIT:
+        _APP_CONFIG_SCANS.popitem(last=False)
+    return found
 
 
 @router.post("/policies/image")

@@ -216,7 +216,13 @@ def ingest(
         published=publish,
         # Scanned once, here, from the base part (W49). The device needs each key's
         # declared type to build a Bundle the app can actually read.
-        declared_config=json.dumps(_declared_config_of(bundle.base.data)),
+        # Read during inspection, while the resource table was already in hand
+        # (W54). Falls back to a scan only for a bundle that predates that.
+        declared_config=json.dumps(
+            bundle.base.info.declared_config
+            if bundle.base.info is not None and bundle.base.info.declared_config
+            else _declared_config_of(bundle.base.data)
+        ),
     )
     session.add(version)
     session.flush()
