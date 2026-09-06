@@ -7481,6 +7481,16 @@ screen an operator was looking for, which is worse than the text box it replaces
 Found by checking the extraction against all three fixtures rather than the one
 that worked.
 
+✅ **Measured on production, and the margin is not close:**
+
+| Chrome | Activities | Launchers |
+|---|---|---|
+| Base APK only | 3 | **0** |
+| Every part | **60** | 1 — `com.google.android.apps.chrome.Main` |
+
+A base-only dropdown would have offered three Play Core dialogs and no way to
+launch Chrome at all.
+
 Fetched on demand and memoised by package, like the managed-config scan; the list
 is refilled whenever the app changes, because an activity from the previously
 selected app is not a valid choice for this one.
