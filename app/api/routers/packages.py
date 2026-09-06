@@ -127,7 +127,11 @@ def update_package(
     if "label" in fields:
         package.label = (fields["label"] or "").strip() or None
     if "store_listed" in fields and fields["store_listed"] is not None:
-        package.store_listed = fields["store_listed"]
+        if package.store_listed != fields["store_listed"]:
+            package.store_listed = fields["store_listed"]
+            # The store is offered to every device, and no policy edit accompanies
+            # this — so without invalidating, the shelf changes and nobody is told.
+            eff.invalidate_all(session)
     session.commit()
     return package
 

@@ -107,6 +107,16 @@ def build(
         # Required apps resolved to concrete artifacts: hashes to verify against and
         # URLs to fetch. The policy says what; this says exactly which bytes.
         "apps": payload.get("apps", []),
+        # The ATLAS store: apps the user *may* install, never ones the agent should
+        # install itself (W56).
+        #
+        # ⚠️ A sibling key rather than reshaping `apps` into {required, available}
+        # like `files`. The reshape would need a `schema_version` bump, and the
+        # whole purpose of that number is to make an older agent **refuse** a
+        # document it does not understand — which would strand every device in the
+        # field over a purely additive change. An agent that has not learned about
+        # the store simply ignores this.
+        "store": payload.get("store", []),
         # Split into what the agent must install and what it should offer the user
         # in the marketplace (F4).
         "files": payload.get("files", {"required": [], "available": []}),

@@ -95,4 +95,12 @@
     <string name="empty_apps_updates">Everything installed is up to date.</string>
     <string name="empty_files">Nothing is offered for this device.</string>
     <string name="empty_policies">No policy is applied to this device.</string>
+    <!-- ATLAS store offers (W56) -->
+    <string name="app_status_offered">Available</string>
+    <string name="app_status_update_offered">Update to v%1$d</string>
+    <string name="action_install">Install</string>
+    <string name="action_update">Update</string>
+    <string name="action_installing">Installing…</string>
+    <string name="install_ok">%1$s installed</string>
+    <string name="install_failed">%1$s could not be installed: %2$s</string>
 </resources>

@@ -271,6 +271,67 @@ def resolve_required_apps(
     return sorted(resolved, key=lambda item: item["package_name"])
 
 
+def resolve_store_apps(
+    session: Session, required: list[dict[str, Any]] | None = None
+) -> list[dict[str, Any]]:
+    """The ATLAS store, resolved to concrete downloads the device can offer (W56).
+
+    Store membership is **server-wide curation, not policy**: an operator moves a
+    package into the store and every enrolled device may offer it. So this takes
+    no policy values — unlike `resolve_required_apps`, there is nothing per-device
+    to resolve against.
+
+    ⚠️ An offer is not an order. These are apps a user *may* install; the agent
+    must never install one on its own. The shape matches a required app so the
+    agent can reuse one download path, and `required` is what keeps the two from
+    colliding.
+
+    Apps with nothing publishable are **omitted**, not reported unavailable — the
+    opposite of the required path. A required app with no build is a broken policy
+    an operator must see; a store app with no build is simply not on the shelf, and
+    listing something a user cannot install would be worse than a shorter list.
+    """
+    already_required = {
+        entry.get("package_name") for entry in (required or []) if entry.get("package_name")
+    }
+
+    offered: list[dict[str, Any]] = []
+    for package in session.scalars(
+        select(AppPackage).where(AppPackage.store_listed.is_(True))
+    ):
+        # Required wins. Offering a user the choice to install something policy is
+        # already installing is a contradiction the console cannot resolve for them.
+        if package.package_name in already_required:
+            continue
+
+        version = packages.resolve_for_policy(session, package.package_name)
+        if version is None:
+            continue
+
+        offered.append(
+            {
+                "package_name": package.package_name,
+                "label": package.label,
+                "available": True,
+                "version_code": version.version_code,
+                "version_name": version.version_name,
+                "files": [
+                    {
+                        "role": file.role.value,
+                        "file_name": file.file_name,
+                        "split_name": file.split_name,
+                        "sha256": file.artifact_sha256,
+                        "size_bytes": file.artifact.size_bytes if file.artifact else None,
+                        "url": f"/api/v1/device/artifacts/{file.artifact_sha256}",
+                    }
+                    for file in sorted(version.files, key=lambda f: (f.role.value, f.file_name))
+                ],
+            }
+        )
+
+    return sorted(offered, key=lambda item: item["package_name"])
+
+
 def refresh(session: Session, device: Device) -> dict[str, Any]:
     """Recompute, store, and bump ``state_version`` if the device-facing state moved.
 
@@ -280,6 +341,10 @@ def refresh(session: Session, device: Device) -> dict[str, Any]:
     effective = compute(session, device)
     payload = effective.as_dict()
     payload["apps"] = resolve_required_apps(session, payload["values"])
+    # The store is server-wide curation, so it takes no policy values — but it is
+    # given the required list so an app that is both required and listed stays
+    # required rather than being offered as an optional install as well (W56).
+    payload["store"] = resolve_store_apps(session, payload["apps"])
     payload["files"] = files.resolve_files(session, payload["values"])
     payload["wallpaper"] = files.resolve_wallpaper(session, payload["values"])
 
@@ -290,6 +355,7 @@ def refresh(session: Session, device: Device) -> dict[str, Any]:
     previous_state = (
         previous.get("values", {}),
         previous.get("apps", []),
+        previous.get("store", []),
         previous.get("files", {"required": [], "available": []}),
         previous.get("wallpaper", {}),
     )
@@ -301,6 +367,7 @@ def refresh(session: Session, device: Device) -> dict[str, Any]:
     if previous_state != (
         payload["values"],
         payload["apps"],
+        payload["store"],
         payload["files"],
         payload["wallpaper"],
     ):

@@ -1037,6 +1037,56 @@ class Reconciler(private val context: Context) {
         return failures
     }
 
+    /**
+     * Install an app the user chose from the ATLAS store (W56).
+     *
+     * Returns null on success, or a reason to show them.
+     *
+     * ⚠️ Called from the Apps screen, never from [sync]. A store entry is an
+     * **offer**: the reconciler reads `apps` and must go on reading only `apps`,
+     * or listing something in the store would silently install it on every device
+     * — which is the opposite of what the store is for.
+     *
+     * Deliberately not folded into [reconcileApps]. That function carries the
+     * downgrade, pinning and OBB rules that make a *required* app converge, and
+     * none of them apply to a user tapping install; sharing the path would mean
+     * one of the two callers is always being told rules it should not obey.
+     * The duplication here is a dozen lines of download-and-install.
+     */
+    fun installFromStore(entry: JSONObject): String? {
+        val packageName = entry.optString("package_name")
+        if (packageName.isBlank()) return "this app has no package name"
+
+        val files = entry.optJSONArray("files") ?: return "nothing to install"
+        // Base first — PackageInstaller needs it before the splits — and OBB parts
+        // dropped, which a Device Owner cannot place anyway (R2).
+        val ordered = (0 until files.length())
+            .mapNotNull { files.optJSONObject(it) }
+            .filter { it.optString("role") != "obb" }
+            .sortedBy { if (it.optString("role") == "base") 0 else 1 }
+
+        val parts = mutableListOf<File>()
+        for (part in ordered) {
+            val sha = part.optString("sha256")
+            val target = File(cacheDir, sha)
+            if (!downloadArtifact(sha, target)) {
+                AgentLog.w(TAG, "store install $packageName: $sha failed verification")
+                return "the download could not be verified"
+            }
+            parts += target
+        }
+        if (parts.isEmpty()) return "nothing to install"
+
+        val result = installer.install(packageName, parts)
+        AgentLog.i(
+            TAG,
+            "store install $packageName: " +
+                if (result.success) "installed versionCode ${installer.installedVersionCode(packageName)}"
+                else "failed — ${result.message}"
+        )
+        return if (result.success) null else result.message
+    }
+
     private fun downloadArtifact(sha256: String, target: File): Boolean {
         if (target.exists() && ApiClient.sha256Of(target) == sha256.lowercase()) return true
         return runCatching { api.downloadArtifact(sha256, target) }.getOrElse {

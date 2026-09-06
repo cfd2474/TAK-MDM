@@ -193,23 +193,45 @@
   <div class="tab-panel" data-tab-panel="store" hidden>
     <div class="panel">
       <p class="sub">
-        The curated set that ships with a deployment. Being in the store is a hint
-        to operators that a package is ready to assign — it does not install
-        anything on its own.
+        The curated set offered to every enrolled device. Anything listed here
+        appears under <strong>Available</strong> in the ATLAS app on the device,
+        for the user to install if they want it — it is an offer, not a policy, so
+        nothing is installed automatically. To install an app whether the user
+        wants it or not, make it a required app in an App&nbsp;Management policy.
       </p>
       {% if not store_packages %}
         {{ empty_state('Nothing in the store. Add a package from the Local apps tab.') }}
       {% else %}
-      <table>
-        <thead><tr><th>Package</th><th>Label</th><th>Latest version</th><th></th></tr></thead>
+      {# Same shape as Local apps, within reason: icon, name over package id,
+         published version, parts — and sortable. The two tabs list the same kind
+         of thing, so reading one should teach you how to read the other.
+
+         🐛 The header used to declare four columns (Package, Label, Latest
+         version, blank) while every row emitted three, so the columns did not
+         line up with their headings at all. #}
+      <table data-sortable>
+        <thead><tr>
+          <th class="app-icon-col"></th>
+          <th data-sort>App name</th><th data-sort>Offered version</th>
+          <th data-sort>Parts</th><th></th>
+        </tr></thead>
         <tbody>
         {% for p in store_packages %}
           <tr>
+            <td class="app-icon-col">
+              {% if p.icon_media_type %}
+                <span class="app-icon">
+                  <img src="/api/v1/packages/{{ p.id }}/icon" alt=""
+                       loading="lazy"
+                       class="{{ 'adaptive' if p.icon_adaptive else '' }}">
+                </span>
+              {% else %}
+                <span class="app-icon app-icon-blank" aria-hidden="true">
+                  {{ (p.label or p.package_name)[0] | upper }}
+                </span>
+              {% endif %}
+            </td>
             <td>
-              {# The package name is the identity that has to match the device, so
-                 it keeps its place under the name even without its own column. An
-                 unlabelled upload falls back to it rather than showing a bare
-                 dash — and then does not repeat it underneath. #}
               {% if p.label %}
                 {{ p.label }}
                 <div class="mono muted" style="font-size:11px">{{ p.package_name }}</div>
@@ -217,7 +239,22 @@
                 <span class="mono">{{ p.package_name }}</span>
               {% endif %}
             </td>
-            <td class="mono">{{ p.latest_version.version_code if p.latest_version else '—' }}</td>
+            <td class="mono">
+              {# The *published* build, because that is the one a device is offered
+                 — the newest upload may deliberately be held back. #}
+              {% set deployed = p.versions | selectattr('published') | sort(attribute='version_code') | last %}
+              {% if deployed %}
+                {{ deployed.version_code }}{% if deployed.version_name %} ({{ deployed.version_name }}){% endif %}
+              {% else %}
+                <span class="pill warn">none published</span>
+              {% endif %}
+            </td>
+            <td class="muted">
+              {{ (p.latest_version.files | length) if p.latest_version else 0 }}
+              {% if p.latest_version and p.latest_version.has_obb %}
+                <span class="pill" title="This package ships an OBB expansion file. A Device Owner cannot place OBB files on the device, so the APK installs WITHOUT it and the app will be missing the assets it expects.">OBB</span>
+              {% endif %}
+            </td>
             <td>
               <form method="post" action="/apps/{{ p.id }}/store" style="margin:0">
                 {{ csrf_field(csrf_token) }}

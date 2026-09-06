@@ -7109,6 +7109,88 @@ unfixed code in 60 and simply did not collide that time. The first update fetche
 5. Build, deploy to the fleet, and **have the operator confirm what appeared** —
    a build that compiles proves nothing about what is on screen.
 
+#### 🔻 W56 — The ATLAS store reaches the device
+
+Operator: *"any application that is moved into the Atlas store should show up in
+the available apps on the EUD for the user to download and install. also, the web
+portal page for atlas store should share the same table properties as the local
+apps tab, within reason."*
+
+⚠️ **This changes what "Available" means, and the DPC says so in its own words.**
+`AppsTabPlan`'s docstring reads: *"Every managed app is **required** by policy …
+`AVAILABLE` means 'policy wants this and it is not installed yet' — a queue, not a
+shop."* The store makes it a shop. The tab has to carry both senses without
+blurring them: a required app not yet installed is a **pending obligation**, a
+store app is an **offer**, and showing them identically would make a broken policy
+look like a shopping list.
+
+✅ **The precedent already exists.** `files` is split into `required` and
+`available` — *"what the agent must install and what it should offer the user in
+the marketplace (F4)"* — and the DPC already renders optional files the user picks.
+Apps mirror that rather than inventing a second idiom.
+
+**Design decisions:**
+
+* Store membership is **server-wide curation, not policy**. Every enrolled device
+  is offered the whole store; there is no per-device store yet. That matches the
+  operator's "any application moved into the store" exactly, and a narrower rule
+  can be added later without changing the wire format.
+* The desired state gains a **new `store` key** rather than reshaping `apps` into
+  `{required, available}`. Additive means an agent in the field ignores it; the
+  reshape would need a `schema_version` bump, whose whole purpose is to make an old
+  agent *refuse* the document.
+* A store app the agent must **never auto-install** — that is the difference
+  between an offer and an order.
+
+##### ✅ Chunk 1 — server — **done, 784 tests**
+
+Built as planned, and the trap in step 3 was real: nothing recomputed anything.
+
+🐛 **The test that nearly proved nothing.** My first "listing wakes devices" test
+called `eff.refresh()` directly — which recomputes unconditionally — so it passed
+with the invalidation deleted. Rewritten to go through the cache-aware
+`get_effective()`, and then verified by removing the invalidation and watching it
+fail. Two tests now cover it.
+
+1. `resolve_store_apps()`: every `store_listed` package with a publishable build,
+   resolved to the same artifact shape as required apps.
+2. Carried on the effective payload and into the desired state as `store`.
+3. ⚠️ Toggling store membership is **not** a policy edit, so nothing currently
+   recomputes any device. Without wiring that, a store change reaches nobody.
+4. Tests: a store app reaches a device with no policy at all; removing it withdraws
+   it; an app both required *and* listed stays required and is not offered twice.
+
+##### ✅ Chunk 2 — agent — **done, 11 AppsTabPlan tests**
+
+Required apps and offers share the Apps screen and its bucketing — a user looks in
+one place for "things I could have" — but read differently once there. An offer is
+`NEUTRAL`, never `WARN`: nothing is wrong with a store app nobody has taken, and
+colouring it like an unmet requirement would cry wolf on every device that ignores
+the shop. Only offers get an install button; a required app has none, because the
+device installs it regardless and a button would imply a choice that does not exist.
+
+`installFromStore` is deliberately **not** folded into `reconcileApps`. That
+function carries the downgrade, pinning and OBB rules that make a *required* app
+converge, none of which apply to a user tapping install — sharing it would mean
+one caller is always obeying rules meant for the other.
+
+5. Parse `store`; render as offers in Available with an explicit install action.
+6. `AppsTabPlan` learns the required/offered distinction, with tests.
+7. Install on demand through the existing installer; never from the reconciler.
+
+##### ✅ Chunk 3 — the store table — **done**
+
+Icon, name over package id, published version, parts, sortable — and the header
+now matches the rows: verified by rendering the real page and counting, **5
+headers, 5 cells**. The intro copy was rewritten too; it claimed the store "does
+not install anything on its own", which is still true but no longer the whole
+story now that the shelf reaches every device.
+
+8. Match the Local apps table within reason: icon, name over package id, latest
+   version, parts, sortable. 🐛 Its header declares **four** columns
+   (`Package`, `Label`, `Latest version`, ``) while every row emits **three** —
+   so the columns are already misaligned today.
+
 | # | Chunk | Notes |
 |---|---|---|
 | 7 | **Knox layer** | Planned in detail below |

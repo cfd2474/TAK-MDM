@@ -97,4 +97,37 @@ class AppsTabPlanTest {
             )
         }
     }
+
+    // ----------------------------------------------------------------------- //
+    // ATLAS store offers (W56)
+    // ----------------------------------------------------------------------- //
+
+    @Test
+    fun `an untaken store offer sits in Available alongside a pending requirement`() {
+        // Bucketing is shared on purpose: the user looks in one place for "things
+        // I could have". What must NOT be shared is how they read once there — a
+        // required app in Available is an unmet obligation, an offer is a choice —
+        // and that distinction lives in the card, not the tab.
+        assertEquals(AppsTab.AVAILABLE, AppsTabPlan.tabFor(true, null, 12L))
+    }
+
+    @Test
+    fun `a store app the user installed is Installed like any other`() {
+        // Once it is on the device, how it arrived stops mattering.
+        assertEquals(AppsTab.INSTALLED, AppsTabPlan.tabFor(true, 12L, 12L))
+    }
+
+    @Test
+    fun `a newer build of an installed store app is an Update`() {
+        // The offer to update is still the user's to take; the tab only says one
+        // exists.
+        assertEquals(AppsTab.UPDATES, AppsTabPlan.tabFor(true, 11L, 12L))
+    }
+
+    @Test
+    fun `a store app installed ahead of the offer is not shown as needing one`() {
+        // The store publishes one build; a device may already carry a newer one
+        // from elsewhere. Offering a downgrade would be an offer Android refuses.
+        assertEquals(AppsTab.INSTALLED, AppsTabPlan.tabFor(true, 13L, 12L))
+    }
 }

@@ -286,7 +286,24 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderApps(root: LinearLayout, desired: JSONObject?) {
         root.addView(ConsoleViews.sectionTitle(this, getString(R.string.section_apps_title)))
-        val apps = desired?.optJSONArray("apps") ?: JSONArray()
+
+        // Required apps and store offers share this screen, flagged apart (W56).
+        //
+        // ⚠️ They are not the same kind of thing and must not read as though they
+        // are. A required app sitting in Available is a *pending obligation* — the
+        // device has not converged yet. A store app there is an *offer* nobody has
+        // taken. Showing them identically would make a broken policy look like a
+        // shopping list.
+        val apps = JSONArray()
+        (desired?.optJSONArray("apps") ?: JSONArray()).let { required ->
+            for (i in 0 until required.length()) apps.put(required.optJSONObject(i))
+        }
+        (desired?.optJSONArray("store") ?: JSONArray()).let { store ->
+            for (i in 0 until store.length()) {
+                store.optJSONObject(i)?.let { apps.put(it.put(OFFERED, true)) }
+            }
+        }
+
         if (apps.length() == 0) {
             root.addView(ConsoleViews.emptyNote(this, getString(R.string.empty_apps)))
             return
@@ -338,10 +355,17 @@ class MainActivity : AppCompatActivity() {
                 (0 until files.length()).sumOf { files.optJSONObject(it)?.optLong("size_bytes", 0) ?: 0 }
             } ?: 0L
 
+            val offered = app.optBoolean(OFFERED, false)
+
             val (statusText, tone) = when {
                 !available -> getString(R.string.app_status_nothing) to Tone.ERROR
+                // An offer is never WARN. Nothing is wrong with a store app the
+                // user has simply not taken, and colouring it like an unmet
+                // requirement would cry wolf on every device that ignores the shop.
+                offered && installed == null -> getString(R.string.app_status_offered) to Tone.NEUTRAL
                 installed == null -> getString(R.string.app_status_missing) to Tone.WARN
                 installed >= wanted -> getString(R.string.app_status_installed, installed) to Tone.OK
+                offered -> getString(R.string.app_status_update_offered, wanted) to Tone.NEUTRAL
                 else -> getString(R.string.app_status_update, wanted) to Tone.WARN
             }
 
@@ -370,11 +394,60 @@ class MainActivity : AppCompatActivity() {
                     textSize = 12f
                     setPadding(0, ConsoleViews.dp(this@MainActivity, 6), 0, 0)
                 })
+
+                // The offer's only affordance. A required app has no button here
+                // on purpose: the device installs it whether anyone asks or not,
+                // so a button would imply a choice the user does not have.
+                if (offered && available && (installed == null || installed < wanted)) {
+                    addView(MaterialButton(this@MainActivity).apply {
+                        text = getString(
+                            if (installed == null) R.string.action_install
+                            else R.string.action_update
+                        )
+                        isEnabled = !installingPackage.contains(pkg)
+                        if (!isEnabled) text = getString(R.string.action_installing)
+                        setOnClickListener { installOffered(app) }
+                        layoutParams = LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                        ).apply { topMargin = ConsoleViews.dp(this@MainActivity, 10) }
+                    })
+                }
             }
             root.addView(card)
         }
 
         root.addView(hintSync())
+    }
+
+    /** Packages with a user-initiated install in flight, so the button can say so. */
+    private val installingPackage = mutableSetOf<String>()
+
+    /**
+     * Install a store app the user asked for (W56).
+     *
+     * Off the main thread: this downloads tens of megabytes and then blocks on
+     * `PackageInstaller`. The button is disabled while it runs because the install
+     * is not instant and a second tap would start the whole download again.
+     */
+    private fun installOffered(entry: JSONObject) {
+        val pkg = entry.optString("package_name")
+        if (!installingPackage.add(pkg)) return
+        render()
+
+        lifecycleScope.launch {
+            val failure = withContext(Dispatchers.IO) {
+                runCatching { Reconciler(applicationContext).installFromStore(entry) }
+                    .getOrElse { it.message ?: "the install could not be started" }
+            }
+            installingPackage.remove(pkg)
+            Toast.makeText(
+                this@MainActivity,
+                if (failure == null) getString(R.string.install_ok, appLabel(pkg))
+                else getString(R.string.install_failed, appLabel(pkg), failure),
+                Toast.LENGTH_LONG,
+            ).show()
+            render()
+        }
     }
 
     /**
@@ -695,6 +768,14 @@ class MainActivity : AppCompatActivity() {
         if (isNull(key)) null else optString(key).takeIf { it.isNotBlank() }
 
     private companion object {
+        /**
+         * Marks a merged entry as a store offer rather than a required app (W56).
+         *
+         * Set on the JSON object itself so the two lists can share one render
+         * path; the server never sends this key.
+         */
+        const val OFFERED = "_atlas_offered"
+
         /** How long the ATLAS logo is held on screen, as the operator asked. */
         const val SPLASH_MILLIS = 3_000L
 

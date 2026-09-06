@@ -1734,7 +1734,12 @@ def toggle_store_form(
     package = session.get(AppPackage, package_id)
     if package is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "package not found")
+    was_listed = package.store_listed
     package.store_listed = listed == "true"
+    # ⚠️ Store membership is not policy, so nothing else recomputes anyone. Without
+    # this the shelf changes in the console and no device is ever told (W56).
+    if package.store_listed != was_listed:
+        eff.invalidate_all(session)
     session.commit()
     return _redirect("/apps#tab-" + ("store" if package.store_listed else "local"))
 
