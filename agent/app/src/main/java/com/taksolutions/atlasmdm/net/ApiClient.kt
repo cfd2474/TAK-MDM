@@ -37,6 +37,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
 import com.taksolutions.atlasmdm.core.AgentConfig
+import com.taksolutions.atlasmdm.diag.AgentLog
 
 /** Raised when the server answers with a non-success status. */
 class ApiException(val code: Int, message: String) : IOException("HTTP $code: $message")
@@ -213,44 +214,83 @@ class ApiClient(private val config: AgentConfig) {
     }
 
     /**
-     * Download an artifact, resuming if a partial file is already present.
+     * Download an artifact, resuming if a partial download is already present.
      *
      * The hash is verified before the caller is told it succeeded, so a truncated or
      * corrupted transfer can never reach an installer.
+     *
+     * ⚠️ **Two reconcile passes can run at once**, and before this they downloaded
+     * the same artifact to the same path: one writing from offset 0 while the other
+     * appended a resumed range. That produces a file of exactly the right *length*
+     * whose bytes are interleaved garbage, so the only symptom is a hash mismatch —
+     * which reads as a corrupt download and sends the agent round again, forever.
+     * It cost five 20 MB downloads per agent update and made every rollout look
+     * broken (observed against builds 51, 57, 59 and 60).
+     *
+     * Two things prevent it. Downloads of a given artifact are **serialised** on the
+     * hash, so a second pass waits and then finds the finished file. And bytes land
+     * in a `.part` file that is renamed into place **only after it verifies**, so
+     * the destination never holds anything unverified and a caller that checks it
+     * cannot see a half-written file.
      */
-    fun downloadArtifact(sha256: String, destination: File): Boolean {
+    fun downloadArtifact(sha256: String, destination: File): Boolean =
+        synchronized(downloadLockFor(sha256)) {
+            // A concurrent pass may have finished it while this one waited.
+            if (destination.exists() && sha256Of(destination) == sha256.lowercase()) return true
+            downloadLocked(sha256, destination)
+        }
+
+    private fun downloadLocked(sha256: String, destination: File): Boolean {
         destination.parentFile?.mkdirs()
-        val existing = if (destination.exists()) destination.length() else 0L
+        val part = File(destination.parentFile, "${destination.name}.part")
+        val existing = if (part.exists()) part.length() else 0L
 
         val builder = Request.Builder().url("$baseUrl/api/v1/device/artifacts/$sha256").get()
         if (existing > 0) builder.header("Range", "bytes=$existing-")
 
+        var expected = -1L
+        var written = 0L
         mtlsClient.newCall(builder.build()).execute().use { response ->
+            expected = response.body?.contentLength() ?: -1L
             when {
                 response.code == 416 -> {
-                    // Already have the whole file, or the local copy is longer than
+                    // Already hold the whole file, or the local copy is longer than
                     // the remote. Verification below decides which.
                 }
-                response.code == 206 -> appendBody(response, destination)
+                response.code == 206 -> written = appendBody(response, part, append = true)
                 response.isSuccessful -> {
-                    destination.delete()
-                    appendBody(response, destination)
+                    part.delete()
+                    written = appendBody(response, part, append = false)
                 }
                 else -> throw ApiException(response.code, response.message)
             }
         }
 
-        if (sha256Of(destination) == sha256.lowercase()) return true
+        // A body that stops early does **not** raise: `copyTo` simply returns when
+        // the stream ends. Without this the only evidence was a hash mismatch, which
+        // is indistinguishable from corruption and hides the real cause.
+        if (expected >= 0 && written != expected) {
+            AgentLog.w(TAG, "artifact $sha256: got $written of $expected bytes")
+            part.delete()
+            return false
+        }
 
-        // A mismatch means the partial file was stale or the transfer was corrupted.
-        // Start clean rather than resuming onto bad bytes forever.
-        destination.delete()
+        if (sha256Of(part) == sha256.lowercase()) {
+            destination.delete()
+            if (part.renameTo(destination)) return true
+            AgentLog.w(TAG, "artifact $sha256: could not move the verified download into place")
+        }
+
+        // Stale or corrupt: start clean rather than resuming onto bad bytes forever.
+        part.delete()
         return false
     }
 
-    private fun appendBody(response: Response, destination: File) {
-        response.body?.byteStream()?.use { input ->
-            java.io.FileOutputStream(destination, destination.exists()).use { output ->
+    /** Returns the number of bytes written, so a short body can be detected. */
+    private fun appendBody(response: Response, destination: File, append: Boolean): Long {
+        val body = response.body ?: return 0L
+        return body.byteStream().use { input ->
+            java.io.FileOutputStream(destination, append).use { output ->
                 input.copyTo(output, DEFAULT_BUFFER_SIZE)
             }
         }
@@ -263,7 +303,22 @@ class ApiClient(private val config: AgentConfig) {
     }
 
     companion object {
+        private const val TAG = "ApiClient"
         private val JSON = "application/json; charset=utf-8".toMediaType()
+
+        /**
+         * One lock per artifact hash, shared by every `ApiClient` in the process.
+         *
+         * Held for the duration of a download so two reconcile passes cannot write
+         * the same file at once. Keyed by hash rather than a single global lock so
+         * unrelated downloads still overlap; entries are never evicted, which is
+         * fine — a device sees a handful of distinct artifacts, and each key is a
+         * 64-character string.
+         */
+        private val downloadLocks = java.util.concurrent.ConcurrentHashMap<String, Any>()
+
+        private fun downloadLockFor(sha256: String): Any =
+            downloadLocks.computeIfAbsent(sha256.lowercase()) { Any() }
 
         fun sha256Of(file: File): String {
             if (!file.exists()) return ""
