@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ATLAS Launcher</string>
+    <string name="no_apps">No apps have been assigned to this device yet.</string>
+    <string name="no_apps_hint">They will appear here at the next check-in.</string>
+    <string name="search_hint">Search apps</string>
+    <string name="cannot_open">That app is not available on this device</string>
+
+    <!-- Managed configuration, read by the console out of the built APK. -->
+    <string name="cfg_apps">Apps</string>
+    <string name="cfg_apps_desc">Which apps appear on the kiosk home screen, in order.</string>
+    <string name="cfg_app_package">Package name</string>
+    <string name="cfg_app_activity">Activity</string>
+    <string name="cfg_app_activity_desc">Leave empty to open the app normally. Name a class to open a specific screen.</string>
+    <string name="cfg_app_favorite">Pin to the dock</string>
+    <string name="cfg_app_favorite_desc">Keep this app on the dock as well as in the grid.</string>
+    <string name="cfg_columns">Grid columns</string>
+    <string name="cfg_columns_desc">How many app tiles fit across the screen. Between 2 and 8.</string>
+    <string name="cfg_show_search">Show the search bar</string>
+    <string name="cfg_show_search_desc">Filter the grid by typing. Useful with many apps, clutter with few.</string>
+    <string name="cfg_show_clock">Show the clock</string>
+    <string name="cfg_show_clock_desc">A clock across the top of the home screen.</string>
+    <string name="cfg_clock_zulu">Zulu time</string>
+    <string name="cfg_clock_zulu_desc">Show the clock in UTC rather than the device time zone.</string>
+    <string name="cfg_night_mode">Night mode</string>
+    <string name="cfg_night_mode_desc">Tint the screen to preserve dark adaptation.</string>
+    <string name="cfg_night_hue">Night mode colour</string>
+    <string name="cfg_night_hue_desc">Red preserves dark adaptation best; amber and green are easier to read by.</string>
+    <string name="cfg_night_level">Night mode strength</string>
+    <string name="cfg_night_level_desc">0 leaves the screen alone, 100 is as dark as the tint goes.</string>
+    <string name="cfg_orientation">Screen orientation</string>
+    <string name="cfg_orientation_desc">Pin the kiosk to portrait or landscape, or let the device rotate.</string>
+</resources>

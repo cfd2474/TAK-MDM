@@ -33,3 +33,4 @@ dependencyResolutionManagement {
 rootProject.name = "takmdm-agent"
 include(":app")
 include(":testapp")
+include(":launcher")

@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What the Device Owner may configure on this launcher (W68).
+
+  ⚠️ This file is the contract. The agent sets these keys with
+  `setApplicationRestrictions`, the launcher reads them from `RestrictionsManager`,
+  and the console reads *this file* out of the built APK with the scanner it
+  already has for third-party app configuration. Renaming a key here silently
+  changes what a device receives, so treat it like a wire format: add keys, do not
+  repurpose them.
+
+  ⚠️ There is no separate favourites key: a favourite is a flag on the app it
+  belongs to, so the two cannot drift apart.
+
+  ⚠️ There is no wallpaper key. Managed configuration carries small values, not
+  images; the Device Owner sets the system wallpaper through `WallpaperManager`
+  and this app draws over it.
+-->
+<restrictions xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      One ordered record per tile: `package`, an optional `activity`, and whether
+      it is pinned to the dock.
+
+      ⚠️ `bundle_array`, not `multi-select`. Multi-select is for a *fixed* set of
+      choices and the platform requires `entries`/`entryValues` to enumerate them
+      — which cannot exist here, because the choices are whatever apps the
+      operator picked. Lint catches that; the deeper reason to prefer this type is
+      that a favourite is a property of a tile, so it cannot disagree with the app
+      list the way two parallel arrays can.
+    -->
+    <restriction
+        android:key="apps"
+        android:title="@string/cfg_apps"
+        android:description="@string/cfg_apps_desc"
+        android:restrictionType="bundle_array">
+        <restriction
+            android:key="app"
+            android:title="@string/cfg_apps"
+            android:restrictionType="bundle">
+            <restriction
+                android:key="package"
+                android:title="@string/cfg_app_package"
+                android:restrictionType="string" />
+            <restriction
+                android:key="activity"
+                android:title="@string/cfg_app_activity"
+                android:description="@string/cfg_app_activity_desc"
+                android:restrictionType="string" />
+            <restriction
+                android:key="favorite"
+                android:title="@string/cfg_app_favorite"
+                android:description="@string/cfg_app_favorite_desc"
+                android:restrictionType="bool"
+                android:defaultValue="false" />
+        </restriction>
+    </restriction>
+
+    <restriction
+        android:key="columns"
+        android:title="@string/cfg_columns"
+        android:description="@string/cfg_columns_desc"
+        android:restrictionType="integer"
+        android:defaultValue="4" />
+
+    <restriction
+        android:key="show_search"
+        android:title="@string/cfg_show_search"
+        android:description="@string/cfg_show_search_desc"
+        android:restrictionType="bool"
+        android:defaultValue="true" />
+
+    <restriction
+        android:key="show_clock"
+        android:title="@string/cfg_show_clock"
+        android:description="@string/cfg_show_clock_desc"
+        android:restrictionType="bool"
+        android:defaultValue="true" />
+
+    <restriction
+        android:key="clock_zulu"
+        android:title="@string/cfg_clock_zulu"
+        android:description="@string/cfg_clock_zulu_desc"
+        android:restrictionType="bool"
+        android:defaultValue="true" />
+
+    <restriction
+        android:key="night_mode"
+        android:title="@string/cfg_night_mode"
+        android:description="@string/cfg_night_mode_desc"
+        android:restrictionType="bool"
+        android:defaultValue="false" />
+
+    <restriction
+        android:key="night_hue"
+        android:title="@string/cfg_night_hue"
+        android:description="@string/cfg_night_hue_desc"
+        android:restrictionType="choice"
+        android:entries="@array/night_hue_labels"
+        android:entryValues="@array/night_hue_values"
+        android:defaultValue="red" />
+
+    <restriction
+        android:key="night_level"
+        android:title="@string/cfg_night_level"
+        android:description="@string/cfg_night_level_desc"
+        android:restrictionType="integer"
+        android:defaultValue="50" />
+
+    <restriction
+        android:key="orientation"
+        android:title="@string/cfg_orientation"
+        android:description="@string/cfg_orientation_desc"
+        android:restrictionType="choice"
+        android:entries="@array/orientation_labels"
+        android:entryValues="@array/orientation_values"
+        android:defaultValue="auto" />
+</restrictions>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ⚠️ The window background is transparent on purpose: the system wallpaper is the
+  kiosk background (the Device Owner sets it through WallpaperManager, because
+  managed configuration carries values, not images), and an opaque theme would
+  paint over it.
+-->
+<resources>
+    <style name="Theme.AtlasLauncher" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowShowWallpaper">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

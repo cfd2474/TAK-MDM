@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="tile_label">#FFECF2F8</color>
+    <color name="tile_label_shadow">#CC000000</color>
+    <color name="empty_text">#FFB9C6D4</color>
+</resources>

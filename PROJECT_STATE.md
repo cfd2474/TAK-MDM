@@ -333,6 +333,90 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### 🔨 W68 — ATLAS Launcher (IN PROGRESS)
+
+Decided with the operator 2026-09-06, closing
+[DECISION-atlas-launcher.md](docs/DECISION-atlas-launcher.md) on **Option B**.
+Modelled on `Test Files/GoTAK-Launcher-1.2.0.apk` (`com.gotak.launcher` 1.2.0),
+which the operator supplied as the shape to aim at: a small View-based grid
+launcher whose own classes are `AppAdapter`, `AppInfo`, `Gestures`, `NightMode`,
+`Prefs`, `Updater`, and whose resource names show the feature set — `grid_columns`,
+`tile_rows`, `large_icon`, `night_hue`/`night_level`/`night_opacity`, `clock_zulu`,
+`lock_orientation`, `swipe_*`, `double_tap_sleep`.
+
+**Operator decisions:**
+
+| Question | Answer |
+|---|---|
+| Packaging | **Separate APK**, `com.taksolutions.atlaslauncher` |
+| Console layout UI | **Ordered app list + column count + preview** — not Hexnode's drag-onto-device designer, no pages, no per-orientation layouts |
+| v1 features | Night mode, Zulu clock, orientation lock, search + favourites — **all four** |
+
+⚠️ **Config travels as managed configuration**, not a private protocol. The agent
+is Device Owner, so `setApplicationRestrictions` is a channel it already has and
+already tests; the launcher reads its own `RestrictionsManager` bundle. No
+exported service, no custom permission, no IPC to get wrong.
+
+⚠️ **The wallpaper does not travel that way.** Managed config is for small values,
+not images. The Device Owner sets the system wallpaper through `WallpaperManager`
+and the launcher draws over it — the picture never passes through the config.
+
+⚠️ **The recovery path is what Option B buys.** Removing `kiosk_package` removes
+the launcher's claim on HOME, so "unassign the profile" still recovers a device
+without physical access. That is the property to check every change against.
+
+#### ✅ Chunk 1 — module, config contract, grid (COMPLETE)
+
+1. `:launcher` Gradle module, same keystore as the agent, own `applicationId`.
+2. Manifest: `category.HOME` + `DEFAULT` + `LAUNCHER`, `singleTask`,
+   `stateNotNeeded`; `<queries>` for `MAIN`/`LAUNCHER` (a non-DO app cannot see
+   installed packages on Android 11+ without it); `WRITE_SETTINGS` for Chunk 2.
+3. `LauncherConfig` — a pure parser from the restrictions `Bundle` to a typed
+   model, with unit tests for absent, malformed and unknown-package input.
+4. `res/xml/app_restrictions.xml` declaring the schema, so the console's existing
+   APK scanner can read it and the contract is self-documenting.
+5. Grid of app tiles: icon, label, launch on tap.
+6. Build, sign, verify.
+
+**Built:** `com.taksolutions.atlaslauncher` 0.1.0 (1), 7.08 MB, v2-signed with the
+agent's key. 13 config tests green.
+
+⚠️ **`apps` is a `bundle_array`, not a `multi-select`.** Multi-select is for a
+*fixed* choice set and the platform requires `entries`/`entryValues` enumerating
+it — which cannot exist when the choices are whatever apps the operator picked.
+Lint refuses it (`ValidRestrictions`). The better reason is that `favorite` then
+lives on the record, so there is no second list to disagree with the first: a
+dock tile that lock task would refuse to open is now unrepresentable.
+
+⚠️ **The parser reads a `Source`, not a `Bundle`.** Under plain JVM unit tests
+`Bundle` is a stub returning defaults, so tests written against one would pass no
+matter what the parser did — the salvage rules would be exactly the code never
+exercised. Same trap as `isReturnDefaultValues` generally.
+
+✅ **The console already reads the contract out of the built APK** — the existing
+`discover_in` scanner returns all nine keys with their types, so the schema has
+one home and it is the launcher's own manifest.
+
+**A defect the tests caught:** `/some.Activity` has its slash at index 0, and the
+`slash <= 0` branch made the whole string the package name — a tile that could
+never open anything. No package before the slash now drops the record.
+
+#### Chunk 2 — the four v1 features
+Night mode overlay, Zulu clock, orientation lock, search + favourites; wallpaper
+via `WallpaperManager`. Rendered and looked at before shipping.
+
+#### Chunk 3 — agent side
+Install/remove the launcher on policy, push its config, point HOME at it,
+`setLockTaskPackages(launcher + chosen apps)`, launch it through
+`KioskLaunchPlan`, and undo all of it in `releaseKiosk`.
+
+#### Chunk 4 — server and console
+Lift `_refuse_what_needs_a_launcher` for multi-app and wallpaper (website kiosk
+and screensaver stay refused until they are built), the ordered-app-list UI with
+column count and preview, effective-policy requiring the launcher and the chosen
+apps, validators, tests, deploy.
+
+
 ### ✅ Chunk 1 — Policy stacking engine (COMPLETE)
 
 Server-side only, fully testable with zero devices.

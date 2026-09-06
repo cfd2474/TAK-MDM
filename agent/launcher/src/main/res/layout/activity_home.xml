@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The kiosk home screen (W68, Chunk 1).
+
+  Clock, search and dock are all `gone` until config asks for them, so a kiosk
+  with three apps and no clock is a plain grid rather than a screen of empty
+  furniture.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/home_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:fitsSystemWindows="true">
+
+    <TextView
+        android:id="@+id/clock"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:gravity="center"
+        android:textColor="@color/tile_label"
+        android:shadowColor="@color/tile_label_shadow"
+        android:shadowRadius="6"
+        android:textSize="28sp"
+        android:fontFamily="monospace"
+        android:visibility="gone" />
+
+    <EditText
+        android:id="@+id/search"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        android:hint="@string/search_hint"
+        android:inputType="text"
+        android:imeOptions="actionSearch"
+        android:maxLines="1"
+        android:autofillHints=""
+        android:visibility="gone" />
+
+    <!-- The empty state is a message, not a blank screen. A kiosk with no apps
+         yet is a normal moment between install and the next check-in, and a black
+         rectangle reads as a broken device. -->
+    <LinearLayout
+        android:id="@+id/empty"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="32dp"
+        android:visibility="gone">
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/no_apps"
+            android:textColor="@color/empty_text"
+            android:textSize="18sp"
+            android:gravity="center" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/no_apps_hint"
+            android:textColor="@color/empty_text"
+            android:textSize="14sp"
+            android:alpha="0.75"
+            android:gravity="center" />
+    </LinearLayout>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/grid"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:padding="12dp"
+        android:scrollbars="none" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/dock"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:clipToPadding="false"
+        android:paddingHorizontal="12dp"
+        android:paddingBottom="12dp"
+        android:visibility="gone" />
+</LinearLayout>

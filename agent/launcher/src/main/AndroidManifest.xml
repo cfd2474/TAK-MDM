@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The ATLAS kiosk home screen (W68).
+
+  ⚠️ `<queries>` is not optional. From Android 11 an ordinary app cannot see what
+  else is installed, and a launcher whose whole job is to show other apps gets an
+  empty grid without it — with no error, because filtering looks exactly like "not
+  installed". The agent never needed this: a Device Owner is exempt from package
+  visibility filtering, and this app is not the Device Owner.
+
+  QUERY_ALL_PACKAGES would also work and is what most launchers reach for. The
+  narrower intent query is enough here — everything this app shows is launchable
+  by definition — and it is the version that does not need justifying to Play or
+  to a security review.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
+    <!-- Orientation lock (Chunk 2). Held here rather than added later so the
+         permission set is reviewed once; it is a settings write, and it is the
+         only permission this app asks for. -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AtlasLauncher">
+
+        <!--
+          ⚠️ `stateNotNeeded` is what stops the home screen dying with the system.
+          A HOME activity is started before storage is unlocked on a direct-boot
+          device and after low-memory kills; without it, restoring saved state can
+          fail and take the only home screen with it.
+
+          `singleTask` so pressing HOME returns to the running grid instead of
+          stacking another copy — the same reason every launcher uses it.
+
+          `excludeFromRecents` because the home screen is not somewhere to go
+          "back" to; it is where back ends up.
+        -->
+        <activity
+            android:name=".HomeActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:stateNotNeeded="true"
+            android:excludeFromRecents="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          The managed-configuration schema. Declared so the console's own APK
+          scanner reads it out of the built artifact rather than being told
+          separately what this app accepts — the contract has one home, and it is
+          this file's neighbour.
+        -->
+        <meta-data
+            android:name="android.content.APP_RESTRICTIONS"
+            android:resource="@xml/app_restrictions" />
+    </application>
+</manifest>

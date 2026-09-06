@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="night_hue_labels">
+        <item>Red</item>
+        <item>Amber</item>
+        <item>Green</item>
+    </string-array>
+    <string-array name="night_hue_values">
+        <item>red</item>
+        <item>amber</item>
+        <item>green</item>
+    </string-array>
+    <string-array name="orientation_labels">
+        <item>Follow the device</item>
+        <item>Portrait</item>
+        <item>Landscape</item>
+    </string-array>
+    <string-array name="orientation_values">
+        <item>auto</item>
+        <item>portrait</item>
+        <item>landscape</item>
+    </string-array>
+</resources>
