@@ -6917,12 +6917,57 @@ That is the Device-Owner self-replacement path proven on hardware, and it is the
 one with no rollback — Android refuses a downgrade, so a bad build could only be
 cured by another build.
 
-⚠️ **What this does *not* prove.** No policy on that device uses a multi-select
-key, so the `String[]` fix rode along but was never exercised. And a COMPLIANT
-status one check-in after an update is weak evidence about apply errors, which
-lag a check-in (the trap recorded at W44). Both still want a deliberate test:
-assign a policy with a multi-select managed-config key and read the device's own
-report.
+##### ✅ Hardware: multi-select managed config, and the downgrade warning
+
+Both gaps closed on `R5GL40MMHRN` by assigning a profile carrying Chrome's
+`PolicyDictionaryMultipleSourceMergeList` (a real `multi-select`, 7 declared
+options) alongside a plain string key as a control.
+
+Desired state carried exactly what it should — the wire value keeping its
+terminator, and the declared type the agent needs:
+
+```json
+"values": {"PolicyDictionaryMultipleSourceMergeList": "ExtensionSettings\nKeyPermissions\n",
+           "HomepageLocation": "https://atlas.test/start"},
+"types":  {"PolicyDictionaryMultipleSourceMergeList": 4, "HomepageLocation": 6}
+```
+
+**Read from the device's own log**, not inferred from a status:
+
+```
+21:09:57 I/PolicyApplier: applied 2 config keys to com.android.chrome
+21:09:57 I/SyncService:   sync: state=14 applied=14 errors=0
+```
+
+Two keys, both of mine, across four consecutive check-ins with `errors=0` and no
+coercion rejection. The three `has no declared type` warnings in the bundle are
+from **18:17**, hours earlier, from the previous policy — worth checking rather
+than assuming, since a grep for "rejections" matched them.
+
+✅ **W50's downgrade deconfliction, also proven here** and previously unverified.
+The tablet carries Chrome `733920733` against the policy's `725815833`:
+
+```
+W/Reconciler: com.android.chrome is at versionCode 733920733 but the policy
+              wants 725815833; keeping the newer build
+```
+
+Surfaced as a **compliance warning** while the device stays COMPLIANT, and the
+managed configuration still applied to the package the DPC did not install —
+exactly the behaviour W50 specified.
+
+✅ **Self-replacement logged from the inside** as well:
+`I/Reconciler: agent update: replacing 57 with 58 (0.21.0); this process is about
+to be killed` → `I/Application: agent starting (v0.21.0)`.
+
+⚠️ **What is still not proven:** that *Chrome itself* reads the `String[]`. The
+agent put it in the Bundle and `setApplicationRestrictions` accepted it, which is
+the whole of the contract this project controls; what a third-party app does with
+a correctly-typed value is its own business.
+
+⚠️ **Left on the device:** the proof profile is assigned at **rank 10**, so it
+outranks the pre-existing "test app configs" and its three password keys are no
+longer being applied. Remove it to restore the previous state.
 
 ⚠️ **A curl size is not a file size.** The W53 record said the provisioning APK
 was "7 057 180 b" and W54's first draft said "7 196 444 b" — both were
