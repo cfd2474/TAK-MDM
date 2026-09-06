@@ -7052,11 +7052,49 @@ Two further clues:
 and build **57 (four times, then success)**. It has been intermittently wasting a
 full 20 MB download per attempt and making every rollout look broken.
 
-**Not yet fixed.** The likely repair is to download to a unique temporary file and
-rename it into place only once it verifies, so concurrent passes cannot corrupt
-each other and a partial can never be resumed onto — plus checking the received
-length against `Content-Length`, so a short read is named as such instead of
-surfacing as a hash mismatch.
+##### ✅ Root cause found and fixed in agent 61 (0.24.0)
+
+Reported twice by the operator as *"synced but not updated"*. The cause is a
+**race between two reconcile passes**, and the evidence names it precisely:
+
+* A `206` resume brought the file to **exactly** the right total length
+  (16 003 909 + 4 857 451 = 20 861 360) and **still** failed the hash — so the
+  bytes already on disk were wrong, not missing.
+* Every cycle left a fresh **~4–5 MB partial** behind.
+* The sync log shows two passes **0.6 s apart** (22:00:21.924 / 22:00:22.534).
+
+Both passes downloaded the same artifact to the same path — one writing from
+offset 0 while the other appended a resumed range. The result is a file of the
+right *length* holding interleaved bytes, whose only symptom is a hash mismatch.
+That reads as a corrupt transfer, so the agent deletes and retries, forever.
+
+The server was blameless throughout: the APK built here, the artifact store's
+copy and the bytes nginx sent all hash identically, and nginx logged the complete
+file three times over.
+
+**Fixed** by serialising downloads on the artifact hash, and landing bytes in a
+`.part` file renamed into place **only after it verifies** — so the destination
+never holds anything unverified and two passes cannot interleave. A short body is
+now also caught against `Content-Length`: `copyTo` returns silently when a stream
+ends early, which is why the only previous evidence was a hash mismatch pointing
+at the wrong cause.
+
+⚠️ **Not unit-tested.** `ApiClient` takes an Android `Context`, so this cannot be
+exercised off-device without adding Robolectric, which the agent deliberately does
+not carry. Reasoned from the evidence above, not proven by a test.
+
+⚠️ **And not yet proven on hardware either.** Download requests per build:
+
+| Build | Requests | Fetched by |
+|---|---|---|
+| 57 | 5 | old code |
+| 59 | 5 | old code |
+| 60 | **5** | old code |
+| 61 | **1** | **old code** — 60's downloader |
+
+61 arriving in one attempt is *not* evidence the fix works: it was fetched by the
+unfixed code in 60 and simply did not collide that time. The first update fetched
+**by 61** is the real test.
 
 ##### Plan (5 steps)
 
