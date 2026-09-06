@@ -1115,9 +1115,26 @@ class PolicyApplier(private val context: Context) {
             dpm.setLockTaskFeatures(admin, DevicePolicyManager.LOCK_TASK_FEATURE_NONE)
         }.onFailure { failures += "kiosk: could not clear lock task - ${it.message}" }
 
-        runCatching {
-            dpm.clearPackagePersistentPreferredActivities(admin, context.packageName)
-        }.onFailure { failures += "kiosk: could not restore the home screen - ${it.message}" }
+        // ⚠️ **Name the package the preference points at, not this one** (W69).
+        // `clearPackagePersistentPreferredActivities` matches on the *target*
+        // component's package — AOSP compares `pa.mComponent.getPackageName()` —
+        // and this passed the agent's own package while the preference pointed at
+        // the kiosk app. It therefore removed nothing, ever, and a device kept its
+        // kiosk app as the home screen after the policy was removed. The symptom
+        // is a HOME button that still goes to the kiosk on a device with no kiosk
+        // policy, which reads as the policy not having been removed at all.
+        //
+        // Both are cleared: the recorded one, and the launcher unconditionally —
+        // a device that took the takeover from a build before this was recorded
+        // has a stale preference and nothing left to read it from.
+        for (target in setOfNotNull(config.kioskHomePackage, LAUNCHER_PACKAGE)) {
+            runCatching {
+                dpm.clearPackagePersistentPreferredActivities(admin, target)
+            }.onFailure {
+                failures += "kiosk: could not restore the home screen from $target - ${it.message}"
+            }
+        }
+        config.kioskHomePackage = null
 
         // ⚠️ The wash follows the device out of kiosk. Left behind it would tint
         // a device nobody has told about it, and the only way back would be to
@@ -1155,6 +1172,10 @@ class PolicyApplier(private val context: Context) {
 
         return runCatching {
             dpm.addPersistentPreferredActivity(admin, home, activity)
+            // Recorded so the takeover can be undone. The undo has to name the
+            // package the preference *points at*, and nothing else knows it once
+            // the policy is gone (W69).
+            config.kioskHomePackage = packageName
             emptyList<String>()
         }.getOrElse { listOf("kiosk: could not make $packageName the home screen - ${it.message}") }
     }

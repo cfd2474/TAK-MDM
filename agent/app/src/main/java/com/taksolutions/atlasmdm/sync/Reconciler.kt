@@ -43,6 +43,7 @@ import com.taksolutions.atlasmdm.permissions.PermissionRequirement
 import com.taksolutions.atlasmdm.policy.AllowlistPlan
 import com.taksolutions.atlasmdm.policy.AppUpdatePlan
 import com.taksolutions.atlasmdm.policy.DataUsageTracker
+import com.taksolutions.atlasmdm.policy.LauncherConfigPlan
 import com.taksolutions.atlasmdm.policy.PolicyApplier
 import com.taksolutions.atlasmdm.policy.WallpaperPlan
 
@@ -501,6 +502,10 @@ class Reconciler(private val context: Context) {
             policy.optJSONObject("KIOSK") ?: JSONObject(),
             policy.optJSONObject("APP_CATALOG") ?: JSONObject(),
             policy.optJSONObject("RESTRICTIONS") ?: JSONObject(),
+        )
+        errors += removeLauncherIfNoLongerAKiosk(
+            policy.optJSONObject("KIOSK") ?: JSONObject(),
+            desired.optJSONArray("apps") ?: JSONArray(),
         )
         errors += reconcileFiles(desired.optJSONObject("files") ?: JSONObject())
         errors += reconcileWallpaper(desired.optJSONObject("wallpaper") ?: JSONObject())
@@ -977,6 +982,46 @@ class Reconciler(private val context: Context) {
     // ----------------------------------------------------------------------- //
     // Files
     // ----------------------------------------------------------------------- //
+
+    /**
+     * Take the ATLAS launcher off a device that is no longer a multi-app kiosk
+     * (W69).
+     *
+     * ⚠️ **Clearing the HOME preference is not enough on its own.** With the
+     * launcher still installed the device has *two* home apps and no default, so
+     * pressing HOME raises Android's "Complete action using…" chooser rather than
+     * going to the stock launcher. The operator removed a policy and expects the
+     * device back as it was, not a device asking them which launcher they meant.
+     *
+     * ⚠️ Uninstalled rather than hidden. A hidden package still exists but reads
+     * as missing to `getPackageInfo`, so the reconciler would decide it needed
+     * installing again on the very next kiosk — a limbo state where the device
+     * disagrees with itself. Gone is a state both halves can agree on, and
+     * re-entry re-downloads it through the required-app path that exists for
+     * exactly that.
+     *
+     * The decision itself is [LauncherConfigPlan.shouldRemoveLauncher], which is
+     * pure and tested; this is the part that needs a device.
+     */
+    private fun removeLauncherIfNoLongerAKiosk(
+        kiosk: JSONObject,
+        desiredApps: JSONArray,
+    ): List<String> {
+        val launcher = PolicyApplier.LAUNCHER_PACKAGE
+        val required = buildList {
+            for (i in 0 until desiredApps.length()) {
+                desiredApps.optJSONObject(i)?.optString("package_name")
+                    ?.takeIf { it.isNotBlank() }?.let(::add)
+            }
+        }
+        if (!LauncherConfigPlan.shouldRemoveLauncher(kiosk, required)) return emptyList()
+        if (!policyApplier.isInstalled(launcher)) return emptyList()
+
+        AgentLog.i(TAG, "kiosk: no multi-app kiosk any more; removing $launcher")
+        val result = installer.uninstall(launcher)
+        return if (result.success) emptyList()
+        else listOf("kiosk: could not remove the ATLAS launcher - ${result.message}")
+    }
 
     private fun reconcileFiles(files: JSONObject): List<String> {
         val errors = mutableListOf<String>()

@@ -333,6 +333,36 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W69 — removing a kiosk policy gives the launcher back
+
+Reported by the operator: removing the policy did not revert to the stock
+launcher. Two separate causes, and the first predates W68.
+
+⚠️ **The HOME takeover was never undone, on any kiosk.**
+`clearPackagePersistentPreferredActivities(admin, packageName)` matches on the
+package the preference **points at** — AOSP compares
+`pa.mComponent.getPackageName()` — and the agent passed *its own* package while
+the preference pointed at the kiosk app. It removed nothing, ever, and reported
+success. Single-app kiosk had this too; it was invisible because a kiosk app
+looks like a kiosk. The agent now records the package it pointed HOME at and
+clears that one, plus the launcher unconditionally for devices upgraded from a
+build that recorded nothing.
+
+⚠️ **Clearing the preference is not enough by itself.** With the launcher still
+installed the device has two home apps and no default, so HOME raises the
+"Complete action using…" chooser rather than going to the stock launcher.
+
+⚠️ **Uninstall, not hide.** A hidden package still exists but reads as missing to
+`getPackageInfo`, so the reconciler would decide it needed installing again on
+the very next kiosk — a limbo both halves of the agent disagree about. Gone is a
+state they can agree on, and re-entry re-downloads it through the required-app
+path that exists for exactly that.
+
+The rule is `LauncherConfigPlan.shouldRemoveLauncher`, pure and tested, including
+that a policy naming the launcher in `required_apps` keeps it — otherwise the
+agent would remove it every two minutes while the policy reinstalled it.
+
+
 ### 🔨 W68 — ATLAS Launcher (IN PROGRESS)
 
 Decided with the operator 2026-09-06, closing

@@ -196,6 +196,22 @@ class AgentConfig(context: Context) {
         set(value) = prefs.edit { putString(KEY_KIOSK_LAUNCHED, value) }
 
     /**
+     * The package HOME was pointed at, so the takeover can actually be undone
+     * (W69).
+     *
+     * ⚠️ Without this the undo was aimed at the wrong package and did nothing.
+     * `clearPackagePersistentPreferredActivities(admin, packageName)` matches on
+     * the **target component's** package — AOSP compares
+     * `pa.mComponent.getPackageName()` — and the agent was passing *its own*
+     * package while the preference pointed at the kiosk app. Nothing was ever
+     * cleared, so a device kept the kiosk app (or the ATLAS launcher) as its home
+     * screen after the policy that set it was removed.
+     */
+    var kioskHomePackage: String?
+        get() = prefs.getString(KEY_KIOSK_HOME, null)
+        set(value) = prefs.edit { putString(KEY_KIOSK_HOME, value) }
+
+    /**
      * `elapsedRealtime` when that launch happened, which is how a reboot is seen.
      *
      * A stored value **greater than the current** elapsed time can only mean the
@@ -338,6 +354,7 @@ class AgentConfig(context: Context) {
         private const val KEY_LAST_ERROR = "last_error"
         private const val KEY_LAST_SYNC = "last_sync_at"
         private const val KEY_KIOSK_EXITED = "kiosk_exited_at_elapsed"
+        private const val KEY_KIOSK_HOME = "kiosk_home_package"
         private const val KEY_KIOSK_LAUNCHED = "kiosk_launched_component"
         private const val KEY_KIOSK_LAUNCHED_AT = "kiosk_launched_at_elapsed"
         private const val KEY_WALLPAPER_SHA = "applied_wallpaper_sha"

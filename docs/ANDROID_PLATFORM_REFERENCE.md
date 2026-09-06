@@ -1262,6 +1262,27 @@ uniformly and invites the assumption.
 latch like every other DPM setter, so one left behind follows the device out of
 kiosk and nothing else will ever take it off.
 
+### Undoing a HOME takeover names the **target** package (W69) ⚠️
+
+`addPersistentPreferredActivity(admin, homeFilter, component)` makes an app the
+home screen. The undo is
+`clearPackagePersistentPreferredActivities(admin, packageName)` — and the
+`packageName` it wants is the package the preference **points at**, not the admin
+that set it. AOSP compares `pa.mComponent.getPackageName()`.
+
+⚠️ **Passing your own package removes nothing and reports success.** The agent did
+this from the first kiosk build: it set HOME to the kiosk app and cleared for
+itself, so every device that ever entered kiosk kept that app as its home screen
+after the policy was removed — a HOME button still going to the kiosk on a device
+with no kiosk policy, which reads as the removal not having worked at all.
+
+⚠️ **Clearing the preference is still not the whole job.** A launcher installed
+alongside the stock one leaves *two* home apps and no default, so HOME raises the
+"Complete action using…" chooser. To hand the device back as it was, the extra
+launcher has to go — and **uninstall, not hide**: a hidden package still exists
+but reads as missing to `getPackageInfo`, so the DPC's own installer decides it
+needs installing again on the next kiosk.
+
 ### A launcher cannot see other apps (W68)
 
 ⚠️ From Android 11 an ordinary app cannot enumerate installed packages, and a

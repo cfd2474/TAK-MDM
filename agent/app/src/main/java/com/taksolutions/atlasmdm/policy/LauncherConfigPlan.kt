@@ -78,6 +78,29 @@ object LauncherConfigPlan {
     )
 
     /**
+     * Should the ATLAS launcher be taken off this device (W69)?
+     *
+     * ⚠️ Clearing the HOME preference is not enough on its own: with the launcher
+     * still installed the device has *two* home apps and no default, so pressing
+     * HOME raises Android's "Complete action using…" chooser instead of going to
+     * the stock launcher. An operator who removed a policy expects the device back
+     * as it was, not one asking them which launcher they meant.
+     *
+     * Pure so the rule can be tested; the uninstall itself lives with the
+     * installer.
+     *
+     * @param kiosk the KIOSK section of the effective policy.
+     * @param requiredPackages every package the policy asks the device to have —
+     *   an operator who puts the launcher there by hand means it, and this must
+     *   not fight them.
+     */
+    fun shouldRemoveLauncher(kiosk: JSONObject, requiredPackages: Collection<String>): Boolean =
+        from(kiosk).apps.isEmpty() && ATLAS_LAUNCHER !in requiredPackages
+
+    /** Must match the server's `ATLAS_LAUNCHER_PACKAGE`; one contract, two languages. */
+    const val ATLAS_LAUNCHER = "com.taksolutions.atlaslauncher"
+
+    /**
      * Read the app list, which arrives as **either** plain package names or
      * objects carrying an activity and a favourite flag.
      *

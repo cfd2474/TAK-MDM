@@ -147,4 +147,56 @@ class LauncherConfigPlanTest {
         )
         assertEquals(listOf("com.a", "com.b"), p.packages)
     }
+
+    // ----------------------------------------------------------------------- #
+    // Taking the launcher off again (W69)
+    // ----------------------------------------------------------------------- #
+
+    private val LAUNCHER = LauncherConfigPlan.ATLAS_LAUNCHER
+
+    @Test
+    fun `a device with no multi-app kiosk gives the launcher up`() {
+        assertTrue(
+            LauncherConfigPlan.shouldRemoveLauncher(JSONObject("{}"), emptyList())
+        )
+    }
+
+    @Test
+    fun `a single-app kiosk is not a reason to keep the launcher`() {
+        assertTrue(
+            LauncherConfigPlan.shouldRemoveLauncher(
+                JSONObject("""{"kiosk_package": "com.atakmap.app.civ"}"""), emptyList()
+            )
+        )
+    }
+
+    @Test
+    fun `a live multi-app kiosk keeps it`() {
+        assertFalse(
+            LauncherConfigPlan.shouldRemoveLauncher(
+                JSONObject("""{"multi_app_packages": ["com.a"]}"""), listOf(LAUNCHER)
+            )
+        )
+    }
+
+    /**
+     * ⚠️ An operator who puts the launcher in required apps by hand means it, and
+     * an agent that removed it every two minutes while the policy reinstalled it
+     * would be a loop neither side could see the far end of.
+     */
+    @Test
+    fun `a policy that asks for the launcher outright keeps it`() {
+        assertFalse(
+            LauncherConfigPlan.shouldRemoveLauncher(JSONObject("{}"), listOf(LAUNCHER))
+        )
+    }
+
+    @Test
+    fun `other required apps are not a reason to keep it`() {
+        assertTrue(
+            LauncherConfigPlan.shouldRemoveLauncher(
+                JSONObject("{}"), listOf("com.atakmap.app.civ", "com.android.chrome")
+            )
+        )
+    }
 }
