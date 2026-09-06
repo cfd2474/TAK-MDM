@@ -51,6 +51,24 @@ object LauncherConfigPlan {
     ) {
         /** Every package the launcher may open — what lock task has to permit. */
         val packages: List<String> get() = apps.map { it.packageName }
+
+        /**
+         * The same plan with the ATLAS console guaranteed a tile (W70).
+         *
+         * ⚠️ **Separate from [from] on purpose.** `from` reports what the *policy*
+         * asks for, and two other decisions read it: whether this is a multi-app
+         * kiosk at all, and whether the launcher should be uninstalled. Appending
+         * the agent inside `from` would make every single-app kiosk look like a
+         * multi-app one and lock the device to a launcher nobody asked for.
+         *
+         * ⚠️ Appended, never moved. An operator who placed the console themselves
+         * has said where they want it — and if they marked it a favourite, that
+         * stands too.
+         */
+        fun withAgent(agentPackage: String): Plan {
+            if (apps.any { it.packageName == agentPackage }) return this
+            return copy(apps = apps + App(agentPackage))
+        }
     }
 
     const val DEFAULT_COLUMNS = 4

@@ -355,7 +355,11 @@ class KioskSpec(PolicySpec):
         title="Kiosk apps",
         description="The apps on the kiosk home screen, in the order they appear. "
         "The ATLAS launcher is installed automatically and the device is locked to "
-        "it; only these apps can be opened.",
+        "it; only these apps can be opened. The ATLAS console is always added as a "
+        "tile — in a multi-app kiosk the launcher is the only way to anything, and "
+        "the person standing at a misbehaving tablet needs a route to sync, "
+        "permissions and the device's own state. Add it yourself to choose where it "
+        "sits or pin it to the dock.",
         json_schema_extra={"ui_group": _MULTI, "ui_control": "kiosk_apps"},
     )
 

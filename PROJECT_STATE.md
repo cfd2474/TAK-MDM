@@ -333,6 +333,26 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W70 — the ATLAS console is always a tile in a multi-app kiosk
+
+Operator's requirement. In a multi-app kiosk the launcher is the only way to
+anything, so without a tile there is no route from the device to sync,
+permissions or its own state — and the person standing at a misbehaving tablet is
+exactly who needs it. It was already lock-task permitted; it was only ever
+missing a tile.
+
+⚠️ **`Plan.withAgent` is separate from `from` on purpose.** `from` reports what
+the *policy* asks for, and two other decisions read it: whether this is a
+multi-app kiosk at all, and whether the launcher should be uninstalled. Appending
+the console inside `from` would make every **single-app** kiosk look like a
+multi-app one and lock the device to a launcher nobody asked for. There is a test
+for exactly that.
+
+Appended, never moved: an operator who placed the console themselves has said
+where they want it, and a favourite they set stands. Verified by deletion —
+removing the already-present guard fails two tests.
+
+
 ### ✅ W69 — removing a kiosk policy gives the launcher back
 
 Reported by the operator: removing the policy did not revert to the stock

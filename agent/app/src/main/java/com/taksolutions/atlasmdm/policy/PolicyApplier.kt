@@ -757,10 +757,17 @@ class PolicyApplier(private val context: Context) {
             )
         }
 
+        // ⚠️ The ATLAS console is always a tile (W70). In a multi-app kiosk the
+        // launcher is the only way to anything, so without it there is no route
+        // to sync, permissions or the device's own state from the device — and
+        // the person standing at a misbehaving tablet is exactly who needs it.
+        // It is already lock-task permitted; it was only ever missing a tile.
+        val shown = plan.withAgent(context.packageName)
+
         // Before locking, so the launcher has its apps the first time it is drawn
         // rather than showing "no apps assigned" until the next reconcile.
         val failures = mutableListOf<String>()
-        failures += pushLauncherConfig(plan)
+        failures += pushLauncherConfig(shown)
 
         // ⚠️ The apps the launcher offers must be lock-task permitted too, or
         // every tile opens onto a refusal. `applyKiosk` adds the launcher itself,
@@ -769,7 +776,7 @@ class PolicyApplier(private val context: Context) {
             LAUNCHER_PACKAGE,
             spec,
             restrictions,
-            alsoPermitted = plan.packages,
+            alsoPermitted = shown.packages,
         )
     }
 

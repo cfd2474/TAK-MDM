@@ -199,4 +199,65 @@ class LauncherConfigPlanTest {
             )
         )
     }
+
+    // ----------------------------------------------------------------------- #
+    // The ATLAS console is always a tile (W70)
+    // ----------------------------------------------------------------------- #
+
+    private val AGENT = "com.taksolutions.atlasmdm"
+
+    @Test
+    fun `the console is added when the policy does not name it`() {
+        val shown = plan("""{"multi_app_packages": ["com.a", "com.b"]}""").withAgent(AGENT)
+        assertEquals(listOf("com.a", "com.b", AGENT), shown.packages)
+    }
+
+    /**
+     * Appended, not inserted: the operator's apps keep the order they were given,
+     * and the console is the last thing on the grid because it is a utility, not
+     * the reason the device exists.
+     */
+    @Test
+    fun `the operator's apps keep their order and stay first`() {
+        val shown = plan("""{"multi_app_packages": ["com.c", "com.a"]}""").withAgent(AGENT)
+        assertEquals(listOf("com.c", "com.a"), shown.packages.dropLast(1))
+    }
+
+    @Test
+    fun `an operator who placed the console keeps their placement`() {
+        val shown = plan(
+            """{"multi_app_packages": [
+                 {"package_name": "$AGENT", "favorite": true},
+                 {"package_name": "com.a"}
+               ]}"""
+        ).withAgent(AGENT)
+        assertEquals(listOf(AGENT, "com.a"), shown.packages)
+        // And their favourite, which a blind append would have dropped.
+        assertTrue(shown.apps.first().favorite)
+    }
+
+    @Test
+    fun `the console is added exactly once`() {
+        val shown = plan("""{"multi_app_packages": ["com.a"]}""")
+            .withAgent(AGENT).withAgent(AGENT)
+        assertEquals(1, shown.packages.count { it == AGENT })
+    }
+
+    /**
+     * ⚠️ The trap this guards. `from` reports what the *policy* asks for, and two
+     * other decisions read it: whether this is a multi-app kiosk at all, and
+     * whether the launcher should be uninstalled. If the console were appended
+     * inside `from`, every single-app kiosk would look like a multi-app one and
+     * lock the device to a launcher nobody asked for.
+     */
+    @Test
+    fun `adding the console does not turn a single-app kiosk into a multi-app one`() {
+        val single = plan("""{"kiosk_package": "com.atakmap.app.civ"}""")
+        assertTrue(single.apps.isEmpty())
+        assertTrue(
+            LauncherConfigPlan.shouldRemoveLauncher(
+                JSONObject("""{"kiosk_package": "com.atakmap.app.civ"}"""), emptyList()
+            )
+        )
+    }
 }
