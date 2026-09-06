@@ -126,7 +126,13 @@ data class LauncherConfig(
          * Read the app records, keeping the order given and dropping what cannot
          * be a tile.
          *
-         * ⚠️ Duplicates are removed. The same app twice is always a mistake — a
+         * ⚠️ Duplicates are removed, keyed on **package *and* activity** (W71).
+         * Keying on the package alone was right while one app meant one tile, and
+         * wrong the moment the ATLAS agent needed two — its console and its Device
+         * Settings screen are the same package. That dedup silently dropped
+         * whichever came second, so the operator lost a tile with nothing said.
+         *
+         * The same package *and* activity twice is still always a mistake — a
          * merge of two policies, or an operator adding it from search and from
          * the list — and two identical tiles look like a rendering fault. The
          * first wins, so the operator's first placement stands.
@@ -143,7 +149,7 @@ data class LauncherConfig(
 
                 val activity = entry.string(KEY_APP_ACTIVITY)?.trim().orEmpty()
                 out.putIfAbsent(
-                    pkg,
+                    "$pkg/$activity",
                     AppRef(
                         packageName = pkg,
                         // A leading dot is Android's shorthand for "relative to

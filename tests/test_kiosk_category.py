@@ -71,11 +71,16 @@ def test_the_creator_offers_every_sub_topic_the_operator_asked_for():
     #     means the deliberate way *out* (W65);
     #   * "night mode" — the tint is drawn by the agent over every app, so it
     #     applies to a single-app kiosk too and cannot live under "launcher"
-    #     (W68).
+    #     (W68);
+    #   * "peripheral settings" — W71 added the operator's list of what the *user*
+    #     may change from the device, and the existing page (what the *device* is
+    #     allowed to do) had to be renamed "peripheral restrictions", because two
+    #     sub-pages of the same name are a coin toss every time.
     assert kiosk.subtopics == (
         "single app", "multi app", "background apps", "launcher",
-        "permitted features", "peripheral settings", "kiosk exit settings",
-        "night mode", "website kiosk settings", "kiosk screensaver",
+        "permitted features", "peripheral restrictions", "peripheral settings",
+        "kiosk exit settings", "night mode", "website kiosk settings",
+        "kiosk screensaver",
     )
 
 
@@ -464,3 +469,56 @@ def test_a_relaunch_delay_does_not_need_the_manual_exit():
     """It is useful on its own — an engineer wants a moment after a reboot before
     the device locks again, whether or not a passcode exit exists."""
     assert _spec(relaunch_after_reboot_seconds=30).relaunch_after_reboot_seconds == 30
+
+
+# --------------------------------------------------------------------------- #
+# Peripheral Settings — what the user may change on the device (W71)
+# --------------------------------------------------------------------------- #
+
+
+def _multi(**kwargs) -> KioskSpec:
+    """A multi-app kiosk, which is what the Device Settings tile needs."""
+    kwargs.setdefault("multi_app_packages", [{"package_name": ATAK}])
+    return KioskSpec(**kwargs)
+
+
+def test_nothing_is_offered_to_the_user_by_default():
+    """A kiosk shows nothing the operator did not ask for. The alternative —
+    every control appearing unless switched off — puts settings on locked devices
+    whose operator never considered the question."""
+    spec = _multi()
+    offered = [
+        name for name in KioskSpec.model_fields
+        if name.startswith("device_setting_") and getattr(spec, name)
+    ]
+    assert offered == []
+
+
+def test_a_control_the_device_is_forbidden_to_change_is_refused():
+    """⚠️ The contradiction is invisible on the device: the slider is drawn, the
+    user drags it, and Android silently refuses because the restriction is in
+    force. That reads as a broken tablet, and each console page looks correct on
+    its own."""
+    with pytest.raises(ValueError, match="needs kiosk_allow_volume_change"):
+        _multi(device_setting_volume=True, kiosk_allow_volume_change=False)
+
+
+def test_a_control_whose_permission_is_allowed_is_fine():
+    """The other half — the validator must not refuse the normal case."""
+    spec = _multi(device_setting_volume=True, kiosk_allow_volume_change=True)
+    assert spec.device_setting_volume is True
+
+
+def test_a_control_with_no_matching_restriction_is_unconstrained():
+    """Night mode, screen timeout and the flashlight have no peripheral
+    restriction to contradict, so nothing gates them."""
+    spec = _multi(device_setting_night_mode=True, device_setting_flashlight=True)
+    assert spec.device_setting_night_mode is True
+
+
+def test_device_settings_need_a_multi_app_kiosk():
+    """The way to them is a tile on the launcher's home screen, and a single-app
+    kiosk has no home screen to put it on — so the section would save, assign,
+    report no error and never appear."""
+    with pytest.raises(ValueError, match="needs a multi-app kiosk"):
+        KioskSpec(kiosk_package=ATAK, device_setting_night_mode=True)

@@ -107,4 +107,16 @@
     <string name="action_downloading">Downloading…</string>
     <string name="progress_downloading">%1$d%%</string>
     <string name="install_cancelled">%1$s install cancelled</string>
+
+    <!-- Device Settings, the kiosk user's own settings screen (W71). -->
+    <string name="device_settings_title">Device Settings</string>
+    <string name="device_settings_none">Your administrator has not made any settings available on this device.</string>
+    <string name="night_mode">Night mode</string>
+    <string name="night_mode_summary">Tints the screen to preserve night vision</string>
+    <string name="night_strength">Strength</string>
+    <string name="display">Display</string>
+    <string name="brightness">Brightness</string>
+    <string name="brightness_auto">Adaptive brightness</string>
+    <string name="brightness_auto_summary">Adjust to available light</string>
+    <string name="brightness_note">With adaptive brightness on, the device may move the slider itself.</string>
 </resources>

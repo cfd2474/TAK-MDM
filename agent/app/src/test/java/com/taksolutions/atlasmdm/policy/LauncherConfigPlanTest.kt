@@ -99,7 +99,7 @@ class LauncherConfigPlanTest {
     }
 
     @Test
-    fun `the same app twice is one tile and the first wins`() {
+    fun `the same component twice is one tile and the first wins`() {
         val p = plan(
             """{"multi_app_packages": [
                  {"package_name": "com.a", "favorite": true},
@@ -108,6 +108,24 @@ class LauncherConfigPlanTest {
         )
         assertEquals(1, p.apps.size)
         assertTrue(p.apps.single().favorite)
+    }
+
+    /**
+     * ⚠️ Two tiles, not one. Keying the de-duplication on the package alone was
+     * right while one app meant one tile, and wrong the moment the agent needed
+     * two — its console and its Device Settings screen are the same package, and
+     * a package-level key dropped whichever came second with nothing said (W71).
+     */
+    @Test
+    fun `two activities of one app are two tiles`() {
+        val p = plan(
+            """{"multi_app_packages": [
+                 {"package_name": "com.a"},
+                 {"package_name": "com.a", "activity": ".Settings"}
+               ]}"""
+        )
+        assertEquals(2, p.apps.size)
+        assertEquals(listOf(null, "com.a.Settings"), p.apps.map { it.activity })
     }
 
     @Test
@@ -259,5 +277,41 @@ class LauncherConfigPlanTest {
                 JSONObject("""{"kiosk_package": "com.atakmap.app.civ"}"""), emptyList()
             )
         )
+    }
+
+    // ----------------------------------------------------------------------- #
+    // The Device Settings tile (W71)
+    // ----------------------------------------------------------------------- #
+
+    private val SETTINGS_ACTIVITY = "com.taksolutions.atlasmdm.ui.DeviceSettingsActivity"
+
+    @Test
+    fun `the console and the settings screen are both tiles`() {
+        val shown = plan("""{"multi_app_packages": ["com.a"]}""")
+            .withAgent(AGENT)
+            .withDeviceSettings(AGENT, SETTINGS_ACTIVITY)
+        assertEquals(listOf("com.a", AGENT, AGENT), shown.packages)
+        assertEquals(listOf(null, null, SETTINGS_ACTIVITY), shown.apps.map { it.activity })
+    }
+
+    /**
+     * The reason `withAgent` matches on a null activity. Matching the package
+     * alone would have seen the settings tile and decided the console was already
+     * there, leaving a kiosk with settings and no console.
+     */
+    @Test
+    fun `a settings tile does not stand in for the console`() {
+        val shown = plan("""{"multi_app_packages": ["com.a"]}""")
+            .withDeviceSettings(AGENT, SETTINGS_ACTIVITY)
+            .withAgent(AGENT)
+        assertEquals(2, shown.apps.count { it.packageName == AGENT })
+    }
+
+    @Test
+    fun `the settings tile is added at most once`() {
+        val shown = plan("{}")
+            .withDeviceSettings(AGENT, SETTINGS_ACTIVITY)
+            .withDeviceSettings(AGENT, SETTINGS_ACTIVITY)
+        assertEquals(1, shown.apps.size)
     }
 }

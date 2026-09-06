@@ -91,11 +91,24 @@ class LauncherConfigTest {
     }
 
     @Test
-    fun `the same app twice is one tile`() {
-        val c = config("apps" to listOf(app("a.pkg"), app("a.pkg", ".Main"), app("a.pkg")))
+    fun `the same component twice is one tile`() {
+        val c = config("apps" to listOf(app("a.pkg"), app("a.pkg")))
         assertEquals(1, c.apps.size)
         // First wins, so the operator's first placement is the one that stands.
         assertEquals(AppRef("a.pkg"), c.apps.single())
+    }
+
+    /**
+     * ⚠️ Two tiles, not one. De-duplicating on the package alone was right while
+     * one app meant one tile, and wrong the moment the ATLAS agent needed two —
+     * its console and its Device Settings screen are the same package, and the
+     * package-level key dropped whichever came second with nothing said (W71).
+     */
+    @Test
+    fun `two activities of one app are two tiles`() {
+        val c = config("apps" to listOf(app("a.pkg"), app("a.pkg", ".Settings")))
+        assertEquals(2, c.apps.size)
+        assertEquals(listOf(null, "a.pkg.Settings"), c.apps.map { it.activity })
     }
 
     /**

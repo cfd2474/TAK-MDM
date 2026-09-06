@@ -368,7 +368,7 @@ hardware** and is the control most likely to fail. Bluetooth on/off is worse
 still (API 33 deprecated `enable()` in favour of a user-consent intent) and is
 deliberately not in v1.
 
-#### Chunk 1 — the vertical slice *(this chunk)*
+#### ✅ Chunk 1 — the vertical slice (COMPLETE, not yet deployed)
 
 1. `KioskSpec`: a *Peripheral Settings* group with one `device_setting_*` toggle
    per control, default off.
@@ -380,6 +380,28 @@ deliberately not in v1.
 5. Night mode and brightness working end to end — enough to prove the whole path.
 6. `LauncherConfigPlan`: the tile, added only when at least one control is on.
 7. Tests both sides.
+
+⚠️ **Two sub-pages cannot share a name.** The operator named the new one
+*Peripheral Settings*; the existing page — what the **device** is allowed to do —
+is now *Peripheral restrictions*. Renaming the older one was the smaller change
+than renaming the thing they asked for.
+
+⚠️ **De-duplication keyed on the package, and had to stop.** One app meant one
+tile until the agent needed two — its console and its Device Settings screen are
+the same package — and the package-level key silently dropped whichever came
+second. Both sides now key on package *and* activity. `withAgent` matches on a
+**null** activity for the same reason: matching the package alone would have seen
+the settings tile and decided the console was already there, leaving a kiosk with
+settings and no console.
+
+⚠️ **Offering a control is a promise that the answer sticks.** Policy is
+re-applied every two minutes, so the user's night-mode choice is stored and wins
+while the control is offered — otherwise they switch it off and watch it come
+back, which is worse than never offering it. Withdrawing the control forgets the
+override, or an old answer would go on overriding policy where nobody can see it.
+Verified by deletion: removing the offered-gate fails that test.
+
+839 server tests, agent suite green.
 
 #### Chunk 2 — the remaining controls
 Screen timeout, volume, flashlight, Wi-Fi. Wi-Fi last, because it is the one that

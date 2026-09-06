@@ -762,7 +762,13 @@ class PolicyApplier(private val context: Context) {
         // to sync, permissions or the device's own state from the device — and
         // the person standing at a misbehaving tablet is exactly who needs it.
         // It is already lock-task permitted; it was only ever missing a tile.
-        val shown = plan.withAgent(context.packageName)
+        // ⚠️ Console first, then Device Settings — `withAgent` looks for the
+        // agent with *no* activity, so adding the settings tile first would make
+        // it think the console was already there (W71).
+        var shown = plan.withAgent(context.packageName)
+        if (DeviceSettingsPlan.offersAnything(spec)) {
+            shown = shown.withDeviceSettings(context.packageName, DEVICE_SETTINGS_ACTIVITY)
+        }
 
         // Before locking, so the launcher has its apps the first time it is drawn
         // rather than showing "no apps assigned" until the next reconcile.
@@ -1073,11 +1079,22 @@ class PolicyApplier(private val context: Context) {
      * permissions screen is where an operator fixes it.
      */
     private fun applyNightMode(spec: JSONObject) {
+        // ⚠️ The user's own answer wins while they are being offered the control
+        // (W71). Re-applying policy over it every two minutes would look like the
+        // device fighting them.
+        if (DeviceSettingsPlan.shouldForgetOverrides(spec)) {
+            config.nightModeUserChoice = null
+            config.nightLevelUserChoice = null
+        }
+        val (on, level) = DeviceSettingsPlan.nightMode(
+            spec, config.nightModeUserChoice, config.nightLevelUserChoice,
+        ).value
+
         NightOverlay.set(
             context,
-            enabled = spec.optBoolean("kiosk_night_mode", false),
+            enabled = on,
             hue = NightOverlay.Hue.from(spec.optString("kiosk_night_hue")),
-            level = spec.optInt("kiosk_night_level", 50),
+            level = level,
         )
     }
 
@@ -1244,6 +1261,39 @@ class PolicyApplier(private val context: Context) {
         }
     }
 
+    /**
+     * Screen brightness, for the kiosk's Device Settings screen (W71).
+     *
+     * ⚠️ `setSystemSetting` accepts **exactly three keys** —
+     * `SCREEN_BRIGHTNESS`, `SCREEN_BRIGHTNESS_MODE`, `SCREEN_OFF_TIMEOUT` — and
+     * throws on anything else. These two are on that list, which is the only
+     * reason a user can move this slider on a locked device at all: the ordinary
+     * route needs `WRITE_SETTINGS`, which no Device Owner can grant.
+     */
+    fun setBrightness(value: Int): Boolean = runCatching {
+        dpm.setSystemSetting(
+            admin, Settings.System.SCREEN_BRIGHTNESS, value.coerceIn(1, 255).toString(),
+        )
+        true
+    }.getOrElse {
+        AgentLog.w(TAG, "could not set brightness: ${it.message}")
+        false
+    }
+
+    /** Automatic brightness on or off. Same three-key allowlist. */
+    fun setBrightnessMode(automatic: Boolean): Boolean = runCatching {
+        dpm.setSystemSetting(
+            admin,
+            Settings.System.SCREEN_BRIGHTNESS_MODE,
+            if (automatic) Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC.toString()
+            else Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL.toString(),
+        )
+        true
+    }.getOrElse {
+        AgentLog.w(TAG, "could not set the brightness mode: ${it.message}")
+        false
+    }
+
     fun isInstalled(packageName: String): Boolean = runCatching {
         context.packageManager.getPackageInfo(packageName, 0)
         true
@@ -1336,6 +1386,14 @@ class PolicyApplier(private val context: Context) {
          * for why it is not an activity inside this agent.
          */
         const val LAUNCHER_PACKAGE = "com.taksolutions.atlaslauncher"
+
+        /**
+         * The kiosk user's settings screen (W71). Fully qualified because the
+         * launcher starts it by name across a package boundary, where Android's
+         * leading-dot shorthand would resolve against the *launcher's* package.
+         */
+        const val DEVICE_SETTINGS_ACTIVITY =
+            "com.taksolutions.atlasmdm.ui.DeviceSettingsActivity"
         private const val PERMISSION_MANAGE_EXTERNAL_STORAGE =
             "android.permission.MANAGE_EXTERNAL_STORAGE"
         private val LEGACY_STORAGE_PERMISSIONS = setOf(

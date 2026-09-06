@@ -196,6 +196,30 @@ class AgentConfig(context: Context) {
         set(value) = prefs.edit { putString(KEY_KIOSK_LAUNCHED, value) }
 
     /**
+     * The user's own answer for night mode, or null if they have not given one
+     * (W71).
+     *
+     * ⚠️ Stored, because policy is re-applied every two minutes. Without it the
+     * user would turn the tint off and watch it come back — which is worse than
+     * never offering the control, because it looks like the device is fighting
+     * them. Forgotten when the operator stops offering the control, so an old
+     * answer cannot go on overriding policy where nobody can see it.
+     */
+    var nightModeUserChoice: Boolean?
+        get() = if (prefs.contains(KEY_NIGHT_USER)) prefs.getBoolean(KEY_NIGHT_USER, false)
+                else null
+        set(value) = prefs.edit {
+            if (value == null) remove(KEY_NIGHT_USER) else putBoolean(KEY_NIGHT_USER, value)
+        }
+
+    /** The user's own night-mode strength, 0-100, or null. */
+    var nightLevelUserChoice: Int?
+        get() = prefs.getInt(KEY_NIGHT_LEVEL_USER, -1).takeIf { it >= 0 }
+        set(value) = prefs.edit {
+            if (value == null) remove(KEY_NIGHT_LEVEL_USER) else putInt(KEY_NIGHT_LEVEL_USER, value)
+        }
+
+    /**
      * The package HOME was pointed at, so the takeover can actually be undone
      * (W69).
      *
@@ -354,6 +378,8 @@ class AgentConfig(context: Context) {
         private const val KEY_LAST_ERROR = "last_error"
         private const val KEY_LAST_SYNC = "last_sync_at"
         private const val KEY_KIOSK_EXITED = "kiosk_exited_at_elapsed"
+        private const val KEY_NIGHT_USER = "night_mode_user_choice"
+        private const val KEY_NIGHT_LEVEL_USER = "night_level_user_choice"
         private const val KEY_KIOSK_HOME = "kiosk_home_package"
         private const val KEY_KIOSK_LAUNCHED = "kiosk_launched_component"
         private const val KEY_KIOSK_LAUNCHED_AT = "kiosk_launched_at_elapsed"

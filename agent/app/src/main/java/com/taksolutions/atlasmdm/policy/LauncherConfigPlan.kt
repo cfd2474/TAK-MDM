@@ -66,8 +66,28 @@ object LauncherConfigPlan {
          * stands too.
          */
         fun withAgent(agentPackage: String): Plan {
-            if (apps.any { it.packageName == agentPackage }) return this
+            // The console tile is the agent with **no** activity. Matching the
+            // package alone would see a Device Settings tile and conclude the
+            // console was already there (W71).
+            val already = apps.any { it.packageName == agentPackage && it.activity == null }
+            if (already) return this
             return copy(apps = apps + App(agentPackage))
+        }
+
+        /**
+         * A Device Settings tile, when the policy offers the user anything to
+         * change (W71).
+         *
+         * ⚠️ Keyed on the **activity**, not the package. The console tile is the
+         * same package, so a package-level de-duplication would drop whichever of
+         * the two came second and the operator would lose one at random.
+         */
+        fun withDeviceSettings(agentPackage: String, activity: String): Plan {
+            val already = apps.any {
+                it.packageName == agentPackage && it.activity == activity
+            }
+            if (already) return this
+            return copy(apps = apps + App(agentPackage, activity))
         }
     }
 
@@ -136,10 +156,12 @@ object LauncherConfigPlan {
                 is String -> fromString(item)
                 else -> null
             } ?: continue
-            // Keyed on the package: the same app twice is a merge artefact, and
-            // two identical tiles read as a rendering fault. First wins, so the
-            // operator's first placement stands.
-            out.putIfAbsent(app.packageName, app)
+            // ⚠️ Keyed on package *and* activity (W71). One app meant one tile
+            // until the agent needed two — its console and its Device Settings
+            // screen are the same package — and a package-level key dropped
+            // whichever came second with nothing said. The same component twice
+            // is still a merge artefact, and first wins.
+            out.putIfAbsent("${app.packageName}/${app.activity.orEmpty()}", app)
         }
         return out.values.toList()
     }

@@ -76,6 +76,26 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.AtlasMdm">
 
+        <!--
+          The kiosk user's own settings screen (W71).
+
+          ⚠️ `exported` because the ATLAS launcher starts it, and the launcher is a
+          separate application. There is nothing to protect: it draws only what
+          the Device Owner's own policy offers, so an app that started it on a
+          device with no kiosk gets a screen saying nothing is available.
+
+          `excludeFromRecents` and `noHistory` because it is a place a kiosk user
+          steps into and out of, not somewhere to come back to — and in lock task
+          a stale entry in recents is a way to re-enter a screen policy has since
+          withdrawn.
+        -->
+        <activity
+            android:name=".ui.DeviceSettingsActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:label="@string/device_settings_title" />
+
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"

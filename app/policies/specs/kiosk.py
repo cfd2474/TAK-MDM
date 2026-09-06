@@ -50,7 +50,7 @@ a question that has no single answer.
 from __future__ import annotations
 
 import enum
-from typing import Annotated
+from typing import Annotated, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -67,7 +67,11 @@ _MULTI = "Multi app"
 _BACKGROUND = "Background apps"
 _LAUNCHER = "Launcher"
 _NIGHT = "Night mode"
-_PERIPHERAL = "Peripheral settings"
+_DEVICE_SETTINGS = "Peripheral Settings"
+#: What the **device** is allowed to do. Renamed in W71: the operator asked for
+#: a "Peripheral Settings" page holding what the *user* may change, and two
+#: sub-pages of the same name would be a coin toss every time.
+_PERIPHERAL = "Peripheral restrictions"
 _PERMITTED = "Permitted features"
 _EXIT = "Kiosk exit settings"
 _WEBSITE = "Website kiosk settings"
@@ -103,6 +107,28 @@ def _peripheral(title: str, description: str = ""):
             "ui_group": _PERIPHERAL,
             "ui_true": "Allowed",
             "ui_false": "Blocked",
+        },
+    )
+
+
+def _user_setting(title: str, description: str):
+    """A control the **user** may change from the kiosk's Device Settings screen.
+
+    ⚠️ Different in kind from `_peripheral` above, which says what the device is
+    *allowed* to do. This says what appears on a screen. The two can contradict —
+    a volume slider on a device holding `DISALLOW_ADJUST_VOLUME` is a control that
+    cannot move — and `_a_control_must_be_able_to_move` refuses that pairing.
+
+    Default off: a kiosk shows nothing the operator did not ask for.
+    """
+    return Field(
+        default=None,
+        title=title,
+        description=description,
+        json_schema_extra={
+            "ui_group": _DEVICE_SETTINGS,
+            "ui_true": "User can change",
+            "ui_false": "Hidden",
         },
     )
 
@@ -345,6 +371,53 @@ class KioskSpec(PolicySpec):
     ] = _peripheral("Airplane mode", _PERIPHERAL_NOTE)
 
     # ----------------------------------------------------------------------- #
+    # Peripheral Settings — what the user may change on the device (W71)
+    #
+    # ⚠️ These need the ATLAS launcher, because the way to them is a Device
+    # Settings tile on its home screen. A single-app kiosk has no home screen, so
+    # the section is refused there rather than saved and ignored.
+    # ----------------------------------------------------------------------- #
+
+    device_setting_night_mode: Annotated[
+        bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
+    ] = _user_setting(
+        "Night mode",
+        "Let the user turn the night tint on and off and set its strength.",
+    )
+    device_setting_brightness: Annotated[
+        bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
+    ] = _user_setting(
+        "Screen brightness",
+        "Let the user set screen brightness, and turn automatic brightness on or off.",
+    )
+    device_setting_screen_timeout: Annotated[
+        bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
+    ] = _user_setting(
+        "Screen timeout",
+        "Let the user choose how long the screen stays on.",
+    )
+    device_setting_volume: Annotated[
+        bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
+    ] = _user_setting(
+        "Volume",
+        "Let the user set media and notification volume.",
+    )
+    device_setting_flashlight: Annotated[
+        bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
+    ] = _user_setting(
+        "Flashlight",
+        "Let the user turn the torch on and off.",
+    )
+    device_setting_wifi: Annotated[
+        bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
+    ] = _user_setting(
+        "Wi-Fi",
+        "⚠️ Let the user turn Wi-Fi on and off. Android blocks this for ordinary "
+        "apps and permits it for a Device Owner; if the device refuses, the control "
+        "says so rather than failing quietly.",
+    )
+
+    # ----------------------------------------------------------------------- #
     # Multi app — the ATLAS launcher (W68)
     # ----------------------------------------------------------------------- #
 
@@ -506,6 +579,58 @@ class KioskSpec(PolicySpec):
                 f"hold a web page in and no idle surface to draw a screensaver on. "
                 f"Multi app, single app, background apps, exit settings and "
                 f"peripheral settings all work today"
+            )
+        return self
+
+    #: Device Settings control → the peripheral restriction that would stop it
+    #: working. Only the overlaps; night mode, timeout and flashlight have none.
+    _CONTROL_NEEDS_PERMISSION: ClassVar[dict[str, str]] = {
+        "device_setting_volume": "kiosk_allow_volume_change",
+        "device_setting_brightness": "kiosk_allow_brightness_change",
+        "device_setting_wifi": "kiosk_allow_wifi_config",
+    }
+
+    @model_validator(mode="after")
+    def _a_control_must_be_able_to_move(self) -> "KioskSpec":
+        """Refuse a Device Settings control the peripheral restrictions forbid.
+
+        ⚠️ The contradiction is invisible on the device: the slider is drawn, the
+        user drags it, and Android silently refuses because the restriction is in
+        force. That reads as a broken tablet, and the operator has two screens
+        that each look correct on their own.
+        """
+        conflicts = [
+            f"{control} needs {permission} allowed"
+            for control, permission in self._CONTROL_NEEDS_PERMISSION.items()
+            if getattr(self, control) and getattr(self, permission) is False
+        ]
+        if conflicts:
+            raise ValueError(
+                f"{'; '.join(conflicts)}. A control the device is forbidden to "
+                f"change is drawn, dragged, and silently ignored — which reads as a "
+                f"broken device rather than a policy that disagrees with itself"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _device_settings_need_a_launcher(self) -> "KioskSpec":
+        """The way to these is a tile on the kiosk home screen.
+
+        A single-app kiosk has no home screen, so the section would save, assign,
+        report no error, and never appear.
+        """
+        if self.multi_app_packages:
+            return self
+        shown = sorted(
+            name
+            for name in type(self).model_fields
+            if name.startswith("device_setting_") and getattr(self, name) is not None
+        )
+        if shown:
+            raise ValueError(
+                f"{', '.join(shown)} needs a multi-app kiosk. The way to these is a "
+                f"Device Settings tile on the ATLAS launcher's home screen, and a "
+                f"single-app kiosk has no home screen to put it on"
             )
         return self
 
