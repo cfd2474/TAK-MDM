@@ -26,4 +26,15 @@
          rather than on atlas_navy_deep, so the image blends into its surround
          instead of showing as a black rectangle pasted onto navy (W55). -->
     <color name="atlas_logo_field">#FF000203</color>
+    <!-- The slim banner artwork's own field, sampled from the left and right
+         edge columns that actually abut the bar (avg #010915).
+
+         Deliberately separate from atlas_logo_field: the slim logo sits on a dark
+         *navy*, the full logo on near-black, and one value for both leaves a
+         visible seam around the centred image. Sampling the whole border was worse
+         still — the artwork is vignetted, so its top and bottom edges are lighter
+         than its sides, and averaging all four produced a bar that showed the logo
+         as a pasted-on rectangle. The banner is drawn flush to the bar's full
+         height, so only the side edges are ever seen (W55). -->
+    <color name="atlas_banner_field">#FF010915</color>
 </resources>
