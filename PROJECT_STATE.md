@@ -6865,6 +6865,29 @@ holds the table. The app-config schema endpoint went from 0.13 s to 1.40 s and
 are memoised by artifact hash (the **result**, never the bytes: an earlier
 `lru_cache` over bytes was removed for pinning a gigabyte).
 
+##### ✅ Deployed, 2026-09-06 — server **and** agent 58
+
+Commit `65a6222`. Database backed up to `/root/takmdm-20260906-033821.sql.gz`
+first. Agent published under the operator's standing authorisation.
+
+| Check | Result |
+|---|---|
+| Containers / alembic | api·db·proxy running, `t0v2x4z6b8d0` |
+| Errors in log since restart | **0** |
+| Agent APK | **58 (0.21.0)** uploaded and published; signature checksum matches the pinned `IJS8…yxkQ`, so provisioning and updates are unaffected |
+| Chrome schema on the live host | 170 keys, **170 with a resolved title**, 24 with an option list |
+| e.g. `BrowserSignin` | `0` = "Disable browser sign-in", `1` = "Enable browser sign-in" |
+| Second schema request (memoised) | **0.023 s** |
+| `https://…:8443/healthz` | 200 |
+| `https://…:8443/` | **403** |
+| `http://…:8080/…/agent.apk` | 200, 7 196 444 b (now v58) |
+| `http://…:8080/policies/…` | **403** |
+
+⚠️ **The signing key was verified before publishing, not after.** A release built
+with a different key would have been un-installable over the existing agent on
+every device and would have broken QR provisioning — the kind of thing worth
+checking while it is still cheap.
+
 ##### Chunk 1 — resolution (original plan)
 
 1. `arsc.py`: read complex entries; `ResourceTable.array(rid)`.
