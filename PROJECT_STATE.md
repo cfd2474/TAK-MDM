@@ -7365,6 +7365,31 @@ device in someone's hand.
 8. Multi app, launcher, website kiosk, screensaver: declared so the operator can
    see they exist, refused at validation with the launcher reason — the same
    pattern the Knox-gated network fields use.
+##### ✅ Deployed, 2026-09-06
+
+Database backed up to `/root/takmdm-20260906-152232.sql.gz` first. **No migration
+needed** — the move is spec and registry only, and alembic stayed at
+`t0v2x4z6b8d0`.
+
+⚠️ **Checked before deploying, not after:** whether any stored `APP_CATALOG` spec
+still carried `kiosk_package`, which would now fail validation and break an
+existing policy on load. None did — three APP_CATALOG policies, none using kiosk —
+so there was nothing to migrate. Had one existed, this deploy would have needed a
+data fix first.
+
+Smoke-tested against the live server rather than trusting the test suite:
+
+| Attempt | Result |
+|---|---|
+| Single-app kiosk with peripherals | **201** |
+| `website_kiosk_url` | **422** — "needs an ATLAS launcher" |
+| Notifications with the home button blocked | **422** |
+| `kiosk_package` on `APP_CATALOG` | **422** |
+
+All eight sub-pages render; `app_management:kiosk` is gone. The smoke policy was
+archived and deleted afterwards — deletion is deliberately two steps, so it took
+both. Device unaffected: `0.28.0`, COMPLIANT, state 18/18.
+
 9. ✅ **Decision record written**: [docs/DECISION-atlas-launcher.md](docs/DECISION-atlas-launcher.md)
    — three options, the risk each carries to the kiosk **escape hatch**, and the
    three questions worth answering before spending anything. Recommends a
