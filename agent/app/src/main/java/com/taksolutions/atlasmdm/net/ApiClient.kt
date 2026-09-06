@@ -233,6 +233,35 @@ class ApiClient(private val config: AgentConfig) {
      * the destination never holds anything unverified and a caller that checks it
      * cannot see a half-written file.
      */
+    /**
+     * Fetch an app icon into [destination]. Returns false if it could not be had.
+     *
+     * Unlike an artifact this has no hash to verify against — it is not
+     * content-addressed — so the only check is that the body decodes as an image,
+     * which the caller does. A missing icon is an ordinary outcome, not an error:
+     * an app whose icon is a vector drawable has none to send (W53).
+     */
+    fun downloadIcon(path: String, destination: File): Boolean {
+        destination.parentFile?.mkdirs()
+        val request = Request.Builder().url("$baseUrl$path").get().build()
+        return runCatching {
+            mtlsClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return false
+                val body = response.body ?: return false
+                val part = File(destination.parentFile, "${destination.name}.part")
+                body.byteStream().use { input ->
+                    java.io.FileOutputStream(part).use { output ->
+                        input.copyTo(output, DEFAULT_BUFFER_SIZE)
+                    }
+                }
+                // Same rename-after-write discipline as an artifact: a reader must
+                // never find a half-written file at the final path.
+                destination.delete()
+                part.renameTo(destination)
+            }
+        }.getOrDefault(false)
+    }
+
     fun downloadArtifact(sha256: String, destination: File): Boolean =
         synchronized(downloadLockFor(sha256)) {
             // A concurrent pass may have finished it while this one waited.

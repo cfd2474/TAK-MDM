@@ -7206,6 +7206,40 @@ story now that the shelf reaches every device.
    (`Package`, `Label`, `Latest version`, ``) while every row emits **three** —
    so the columns are already misaligned today.
 
+#### 🔻 W57 — The device needs the name and the picture sent to it
+
+The store worked on the first try — screenshot shows UASReady offered with an
+Install button and a neutral *Available* pill — but the card was titled
+`com.taksolutions.uasready` and had no icon.
+
+⚠️ **The device cannot look either of them up.** `appLabel()` asked
+`PackageManager`, which only knows apps that are **installed** — and the Apps
+screen most needs a name for one that is *not*, which is the entire point of an
+offer. Same for the icon.
+
+So both travel with the entry now, on required apps as well as offers:
+
+* `label` — read out of the APK at upload (W51/W53). Preferred over
+  `PackageManager`, which stays as the fallback for an installed app whose entry
+  predates this, with the package id as the last resort because it is at least true.
+* `icon_url` → a new device-facing `GET /api/v1/device/apps/{package}/icon`,
+  behind the mTLS device guard. Already reachable through nginx: the device port
+  opts in `/api/v1/device/` as a **prefix**, so no proxy change was needed.
+
+Two things kept cheap on purpose:
+
+* The entry is built from `icon_media_type` — a small column — never by touching
+  `icon_data`. Reading the blob to decide whether a URL exists would drag it into
+  every check-in for every configured app, which is the exact regression the
+  column was deferred to avoid (W53).
+* The device caches the icon at `cacheDir/icon_<pkg>_<versionCode>`. There is no
+  hash of the icon to key on, and computing one server-side would mean loading the
+  blob; the version code changes when a new build brings new artwork, which is the
+  same thing for this purpose.
+
+An app with no extractable icon sends `icon_url: null` rather than a URL that
+would 404 on every device that tried it, and the card simply starts at the name.
+
 | # | Chunk | Notes |
 |---|---|---|
 | 7 | **Knox layer** | Planned in detail below |

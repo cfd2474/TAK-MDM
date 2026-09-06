@@ -26,11 +26,12 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import authenticated_device, get_db, get_storage
 from app.artifacts.storage import ArtifactNotFound, ArtifactStorage
-from app.db.models import Artifact, Device
+from app.db.models import AppPackage, Artifact, Device
 
 router = APIRouter(prefix="/api/v1/device/artifacts", tags=["device"])
 
@@ -124,4 +125,48 @@ def download_artifact(
             "Content-Range": f"bytes {start}-{end}/{size}",
             "Content-Length": str(end - start + 1),
         },
+    )
+
+
+# --------------------------------------------------------------------------- #
+# App icons
+# --------------------------------------------------------------------------- #
+
+icons_router = APIRouter(prefix="/api/v1/device/apps", tags=["device"])
+
+
+@icons_router.get("/{package_name}/icon")
+def get_app_icon(
+    package_name: str,
+    session: Session = Depends(get_db),
+    device: Device = Depends(authenticated_device),
+) -> Response:
+    """The launcher icon for an app the device is offered or required to install.
+
+    Served to the device so the Apps screen can show what an app *looks* like
+    before it is installed — until then `PackageManager` knows nothing about it,
+    so the device has no other source for either the icon or the name.
+
+    ⚠️ Not content-addressed like `/artifacts`, because an icon is not an artifact:
+    it lives in a column on the package, extracted from the APK at upload (W53).
+    The device caches it against the package's `version_code`, which is what
+    changes when a new build brings new artwork.
+    """
+    package = session.scalar(
+        select(AppPackage).where(AppPackage.package_name == package_name)
+    )
+    if package is None or not package.icon_media_type:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no icon for this app")
+
+    # Touching `icon_data` loads the deferred column — deliberately only here, and
+    # never on the check-in path, which selects packages for every configured app.
+    data = package.icon_data
+    if not data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no icon for this app")
+
+    return Response(
+        content=data,
+        media_type=package.icon_media_type,
+        # Immutable for a given build; the device re-asks when version_code moves.
+        headers={"Cache-Control": "private, max-age=604800"},
     )

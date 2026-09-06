@@ -122,6 +122,7 @@ app = FastAPI(
 # --------------------------------------------------------------------------- #
 app.include_router(checkin.router)
 app.include_router(artifacts.router)
+app.include_router(artifacts.icons_router)
 app.include_router(wait.router)
 app.include_router(enrollment.device_router)
 app.include_router(device_logs.router)

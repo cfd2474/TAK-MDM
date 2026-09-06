@@ -186,3 +186,84 @@ def test_an_app_that_is_required_is_not_also_offered(client, db, make_device, ma
     assert not any(e["package_name"] == required_name for e in state["store"]), (
         "an app being installed by policy was also offered as an optional install"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Name and icon travel with the offer (W57)
+# --------------------------------------------------------------------------- #
+
+
+@needs_survey
+def test_an_offer_carries_the_apps_name_and_icon(client, db, make_device):
+    """⚠️ The device cannot look either of these up.
+
+    `PackageManager` only knows *installed* apps, so for an app being offered —
+    exactly when the screen needs a name and a picture — it has nothing. The
+    reported symptom was a store entry titled `com.taksolutions.uasready`.
+    """
+    make_device()
+    package_name = _upload(client, SURVEY123)
+    _list_in_store(client, db, package_name)
+
+    device = db.scalar(select(Device))
+    entry = next(
+        e for e in desired_state.build(db, device)["store"] if e["package_name"] == package_name
+    )
+
+    assert entry["label"] == "Survey123", "the offer would show a package id"
+    assert entry["icon_url"] == f"/api/v1/device/apps/{package_name}/icon"
+
+
+@needs_survey
+def test_a_required_app_carries_them_too(client, db, make_device, make_policy, assign):
+    """Not a store-only nicety — the same screen lists both."""
+    created = make_device()
+    package_name = _upload(client, SURVEY123)
+    policy = make_policy(
+        "Requires Survey123", "APP_CATALOG", {"required_apps": [{"package_name": package_name}]}
+    )
+    assign(policy["id"], created["id"])
+
+    db.expire_all()
+    device = db.scalar(select(Device))
+    entry = next(
+        e for e in desired_state.build(db, device)["apps"] if e["package_name"] == package_name
+    )
+
+    assert entry["label"] == "Survey123"
+    assert entry["icon_url"]
+
+
+@needs_survey
+def test_an_app_with_no_extractable_icon_offers_no_url(client, db, make_device):
+    """A vector-only icon yields nothing, and the entry must say so with None
+    rather than a URL that 404s on every device that tries it."""
+    from app.db.models import AppPackage as Pkg
+
+    make_device()
+    package_name = _upload(client, SURVEY123)
+    _list_in_store(client, db, package_name)
+
+    package = db.scalar(select(Pkg).where(Pkg.package_name == package_name))
+    package.icon_media_type = None
+    package.icon_data = None
+    db.commit()
+
+    device = db.scalar(select(Device))
+    entry = next(
+        e for e in desired_state.build(db, device)["store"] if e["package_name"] == package_name
+    )
+
+    assert entry["icon_url"] is None
+
+
+@needs_survey
+def test_the_device_icon_endpoint_needs_a_device_certificate(client, db, make_device):
+    """It sits under /api/v1/device/, which nginx gates on a client certificate —
+    but the application must not depend on the proxy for that."""
+    make_device()
+    package_name = _upload(client, SURVEY123)
+
+    response = client.get(f"/api/v1/device/apps/{package_name}/icon")
+
+    assert response.status_code in (401, 403), response.status_code

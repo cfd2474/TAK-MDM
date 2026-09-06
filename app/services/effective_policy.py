@@ -250,6 +250,12 @@ def resolve_required_apps(
         resolved.append(
             {
                 "package_name": package_name,
+                # Name and icon travel with the entry because the device cannot
+                # look them up: `PackageManager` knows nothing about an app that is
+                # not installed yet, which is precisely when the Apps screen needs
+                # to show one (W57).
+                "label": version.package.label if version.package else None,
+                "icon_url": _icon_url(version),
                 "available": True,
                 "version_code": version.version_code,
                 "version_name": version.version_name,
@@ -269,6 +275,20 @@ def resolve_required_apps(
         )
 
     return sorted(resolved, key=lambda item: item["package_name"])
+
+
+def _icon_url(version: AppPackageVersion | None) -> str | None:
+    """Where the device can fetch this app's icon, or None when there is none.
+
+    Reads `icon_media_type` — a small column on the package row — rather than the
+    icon itself. Touching `icon_data` here would drag a blob into every check-in
+    for every configured app, which is the regression the column was deferred to
+    avoid (W53).
+    """
+    package = version.package if version is not None else None
+    if package is None or not package.icon_media_type:
+        return None
+    return f"/api/v1/device/apps/{package.package_name}/icon"
 
 
 def resolve_store_apps(
@@ -312,6 +332,7 @@ def resolve_store_apps(
             {
                 "package_name": package.package_name,
                 "label": package.label,
+                "icon_url": _icon_url(version),
                 "available": True,
                 "version_code": version.version_code,
                 "version_name": version.version_name,

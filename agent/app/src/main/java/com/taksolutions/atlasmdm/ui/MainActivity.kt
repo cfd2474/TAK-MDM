@@ -41,10 +41,12 @@ import com.taksolutions.atlasmdm.admin.PolicyComplianceActivity
 import com.taksolutions.atlasmdm.core.AgentConfig
 import com.taksolutions.atlasmdm.files.FileDeployer
 import com.taksolutions.atlasmdm.install.AppInstaller
+import com.taksolutions.atlasmdm.net.ApiClient
 import com.taksolutions.atlasmdm.permissions.PermissionRequirement
 import com.taksolutions.atlasmdm.sync.Reconciler
 import com.taksolutions.atlasmdm.sync.SyncScheduler
 import com.taksolutions.atlasmdm.ui.ConsoleViews.Tone
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -375,8 +377,20 @@ class MainActivity : AppCompatActivity() {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = android.view.Gravity.CENTER_VERTICAL
                 }
+                // The icon leads, as it does in the console's app list. Absent for
+                // an app whose artwork could not be extracted, and the row simply
+                // starts at the name — a placeholder box would add nothing.
+                appIcon(app)?.let { art ->
+                    head.addView(android.widget.ImageView(this@MainActivity).apply {
+                        setImageDrawable(art)
+                        layoutParams = LinearLayout.LayoutParams(
+                            ConsoleViews.dp(this@MainActivity, 36),
+                            ConsoleViews.dp(this@MainActivity, 36),
+                        ).apply { marginEnd = ConsoleViews.dp(this@MainActivity, 10) }
+                    })
+                }
                 head.addView(TextView(this@MainActivity).apply {
-                    text = appLabel(pkg)
+                    text = appLabel(pkg, app.str("label"))
                     setTextAppearance(R.style.TextAppearance_Atlas_SectionTitle)
                     textSize = 16f
                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -442,8 +456,8 @@ class MainActivity : AppCompatActivity() {
             installingPackage.remove(pkg)
             Toast.makeText(
                 this@MainActivity,
-                if (failure == null) getString(R.string.install_ok, appLabel(pkg))
-                else getString(R.string.install_failed, appLabel(pkg), failure),
+                if (failure == null) getString(R.string.install_ok, appLabel(pkg, entry.str("label")))
+                else getString(R.string.install_failed, appLabel(pkg, entry.str("label")), failure),
                 Toast.LENGTH_LONG,
             ).show()
             render()
@@ -725,10 +739,64 @@ class MainActivity : AppCompatActivity() {
             ?.takeIf { it.isNotBlank() && it != Build.UNKNOWN }
             ?: getString(R.string.value_unknown)
 
-    private fun appLabel(pkg: String): String = runCatching {
-        val pm = packageManager
-        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
-    }.getOrDefault(pkg)
+    /**
+     * What to call an app, best source first.
+     *
+     * ⚠️ `PackageManager` only knows apps that are **installed**, and the Apps
+     * screen most needs a name for one that is not — an offer nobody has taken
+     * yet. Asking it first is why a store entry showed as
+     * `com.taksolutions.uasready` (W57). The server sends the name it read out of
+     * the APK, so that is preferred; the package id remains the last resort,
+     * because it is at least true.
+     */
+    private fun appLabel(pkg: String, fromServer: String? = null): String =
+        fromServer?.takeIf { it.isNotBlank() }
+            ?: runCatching {
+                val pm = packageManager
+                pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+            }.getOrDefault(pkg)
+
+    /**
+     * The app's icon, fetched once per build and cached (W57).
+     *
+     * Returns null when the app has no extractable icon, when it has not been
+     * fetched yet, or when the file will not decode — all of which the caller
+     * treats the same way, by showing nothing rather than a broken placeholder.
+     *
+     * Keyed by `version_code`: the artwork only changes when a new build brings
+     * new artwork, and the server has no cheap hash of the icon to offer instead.
+     */
+    private fun appIcon(entry: JSONObject): android.graphics.drawable.Drawable? {
+        val path = entry.str("icon_url") ?: return null
+        val pkg = entry.optString("package_name")
+        val version = entry.optLong("version_code", 0)
+        val cached = File(cacheDir, "icon_${pkg}_$version")
+
+        if (!cached.exists()) {
+            // Fetched on a worker and the screen re-rendered when it lands, so a
+            // slow link cannot stall the list being drawn.
+            if (iconsFetching.add(cached.name)) {
+                lifecycleScope.launch {
+                    val ok = withContext(Dispatchers.IO) {
+                        runCatching { ApiClient(config).downloadIcon(path, cached) }
+                            .getOrDefault(false)
+                    }
+                    iconsFetching.remove(cached.name)
+                    if (ok) render()
+                }
+            }
+            return null
+        }
+
+        return runCatching {
+            android.graphics.BitmapFactory.decodeFile(cached.absolutePath)?.let {
+                android.graphics.drawable.BitmapDrawable(resources, it)
+            }
+        }.getOrNull()
+    }
+
+    /** Icon fetches in flight, so a re-render does not start the same one twice. */
+    private val iconsFetching = mutableSetOf<String>()
 
     private fun lastSyncText(): String {
         val at = config.lastSyncAt
