@@ -522,3 +522,55 @@ def test_device_settings_need_a_multi_app_kiosk():
     report no error and never appear."""
     with pytest.raises(ValueError, match="needs a multi-app kiosk"):
         KioskSpec(kiosk_package=ATAK, device_setting_night_mode=True)
+
+
+# --------------------------------------------------------------------------- #
+# Bluetooth and Radios off (W72)
+# --------------------------------------------------------------------------- #
+
+
+def test_bluetooth_control_needs_bluetooth_allowed():
+    """Same rule as volume and brightness: a control the device is forbidden to
+    act on is drawn, tapped, and silently ignored."""
+    with pytest.raises(ValueError, match="needs kiosk_allow_bluetooth"):
+        _multi(device_setting_bluetooth=True, kiosk_allow_bluetooth=False)
+
+
+def test_radios_off_needs_both_radios_allowed():
+    """⚠️ The one control that touches two restrictions, which the single-permission
+    map cannot express. Half-working is the worst outcome: the user taps once
+    expecting to go quiet, one radio stays up, and nothing says which."""
+    with pytest.raises(ValueError, match="kiosk_allow_wifi_config"):
+        _multi(device_setting_radios_off=True, kiosk_allow_wifi_config=False)
+    with pytest.raises(ValueError, match="kiosk_allow_bluetooth"):
+        _multi(device_setting_radios_off=True, kiosk_allow_bluetooth=False)
+
+
+def test_radios_off_names_both_when_both_are_blocked():
+    """The message has to name both, or the operator fixes one and hits the same
+    refusal again."""
+    with pytest.raises(ValueError, match="wifi_config and kiosk_allow_bluetooth"):
+        _multi(
+            device_setting_radios_off=True,
+            kiosk_allow_wifi_config=False,
+            kiosk_allow_bluetooth=False,
+        )
+
+
+def test_radios_off_is_accepted_when_both_radios_are_allowed():
+    spec = _multi(
+        device_setting_radios_off=True,
+        kiosk_allow_wifi_config=True,
+        kiosk_allow_bluetooth=True,
+    )
+    assert spec.device_setting_radios_off is True
+
+
+def test_radios_off_is_not_airplane_mode_and_says_so():
+    """⚠️ An operator who believed this silenced a device that was still on
+    cellular would be worse off than with no control at all, so the field itself
+    has to say what it does not do."""
+    field = KioskSpec.model_fields["device_setting_radios_off"]
+    assert "not" in field.description.lower()
+    assert "airplane" in field.description.lower()
+    assert "cellular" in field.description.lower()

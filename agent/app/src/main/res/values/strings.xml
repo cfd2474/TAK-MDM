@@ -109,6 +109,12 @@
     <string name="install_cancelled">%1$s install cancelled</string>
 
     <!-- Device Settings, the kiosk user's own settings screen (W71). -->
+    <!--
+      Two names on purpose. The tile says "Settings" because that is what a user
+      looks for; the screen says "Device Settings" because on a kiosk it is not
+      the whole of Android's settings and should not claim to be.
+    -->
+    <string name="settings_tile_title">Settings</string>
     <string name="device_settings_title">Device Settings</string>
     <string name="device_settings_none">Your administrator has not made any settings available on this device.</string>
     <string name="night_mode">Night mode</string>
@@ -132,6 +138,11 @@
     <string name="flashlight_summary">Turns off when the screen locks</string>
     <string name="no_torch">This device has no flashlight.</string>
     <string name="network">Network</string>
+    <string name="bluetooth">Bluetooth</string>
+    <string name="bluetooth_summary">Turn the Bluetooth radio on or off</string>
+    <string name="no_bluetooth">This device has no Bluetooth.</string>
+    <string name="radios_off">Radios off</string>
+    <string name="radios_off_summary">Turns Wi-Fi and Bluetooth off. Mobile data is not affected.</string>
     <string name="wifi">Wi-Fi</string>
     <string name="wifi_summary">Turn the wireless radio on or off</string>
     <string name="brightness_note">With adaptive brightness on, the device may move the slider itself.</string>

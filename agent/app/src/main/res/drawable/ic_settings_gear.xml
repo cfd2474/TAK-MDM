@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Device Settings tile's icon (W72).
+
+  ⚠️ An adaptive icon, not a bare vector. A launcher tile drawn from a plain
+  drawable is not masked or padded like every other icon on the grid, so it sat
+  at a different visual size next to real app icons. `<adaptive-icon>` is what
+  makes it one of them.
+
+  The gear is the standard settings glyph on purpose: this screen is the kiosk
+  user's Settings, and a bespoke mark would be one more thing to learn on a
+  device whose whole point is that it teaches nothing.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_settings_gear_background" />
+    <foreground android:drawable="@drawable/ic_settings_gear_foreground" />
+    <monochrome android:drawable="@drawable/ic_settings_gear_foreground" />
+</adaptive-icon>

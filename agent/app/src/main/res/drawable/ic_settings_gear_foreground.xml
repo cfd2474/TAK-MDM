@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The gear itself, on the 108dp adaptive-icon canvas.
+
+  ⚠️ Drawn inside the centre 72dp of the 108dp canvas — the safe zone every
+  launcher mask keeps. Anything outside it is cropped, and how much depends on
+  the device's mask shape, so a gear drawn to the edges loses its teeth on a
+  circular mask and keeps them on a squircle.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <group android:translateX="18" android:translateY="18">
+        <path
+            android:fillColor="#FFE7EDF4"
+            android:pathData="M36,22.5c-7.456,0 -13.5,6.044 -13.5,13.5s6.044,13.5 13.5,13.5s13.5,-6.044 13.5,-13.5S43.456,22.5 36,22.5zM36,43.2c-3.977,0 -7.2,-3.223 -7.2,-7.2s3.223,-7.2 7.2,-7.2s7.2,3.223 7.2,7.2S39.977,43.2 36,43.2z" />
+        <path
+            android:fillColor="#FF4FA3E3"
+            android:pathData="M65.7,40.5v-9l-7.94,-1.32c-0.53,-1.98 -1.32,-3.86 -2.33,-5.6l4.68,-6.55l-6.36,-6.36l-6.55,4.68c-1.74,-1.01 -3.62,-1.8 -5.6,-2.33L40.5,6.3h-9l-1.32,7.94c-1.98,0.53 -3.86,1.32 -5.6,2.33l-6.55,-4.68l-6.36,6.36l4.68,6.55c-1.01,1.74 -1.8,3.62 -2.33,5.6L6.3,31.5v9l7.94,1.32c0.53,1.98 1.32,3.86 2.33,5.6l-4.68,6.55l6.36,6.36l6.55,-4.68c1.74,1.01 3.62,1.8 5.6,2.33L31.5,65.7h9l1.32,-7.94c1.98,-0.53 3.86,-1.32 5.6,-2.33l6.55,4.68l6.36,-6.36l-4.68,-6.55c1.01,-1.74 1.8,-3.62 2.33,-5.6L65.7,40.5zM36,54c-9.941,0 -18,-8.059 -18,-18s8.059,-18 18,-18s18,8.059 18,18S45.941,54 36,54z" />
+    </group>
+</vector>

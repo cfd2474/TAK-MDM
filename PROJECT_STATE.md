@@ -356,7 +356,7 @@ device there is no power control at all — `dpm.reboot()` was offered as a
 grant-free alternative and declined. The screen must therefore make a missing
 grant *visible* rather than simply omitting the row.
 
-#### Chunk 1 — the tile's own identity, Bluetooth, Radios off *(this chunk)*
+#### ✅ Chunk 1 — the tile's own identity, Bluetooth, Radios off (COMPLETE)
 1. A gear icon and the label "Settings" on the activity.
 2. ⚠️ The real bug behind the wrong icon: `AppCatalog` reads the **application's**
    label and icon even when the tile names an activity.
@@ -365,6 +365,30 @@ grant *visible* rather than simply omitting the row.
 4. A Radios off control.
 5. Policy fields and tests.
 
+⚠️ **The wrong icon was a real bug, not a missing attribute.** `AppCatalog` read
+the **application's** label and icon even when the tile named an activity — and
+the console and Device Settings are the same package, so both tiles came out
+identical with no way to tell them apart. It now prefers the activity's own, and
+falls back to the application's, which is strictly better: an activity declaring
+neither inherits them anyway.
+
+⚠️ **Bluetooth is achievable after all.** API 33 deprecated
+`BluetoothAdapter.enable()` **for ordinary apps**; device owners and profile
+owners are exempt. Chunk 2 of W71 recorded it as impossible; that was wrong.
+
+⚠️ **Bluetooth does not settle synchronously.** `isEnabled` straight after an
+accepted call still reports the old value, so an accepted call returns what was
+asked for and the switch corrects itself on the next draw. Reading it back the way
+Wi-Fi does would make every successful toggle look like a refusal.
+
+⚠️ **Radios off has its own validator** because it is the only control touching
+*two* restrictions, which `_CONTROL_NEEDS_PERMISSION` cannot express — and the
+message names both, or the operator fixes one and hits the refusal again.
+
+✅ **The gear was rendered and looked at** — and my first renderer painted holes
+with the background colour, which hid the light hub ring and nearly had me delete
+a correct element. On Android that hole is transparent and the ring shows
+through. 844 server tests.
 #### Chunk 2 — the Wi-Fi picker
 Scan, list with signal, join with a password. Needs the keyboard to work inside
 lock task.

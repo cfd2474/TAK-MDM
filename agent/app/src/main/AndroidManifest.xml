@@ -29,6 +29,14 @@
       permissions (auto-granted). The deprecated WifiManager config API
       (addNetwork/removeNetwork) is grandfathered for a Device Owner.
     -->
+    <!--
+      Bluetooth on/off from the kiosk's Device Settings screen (W72).
+
+      A dangerous runtime permission, so `ensureSelfPermissions` grants it as
+      Device Owner - unlike the overlay and accessibility grants, this one needs
+      no person at the device.
+    -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <!--
@@ -94,7 +102,8 @@
             android:exported="true"
             android:excludeFromRecents="true"
             android:noHistory="true"
-            android:label="@string/device_settings_title" />
+            android:icon="@drawable/ic_settings_gear"
+            android:label="@string/settings_tile_title" />
 
         <activity
             android:name=".ui.MainActivity"

@@ -161,6 +161,51 @@ object SettingsViews {
         return row
     }
 
+    /**
+     * A tappable row that does a thing, rather than holding a state.
+     *
+     * ⚠️ For actions with no "on" position to rest in. Drawn as a switch, "Radios
+     * off" would have to spring back the moment either radio came up again, which
+     * reads as the control failing rather than as something that happened.
+     */
+    fun actionRow(
+        context: Context,
+        label: CharSequence,
+        summary: CharSequence?,
+        onTap: () -> Unit,
+    ): View {
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            minimumHeight = dp(context, 56)
+            setPadding(0, dp(context, 10), 0, dp(context, 10))
+            // The platform's own ripple, resolved from the theme rather than
+            // drawn here: a tappable row that does not respond to touch reads as
+            // a label, and the user stops trying.
+            background = android.util.TypedValue().let { out ->
+                context.theme.resolveAttribute(
+                    android.R.attr.selectableItemBackground, out, true,
+                )
+                androidx.core.content.ContextCompat.getDrawable(context, out.resourceId)
+            }
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onTap() }
+        }
+        row.addView(TextView(context).apply {
+            setText(label)
+            setTextAppearance(R.style.TextAppearance_Atlas_Value)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+        })
+        if (!summary.isNullOrBlank()) {
+            row.addView(TextView(context).apply {
+                setText(summary)
+                setTextAppearance(R.style.TextAppearance_Atlas_Label)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            })
+        }
+        return row
+    }
+
     /** A one-line note under a control, for saying why something is unavailable. */
     fun note(context: Context, text: CharSequence): TextView =
         TextView(context).apply {

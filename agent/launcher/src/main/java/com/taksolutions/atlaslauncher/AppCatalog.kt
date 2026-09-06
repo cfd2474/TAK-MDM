@@ -57,6 +57,32 @@ class AppCatalog(private val context: Context) {
             Log.i(TAG, "${ref.packageName} is configured but not installed; skipping")
             return null
         }
+
+        // The activity's own label and icon when the tile names one, and only
+        // then the application's.
+        //
+        // Reading the application's either way is what put the agent's name and
+        // icon on the Device Settings tile: it is the same package as the ATLAS
+        // console, so both tiles came out identical and the user had no way to
+        // tell which was which. An activity that declares no label or icon of its
+        // own inherits the application's, so this is strictly better - there is
+        // no case where the old behaviour was the right answer.
+        val fromActivity = ref.activity?.let { activity ->
+            runCatching {
+                pm.getActivityInfo(android.content.ComponentName(ref.packageName, activity), 0)
+            }.getOrNull()
+        }
+        if (fromActivity != null) {
+            return runCatching {
+                AppEntry(
+                    ref = ref,
+                    label = fromActivity.loadLabel(pm).toString(),
+                    icon = runCatching { fromActivity.loadIcon(pm) }.getOrNull(),
+                    intent = intent,
+                )
+            }.getOrNull()
+        }
+
         return runCatching {
             val info = pm.getApplicationInfo(ref.packageName, 0)
             AppEntry(

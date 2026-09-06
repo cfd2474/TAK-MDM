@@ -93,9 +93,12 @@ class DeviceSettingsActivity : AppCompatActivity() {
             root.addView(deviceCard(volume, flashlight))
         }
 
-        if (DeviceSettingsPlan.offers(kiosk, DeviceSettingsPlan.OFFER_WIFI)) {
+        val wifi = DeviceSettingsPlan.offers(kiosk, DeviceSettingsPlan.OFFER_WIFI)
+        val bluetooth = DeviceSettingsPlan.offers(kiosk, DeviceSettingsPlan.OFFER_BLUETOOTH)
+        val radiosOff = DeviceSettingsPlan.offers(kiosk, DeviceSettingsPlan.OFFER_RADIOS_OFF)
+        if (wifi || bluetooth || radiosOff) {
             root.addView(ConsoleViews.sectionTitle(this, getString(R.string.network)))
-            root.addView(wifiCard())
+            root.addView(networkCard(wifi, bluetooth, radiosOff))
         }
 
         setContentView(ScrollView(this).apply { addView(root) })
@@ -245,19 +248,59 @@ class DeviceSettingsActivity : AppCompatActivity() {
             }
         }
 
-    private fun wifiCard() = ConsoleViews.card(this).also { card ->
-        ConsoleViews.body(card).addView(
-            SettingsViews.switchRow(
-                this, getString(R.string.wifi), getString(R.string.wifi_summary),
-                DeviceControls.isWifiEnabled(this),
-            ) { wanted ->
-                // Reads the state back: setWifiEnabled returns false rather than
-                // throwing when refused, and a switch that stayed where the user
-                // put it while Wi-Fi did not move is the lie this screen avoids.
-                DeviceControls.setWifiEnabled(this, wanted)
+    private fun networkCard(wifi: Boolean, bluetooth: Boolean, radiosOff: Boolean) =
+        ConsoleViews.card(this).also { card ->
+            val body = ConsoleViews.body(card)
+
+            if (wifi) {
+                body.addView(
+                    SettingsViews.switchRow(
+                        this, getString(R.string.wifi), getString(R.string.wifi_summary),
+                        DeviceControls.isWifiEnabled(this),
+                    ) { wanted ->
+                        // Reads the state back: setWifiEnabled returns false rather
+                        // than throwing when refused, and a switch that stayed where
+                        // the user put it while Wi-Fi did not move is the lie this
+                        // screen exists to avoid.
+                        DeviceControls.setWifiEnabled(this, wanted)
+                    }
+                )
             }
-        )
-    }
+
+            if (bluetooth) {
+                if (DeviceControls.hasBluetooth(this)) {
+                    if (wifi) body.addView(ConsoleViews.divider(this))
+                    body.addView(
+                        SettingsViews.switchRow(
+                            this, getString(R.string.bluetooth),
+                            getString(R.string.bluetooth_summary),
+                            DeviceControls.isBluetoothEnabled(this),
+                        ) { wanted -> DeviceControls.setBluetoothEnabled(this, wanted) }
+                    )
+                } else {
+                    body.addView(SettingsViews.note(this, getString(R.string.no_bluetooth)))
+                }
+            }
+
+            if (radiosOff) {
+                body.addView(ConsoleViews.divider(this))
+                // A button, not a switch: it has no "on" state to sit in. A switch
+                // would have to spring back the moment either radio came up again,
+                // which reads as the control failing rather than as a thing done.
+                body.addView(
+                    SettingsViews.actionRow(
+                        this, getString(R.string.radios_off),
+                        getString(R.string.radios_off_summary),
+                    ) {
+                        DeviceControls.setRadiosOff(this)
+                        // Redrawn, because turning the radios off moves the two
+                        // switches above and leaving them showing "on" would be the
+                        // screen contradicting what it just did.
+                        recreate()
+                    }
+                )
+            }
+        }
 
     private fun isAutoBrightness(): Boolean = runCatching {
         Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS_MODE) ==

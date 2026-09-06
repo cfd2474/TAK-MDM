@@ -408,6 +408,21 @@ class KioskSpec(PolicySpec):
         "Flashlight",
         "Let the user turn the torch on and off.",
     )
+    device_setting_bluetooth: Annotated[
+        bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
+    ] = _user_setting(
+        "Bluetooth",
+        "Let the user turn Bluetooth on and off.",
+    )
+    device_setting_radios_off: Annotated[
+        bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
+    ] = _user_setting(
+        "Radios off",
+        "⚠️ One switch that turns Wi-Fi and Bluetooth off together. This is **not** "
+        "airplane mode and does not touch the cellular radio — no app can set "
+        "airplane mode, because it needs a permission no Device Owner can grant "
+        "itself. A device on mobile data stays connected.",
+    )
     device_setting_wifi: Annotated[
         bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
     ] = _user_setting(
@@ -588,6 +603,7 @@ class KioskSpec(PolicySpec):
         "device_setting_volume": "kiosk_allow_volume_change",
         "device_setting_brightness": "kiosk_allow_brightness_change",
         "device_setting_wifi": "kiosk_allow_wifi_config",
+        "device_setting_bluetooth": "kiosk_allow_bluetooth",
     }
 
     @model_validator(mode="after")
@@ -609,6 +625,30 @@ class KioskSpec(PolicySpec):
                 f"{'; '.join(conflicts)}. A control the device is forbidden to "
                 f"change is drawn, dragged, and silently ignored — which reads as a "
                 f"broken device rather than a policy that disagrees with itself"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _radios_off_needs_both_radios(self) -> "KioskSpec":
+        """Refuse a Radios off switch the device is forbidden to act on.
+
+        ⚠️ Its own rule because it is the one control that touches **two**
+        restrictions, which `_CONTROL_NEEDS_PERMISSION` cannot express. Half-working
+        is the worst outcome here: the user taps once expecting to go quiet, one
+        radio stays up, and nothing on the device says which.
+        """
+        if not self.device_setting_radios_off:
+            return self
+        blocked = [
+            name
+            for name in ("kiosk_allow_wifi_config", "kiosk_allow_bluetooth")
+            if getattr(self, name) is False
+        ]
+        if blocked:
+            raise ValueError(
+                f"device_setting_radios_off needs {' and '.join(blocked)} allowed. "
+                f"It turns both radios off at once, and one that the device is "
+                f"forbidden to change would stay up with nothing saying which"
             )
         return self
 

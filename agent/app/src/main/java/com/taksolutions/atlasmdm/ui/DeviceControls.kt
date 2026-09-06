@@ -16,6 +16,8 @@
 
 package com.taksolutions.atlasmdm.ui
 
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
@@ -31,11 +33,16 @@ import com.taksolutions.atlasmdm.diag.AgentLog
  * changed nothing is the failure this screen exists to avoid: the user reports a
  * broken tablet, and every log says the write succeeded.
  *
- * ⚠️ **What is deliberately absent.** Airplane mode cannot be set by any app at
- * all. Bluetooth on/off lost `BluetoothAdapter.enable()` in API 33 in favour of a
- * user-consent intent, which is not something to raise from a locked kiosk. Both
- * appear in the commercial consoles this was modelled on; neither is achievable
- * here, and a control that silently did nothing would be worse than its absence.
+ * ⚠️ **Airplane mode is deliberately absent, and cannot be added.**
+ * `Settings.Global.AIRPLANE_MODE_ON` needs `WRITE_SECURE_SETTINGS`, which a
+ * Device Owner cannot self-grant, and it is not on the `setGlobalSetting`
+ * allowlist. "Radios off" below is the honest substitute: it turns off the two
+ * radios this app can actually reach, and does not pretend to touch the cellular
+ * one.
+ *
+ * ⚠️ **Bluetooth *is* here, contrary to an earlier reading.** API 33 deprecated
+ * `BluetoothAdapter.enable()` for **ordinary apps**; device owners and profile
+ * owners are explicitly exempt, which is what makes this reachable from a DPC.
  */
 object DeviceControls {
 
@@ -104,6 +111,72 @@ object DeviceControls {
                 .get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
         }
     }.getOrNull()
+
+    // ----------------------------------------------------------------------- #
+    // Bluetooth
+    // ----------------------------------------------------------------------- #
+
+    fun hasBluetooth(context: Context): Boolean = adapter(context) != null
+
+    fun isBluetoothEnabled(context: Context): Boolean = adapter(context)?.isEnabled ?: false
+
+    /**
+     * Turn Bluetooth on or off, returning what the device ended up at.
+     *
+     * ⚠️ `enable()` and `disable()` are deprecated and return **false** rather than
+     * throwing when refused — the same shape as Wi-Fi, and the same reason to read
+     * the state back rather than trust the call.
+     *
+     * ⚠️ The radio does not settle synchronously. `isEnabled` immediately after a
+     * successful call still reports the old value, so the caller is told what it
+     * asked for when the call was accepted; the switch corrects itself when the
+     * screen is next drawn. Reporting the stale value instead would make every
+     * successful toggle look like a refusal.
+     */
+    @Suppress("DEPRECATION", "MissingPermission")
+    fun setBluetoothEnabled(context: Context, enabled: Boolean): Boolean {
+        val adapter = adapter(context) ?: return false
+        val accepted = runCatching {
+            if (enabled) adapter.enable() else adapter.disable()
+        }.getOrElse {
+            AgentLog.w(TAG, "could not set Bluetooth: ${it.message}")
+            false
+        }
+        if (accepted) {
+            AgentLog.i(TAG, "Bluetooth turned ${if (enabled) "on" else "off"} from Device Settings")
+        } else {
+            AgentLog.w(
+                TAG,
+                "the platform refused to turn Bluetooth ${if (enabled) "on" else "off"}",
+            )
+        }
+        return if (accepted) enabled else isBluetoothEnabled(context)
+    }
+
+    private fun adapter(context: Context): BluetoothAdapter? =
+        context.getSystemService(BluetoothManager::class.java)?.adapter
+
+    // ----------------------------------------------------------------------- #
+    // Radios off
+    // ----------------------------------------------------------------------- #
+
+    /**
+     * Turn off every radio this app can reach (W72).
+     *
+     * ⚠️ **Not airplane mode, and it does not claim to be.** No app can set
+     * airplane mode, and the cellular radio is untouched. This does what airplane
+     * mode is usually wanted for on a TAK device — go quiet on Wi-Fi and
+     * Bluetooth — and the field description says exactly that, because a control
+     * an operator believes silences a device that is still on cellular would be
+     * worse than no control.
+     *
+     * @return true when everything it can reach is now off.
+     */
+    fun setRadiosOff(context: Context): Boolean {
+        val wifi = !setWifiEnabled(context, false)
+        val bluetooth = if (hasBluetooth(context)) !setBluetoothEnabled(context, false) else true
+        return wifi && bluetooth
+    }
 
     // ----------------------------------------------------------------------- #
     // Wi-Fi
