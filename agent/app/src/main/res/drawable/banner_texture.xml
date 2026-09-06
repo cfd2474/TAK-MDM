@@ -12,10 +12,12 @@
   (640x256 px = 320x128 dp), which is the scale that read as texture rather than
   as an obviously repeating motif; Android rescales it for other densities.
 
-  A `<bitmap>` rather than the flat `atlas_banner_field` colour it replaces. The
-  logo drawn over it carries its own dark field, and the two blend because both
-  are the same near-black navy — #000818 in the pattern against #010915 at the
-  logo's edges.
+  A `<bitmap>` rather than the flat `atlas_banner_field` colour it replaces.
+
+  ⚠️ This is now the *only* thing behind the logo. The logo used to carry its own
+  dark field and merely blend into this; since W66 it is transparent artwork, so
+  the texture shows through it and any change here is visible around every letter
+  — a lighter pattern would leave the chrome outlines with nothing to sit on.
 -->
 <bitmap xmlns:android="http://schemas.android.com/apk/res/android"
     android:src="@drawable/atlas_pattern"

@@ -7595,6 +7595,27 @@ cannot be extended by changing the device's date. It is recorded **before** the
 release, so a crash between the two leaves the device out of kiosk with the reason
 known rather than locked again with no trace.
 
+#### W66 — the console's build number, on the device
+
+The operator could not check that the tablet had taken the build the console
+published: the DPC showed `0.33.0` and the console publishes a **versionCode**.
+Two builds can share a version name, and it is the code that decides an update,
+so the agent version row now reads `0.33.1  (build 71)`.
+
+Banner logo replaced with `Test Files/atlasplain.png`, texture unchanged.
+
+⚠️ The new artwork has a **real alpha channel**; the one it replaced was opaque
+and carried its own dark field. That inverts the old layout constraint — the old
+one had to run edge to edge or its lighter top and bottom read as two seams, and
+this one must *not*, because drawn flush at 64dp the globe's spike touches the
+bar edge. 56dp with 4dp above and below, which keeps the bar's height as it was.
+
+Kept **lossless** (228 KiB): composited over the pattern, lossy left a max
+visible error of 74/255 even at q95, on the chrome outlines where the logo meets
+transparency. Against a 20 MB APK the size is not worth the artefacts.
+
+##### Older
+
 ⚠️ **Left out on purpose:** Hexnode's *"exit manually while an app is open"*. It
 distinguishes their kiosk launcher's home screen from a running app, and ATLAS has
 no launcher — the gesture is always over the kiosk app, so the control would have

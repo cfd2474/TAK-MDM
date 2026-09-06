@@ -14,8 +14,7 @@
     android:background="@color/atlas_navy_deep"
     android:orientation="vertical">
 
-    <!-- Header: the slim ATLAS banner, centred in a bar painted its own field
-         colour so the artwork has no visible edge against it.
+    <!-- Header: the ATLAS logo, centred on the contour texture.
 
          ⚠️ The symmetric 132dp margins are what let the logo be **centred on the
          bar** while the Sync button sits at the end of the same bar. Reserving the
@@ -27,16 +26,20 @@
         android:layout_height="wrap_content"
         android:background="@drawable/banner_texture">
 
-        <!-- ⚠️ No vertical padding, and the height *is* the bar's height. Inset
-             with padding, the artwork's lighter top and bottom edges showed as
-             two horizontal seams and the logo read as a rectangle pasted on the
-             bar. Drawn flush, only its side edges meet the bar — and those are
-             its darkest part, which is what atlas_banner_field is sampled from. -->
+        <!-- ⚠️ 56dp plus 4dp above and below, **not** 64dp flush. The artwork
+             this replaced was opaque and had to run edge to edge, or its lighter
+             top and bottom showed as two seams and it read as a rectangle pasted
+             on the bar. This one has a real alpha channel and sits *on* the
+             texture, so the old constraint is gone — and drawn flush at 64dp the
+             globe's top spike touches the bar edge. The 4dp is the breathing
+             room; the 56+4+4 keeps the bar's height exactly what it was. -->
         <ImageView
             android:id="@+id/header_banner"
             android:layout_width="wrap_content"
-            android:layout_height="64dp"
+            android:layout_height="56dp"
             android:layout_gravity="center"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="4dp"
             android:layout_marginStart="132dp"
             android:layout_marginEnd="132dp"
             android:adjustViewBounds="true"

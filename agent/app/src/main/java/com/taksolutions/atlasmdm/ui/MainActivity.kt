@@ -175,7 +175,16 @@ class MainActivity : AppCompatActivity() {
             addView(ConsoleViews.kv(this@MainActivity, getString(R.string.label_serial), serial(), mono = true))
             addView(ConsoleViews.kv(this@MainActivity, getString(R.string.label_server),
                 config.serverUrl ?: getString(R.string.value_not_set), mono = true))
-            addView(ConsoleViews.kv(this@MainActivity, getString(R.string.label_agent_version), BuildConfig.VERSION_NAME))
+            // Both numbers, because they answer different questions and only one
+            // of them is the one the server acts on. The console publishes a
+            // *versionCode*, and an operator checking whether this device took
+            // that build cannot do it from "0.33.0" alone — two builds can share
+            // a version name, and it is the code that decides an update.
+            addView(ConsoleViews.kv(
+                this@MainActivity,
+                getString(R.string.label_agent_version),
+                "${BuildConfig.VERSION_NAME}  (build ${BuildConfig.VERSION_CODE})",
+            ))
         }
         root.addView(enrolCard)
 
