@@ -3,4 +3,10 @@
     <color name="tile_label">#FFECF2F8</color>
     <color name="tile_label_shadow">#CC000000</color>
     <color name="empty_text">#FFB9C6D4</color>
+    <!-- Translucent so the wallpaper still reads through, dark so nothing on
+         this screen is brighter than an app icon. -->
+    <color name="search_fill">#59000C1A</color>
+    <color name="search_stroke">#4D7C93AD</color>
+    <color name="search_text">#FFECF2F8</color>
+    <color name="search_hint">#99B9C6D4</color>
 </resources>

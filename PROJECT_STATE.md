@@ -401,9 +401,35 @@ one home and it is the launcher's own manifest.
 `slash <= 0` branch made the whole string the package name — a tile that could
 never open anything. No package before the slash now drops the record.
 
-#### Chunk 2 — the four v1 features
-Night mode overlay, Zulu clock, orientation lock, search + favourites; wallpaper
-via `WallpaperManager`. Rendered and looked at before shipping.
+#### ✅ Chunk 2 — the four v1 features (COMPLETE)
+
+⚠️ **Night mode moved to the agent.** It is the one feature that cannot live in
+the launcher: the overlay permission is an **app-op a person grants**, no Device
+Owner can grant it, and the agent already holds it. More to the point, what a
+user reads by night light is ATAK's map — a tint drawn by the launcher would stop
+at its own edges and vanish the moment they opened the app it was for. The
+`night_*` keys are gone from the launcher's config schema and belong to
+`KioskSpec` (Chunk 4). `NightOverlay` caps alpha at 190/255: "100" has to mean
+"as dark as is still usable", because a policy that can blank a field device is
+one someone sets by accident.
+
+⚠️ **Orientation needs two mechanisms and only one always works.**
+`setRequestedOrientation` pins the launcher, always. Pinning *every* app needs
+`WRITE_SETTINGS` — a special permission a person grants through Settings, which
+no Device Owner can grant. Attempted, and its absence logged rather than treated
+as a failure.
+
+⚠️ **Search does not match package names.** It read as a free extra until the
+tests showed `com.atakmap.app.civ` and `com.example.bloomap` both contain "map",
+so every package match undid the word-prefix rule beside it. The person who
+searches by package is at the console, not the kiosk.
+
+✅ **Rendered and looked at, which caught a real fault.** A default `EditText` on
+this transparent wallpapered window drew as a **white slab** — the brightest
+thing on screen, and under the night wash a glaring red panel, the exact opposite
+of what night mode is for. It now has its own dark translucent background.
+
+Search hides itself below 8 tiles: a filter box above four apps is furniture.
 
 #### Chunk 3 — agent side
 Install/remove the launcher on policy, push its config, point HOME at it,

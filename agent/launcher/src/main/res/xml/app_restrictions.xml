@@ -12,6 +12,12 @@
   ⚠️ There is no separate favourites key: a favourite is a flag on the app it
   belongs to, so the two cannot drift apart.
 
+  ⚠️ There are no night-mode keys. Night mode is the agent's, because the agent
+  holds `SYSTEM_ALERT_WINDOW` and can therefore tint ATAK and everything else —
+  which is the whole point of it on a TAK device. A tint drawn by this app would
+  stop at its own edges and disappear the moment the user opened the app they are
+  trying to read by.
+
   ⚠️ There is no wallpaper key. Managed configuration carries small values, not
   images; the Device Owner sets the system wallpaper through `WallpaperManager`
   and this app draws over it.
@@ -83,29 +89,6 @@
         android:description="@string/cfg_clock_zulu_desc"
         android:restrictionType="bool"
         android:defaultValue="true" />
-
-    <restriction
-        android:key="night_mode"
-        android:title="@string/cfg_night_mode"
-        android:description="@string/cfg_night_mode_desc"
-        android:restrictionType="bool"
-        android:defaultValue="false" />
-
-    <restriction
-        android:key="night_hue"
-        android:title="@string/cfg_night_hue"
-        android:description="@string/cfg_night_hue_desc"
-        android:restrictionType="choice"
-        android:entries="@array/night_hue_labels"
-        android:entryValues="@array/night_hue_values"
-        android:defaultValue="red" />
-
-    <restriction
-        android:key="night_level"
-        android:title="@string/cfg_night_level"
-        android:description="@string/cfg_night_level_desc"
-        android:restrictionType="integer"
-        android:defaultValue="50" />
 
     <restriction
         android:key="orientation"

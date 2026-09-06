@@ -1,0 +1,45 @@
+/*
+ * Copyright 2026 TAK-Solutions LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.taksolutions.atlaslauncher
+
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+
+/**
+ * The home screen clock (W68, Chunk 2).
+ *
+ * Pure formatting, taking the instant and the zone rather than reading them, so
+ * the Zulu rule can be tested rather than trusted.
+ */
+object Clock {
+
+    /**
+     * ⚠️ `HHmmss'Z'` — TAK convention, not `HH:mm:ss UTC`. On a device whose whole
+     * purpose is coordinating with other people on a shared time reference, the
+     * trailing Z is what says *which* reference, and it is the form those people
+     * read on every other surface they use.
+     */
+    private val ZULU: DateTimeFormatter = DateTimeFormatter.ofPattern("HHmmss'Z'")
+
+    /** Local time keeps the separators, because nothing depends on reading it fast. */
+    private val LOCAL: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
+
+    fun format(instant: Instant, zulu: Boolean, zone: ZoneId): String =
+        if (zulu) ZULU.format(instant.atZone(ZoneId.of("UTC")))
+        else LOCAL.format(instant.atZone(zone))
+}

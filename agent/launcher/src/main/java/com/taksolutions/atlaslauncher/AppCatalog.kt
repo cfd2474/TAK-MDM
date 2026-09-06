@@ -25,10 +25,10 @@ import android.util.Log
 /** One tile: what to draw, and what to start. */
 data class AppEntry(
     val ref: LauncherConfig.AppRef,
-    val label: String,
+    override val label: String,
     val icon: Drawable?,
     val intent: Intent,
-)
+) : Filtering.Searchable
 
 /**
  * Turns the configured references into things that can actually be drawn and

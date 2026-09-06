@@ -25,6 +25,9 @@ package com.taksolutions.atlaslauncher
  * The failure mode of a launcher that refuses to start is a device that needs
  * physical recovery, so the parser's job is to salvage, not to validate.
  *
+ * ⚠️ Night mode is deliberately absent. It belongs to the agent, which holds the
+ * overlay permission and can tint every app rather than only this one.
+ *
  * ⚠️ It reads a [Source], not a `Bundle`, and that is not ceremony. Under plain
  * JVM unit tests `Bundle` is a stub whose getters return defaults, so a test
  * written against one would pass no matter what this parser did — the salvage
@@ -38,10 +41,6 @@ data class LauncherConfig(
     val showSearch: Boolean = true,
     val showClock: Boolean = true,
     val clockZulu: Boolean = true,
-    val nightMode: Boolean = false,
-    val nightHue: NightHue = NightHue.RED,
-    /** 0 = no dimming, 100 = as dark as the overlay goes. */
-    val nightLevel: Int = DEFAULT_NIGHT_LEVEL,
     val orientation: Orientation = Orientation.AUTO,
 ) {
 
@@ -54,20 +53,6 @@ data class LauncherConfig(
 
     /** The pinned subset, in the same order. Cannot disagree with [apps]. */
     val favorites: List<AppRef> get() = apps.filter { it.favorite }
-
-    enum class NightHue(val key: String, val color: Int) {
-        // Red first because it is the default and the reason the feature exists:
-        // it preserves dark adaptation in a way amber and green do not.
-        RED("red", 0xFFFF0000.toInt()),
-        AMBER("amber", 0xFFFFBF00.toInt()),
-        GREEN("green", 0xFF00FF00.toInt()),
-        ;
-
-        companion object {
-            fun from(value: String?): NightHue =
-                entries.firstOrNull { it.key.equals(value?.trim(), ignoreCase = true) } ?: RED
-        }
-    }
 
     enum class Orientation(val key: String) {
         AUTO("auto"),
@@ -83,7 +68,6 @@ data class LauncherConfig(
 
     companion object {
         const val DEFAULT_COLUMNS = 4
-        const val DEFAULT_NIGHT_LEVEL = 50
 
         /**
          * ⚠️ Clamped, not rejected. A column count of 0 divides by zero in a grid
@@ -103,9 +87,6 @@ data class LauncherConfig(
         const val KEY_SHOW_SEARCH = "show_search"
         const val KEY_SHOW_CLOCK = "show_clock"
         const val KEY_CLOCK_ZULU = "clock_zulu"
-        const val KEY_NIGHT_MODE = "night_mode"
-        const val KEY_NIGHT_HUE = "night_hue"
-        const val KEY_NIGHT_LEVEL = "night_level"
         const val KEY_ORIENTATION = "orientation"
 
         /**
@@ -137,10 +118,6 @@ data class LauncherConfig(
                 showSearch = source.bool(KEY_SHOW_SEARCH, true),
                 showClock = source.bool(KEY_SHOW_CLOCK, true),
                 clockZulu = source.bool(KEY_CLOCK_ZULU, true),
-                nightMode = source.bool(KEY_NIGHT_MODE, false),
-                nightHue = NightHue.from(source.string(KEY_NIGHT_HUE)),
-                nightLevel = source.int(KEY_NIGHT_LEVEL, DEFAULT_NIGHT_LEVEL)
-                    .coerceIn(0, 100),
                 orientation = Orientation.from(source.string(KEY_ORIENTATION)),
             )
         }

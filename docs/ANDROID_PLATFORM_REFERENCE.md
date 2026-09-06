@@ -1262,6 +1262,48 @@ uniformly and invites the assumption.
 latch like every other DPM setter, so one left behind follows the device out of
 kiosk and nothing else will ever take it off.
 
+### A launcher cannot see other apps (W68)
+
+⚠️ From Android 11 an ordinary app cannot enumerate installed packages, and a
+launcher without `<queries>` gets an **empty grid with nothing logged** —
+filtering is indistinguishable from "not installed". The agent never hit this: a
+**Device Owner is exempt** from package visibility filtering. A separate launcher
+APK is not the Device Owner and is not exempt.
+
+```xml
+<queries><intent>
+  <action android:name="android.intent.action.MAIN" />
+  <category android:name="android.intent.category.LAUNCHER" />
+</intent></queries>
+```
+
+`QUERY_ALL_PACKAGES` also works and is what most launchers reach for; the intent
+query is enough when everything shown is launchable by definition.
+
+### Two mechanisms pin orientation, and only one always works (W68)
+
+`setRequestedOrientation` pins the **calling activity** and needs no permission —
+so a launcher can pin itself but not the kiosk app the user actually looks at.
+
+`Settings.System.ACCELEROMETER_ROTATION` / `USER_ROTATION` pin every app and need
+`WRITE_SETTINGS`. ⚠️ That is a **special permission a person grants through
+Settings**; no Device Owner can grant it, because `setPermissionGrantState` does
+not reach app-ops. Attempt it and log its absence — do not treat it as a failure,
+because the visible half still works.
+
+### A full-screen overlay must never take a touch (W68)
+
+`TYPE_APPLICATION_OVERLAY` across the whole screen is how a DPC tints every app
+(night mode). ⚠️ Without `FLAG_NOT_TOUCHABLE` **and** `FLAG_NOT_FOCUSABLE` it
+swallows all input, which on a wall-mounted device is a brick recoverable only by
+removing the policy — and under a red wash the user cannot even see what is
+wrong. Add `FLAG_LAYOUT_IN_SCREEN | FLAG_LAYOUT_NO_LIMITS` or the status and
+navigation bars stay untinted as two bright strips.
+
+Recolour the existing view rather than remove-and-re-add: the gap between the two
+flashes the untinted screen, which at night is the one thing the feature exists
+to prevent.
+
 ### Entering lock task is not idempotent (W67) ✅ observed
 
 `startActivity(intent, ActivityOptions.makeBasic().setLockTaskEnabled(true))` is

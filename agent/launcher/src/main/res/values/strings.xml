@@ -22,12 +22,6 @@
     <string name="cfg_show_clock_desc">A clock across the top of the home screen.</string>
     <string name="cfg_clock_zulu">Zulu time</string>
     <string name="cfg_clock_zulu_desc">Show the clock in UTC rather than the device time zone.</string>
-    <string name="cfg_night_mode">Night mode</string>
-    <string name="cfg_night_mode_desc">Tint the screen to preserve dark adaptation.</string>
-    <string name="cfg_night_hue">Night mode colour</string>
-    <string name="cfg_night_hue_desc">Red preserves dark adaptation best; amber and green are easier to read by.</string>
-    <string name="cfg_night_level">Night mode strength</string>
-    <string name="cfg_night_level_desc">0 leaves the screen alone, 100 is as dark as the tint goes.</string>
     <string name="cfg_orientation">Screen orientation</string>
     <string name="cfg_orientation_desc">Pin the kiosk to portrait or landscape, or let the device rotate.</string>
 </resources>

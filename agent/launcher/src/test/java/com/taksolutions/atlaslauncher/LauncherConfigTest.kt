@@ -17,7 +17,6 @@
 package com.taksolutions.atlaslauncher
 
 import com.taksolutions.atlaslauncher.LauncherConfig.AppRef
-import com.taksolutions.atlaslauncher.LauncherConfig.NightHue
 import com.taksolutions.atlaslauncher.LauncherConfig.Orientation
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -56,7 +55,6 @@ class LauncherConfigTest {
         assertEquals(LauncherConfig.DEFAULT_COLUMNS, c.columns)
         assertTrue(c.apps.isEmpty())
         assertEquals(Orientation.AUTO, c.orientation)
-        assertEquals(NightHue.RED, c.nightHue)
     }
 
     @Test
@@ -126,20 +124,12 @@ class LauncherConfigTest {
     }
 
     @Test
-    fun `night level is held inside its range`() {
-        assertEquals(0, config("night_level" to -10).nightLevel)
-        assertEquals(100, config("night_level" to 900).nightLevel)
-    }
-
-    @Test
-    fun `an unknown hue or orientation falls back rather than throwing`() {
-        assertEquals(NightHue.RED, config("night_hue" to "chartreuse").nightHue)
+    fun `an unknown orientation falls back rather than throwing`() {
         assertEquals(Orientation.AUTO, config("orientation" to "sideways").orientation)
     }
 
     @Test
-    fun `hue and orientation are read case-insensitively`() {
-        assertEquals(NightHue.AMBER, config("night_hue" to "  AMBER ").nightHue)
+    fun `orientation is read case-insensitively`() {
         assertEquals(Orientation.PORTRAIT, config("orientation" to "Portrait").orientation)
     }
 
