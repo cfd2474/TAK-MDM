@@ -1015,6 +1015,13 @@ class PolicyApplier(private val context: Context) {
             dpm.clearPackagePersistentPreferredActivities(admin, context.packageName)
         }.onFailure { failures += "kiosk: could not restore the home screen - ${it.message}" }
 
+        // Here rather than in the callers, because this is the one place the
+        // device actually leaves lock task — the on-device passcode exit reaches
+        // it too. Re-entering kiosk later must force a real relaunch, not
+        // re-front an app that is no longer locked to anything (W67).
+        config.kioskLaunched = null
+        config.kioskLaunchedAtElapsed = 0L
+
         return failures
     }
 
@@ -1052,18 +1059,34 @@ class PolicyApplier(private val context: Context) {
                 ?: return listOf("kiosk: $packageName has no launchable activity")
         }
 
-        // CLEAR_TASK forces a relaunch. Without it an app that is already running
-        // stays exactly as it is, outside lock task, and the kiosk silently is not
-        // one.
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        // ⚠️ CLEAR_TASK is right **once** and destructive every time after: see
+        // KioskLaunchPlan, which owns the decision and says why (W67).
+        val component = (activity?.let { "$packageName/$it" } ?: packageName)
+        val now = android.os.SystemClock.elapsedRealtime()
+        val action = KioskLaunchPlan.decide(
+            wanted = component,
+            launched = config.kioskLaunched,
+            launchedAtElapsed = config.kioskLaunchedAtElapsed,
+            nowElapsed = now,
+        )
+        val fresh = action == KioskLaunchPlan.Action.RELAUNCH
+
+        intent.addFlags(
+            if (fresh) Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        )
         val options = ActivityOptions.makeBasic().setLockTaskEnabled(true).toBundle()
 
         return runCatching {
             context.startActivity(intent, options)
+            config.kioskLaunched = component
+            config.kioskLaunchedAtElapsed = now
+            // Says which of the two happened, because "launched" logged every two
+            // minutes was the symptom and read as normal.
             AgentLog.i(
                 TAG,
-                "kiosk: launched " + (activity?.let { "$packageName/$it" } ?: packageName) +
-                    " into lock task"
+                if (fresh) "kiosk: launched $component into lock task"
+                else "kiosk: $component already in lock task; brought to front"
             )
             emptyList<String>()
         }.getOrElse {

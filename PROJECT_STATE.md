@@ -7595,6 +7595,30 @@ cannot be extended by changing the device's date. It is recorded **before** the
 release, so a crash between the two leaves the device out of kiosk with the reason
 known rather than locked again with no trace.
 
+#### W67 — the kiosk app was being restarted every two minutes
+
+Reported as "applied a kiosk policy for ATAK and it crashes". It was not
+crashing: `applyKiosk` runs on every sync and launched the kiosk app with
+`FLAG_ACTIVITY_CLEAR_TASK` every time, which destroys the task and cold-starts
+the app. ATAK was being killed and restarted every two minutes.
+
+⚠️ **It failed green.** Every relaunch succeeded, so no exception, no policy
+failure, no compliance change — the console showed the device healthy the whole
+time. The only trace was `kiosk: launched … into lock task` repeating in the
+agent's own log, which reads as normal operation. Found by pulling that log with
+`COLLECT_LOGS`; adb was not needed and would not have been quicker.
+
+The decision moved into `KioskLaunchPlan` (the `*Plan` pattern) because the bug
+was in *when* the launch happened, not how — and a pure decision can be tested
+without a device. Verified the test fails against the old always-relaunch
+behaviour before keeping it.
+
+The marker is cleared in `releaseKiosk`, which is the one place the device
+actually leaves lock task, so the on-device passcode exit is covered too.
+
+⚠️ Still unconfirmed: whether ATAK **also** has a genuine crash under lock task.
+Only `logcat` shows that, and adb does not connect to this tablet.
+
 #### W66 — the console's build number, on the device
 
 The operator could not check that the tablet had taken the build the console

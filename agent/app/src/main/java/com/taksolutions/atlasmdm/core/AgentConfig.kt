@@ -180,6 +180,33 @@ class AgentConfig(context: Context) {
         set(value) = prefs.edit { putLong(KEY_KIOSK_EXITED, value) }
 
     /**
+     * The kiosk component this agent has already launched into lock task (W67).
+     *
+     * ⚠️ Exists to stop the applier **cold-starting the kiosk app on every sync**.
+     * `launchIntoLockTask` uses `FLAG_ACTIVITY_CLEAR_TASK`, which is right the
+     * first time — an app already running when kiosk arrives would otherwise stay
+     * up *outside* lock task — and destructive every time after, because it tears
+     * the task down and starts the app again. On a two-minute sync that is a heavy
+     * app restarting forever, which reads as the app crashing.
+     *
+     * Stored as "package/activity" so a change of either counts as new.
+     */
+    var kioskLaunched: String?
+        get() = prefs.getString(KEY_KIOSK_LAUNCHED, null)
+        set(value) = prefs.edit { putString(KEY_KIOSK_LAUNCHED, value) }
+
+    /**
+     * `elapsedRealtime` when that launch happened, which is how a reboot is seen.
+     *
+     * A stored value **greater than the current** elapsed time can only mean the
+     * clock restarted, so the device has rebooted and nothing is in lock task any
+     * more — the next apply must force a real relaunch rather than a re-front.
+     */
+    var kioskLaunchedAtElapsed: Long
+        get() = prefs.getLong(KEY_KIOSK_LAUNCHED_AT, 0L)
+        set(value) = prefs.edit { putLong(KEY_KIOSK_LAUNCHED_AT, value) }
+
+    /**
      * Command outcomes awaiting delivery, each a serialised result object.
      *
      * Persisted rather than held in memory: a command executed just before the
@@ -311,6 +338,8 @@ class AgentConfig(context: Context) {
         private const val KEY_LAST_ERROR = "last_error"
         private const val KEY_LAST_SYNC = "last_sync_at"
         private const val KEY_KIOSK_EXITED = "kiosk_exited_at_elapsed"
+        private const val KEY_KIOSK_LAUNCHED = "kiosk_launched_component"
+        private const val KEY_KIOSK_LAUNCHED_AT = "kiosk_launched_at_elapsed"
         private const val KEY_WALLPAPER_SHA = "applied_wallpaper_sha"
         private const val KEY_SAVED_SCREEN_TIMEOUT = "saved_screen_timeout_ms"
         private const val KEY_APPLY_ERRORS = "last_apply_errors"

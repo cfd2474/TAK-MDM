@@ -1262,6 +1262,32 @@ uniformly and invites the assumption.
 latch like every other DPM setter, so one left behind follows the device out of
 kiosk and nothing else will ever take it off.
 
+### Entering lock task is not idempotent (W67) ✅ observed
+
+`startActivity(intent, ActivityOptions.makeBasic().setLockTaskEnabled(true))` is
+how a Device Owner puts an app into lock task, and `FLAG_ACTIVITY_CLEAR_TASK` is
+what makes it work on an app that is **already running** — without it the app
+stays up exactly as it is, outside lock task, and the kiosk silently is not one.
+
+⚠️ **That same flag is destructive on every call after the first.** It tears the
+task down and cold-starts the app. A DPC that applies policy on a timer therefore
+restarts its kiosk app on every reconcile — every two minutes here — which on a
+heavy app (ATAK: maps, plugins, a long startup) is indistinguishable from the app
+crashing in a loop.
+
+⚠️ **It fails green.** Each relaunch succeeds, so there is no exception, no policy
+failure and no compliance change; the console shows a healthy device. The only
+trace is the DPC's own log saying it launched the app, over and over, which reads
+as normal operation. There is no API to ask "is this package already in lock
+task" — `ActivityManager.getLockTaskModeState()` answers only for the caller's own
+task — so the DPC has to remember what it launched.
+
+Front an already-launched kiosk with `NEW_TASK or SINGLE_TOP` instead: a no-op
+when it is in front, and it recovers the kiosk if anything got on top of it.
+Force the relaunch again only when the component changes or the device reboots —
+and detect the reboot with `elapsedRealtime`, since after a restart nothing is in
+lock task and fronting would leave the device unlocked.
+
 ### Getting out **on the device** (W65)
 
 A Device Owner can release its own kiosk: clearing the allowlist ejects the locked
