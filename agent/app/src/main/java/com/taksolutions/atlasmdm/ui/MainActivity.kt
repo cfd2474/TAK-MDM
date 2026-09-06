@@ -413,18 +413,7 @@ class MainActivity : AppCompatActivity() {
                 // on purpose: the device installs it whether anyone asks or not,
                 // so a button would imply a choice the user does not have.
                 if (offered && available && (installed == null || installed < wanted)) {
-                    addView(MaterialButton(this@MainActivity).apply {
-                        text = getString(
-                            if (installed == null) R.string.action_install
-                            else R.string.action_update
-                        )
-                        isEnabled = !installingPackage.contains(pkg)
-                        if (!isEnabled) text = getString(R.string.action_installing)
-                        setOnClickListener { installOffered(app) }
-                        layoutParams = LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                        ).apply { topMargin = ConsoleViews.dp(this@MainActivity, 10) }
-                    })
+                    addView(installRow(app, pkg, fresh = installed == null))
                 }
             }
             root.addView(card)
@@ -433,36 +422,154 @@ class MainActivity : AppCompatActivity() {
         root.addView(hintSync())
     }
 
-    /** Packages with a user-initiated install in flight, so the button can say so. */
-    private val installingPackage = mutableSetOf<String>()
+    /** A store install in flight, and how far it has got (W58). */
+    private class Install(
+        @Volatile var phase: Reconciler.InstallPhase = Reconciler.InstallPhase.DOWNLOADING,
+        @Volatile var read: Long = 0,
+        @Volatile var total: Long = 0,
+        val cancel: java.util.concurrent.atomic.AtomicBoolean =
+            java.util.concurrent.atomic.AtomicBoolean(false),
+    )
+
+    private val installs = mutableMapOf<String, Install>()
+
+    /** Bar and label per package, so the worker can update them without a render. */
+    private val progressViews = mutableMapOf<String, Pair<android.widget.ProgressBar, TextView>>()
 
     /**
-     * Install a store app the user asked for (W56).
+     * The Install button — or, while one is running, a progress bar and Cancel.
+     *
+     * ⚠️ The two phases fail and feel differently, so the row says which it is in.
+     * **Downloading** is slow, measurable and safely abandonable. **Installing** is
+     * `PackageInstaller` committing: quick, unmeasurable, and *not* safe to abandon,
+     * because Android is mutating the package by then. Hence a determinate bar and
+     * a live Cancel for the first, an indeterminate bar and a dead one for the
+     * second.
+     */
+    private fun installRow(entry: JSONObject, pkg: String, fresh: Boolean): LinearLayout {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = ConsoleViews.dp(this@MainActivity, 10) }
+        }
+
+        val running = installs[pkg]
+
+        row.addView(MaterialButton(this).apply {
+            text = getString(
+                when {
+                    running != null -> R.string.action_cancel
+                    fresh -> R.string.action_install
+                    else -> R.string.action_update
+                }
+            )
+            isEnabled = running == null || running.phase == Reconciler.InstallPhase.DOWNLOADING
+            setOnClickListener {
+                if (running != null) running.cancel.set(true) else installOffered(entry)
+            }
+        })
+
+        if (running != null) {
+            val bar = android.widget.ProgressBar(
+                this, null, android.R.attr.progressBarStyleHorizontal
+            ).apply {
+                max = 100
+                isIndeterminate = running.phase == Reconciler.InstallPhase.INSTALLING
+                progress = percentOf(running)
+                layoutParams = LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+                ).apply { marginStart = ConsoleViews.dp(this@MainActivity, 12) }
+            }
+            val label = TextView(this).apply {
+                text = progressText(running)
+                setTextAppearance(R.style.TextAppearance_Atlas_Mono)
+                textSize = 12f
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { marginStart = ConsoleViews.dp(this@MainActivity, 8) }
+            }
+            row.addView(bar)
+            row.addView(label)
+            progressViews[pkg] = bar to label
+        }
+        return row
+    }
+
+    private fun percentOf(state: Install): Int =
+        if (state.total <= 0) 0 else ((state.read * 100) / state.total).toInt().coerceIn(0, 100)
+
+    private fun progressText(state: Install): String = when (state.phase) {
+        Reconciler.InstallPhase.INSTALLING -> getString(R.string.action_installing)
+        Reconciler.InstallPhase.DOWNLOADING ->
+            if (state.total <= 0) getString(R.string.action_downloading)
+            else getString(R.string.progress_downloading, percentOf(state))
+    }
+
+    /**
+     * Install a store app the user asked for (W56; progress and cancel in W58).
      *
      * Off the main thread: this downloads tens of megabytes and then blocks on
-     * `PackageInstaller`. The button is disabled while it runs because the install
-     * is not instant and a second tap would start the whole download again.
+     * `PackageInstaller`.
+     *
+     * ⚠️ The bar is updated **in place** by the worker, never by re-rendering the
+     * list. The progress callback fires once per 8 KB buffer — roughly two thousand
+     * times for a 16 MB app — and rebuilding every card at that rate would make the
+     * screen unusable, so only a whole-percent change reaches the main thread.
      */
     private fun installOffered(entry: JSONObject) {
         val pkg = entry.optString("package_name")
-        if (!installingPackage.add(pkg)) return
+        if (installs.containsKey(pkg)) return
+        val state = Install()
+        installs[pkg] = state
         render()
 
         lifecycleScope.launch {
-            val failure = withContext(Dispatchers.IO) {
-                runCatching { Reconciler(applicationContext).installFromStore(entry) }
-                    .getOrElse { it.message ?: "the install could not be started" }
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching {
+                    Reconciler(applicationContext).installFromStore(
+                        entry,
+                        onProgress = { phase, read, total ->
+                            val wasWhole = percentOf(state)
+                            val changedPhase = phase != state.phase
+                            state.phase = phase
+                            state.read = read
+                            state.total = if (total > 0) total else state.total
+                            if (changedPhase || percentOf(state) != wasWhole) {
+                                runOnUiThread { paintProgress(pkg, state) }
+                            }
+                        },
+                        isCancelled = { state.cancel.get() },
+                    )
+                }.getOrElse {
+                    Reconciler.StoreInstall.Failed(it.message ?: "the install could not be started")
+                }
             }
-            installingPackage.remove(pkg)
-            Toast.makeText(
-                this@MainActivity,
-                if (failure == null) getString(R.string.install_ok, appLabel(pkg, entry.str("label")))
-                else getString(R.string.install_failed, appLabel(pkg, entry.str("label")), failure),
-                Toast.LENGTH_LONG,
-            ).show()
+
+            installs.remove(pkg)
+            progressViews.remove(pkg)
+            val name = appLabel(pkg, entry.str("label"))
+            when (outcome) {
+                is Reconciler.StoreInstall.Done -> toast(getString(R.string.install_ok, name))
+                is Reconciler.StoreInstall.Cancelled ->
+                    toast(getString(R.string.install_cancelled, name))
+                is Reconciler.StoreInstall.Failed ->
+                    toast(getString(R.string.install_failed, name, outcome.reason))
+            }
             render()
         }
     }
+
+    private fun paintProgress(pkg: String, state: Install) {
+        val (bar, label) = progressViews[pkg] ?: return
+        bar.isIndeterminate = state.phase == Reconciler.InstallPhase.INSTALLING
+        if (!bar.isIndeterminate) bar.progress = percentOf(state)
+        label.text = progressText(state)
+    }
+
+    private fun toast(message: String) =
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
     /**
      * The Available / Installed / Updates selector.

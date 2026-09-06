@@ -262,14 +262,33 @@ class ApiClient(private val config: AgentConfig) {
         }.getOrDefault(false)
     }
 
-    fun downloadArtifact(sha256: String, destination: File): Boolean =
+    /**
+     * @param onProgress bytes-so-far and total, for a caller drawing a bar. Called
+     *   on the calling (background) thread, once per buffer.
+     * @param isCancelled polled between buffers. A cancelled transfer leaves its
+     *   `.part` behind on purpose, so resuming later costs only what is missing.
+     */
+    fun downloadArtifact(
+        sha256: String,
+        destination: File,
+        onProgress: ((Long, Long) -> Unit)? = null,
+        isCancelled: (() -> Boolean)? = null,
+    ): Boolean =
         synchronized(downloadLockFor(sha256)) {
             // A concurrent pass may have finished it while this one waited.
             if (destination.exists() && sha256Of(destination) == sha256.lowercase()) return true
-            downloadLocked(sha256, destination)
+            downloadLocked(sha256, destination, onProgress, isCancelled)
         }
 
-    private fun downloadLocked(sha256: String, destination: File): Boolean {
+    /** Thrown to unwind a transfer the caller asked to stop. */
+    class TransferCancelled : java.io.IOException("cancelled")
+
+    private fun downloadLocked(
+        sha256: String,
+        destination: File,
+        onProgress: ((Long, Long) -> Unit)? = null,
+        isCancelled: (() -> Boolean)? = null,
+    ): Boolean {
         destination.parentFile?.mkdirs()
         val part = File(destination.parentFile, "${destination.name}.part")
         val existing = if (part.exists()) part.length() else 0L
@@ -286,10 +305,11 @@ class ApiClient(private val config: AgentConfig) {
                     // Already hold the whole file, or the local copy is longer than
                     // the remote. Verification below decides which.
                 }
-                response.code == 206 -> written = appendBody(response, part, append = true)
+                response.code == 206 ->
+                    written = appendBody(response, part, true, existing, onProgress, isCancelled)
                 response.isSuccessful -> {
                     part.delete()
-                    written = appendBody(response, part, append = false)
+                    written = appendBody(response, part, false, 0L, onProgress, isCancelled)
                 }
                 else -> throw ApiException(response.code, response.message)
             }
@@ -315,14 +335,40 @@ class ApiClient(private val config: AgentConfig) {
         return false
     }
 
-    /** Returns the number of bytes written, so a short body can be detected. */
-    private fun appendBody(response: Response, destination: File, append: Boolean): Long {
+    /**
+     * Copy the body out, returning the bytes written so a short one is detectable.
+     *
+     * ⚠️ An explicit loop rather than `copyTo`, which can neither report progress
+     * nor be interrupted. [alreadyOnDisk] is added to the running total so a
+     * resumed transfer measures the **whole file**, not the remainder — a bar that
+     * jumps to 70% and crawls is worse than no bar.
+     */
+    private fun appendBody(
+        response: Response,
+        destination: File,
+        append: Boolean,
+        alreadyOnDisk: Long,
+        onProgress: ((Long, Long) -> Unit)?,
+        isCancelled: (() -> Boolean)?,
+    ): Long {
         val body = response.body ?: return 0L
-        return body.byteStream().use { input ->
+        val total = body.contentLength().let { if (it >= 0) it + alreadyOnDisk else -1L }
+        var written = 0L
+
+        body.byteStream().use { input ->
             java.io.FileOutputStream(destination, append).use { output ->
-                input.copyTo(output, DEFAULT_BUFFER_SIZE)
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    if (isCancelled?.invoke() == true) throw TransferCancelled()
+                    val read = input.read(buffer)
+                    if (read <= 0) break
+                    output.write(buffer, 0, read)
+                    written += read
+                    onProgress?.invoke(alreadyOnDisk + written, total)
+                }
             }
         }
+        return written
     }
 
     private fun Response.readJson(): JSONObject = use {

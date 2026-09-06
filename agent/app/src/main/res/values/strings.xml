@@ -103,4 +103,8 @@
     <string name="action_installing">Installing…</string>
     <string name="install_ok">%1$s installed</string>
     <string name="install_failed">%1$s could not be installed: %2$s</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_downloading">Downloading…</string>
+    <string name="progress_downloading">%1$d%%</string>
+    <string name="install_cancelled">%1$s install cancelled</string>
 </resources>

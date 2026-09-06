@@ -7261,6 +7261,57 @@ Two in a row through the fixed downloader, against a bug that previously cost fi
 attempts three times running. Still short of proof — 61 managed one attempt on the
 old code — but the pattern is now going the right way and each build adds a sample.
 
+#### 🔻 W58 — Progress and cancel for a store install
+
+Operator: a **progress bar beside the Install button**, the button becoming
+**Cancel** while it runs, and the bar turning into **Installing** for the second
+phase.
+
+The install is two phases that fail and feel differently, and the UI has to say
+which one it is in. **Downloading** is 15–20 MB over the device link: slow,
+measurable, and safely abandonable. **Installing** is `PackageInstaller`
+committing: quick, unmeasurable, and *not* safely abandonable — Android is
+mutating the package at that point. So Cancel is offered for the first phase only.
+
+##### Plan (5 steps)
+
+1. `ApiClient.downloadArtifact` gains an optional progress callback and a
+   cancellation check. ⚠️ Must not disturb the W-fix discipline it now carries:
+   the per-hash lock, the `.part` file, verify-then-rename, and the
+   `Content-Length` short-read check.
+2. `copyTo` cannot report progress, so the copy becomes an explicit loop that
+   counts bytes and polls for cancellation between buffers.
+3. `installFromStore` reports `DOWNLOADING` (with bytes) then `INSTALLING`, and
+   returns a three-way result — done, cancelled, failed — rather than a
+   string, so "the user changed their mind" cannot be shown as an error.
+4. Progress spans **all parts** of a split app, summed from the entry's
+   `size_bytes`, so the bar measures the install rather than one file of several.
+5. ⚠️ The UI updates the bar **in place**, not by re-rendering the list. The
+   callback fires per 8 KB buffer — thousands of times for a 16 MB app — and
+   rebuilding every card at that rate would make the screen unusable. Posted only
+   when the whole percent changes.
+
+##### ✅ Built as agent 0.27.0 (64)
+
+🐛 **A near miss worth recording.** The first attempt patched `MainActivity` by
+slicing between two text markers, and the region between them contained
+`appsTabBar` and `renderFiles` — both silently deleted. The Kotlin compiler caught
+it (`Unresolved reference`), but only because they were referenced elsewhere; a
+private helper used once would have vanished without complaint. Reverted and
+redone as two exact-match edits instead. **Do not delete code by line range when
+an exact-match replacement will do.**
+
+`copyTo` had to become an explicit read/write loop — it can neither report
+progress nor be interrupted. Cancellation unwinds through a dedicated
+`TransferCancelled`, and the `.part` file is deliberately **left behind**: a user
+who changes their mind and retries then pays only for what is missing, and the
+verify-then-rename discipline means an abandoned partial can never be mistaken for
+a finished download.
+
+A resumed transfer adds what is already on disk to the running total, so the bar
+measures the **whole file**. Reporting only the remainder would make a resumed
+download start at 70% and crawl, which is worse than showing nothing.
+
 | # | Chunk | Notes |
 |---|---|---|
 | 7 | **Knox layer** | Planned in detail below |

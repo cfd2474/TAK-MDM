@@ -1053,11 +1053,47 @@ class Reconciler(private val context: Context) {
      * one of the two callers is always being told rules it should not obey.
      * The duplication here is a dozen lines of download-and-install.
      */
-    fun installFromStore(entry: JSONObject): String? {
-        val packageName = entry.optString("package_name")
-        if (packageName.isBlank()) return "this app has no package name"
+    /** Which half of a store install is running, so the UI can say (W58). */
+    enum class InstallPhase { DOWNLOADING, INSTALLING }
 
-        val files = entry.optJSONArray("files") ?: return "nothing to install"
+    /**
+     * How a store install ended.
+     *
+     * ⚠️ Three outcomes, not two. A user who pressed Cancel has not suffered a
+     * failure, and reporting one would be a lie the screen then has to show them.
+     */
+    sealed interface StoreInstall {
+        data object Done : StoreInstall
+        data object Cancelled : StoreInstall
+        data class Failed(val reason: String) : StoreInstall
+    }
+
+    /**
+     * Install an app the user chose from the ATLAS store (W56).
+     *
+     * ⚠️ Called from the Apps screen, never from [sync]. A store entry is an
+     * **offer**: the reconciler reads `apps` and must go on reading only `apps`,
+     * or listing something in the store would silently install it on every device
+     * — which is the opposite of what the store is for.
+     *
+     * Deliberately not folded into [reconcileApps]. That function carries the
+     * downgrade, pinning and OBB rules that make a *required* app converge, and
+     * none of them apply to a user tapping install; sharing the path would mean
+     * one of the two callers is always being told rules it should not obey.
+     *
+     * [isCancelled] is honoured **only while downloading**. Once
+     * `PackageInstaller` is committing, Android is mutating the package and there
+     * is nothing safe left to abandon (W58).
+     */
+    fun installFromStore(
+        entry: JSONObject,
+        onProgress: ((InstallPhase, Long, Long) -> Unit)? = null,
+        isCancelled: (() -> Boolean)? = null,
+    ): StoreInstall {
+        val packageName = entry.optString("package_name")
+        if (packageName.isBlank()) return StoreInstall.Failed("this app has no package name")
+
+        val files = entry.optJSONArray("files") ?: return StoreInstall.Failed("nothing to install")
         // Base first — PackageInstaller needs it before the splits — and OBB parts
         // dropped, which a Device Owner cannot place anyway (R2).
         val ordered = (0 until files.length())
@@ -1065,18 +1101,48 @@ class Reconciler(private val context: Context) {
             .filter { it.optString("role") != "obb" }
             .sortedBy { if (it.optString("role") == "base") 0 else 1 }
 
+        // Progress spans every part, so the bar measures the install rather than
+        // whichever file happens to be in flight.
+        val totalBytes = ordered.sumOf { it.optLong("size_bytes", 0L) }
+        var doneBytes = 0L
+
         val parts = mutableListOf<File>()
         for (part in ordered) {
             val sha = part.optString("sha256")
             val target = File(cacheDir, sha)
-            if (!downloadArtifact(sha, target)) {
-                AgentLog.w(TAG, "store install $packageName: $sha failed verification")
-                return "the download could not be verified"
+            val partBytes = part.optLong("size_bytes", 0L)
+            val startedAt = doneBytes
+
+            val ok = try {
+                api.downloadArtifact(
+                    sha,
+                    target,
+                    onProgress = { read, _ ->
+                        onProgress?.invoke(InstallPhase.DOWNLOADING, startedAt + read, totalBytes)
+                    },
+                    isCancelled = isCancelled,
+                )
+            } catch (_: ApiClient.TransferCancelled) {
+                AgentLog.i(TAG, "store install $packageName: cancelled by the user")
+                return StoreInstall.Cancelled
+            } catch (e: Exception) {
+                AgentLog.w(TAG, "store install $packageName: ${e.message}")
+                return StoreInstall.Failed(e.message ?: "the download failed")
             }
+
+            if (!ok) {
+                AgentLog.w(TAG, "store install $packageName: $sha failed verification")
+                return StoreInstall.Failed("the download could not be verified")
+            }
+            doneBytes = startedAt + partBytes
             parts += target
         }
-        if (parts.isEmpty()) return "nothing to install"
+        if (parts.isEmpty()) return StoreInstall.Failed("nothing to install")
 
+        // Last chance to stop: past this the installer owns the outcome.
+        if (isCancelled?.invoke() == true) return StoreInstall.Cancelled
+
+        onProgress?.invoke(InstallPhase.INSTALLING, totalBytes, totalBytes)
         val result = installer.install(packageName, parts)
         AgentLog.i(
             TAG,
@@ -1084,7 +1150,7 @@ class Reconciler(private val context: Context) {
                 if (result.success) "installed versionCode ${installer.installedVersionCode(packageName)}"
                 else "failed — ${result.message}"
         )
-        return if (result.success) null else result.message
+        return if (result.success) StoreInstall.Done else StoreInstall.Failed(result.message)
     }
 
     private fun downloadArtifact(sha256: String, target: File): Boolean {
