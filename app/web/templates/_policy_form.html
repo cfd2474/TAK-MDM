@@ -121,6 +121,20 @@
   </div>
 {% endmacro %}
 
+{% macro _activity_choice(f, value, name) %}
+  {#
+    Filled by atlas.js from /policies/app-activities once an app is chosen (W62).
+    Rendered with only the saved value so a saved policy still shows its activity
+    before the fetch lands — and so the field is never empty-but-set, which would
+    silently drop the activity on the next save.
+  #}
+  <select name="{{ name }}" class="field-full" data-activity-choice>
+    <option value="">— pick an app first —</option>
+    {% if value %}<option value="{{ value }}" selected>{{ value }}</option>{% endif %}
+  </select>
+  <div class="muted" style="font-size:12px; margin-top:6px" data-activity-note></div>
+{% endmacro %}
+
 {% macro _app_list(f, items, name, app_packages) %}
   <div class="rowset" data-rowset="{{ name }}">
     {% for entry in items or [] %}
@@ -433,6 +447,7 @@
   {% elif f.control == 'package_list' %}{{ _package_list(f, value, name) }}
   {% elif f.control == 'app_list' %}{{ _app_list(f, value, name, app_packages) }}
   {% elif f.control == 'kiosk_app' %}{{ _kiosk_app(f, value, name, app_packages) }}
+  {% elif f.control == 'activity_choice' %}{{ _activity_choice(f, value, name) }}
   {% elif f.control == 'file_list' %}{{ _file_list(f, value, name, managed_files) }}
   {% elif f.control == 'image_file' %}{{ _image_file(f, value, name) }}
   {% elif f.control == 'wifi_list' %}{{ _wifi_list(f, value, name) }}

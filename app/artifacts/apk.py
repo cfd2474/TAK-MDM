@@ -67,6 +67,10 @@ class ApkInfo:
     # Fully-qualified names of every declared <receiver>. Used to verify that a
     # provisioning payload names a component the APK actually contains.
     receivers: tuple[str, ...] = ()
+    # Every <activity> and <activity-alias>, and the subset carrying a LAUNCHER
+    # category — the kiosk activity picker offers the latter first (W62).
+    activities: tuple[str, ...] = ()
+    launcher_activities: tuple[str, ...] = ()
     # The exact ATAK build an ATAK plugin was compiled against, e.g.
     # "com.atakmap.app@5.5.0.CIV". None for anything that is not an ATAK plugin.
     plugin_api: str | None = None
@@ -106,7 +110,7 @@ def _read_manifest(
     archive: zipfile.ZipFile,
 ) -> tuple[
     str, int, str | None, int | None, int | None, str | None, tuple[str, ...],
-    str | None, str | None,
+    str | None, str | None, tuple[str, ...], tuple[str, ...],
 ]:
     try:
         raw = archive.read(_MANIFEST)
@@ -147,6 +151,27 @@ def _read_manifest(
         if name
     )
 
+    # Activities, for the kiosk activity picker (W62). `activity-alias` counts:
+    # an alias is a launchable component name in its own right, and for several
+    # apps it *is* the entry point.
+    #
+    # A LAUNCHER category marks the ones a user would normally arrive at, which is
+    # what an operator picking a kiosk screen almost always wants — so they are
+    # reported separately rather than buried in the full list.
+    activities: list[str] = []
+    launcher_activities: list[str] = []
+    current: str | None = None
+    for element in elements:
+        if element.name in ("activity", "activity-alias"):
+            name = element.get_str("name")
+            current = _qualify(package_name, name) if name else None
+            if current:
+                activities.append(current)
+        elif element.name == "category" and current:
+            if element.get_str("name") == "android.intent.category.LAUNCHER":
+                if current not in launcher_activities:
+                    launcher_activities.append(current)
+
     # ATAK plugins declare the exact ATAK build they were compiled against:
     #     <meta-data android:name="plugin-api"
     #                android:value="com.atakmap.app@5.5.0.CIV"/>
@@ -174,6 +199,7 @@ def _read_manifest(
     return (
         package_name, version_code, version_name, min_sdk, target_sdk,
         split_name, receivers, plugin_api, label,
+        tuple(activities), tuple(launcher_activities),
     )
 
 
@@ -371,6 +397,7 @@ def inspect_apk(data: bytes) -> ApkInfo:
         (
             package_name, version_code, version_name, min_sdk, target_sdk,
             split_name, receivers, plugin_api, label,
+            activities, launcher_activities,
         ) = _read_manifest(archive)
         signature_sha256, scheme = extract_signature(data, archive)
 
@@ -405,6 +432,8 @@ def inspect_apk(data: bytes) -> ApkInfo:
         signature_sha256=signature_sha256,
         signature_scheme=scheme,
         receivers=receivers,
+        activities=activities,
+        launcher_activities=launcher_activities,
         plugin_api=plugin_api,
         label=label,
         icon=icon,

@@ -1122,8 +1122,53 @@
       });
     });
 
+    /* The activity list is a fact about the chosen build, so it is fetched rather
+       than typed. Refilled whenever the app changes — an activity from the
+       previously selected app is not a valid choice for this one. */
+    var appSelect = host.querySelector('select[name="kiosk_package"]');
+    var note = document.querySelector("[data-activity-note]");
+
+    function loadActivities(keepValue) {
+      if (!activity || activity.tagName !== "SELECT") return;
+      var pkg = appSelect && appSelect.value;
+      if (!pkg) {
+        activity.innerHTML = '<option value="">— pick an app first —</option>';
+        if (note) note.textContent = "";
+        return;
+      }
+      if (note) note.textContent = "Reading the app…";
+      fetch("/policies/app-activities?package=" + encodeURIComponent(pkg))
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          var list = data.activities || [];
+          activity.innerHTML = '<option value="">— pick an activity —</option>';
+          list.forEach(function (a) {
+            var opt = document.createElement("option");
+            opt.value = a.name;
+            // The launcher marker is the useful distinction: it is the screen a
+            // user would normally arrive at, and usually the one a kiosk wants.
+            opt.textContent = a.name + (a.launcher ? "   (launcher)" : "");
+            if (a.name === keepValue) opt.selected = true;
+            activity.appendChild(opt);
+          });
+          if (note) {
+            note.textContent = list.length
+              ? list.length + " activities declared by this build"
+              : "This build declares no activities — it has nothing to lock to.";
+          }
+        })
+        .catch(function () {
+          if (note) note.textContent = "Could not read this app's activities.";
+        });
+    }
+
+    if (appSelect) {
+      appSelect.addEventListener("change", function () { loadActivities(null); });
+    }
+
     // Derived, not stored: a saved policy with an activity opens on that mode.
     var hasActivity = !!(activity && activity.value.trim());
     radios.forEach(function (r) { r.checked = (r.value === "activity") === hasActivity; });
     show(hasActivity);
+    if (hasActivity) loadActivities(activity.value);
   })();

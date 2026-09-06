@@ -7462,6 +7462,36 @@ A named activity launches as an explicit `ComponentName`, not through
 and may not be exported as one. A leading dot expands against the package, the
 same shorthand `component_class()` already handles server-side.
 
+#### 🔻 W62 — The kiosk activity is picked, not typed
+
+The class name is a fact about the build, so it comes out of the APK. Activities
+and `activity-alias` entries are read from the manifest — the same walk that
+already collects receivers — and the ones carrying a `LAUNCHER` category are
+marked and sorted first, since a kiosk almost always wants the screen a user would
+normally arrive at.
+
+ATAK is the case that shows why it matters: **`ATAKActivityCiv` and
+`ATAKActivityMil`**, two launchers in one build, and no operator should have to
+know which string to type to lock a device to one of them.
+
+⚠️ **It scans every part, not just the base.** Chrome's base APK declares three
+activities and **none of them is its launcher** — the rest live in its splits. A
+base-only scan would have produced a dropdown that silently omitted the very
+screen an operator was looking for, which is worse than the text box it replaces.
+Found by checking the extraction against all three fixtures rather than the one
+that worked.
+
+Fetched on demand and memoised by package, like the managed-config scan; the list
+is refilled whenever the app changes, because an activity from the previously
+selected app is not a valid choice for this one.
+
+🐛 **The first DOM run reported an empty dropdown, and the code was fine.** The
+panel had been dumped from an empty test database, so the app `<select>` held only
+its placeholder — and assigning `.value` to an option that does not exist leaves
+it empty, so no app was ever selected and nothing was fetched. The harness was
+wrong, not the page. Same shape as the W52 jsdom failure: when a DOM test says a
+feature is dead, suspect the fixture first.
+
 | # | Chunk | Notes |
 |---|---|---|
 | 7 | **Knox layer** | Planned in detail below |

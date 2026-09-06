@@ -122,7 +122,7 @@ class KioskSpec(PolicySpec):
         description="Launch this screen instead of the app's normal entry point — "
         "for example com.example.app.KioskActivity. Leave blank to use whatever "
         "the app opens with.",
-        json_schema_extra={"ui_group": _SINGLE, "ui_control": "str"},
+        json_schema_extra={"ui_group": _SINGLE, "ui_control": "activity_choice"},
     )
 
     kiosk_restrict_to_activity: Annotated[

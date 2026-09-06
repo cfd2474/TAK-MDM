@@ -201,3 +201,56 @@ def test_the_activity_fields_ride_with_the_app_in_the_form():
     }
 
     assert set(groups.values()) == {"Single app"}
+
+
+# --------------------------------------------------------------------------- #
+# The activity dropdown (W62)
+# --------------------------------------------------------------------------- #
+
+
+ATAK_APK = "Test Files/ATAK-5.8.0.4-174b425-civSmall-release.apk"
+
+
+def test_the_activity_field_is_a_dropdown_not_a_text_box():
+    from app.policies.form_schema import form_fields
+
+    field = next(f for f in form_fields("KIOSK") if f.name == "kiosk_activity")
+
+    assert field.control == "activity_choice"
+
+
+@pytest.mark.skipif(
+    not __import__("pathlib").Path(ATAK_APK).exists(),
+    reason="the ATAK APK is not in this checkout",
+)
+def test_activities_are_read_from_the_apk_with_launchers_marked(client, db, artifact_storage):
+    """The names are facts about the build, so the operator picks rather than
+    types a class from memory. ATAK's two launchers — Civ and Mil — are exactly
+    the distinction that matters when locking a device to one of them.
+    """
+    import pathlib
+
+    from app.services.packages import declared_activities
+    from tests.conftest import ADMIN_HEADERS
+
+    client.post(
+        "/api/v1/packages",
+        files={"file": ("atak.apk", pathlib.Path(ATAK_APK).read_bytes(), "application/octet-stream")},
+        headers=ADMIN_HEADERS,
+    )
+
+    found = declared_activities(db, artifact_storage, "com.atakmap.app.civ")
+
+    assert len(found) > 5
+    launchers = [a["name"] for a in found if a["launcher"]]
+    assert "com.atakmap.app.ATAKActivityCiv" in launchers
+    # Launchers sort first: the screen a user would normally arrive at is almost
+    # always the one a kiosk wants.
+    assert found[0]["launcher"] is True
+
+
+def test_an_unknown_package_yields_an_empty_list_rather_than_an_error(db, artifact_storage):
+    """A dropdown with nothing in it is a true answer; a 500 is not."""
+    from app.services.packages import declared_activities
+
+    assert declared_activities(db, artifact_storage, "com.not.uploaded") == []

@@ -71,7 +71,7 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
             if raw:
                 spec[name] = raw
 
-        elif field.control in ("str", "password", "text", "kiosk_app"):
+        elif field.control in ("str", "password", "text", "kiosk_app", "activity_choice"):
             # The strip matters for `text`: a box holding only whitespace means the
             # operator cleared it, so the field goes absent ("stop managing this")
             # rather than being pushed as a blank string — which for the lock screen

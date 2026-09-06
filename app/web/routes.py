@@ -603,6 +603,32 @@ def new_policy_page(
     )
 
 
+@router.get("/policies/app-activities")
+def app_activities(
+    package: str,
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+    identity: AdminIdentity = Depends(admin_required),
+) -> JSONResponse:
+    """Activities the app declares, for the kiosk activity picker (W62).
+
+    Read from the APK on demand and memoised by the version, like the
+    managed-config scan. The names are facts about the build, so an operator
+    picks from what is actually there instead of typing a class from memory.
+    """
+    key = ("activities", package)
+    cached = _APP_CONFIG_SCANS.get(key)
+    if cached is None:
+        cached = package_service.declared_activities(session, storage, package)
+        _APP_CONFIG_SCANS[key] = cached
+        if len(_APP_CONFIG_SCANS) > _APP_CONFIG_SCAN_LIMIT:
+            _APP_CONFIG_SCANS.popitem(last=False)
+    else:
+        _APP_CONFIG_SCANS.move_to_end(key)
+
+    return JSONResponse({"package_name": package, "activities": cached})
+
+
 @router.get("/policies/app-config-schema")
 def app_config_schema(
     package: str,

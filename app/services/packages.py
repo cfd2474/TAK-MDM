@@ -623,3 +623,47 @@ def declared_receivers(
             return inspect_apk(handle.read()).receivers
     except (ApkError, OSError):
         return None
+
+
+def declared_activities(
+    session: Session, storage: ArtifactStorage, package_name: str
+) -> list[dict[str, object]]:
+    """Every activity a package's published build declares, launchers first (W62).
+
+    ⚠️ **Scans every part, not just the base.** Chrome's base APK declares three
+    activities and none of them is its launcher — the rest live in its splits. A
+    base-only scan would offer an operator a dropdown that silently omits the very
+    screen they were looking for, which is worse than the text box it replaces.
+
+    Returns `[{"name": ..., "launcher": bool}]`. Launchable activities sort first
+    because a kiosk almost always wants the screen a user would normally arrive
+    at; the rest follow, since some kiosk screens are deliberately not launchers.
+    """
+    from app.artifacts.apk import inspect_apk
+    from app.artifacts.storage import ArtifactNotFound
+
+    package = session.scalar(
+        select(AppPackage).where(AppPackage.package_name == package_name)
+    )
+    version = latest_published(session, package) if package else None
+    if version is None:
+        return []
+
+    names: dict[str, bool] = {}
+    for part in version.files:
+        if part.role is DbPartRole.OBB:
+            continue  # not an APK; it has no manifest
+        try:
+            with storage.open(part.artifact_sha256) as handle:
+                info = inspect_apk(handle.read())
+        except (ArtifactNotFound, ApkError, OSError):
+            continue
+        for name in info.activities:
+            names.setdefault(name, False)
+        for name in info.launcher_activities:
+            names[name] = True
+
+    return sorted(
+        ({"name": n, "launcher": is_launcher} for n, is_launcher in names.items()),
+        key=lambda a: (not a["launcher"], a["name"]),
+    )
