@@ -7502,6 +7502,38 @@ it empty, so no app was ever selected and nothing was fetched. The harness was
 wrong, not the page. Same shape as the W52 jsdom failure: when a DOM test says a
 feature is dead, suspect the fixture first.
 
+#### 🔻 W63 — A kiosk app installs itself
+
+Hardware report: *"tested single app kiosk, got error that the app designated for
+kiosk mode not installed, not engaging"*. The policy was correct; the device
+simply had nothing to lock to.
+
+**Naming a kiosk app *is* an instruction to install it.** Asking an operator to
+also add it under required apps is a second step that exists only to be forgotten
+— and forgetting it produces exactly this error, which reads like a bug in the
+kiosk rather than a missing line elsewhere in the policy.
+
+Two fixes, and the second is the one that would have been easy to miss:
+
+1. **The kiosk package is resolved as a required app.** Done in
+   `resolve_required_apps` rather than in the applier, so it inherits the whole
+   install pipeline — version resolution, artifact hashes, the downgrade rules —
+   instead of growing a second, thinner one beside it. An explicit `required_apps`
+   entry for the same package keeps its own pin or floor: an operator who pinned a
+   build meant it.
+
+2. ⚠️ **Kiosk now runs *after* the installs.** `policyApplier.apply()` runs before
+   `reconcileApps`, so applying kiosk inside it would have failed on the very sync
+   that installed the app — marking the device DEGRADED and engaging only on the
+   next check-in. Making the app required without moving the call would have
+   turned a hard failure into a slower, more confusing one. The kiosk step is now
+   called from the reconciler after `reconcileApps`, for the same reason
+   `suppressUnwantedApps` already was.
+
+The refusal message was rewritten too: it now says the app is required and should
+install on this or the next check-in, rather than stating a fact and leaving the
+operator to guess whether the policy is wrong.
+
 | # | Chunk | Notes |
 |---|---|---|
 | 7 | **Knox layer** | Planned in detail below |

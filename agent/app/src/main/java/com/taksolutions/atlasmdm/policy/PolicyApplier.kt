@@ -86,15 +86,10 @@ class PolicyApplier(private val context: Context) {
         // Unconditional, unlike the rest of APP_CATALOG: these latch, so an
         // empty section has to mean "clear what we set" rather than "skip".
         failures += applyAppConfigs(policy.optJSONObject("APP_CATALOG") ?: JSONObject())
-        // ⚠️ Unconditional, and it reads **both** places. Kiosk moved out of
-        // APP_CATALOG into its own policy in W59, and a device running an older
-        // agent — or an older server — must not silently drop out of kiosk during
-        // the changeover. KIOSK wins when present; APP_CATALOG is the fallback.
-        failures += applyKioskPolicy(
-            policy.optJSONObject("KIOSK") ?: JSONObject(),
-            policy.optJSONObject("APP_CATALOG") ?: JSONObject(),
-            policy.optJSONObject("RESTRICTIONS") ?: JSONObject(),
-        )
+        // ⚠️ Kiosk is **not** applied here — see [applyKiosk], called by the
+        // reconciler *after* app installs. Locking to an app the device has not
+        // installed yet cannot work, and the install is what makes it present
+        // (W63).
         failures += applyNetworks(policy.optJSONObject("NETWORKS") ?: JSONObject())
         failures += applyCustomizations(policy.optJSONObject("CUSTOMIZATIONS") ?: JSONObject())
         return failures
@@ -710,6 +705,14 @@ class PolicyApplier(private val context: Context) {
      * out of kiosk the moment one side deploys — a wall-mounted tablet quietly
      * becoming a general-purpose one.
      */
+    /**
+     * ⚠️ Called from [Reconciler.sync] **after** app installs, not from [apply].
+     *
+     * A kiosk policy names an app to lock to, and the server now makes that app a
+     * required install (W63) — but installs run after the policy pass. Applied in
+     * `apply()` it would fail on the very sync that installs the app, mark the
+     * device DEGRADED, and only engage on the next check-in.
+     */
     fun applyKioskPolicy(
         kiosk: JSONObject,
         appCatalog: JSONObject,
@@ -734,8 +737,14 @@ class PolicyApplier(private val context: Context) {
 
         if (!isInstalled(kioskPackage)) {
             // Locking the device to an app that is not there would leave it on a
-            // blank screen with no way out. Refuse, and say why.
-            return listOf("kiosk: $kioskPackage is not installed; not engaging")
+            // blank screen with no way out. Refuse, and say what happens next —
+            // the server requires the kiosk app, so this is normally a sync that
+            // has not finished installing rather than a policy that is wrong.
+            return listOf(
+                "kiosk: $kioskPackage is not installed yet, so the device was not " +
+                    "locked to it. It is a required app and should install on this " +
+                    "or the next check-in; if it never does, the install error says why."
+            )
         }
 
         // Before the features are set, because those enable HOME. Doing it the

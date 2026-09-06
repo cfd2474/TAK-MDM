@@ -254,3 +254,67 @@ def test_an_unknown_package_yields_an_empty_list_rather_than_an_error(db, artifa
     from app.services.packages import declared_activities
 
     assert declared_activities(db, artifact_storage, "com.not.uploaded") == []
+
+
+# --------------------------------------------------------------------------- #
+# A kiosk app installs itself (W63)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_kiosk_app_is_required_without_being_listed_twice():
+    """Reported from hardware: "the app designated for kiosk mode not installed,
+    not engaging". The policy was right; the device had nothing to lock to.
+
+    Naming a kiosk app *is* an instruction to install it — asking an operator to
+    also add it under required apps is a second step that exists only to be
+    forgotten.
+    """
+    from app.services.effective_policy import resolve_required_apps
+
+    class _NoPackages:
+        def scalar(self, *_a, **_k):
+            return None
+
+    resolved = resolve_required_apps(
+        _NoPackages(), {"KIOSK": {"kiosk_package": "com.atakmap.app.civ"}}
+    )
+
+    assert [entry["package_name"] for entry in resolved] == ["com.atakmap.app.civ"]
+    # Nothing uploaded, so it reports why rather than being dropped.
+    assert resolved[0]["available"] is False
+
+
+def test_an_explicit_required_entry_keeps_its_own_version_pin():
+    """An operator who pinned a build meant it. The kiosk default only covers the
+    case where nobody said anything at all."""
+    from app.services.effective_policy import resolve_required_apps
+
+    class _NoPackages:
+        def scalar(self, *_a, **_k):
+            return None
+
+    resolved = resolve_required_apps(
+        _NoPackages(),
+        {
+            "KIOSK": {"kiosk_package": "com.atakmap.app.civ"},
+            "APP_CATALOG": {
+                "required_apps": [
+                    {"package_name": "com.atakmap.app.civ", "min_version_code": 52400}
+                ]
+            },
+        },
+    )
+
+    assert len(resolved) == 1, "the kiosk app was required twice"
+    assert "52400" in resolved[0]["reason"], resolved[0]
+
+
+def test_no_kiosk_app_adds_nothing():
+    from app.services.effective_policy import resolve_required_apps
+
+    class _NoPackages:
+        def scalar(self, *_a, **_k):
+            return None
+
+    assert resolve_required_apps(_NoPackages(), {"KIOSK": {}}) == []
+    assert resolve_required_apps(_NoPackages(), {}) == []

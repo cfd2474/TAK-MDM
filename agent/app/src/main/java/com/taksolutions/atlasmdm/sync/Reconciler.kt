@@ -492,6 +492,16 @@ class Reconciler(private val context: Context) {
             policy.optJSONObject("APP_CATALOG") ?: JSONObject(),
             desired.optJSONArray("apps") ?: JSONArray()
         )
+        // ⚠️ After the installs, and that ordering is the whole point (W63). A
+        // kiosk policy names an app to lock to; the server makes that app a
+        // required install; and locking to something the device has not installed
+        // yet cannot work. Run before `reconcileApps` this failed on the very sync
+        // that installed the app.
+        errors += policyApplier.applyKioskPolicy(
+            policy.optJSONObject("KIOSK") ?: JSONObject(),
+            policy.optJSONObject("APP_CATALOG") ?: JSONObject(),
+            policy.optJSONObject("RESTRICTIONS") ?: JSONObject(),
+        )
         errors += reconcileFiles(desired.optJSONObject("files") ?: JSONObject())
         errors += reconcileWallpaper(desired.optJSONObject("wallpaper") ?: JSONObject())
         // Last, and reading-only: usage thresholds describe what the device has

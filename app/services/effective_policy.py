@@ -185,9 +185,30 @@ def resolve_required_apps(
     Apps with nothing uploaded yet are reported with ``available: false`` rather
     than omitted — an app that is required but missing is a fact the operator needs
     to see, not an absence to be silently tidied away.
+
+    ⚠️ **A kiosk app is required by definition** (W63). Naming one in a KIOSK
+    policy is an instruction to lock the device to it, which cannot mean anything
+    unless it is installed — and asking an operator to also list it under required
+    apps is a second step that exists only to be forgotten. Reported on hardware
+    as *"the app designated for kiosk mode not installed, not engaging"*: the
+    policy was correct, the device simply had nothing to lock to.
+
+    Added here rather than in the applier so it inherits the whole install
+    pipeline — version resolution, artifact hashes, the downgrade rules — instead
+    of growing a second, thinner one beside it.
     """
     catalog = values.get("APP_CATALOG") or {}
-    required = catalog.get("required_apps") or []
+    required = list(catalog.get("required_apps") or [])
+
+    kiosk_package = (values.get("KIOSK") or {}).get("kiosk_package")
+    if kiosk_package and not any(
+        entry.get("package_name") == kiosk_package for entry in required
+    ):
+        # No version constraint: an explicit `required_apps` entry for the same app
+        # keeps its own pin or floor, because an operator who pinned a build meant
+        # it. This only covers the case where nobody said anything at all.
+        required.append({"package_name": kiosk_package})
+
     resolved: list[dict[str, Any]] = []
 
     for entry in required:
