@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The narrowest accessibility service that can still press the power button (W72).
+
+  This service receives no window content, no text and no keystrokes. An
+  accessibility service on a managed device can otherwise see everything the user
+  does, and this one is installed on kiosks purely so
+  `performGlobalAction(GLOBAL_ACTION_POWER_DIALOG)` can be called - which is the
+  only route an app has to Android's power menu.
+
+  ⚠️ `accessibilityEventTypes` is **omitted**, not set to a "none" value. There is
+  no `typeNotSet` flag - aapt rejects it - and the way to subscribe to nothing is
+  to leave the attribute out. Naming any event type here would start delivering
+  the user's activity to this process for no reason.
+
+  ⚠️ `canRetrieveWindowContent` is likewise absent, which means false. Global
+  actions need neither it nor any event subscription.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityFlags="flagDefault"
+    android:notificationTimeout="0"
+    android:description="@string/power_menu_service_description" />

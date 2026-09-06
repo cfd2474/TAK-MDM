@@ -423,9 +423,42 @@ Wi-Fi would be a way round policy rather than an expression of it.
 network they can see, including one they control. Chosen over the
 provisioned-only list with that consequence stated.
 
-#### Chunk 3 — the power menu
-An `AccessibilityService` performing `GLOBAL_ACTION_POWER_DIALOG`, its grant in
-the setup wizard, and a visible "needs enabling" state on the settings screen.
+#### ✅ Chunk 3 — the power menu (COMPLETE, not yet deployed)
+
+⚠️ **The grant cannot be given from inside a kiosk.** Enabling an accessibility
+service means visiting `com.android.settings`, which lock task blocks — so it has
+to be switched on **before** the device is locked down, or the device taken out
+of kiosk to do it. The field says so, the wizard lists it last, and the settings
+screen explains itself rather than offering a button that would do nothing.
+
+⚠️ **The service observes nothing.** `accessibilityEventTypes` is **omitted**, not
+set to a "none" value — there is no `typeNotSet` flag and aapt rejects it; leaving
+the attribute out is how you subscribe to nothing. Naming any type would start
+delivering the user's activity to this process for no reason, and an accessibility
+service on a managed device can otherwise see everything.
+
+⚠️ **Availability is "enabled **and** bound", not either.**
+`ENABLED_ACCESSIBILITY_SERVICES` can name a service that has not bound yet, and a
+live instance can outlast the setting — either alone would give the user a row
+that does nothing when tapped.
+
+⚠️ **`device_setting_power` is refused when `keep_power_menu` is false.** With
+`LOCK_TASK_FEATURE_GLOBAL_ACTIONS` off the platform suppresses the dialog, so the
+row is tapped, the accessibility action *reports success*, and nothing appears —
+the most confusing failure available, because every part of it looks like it
+worked.
+
+##### Two build traps worth remembering
+
+⚠️ An **apostrophe** in a string resource must be escaped, and `&apos;` resolves
+to a bare one. aapt rejects it with *"Invalid unicode escape sequence"*, naming
+neither the character nor the rule. Reworded round it.
+
+⚠️ My terminal renders UTF-8 as cp1252, so `…` and `—` in a file read back as `�`
+and looked like corruption. **They were fine.** Check bytes before believing a
+console.
+
+848 server tests.
 
 #### Chunk 4 — deploy and verify on the tablet
 

@@ -49,6 +49,7 @@ object DeviceSettingsPlan {
     const val OFFER_WIFI = "device_setting_wifi"
     const val OFFER_BLUETOOTH = "device_setting_bluetooth"
     const val OFFER_RADIOS_OFF = "device_setting_radios_off"
+    const val OFFER_POWER = "device_setting_power"
 
     const val DEFAULT_NIGHT_LEVEL = 50
 
@@ -61,7 +62,7 @@ object DeviceSettingsPlan {
     private val OFFERS = listOf(
         OFFER_NIGHT_MODE, OFFER_BRIGHTNESS, OFFER_SCREEN_TIMEOUT,
         OFFER_VOLUME, OFFER_FLASHLIGHT, OFFER_WIFI, OFFER_BLUETOOTH,
-        OFFER_RADIOS_OFF,
+        OFFER_RADIOS_OFF, OFFER_POWER,
     )
 
     /**

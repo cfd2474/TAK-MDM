@@ -574,3 +574,37 @@ def test_radios_off_is_not_airplane_mode_and_says_so():
     assert "not" in field.description.lower()
     assert "airplane" in field.description.lower()
     assert "cellular" in field.description.lower()
+
+
+# --------------------------------------------------------------------------- #
+# The power menu (W72)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_power_row_needs_the_power_menu_kept():
+    """⚠️ The most confusing failure available, because every part of it looks
+    like it worked: with LOCK_TASK_FEATURE_GLOBAL_ACTIONS off the platform
+    suppresses the dialog, so the row is tapped, the accessibility action reports
+    success, and nothing appears."""
+    with pytest.raises(ValueError, match="needs keep_power_menu allowed"):
+        _multi(device_setting_power=True, keep_power_menu=False)
+
+
+def test_the_power_row_is_fine_when_the_menu_is_kept():
+    spec = _multi(device_setting_power=True, keep_power_menu=True)
+    assert spec.device_setting_power is True
+
+
+def test_the_power_row_is_fine_when_the_menu_is_unmanaged():
+    """Unset means the agent's default, which keeps GLOBAL_ACTIONS on - so an
+    operator who never touched the lock-task controls is not refused."""
+    spec = _multi(device_setting_power=True)
+    assert spec.keep_power_menu is None
+
+
+def test_the_power_field_says_the_grant_cannot_be_given_from_a_kiosk():
+    """⚠️ The one thing an operator must know before assigning this: the
+    accessibility switch lives in Android's settings, which lock task blocks, so
+    granting it after the device is locked means taking it out of kiosk first."""
+    description = KioskSpec.model_fields["device_setting_power"].description.lower()
+    assert "cannot be done from a locked device" in description

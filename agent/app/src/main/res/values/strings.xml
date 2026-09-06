@@ -138,6 +138,13 @@
     <string name="flashlight_summary">Turns off when the screen locks</string>
     <string name="no_torch">This device has no flashlight.</string>
     <string name="network">Network</string>
+    <string name="power_menu_service_label">ATLAS power menu</string>
+    <string name="power_menu_service_description">Lets ATLAS show the power menu on a locked device, where the side key cannot. It reads nothing from the screen.</string>
+    <string name="power">Power</string>
+    <string name="power_off">Power off</string>
+    <string name="power_off_summary">Shows the power menu</string>
+    <string name="power_unavailable">Powering off needs the ATLAS power menu switched on in accessibility settings. That cannot be done from a locked device - ask your administrator.</string>
+    <string name="power_failed">The power menu could not be shown.</string>
     <string name="wifi_network">Wi-Fi network</string>
     <string name="wifi_pick_title">Choose a network</string>
     <string name="wifi_pick_off">Wi-Fi is off. Turn it on to see networks.</string>
@@ -149,7 +156,7 @@
     <string name="wifi_pick_saved"> · Saved</string>
     <string name="wifi_pick_password">Password</string>
     <string name="wifi_pick_join">Join</string>
-    <string name="wifi_pick_joining">Joining %1$s…</string>
+    <string name="wifi_pick_joining">Joining %1$s</string>
     <string name="wifi_pick_enterprise">This network needs credentials your administrator must provide.</string>
     <string name="wifi_bars_0">No signal</string>
     <string name="wifi_bars_1">Weak</string>

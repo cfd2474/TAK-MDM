@@ -21,6 +21,7 @@ import android.provider.Settings
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.taksolutions.atlasmdm.R
 import com.taksolutions.atlasmdm.core.AgentConfig
@@ -100,6 +101,11 @@ class DeviceSettingsActivity : AppCompatActivity() {
         if (wifi || bluetooth || radiosOff) {
             root.addView(ConsoleViews.sectionTitle(this, getString(R.string.network)))
             root.addView(networkCard(wifi, bluetooth, radiosOff))
+        }
+
+        if (DeviceSettingsPlan.offers(kiosk, DeviceSettingsPlan.OFFER_POWER)) {
+            root.addView(ConsoleViews.sectionTitle(this, getString(R.string.power)))
+            root.addView(powerCard())
         }
 
         setContentView(ScrollView(this).apply { addView(root) })
@@ -248,6 +254,32 @@ class DeviceSettingsActivity : AppCompatActivity() {
                 }
             }
         }
+
+    /**
+     * ⚠️ The row is shown even when the service is off, with the reason.
+     *
+     * Hiding it would leave an operator who switched the control on with no way
+     * to tell whether the policy failed to arrive or the grant is missing - and
+     * the user with no explanation for why a device they were told they could
+     * turn off has no way to do it.
+     */
+    private fun powerCard() = ConsoleViews.card(this).also { card ->
+        val body = ConsoleViews.body(card)
+        if (PowerMenuService.isAvailable(this)) {
+            body.addView(
+                SettingsViews.actionRow(
+                    this, getString(R.string.power_off),
+                    getString(R.string.power_off_summary),
+                ) {
+                    if (!PowerMenuService.show()) {
+                        Toast.makeText(this, R.string.power_failed, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            )
+        } else {
+            body.addView(SettingsViews.note(this, getString(R.string.power_unavailable)))
+        }
+    }
 
     private fun networkCard(wifi: Boolean, bluetooth: Boolean, radiosOff: Boolean) =
         ConsoleViews.card(this).also { card ->

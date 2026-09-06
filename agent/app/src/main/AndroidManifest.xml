@@ -98,6 +98,31 @@
           withdrawn.
         -->
         <!--
+          The power menu service (W72).
+
+          ⚠️ BIND_ACCESSIBILITY_SERVICE is what stops anything but the system
+          binding it. The service observes nothing - see res/xml - and exists
+          solely so an app can raise Android's power menu, which
+          performGlobalAction is the only route to.
+
+          ⚠️ It cannot be enabled from inside a kiosk: the switch lives in
+          com.android.settings, which lock task blocks. It has to be granted
+          before the device is locked down.
+        -->
+        <service
+            android:name=".ui.PowerMenuService"
+            android:exported="true"
+            android:label="@string/power_menu_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/power_menu_service" />
+        </service>
+
+        <!--
           The Wi-Fi picker, opened from Device Settings (W72).
 
           Not exported: only this app opens it, and it refuses to draw unless the

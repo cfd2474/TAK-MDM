@@ -408,6 +408,16 @@ class KioskSpec(PolicySpec):
         "Flashlight",
         "Let the user turn the torch on and off.",
     )
+    device_setting_power: Annotated[
+        bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
+    ] = _user_setting(
+        "Power off",
+        "⚠️ Show a Power off row that raises Android's power menu. Needs the ATLAS "
+        "power menu switched on in the device's accessibility settings — which "
+        "**cannot be done from a locked device**, so grant it before the kiosk "
+        "policy is assigned. Without it the row explains itself rather than "
+        "working.",
+    )
     device_setting_bluetooth: Annotated[
         bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
     ] = _user_setting(
@@ -625,6 +635,24 @@ class KioskSpec(PolicySpec):
                 f"{'; '.join(conflicts)}. A control the device is forbidden to "
                 f"change is drawn, dragged, and silently ignored — which reads as a "
                 f"broken device rather than a policy that disagrees with itself"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _the_power_menu_needs_global_actions(self) -> "KioskSpec":
+        """Refuse a Power off row on a kiosk that suppresses the power menu.
+
+        ⚠️ `keep_power_menu` maps to `LOCK_TASK_FEATURE_GLOBAL_ACTIONS`, and with
+        it off the platform suppresses the dialog this row raises. The row would
+        be tapped, the accessibility action would report success, and nothing
+        would appear — the most confusing failure available, because every part
+        of it looks like it worked.
+        """
+        if self.device_setting_power and self.keep_power_menu is False:
+            raise ValueError(
+                "device_setting_power needs keep_power_menu allowed. With the "
+                "power menu suppressed by lock task, the row is tapped, the action "
+                "reports success, and no dialog appears"
             )
         return self
 

@@ -97,6 +97,31 @@ sealed class PermissionRequirement {
     }
 
     /**
+     * The accessibility service behind the kiosk power menu (W72).
+     *
+     * ⚠️ **Grant this before locking a device down.** The switch lives in
+     * `com.android.settings`, which lock task blocks, so a kiosk cannot be talked
+     * through enabling it afterwards — the device would have to leave kiosk first.
+     *
+     * Optional in the sense that everything else works without it; the Power off
+     * row then explains itself instead of appearing to fail.
+     */
+    data object PowerMenu : PermissionRequirement() {
+        override val id = "power_menu"
+        override val title = "ATLAS power menu"
+        override val rationale =
+            "Lets a kiosk user reach the power menu, which the side key may not " +
+                "raise. Grant it before the device is locked down - a kiosk " +
+                "cannot open Android's settings to switch it on later."
+
+        override fun isGranted(context: Context) =
+            com.taksolutions.atlasmdm.ui.PowerMenuService.isEnabledInSettings(context)
+
+        override fun grantIntent(context: Context) =
+            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+    }
+
+    /**
      * Battery optimization exemption.
      *
      * Without it the system will eventually defer the sync service and the
@@ -158,6 +183,10 @@ sealed class PermissionRequirement {
             BatteryExemption,
             Location,
             Notifications,
+            // Last, because it is the only one that is optional in practice - and
+            // the only one that cannot be granted later, since a locked device
+            // cannot open Android's settings to reach it (W72).
+            PowerMenu,
         )
 
         /** Those needing a human. The rest a Device Owner grants for itself. */
