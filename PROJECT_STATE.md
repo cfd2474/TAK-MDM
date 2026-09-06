@@ -333,6 +333,62 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### 🔨 W71 — Device Settings on the launcher (IN PROGRESS)
+
+Operator's requirement, with Hexnode's *Peripheral Settings* screens as the
+model: a **Device Settings** tile on the kiosk launcher opening a list of
+settings the user may change, matching a new Kiosk sub-topic, and feeling like
+native OS settings.
+
+**Operator decisions:**
+
+| Question | Answer |
+|---|---|
+| Controls in v1 | Night mode, brightness, screen timeout, volume, flashlight, Wi-Fi — all four groups |
+| Gating | A **new** *Peripheral Settings* sub-topic with an explicit toggle per control, **default off** |
+
+⚠️ **The screen lives in the agent, not the launcher.** The launcher holds no
+permissions; the agent is Device Owner and already holds `CHANGE_WIFI_STATE`,
+`SYSTEM_ALERT_WINDOW` and the `setSystemSetting` allowlist. The launcher opens it
+as a tile pointing at `com.taksolutions.atlasmdm/<activity>` — a shape the app
+list already supports, and the agent is already lock-task permitted. No IPC, no
+new permission, nothing to keep in sync.
+
+⚠️ **Default off, and a validator against contradictions.** A kiosk shows nothing
+the operator did not ask for. Where a control overlaps an existing `kiosk_allow_*`
+restriction, showing it while the restriction forbids it would be a slider that
+cannot move — refused rather than shipped.
+
+⚠️ **What Android will not allow, whatever the screenshots show.** Airplane mode
+cannot be set by any app. `setSystemSetting` permits **exactly three** keys
+(`SCREEN_BRIGHTNESS`, `SCREEN_BRIGHTNESS_MODE`, `SCREEN_OFF_TIMEOUT`) — already
+verified on `SM-X520`. `setWifiEnabled` is blocked for ordinary apps since
+Android 10 and permitted for a Device Owner, but that is **unverified on our
+hardware** and is the control most likely to fail. Bluetooth on/off is worse
+still (API 33 deprecated `enable()` in favour of a user-consent intent) and is
+deliberately not in v1.
+
+#### Chunk 1 — the vertical slice *(this chunk)*
+
+1. `KioskSpec`: a *Peripheral Settings* group with one `device_setting_*` toggle
+   per control, default off.
+2. Validators: refuse a control the peripheral restrictions forbid; refuse the
+   whole section without a multi-app kiosk, since the tile needs a launcher.
+3. Catalog: the eleventh sub-topic.
+4. Agent: `DeviceSettingsActivity`, reading the stored policy, rendering only the
+   controls the policy enables, in the console's own visual language.
+5. Night mode and brightness working end to end — enough to prove the whole path.
+6. `LauncherConfigPlan`: the tile, added only when at least one control is on.
+7. Tests both sides.
+
+#### Chunk 2 — the remaining controls
+Screen timeout, volume, flashlight, Wi-Fi. Wi-Fi last, because it is the one that
+may turn out to be impossible on this hardware.
+
+#### Chunk 3 — deploy and verify on the tablet
+Including whether `setWifiEnabled` actually works as Device Owner on `SM-X520`.
+
+
 ### ✅ W70 — the ATLAS console is always a tile in a multi-app kiosk
 
 Operator's requirement. In a multi-app kiosk the launcher is the only way to
