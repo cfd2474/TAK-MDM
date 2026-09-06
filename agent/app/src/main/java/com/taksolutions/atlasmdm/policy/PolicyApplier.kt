@@ -93,6 +93,7 @@ class PolicyApplier(private val context: Context) {
         failures += applyKioskPolicy(
             policy.optJSONObject("KIOSK") ?: JSONObject(),
             policy.optJSONObject("APP_CATALOG") ?: JSONObject(),
+            policy.optJSONObject("RESTRICTIONS") ?: JSONObject(),
         )
         failures += applyNetworks(policy.optJSONObject("NETWORKS") ?: JSONObject())
         failures += applyCustomizations(policy.optJSONObject("CUSTOMIZATIONS") ?: JSONObject())
@@ -709,17 +710,25 @@ class PolicyApplier(private val context: Context) {
      * out of kiosk the moment one side deploys — a wall-mounted tablet quietly
      * becoming a general-purpose one.
      */
-    fun applyKioskPolicy(kiosk: JSONObject, appCatalog: JSONObject): List<String> {
+    fun applyKioskPolicy(
+        kiosk: JSONObject,
+        appCatalog: JSONObject,
+        restrictions: JSONObject = JSONObject(),
+    ): List<String> {
         val pkg = kiosk.optString("kiosk_package").takeIf { it.isNotBlank() }
             ?: appCatalog.optString("kiosk_package").takeIf { it.isNotBlank() }
-        return applyKiosk(pkg, kiosk)
+        return applyKiosk(pkg, kiosk, restrictions)
     }
 
-    fun applyKiosk(kioskPackage: String?, spec: JSONObject = JSONObject()): List<String> {
+    fun applyKiosk(
+        kioskPackage: String?,
+        spec: JSONObject = JSONObject(),
+        restrictions: JSONObject = JSONObject(),
+    ): List<String> {
         val failures = mutableListOf<String>()
 
         if (kioskPackage == null) {
-            failures += releaseKiosk()
+            failures += releaseKiosk(restrictions)
             return failures
         }
 
@@ -862,29 +871,58 @@ class PolicyApplier(private val context: Context) {
         return failures
     }
 
-    /** Hand the device back to the ordinary Restrictions policy (W59). */
-    private fun releaseKioskPeripherals(): List<String> {
+    /**
+     * Hand the device back to the ordinary Restrictions policy (W59).
+     *
+     * ⚠️ **Restores what Restrictions asked for; it does not blanket-clear.**
+     * Three of these — camera, Bluetooth, screen capture — are also Restrictions
+     * fields, and `applyRestrictions` has already run by the time this does. A
+     * clear-everything release therefore undid the Restrictions policy on *every*
+     * sync of *every* device, kiosk or not: block Bluetooth in Restrictions, and
+     * the next check-in silently switched it back on.
+     *
+     * So each peripheral is handed back to whatever Restrictions says about it,
+     * and only genuinely kiosk-only ones (Wi-Fi config, volume, brightness,
+     * airplane mode) are cleared.
+     */
+    private fun releaseKioskPeripherals(restrictions: JSONObject): List<String> {
         val failures = mutableListOf<String>()
-        for (restriction in KIOSK_PERIPHERALS.values) {
-            runCatching { dpm.clearUserRestriction(admin, restriction) }
-                .onFailure { failures += "kiosk peripheral release: ${it.message}" }
+
+        for ((kioskKey, restriction) in KIOSK_PERIPHERALS) {
+            val owner = RESTRICTIONS_EQUIVALENT[kioskKey]
+            val allowed = when {
+                owner != null && restrictions.has(owner) && !restrictions.isNull(owner) ->
+                    restrictions.optBoolean(owner, true)
+                // Kiosk-only, or Restrictions is silent: kiosk had no business
+                // holding it once the device is out.
+                else -> true
+            }
+            runCatching {
+                if (allowed) dpm.clearUserRestriction(admin, restriction)
+                else dpm.addUserRestriction(admin, restriction)
+            }.onFailure { failures += "kiosk peripheral release: ${it.message}" }
         }
-        // Camera and screen capture are handed back permissive and left to the
-        // Restrictions policy, which runs unconditionally on every apply and will
-        // re-disable either if that is what policy says.
-        runCatching { dpm.setCameraDisabled(admin, false) }
-        runCatching { dpm.setScreenCaptureDisabled(admin, false) }
+
+        // The two with their own setters, restored the same way.
+        runCatching {
+            dpm.setCameraDisabled(admin, !restrictions.optBoolean("allow_camera", true))
+        }
+        runCatching {
+            dpm.setScreenCaptureDisabled(
+                admin, !restrictions.optBoolean("allow_screen_capture", true)
+            )
+        }
         return failures
     }
 
     /** Undo everything kiosk set, in the reverse order it was applied. */
-    fun releaseKiosk(): List<String> {
+    fun releaseKiosk(restrictions: JSONObject = JSONObject()): List<String> {
         val failures = mutableListOf<String>()
 
         // ⚠️ First, and unconditionally. Kiosk peripheral rules apply only while
         // the device is locked in; left behind they would follow it out of kiosk,
         // and the Restrictions policy has no way to know it should take them off.
-        failures += releaseKioskPeripherals()
+        failures += releaseKioskPeripherals(restrictions)
 
         runCatching {
             // Clearing the allowlist is what actually ejects an app that is
@@ -1032,6 +1070,16 @@ class PolicyApplier(private val context: Context) {
          * deliberately absent: neither is a user restriction — there is no
          * `DISALLOW_CAMERA` — and both have their own setter.
          */
+        /**
+         * Kiosk peripheral field → the Restrictions field that owns it outside
+         * kiosk. Absent means kiosk-only, and clearing it on exit is correct.
+         */
+        private val RESTRICTIONS_EQUIVALENT = mapOf(
+            "kiosk_allow_bluetooth" to "allow_bluetooth",
+            "kiosk_allow_camera" to "allow_camera",
+            "kiosk_allow_screen_capture" to "allow_screen_capture",
+        )
+
         private val KIOSK_PERIPHERALS = linkedMapOf(
             "kiosk_allow_bluetooth" to UserManager.DISALLOW_BLUETOOTH,
             "kiosk_allow_wifi_config" to UserManager.DISALLOW_CONFIG_WIFI,

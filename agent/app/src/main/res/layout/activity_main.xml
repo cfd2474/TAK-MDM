@@ -25,7 +25,7 @@
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@color/atlas_banner_field">
+        android:background="@drawable/banner_texture">
 
         <!-- ⚠️ No vertical padding, and the height *is* the bar's height. Inset
              with padding, the artwork's lighter top and bottom edges showed as

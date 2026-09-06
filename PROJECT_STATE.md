@@ -7371,6 +7371,35 @@ device in someone's hand.
    separate launcher APK, and only once multi-app kiosk is a confirmed field
    requirement rather than a feature-parity checkbox.
 
+#### 🔻 W60 — A tiled texture behind the banner logo
+
+`Test Files/pattern.png` — a dark navy contour texture, dominant `#000818`, the
+same family as the logo's own field — tiled behind the banner.
+
+Two decisions came from rendering it rather than reasoning about it:
+
+* **Tile size is set by the density bucket, not by the layout.** `tileMode` repeats
+  a bitmap at its *intrinsic* size, so the asset ships at **xhdpi** (640×256 px =
+  320×128 dp). Simulated 64 dp and 128 dp tiles side by side: the smaller one
+  repeated five times across a tablet and read as an obviously repeating motif;
+  the larger repeats 2.5× and reads as texture. 20 KB, from a 1.6 MB source.
+* **The logo stays opaque over it.** Its own background is a topographic/world
+  texture of the same family, so it reads as a plate rather than a hole. Cutting
+  it out to let the pattern through would have destroyed the artwork.
+
+🐛 **And writing it up caught a bug that had nothing to do with the texture.**
+
+W59's `releaseKioskPeripherals()` blanket-cleared every kiosk peripheral. But
+three of them — camera, Bluetooth, screen capture — are *also* `RESTRICTIONS`
+fields, and `applyRestrictions` runs **before** the kiosk path in `apply()`. So on
+every sync of every device, kiosk or not, the release undid the Restrictions
+policy: block Bluetooth in Restrictions, and the next check-in switched it back on.
+
+It would have shipped invisibly — no error, no failed apply, just a policy that
+quietly stopped holding. The release now **restores what Restrictions asked for**
+rather than clearing, and only the genuinely kiosk-only peripherals (Wi-Fi config,
+volume, brightness, airplane mode) are cleared on exit.
+
 | # | Chunk | Notes |
 |---|---|---|
 | 7 | **Knox layer** | Planned in detail below |
