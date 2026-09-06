@@ -333,6 +333,33 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ⚠️ W73 — an optional permission must never report itself as a failure
+
+Found while answering "assign the accessibility on provisioning". W72 chunk 3
+added `PowerMenu` to `PermissionRequirement.ALL`, and `outstanding()` feeds the
+reconciler's **errors** — which set compliance DEGRADED, which
+`agent_update.decide()` treats as *"not applying its policy cleanly"* and refuses
+to offer updates to.
+
+⚠️ **So agent 79 shut its own update channel on any device without an
+accessibility grant** — which is every device until someone gives it. Observed on
+`SM-X520`: `DEGRADED — missing permission: power_menu`. It cleared shortly after,
+almost certainly because the grant was then given by hand; the hazard was real
+for every future enrollment regardless.
+
+⚠️ **`optional` already existed on the base class and `outstanding()` ignored
+it** — `Notifications` has been marked optional all along and was being reported
+as an error too. It only ever passed because that permission is granted silently.
+So this was a latent bug that W72 merely made reachable.
+
+Fixed in agent **0.39.1 (80)**: required permissions are errors, optional ones
+are warnings, and the base declaration now says plainly what the flag decides.
+
+⚠️ **The server-side gate was left alone on purpose.** Refusing to stack an agent
+swap on a device that is failing to apply policy is correct; weakening it to work
+around an agent bug would trade a real safeguard for a symptom.
+
+
 ### 🔨 W72 — Device Settings, second round (IN PROGRESS)
 
 From testing W71 on the tablet. ✅ Wi-Fi works; ✅ the "no flashlight" message was

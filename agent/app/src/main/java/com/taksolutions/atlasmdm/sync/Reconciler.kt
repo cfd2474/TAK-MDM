@@ -467,6 +467,14 @@ class Reconciler(private val context: Context) {
         errors += PermissionRequirement.outstanding(context).map {
             "missing permission: $it (grant it in the agent)"
         }
+        // ⚠️ A *warning*, not an error. An optional permission reported as an
+        // error marks the device DEGRADED, and agent_update.decide() refuses to
+        // offer an update to a device that is not applying its policy cleanly -
+        // so a missing nice-to-have would shut the update channel that fixes it.
+        warnings += PermissionRequirement.outstandingOptional(context).map {
+            "optional permission not granted: $it (some Device Settings controls " +
+                "will explain themselves instead of working)"
+        }
         // Reported, not merely logged. A device on the fallback identity looks
         // perfectly healthy right up until it is wiped, at which point it silently
         // becomes a second record and loses its policy stack. The console should be

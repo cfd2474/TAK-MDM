@@ -53,7 +53,15 @@ sealed class PermissionRequirement {
      */
     open fun grantIntent(context: Context): Intent? = null
 
-    /** Losing this degrades the agent but does not stop it working. */
+    /**
+     * True when the agent works without it.
+     *
+     * ⚠️ This decides whether a missing permission is reported as an **error** or
+     * a warning, and an error marks the device DEGRADED - which
+     * `agent_update.decide()` treats as "not applying its policy cleanly" and
+     * refuses to send updates to. Getting it wrong on a permission no device has
+     * shuts the agent-update channel fleet-wide.
+     */
     open val optional: Boolean = false
 
     // ----------------------------------------------------------------------- //
@@ -108,6 +116,18 @@ sealed class PermissionRequirement {
      */
     data object PowerMenu : PermissionRequirement() {
         override val id = "power_menu"
+
+        /**
+         * ⚠️ **Optional, and that is load-bearing.** Everything else here is
+         * needed for the agent to do its job, so its absence is a policy failure.
+         * This one only adds a Power off row, and reporting it as a failure marks
+         * the device DEGRADED - which `agent_update.decide()` treats as "not
+         * applying its policy cleanly" and refuses to send updates to.
+         *
+         * Agent 79 did exactly that: it shut its own update channel on every
+         * device that had not been granted an accessibility service.
+         */
+        override val optional = true
         override val title = "ATLAS power menu"
         override val rationale =
             "Lets a kiosk user reach the power menu, which the side key may not " +
@@ -193,8 +213,18 @@ sealed class PermissionRequirement {
         fun needingUserAction(context: Context): List<PermissionRequirement> =
             ALL.filter { it.grantIntent(context) != null && !it.isGranted(context) }
 
-        /** Names of everything still missing, for reporting to the server. */
+        /**
+         * Names of the **required** permissions still missing.
+         *
+         * ⚠️ Required only. The caller reports these as errors, and an error puts
+         * the device in DEGRADED - which stops the agent-update channel offering
+         * it anything. A missing optional permission must never do that.
+         */
         fun outstanding(context: Context): List<String> =
-            ALL.filterNot { it.isGranted(context) }.map { it.id }
+            ALL.filterNot { it.optional }.filterNot { it.isGranted(context) }.map { it.id }
+
+        /** Missing optional permissions, for reporting as warnings. */
+        fun outstandingOptional(context: Context): List<String> =
+            ALL.filter { it.optional }.filterNot { it.isGranted(context) }.map { it.id }
     }
 }
