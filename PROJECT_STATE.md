@@ -7425,6 +7425,43 @@ quietly stopped holding. The release now **restores what Restrictions asked for*
 rather than clearing, and only the genuinely kiosk-only peripherals (Wi-Fi config,
 volume, brightness, airplane mode) are cleared on exit.
 
+#### 🔻 W61 — Single-app kiosk: pick an app, not type a package name
+
+Operator: *"the policy creator for single app kiosk just as a blank type field.
+instructions on this are poor."* — two options wanted: **Select App** and
+**Select app with activity**, the first like the required-app picker, the second
+adding a class field and a *"restrict to this activity only"* checkbox.
+
+The field was a bare text box, which told an operator neither what to type nor
+which apps existed. It is now a dropdown of uploaded apps, the same source the
+required-app picker uses, plus two radios that reveal the activity fields.
+
+⚠️ **The mode is not stored.** It is derived on load from whether an activity
+class is set, so there is no third piece of state to fall out of step with the two
+that are saved. And switching back to "Select app" **clears** the activity fields
+rather than hiding them — a hidden input still submits, so an activity left behind
+would keep being sent while the operator could no longer see it. Verified in a
+real DOM, including that clear.
+
+⚠️ **"Restrict to this activity only" cannot mean what it sounds like.** Checked
+against the platform before building rather than after: *"an app in lock task mode
+can start new activities as long as the activity doesn't start a new task"* — so
+an app locked in kiosk moves between its own screens freely and no Device Owner
+API prevents it. The nearest thing,
+`LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK` (confirmed to exist by compiling
+against it, not by assuming), restricts by **package**, not by activity.
+
+So the control is implemented and does something real — nothing outside the
+allowlist can open in the locked task — and both the field description and the
+applier say plainly what it does *not* do. Refusing it outright would have thrown
+away a genuine tightening; naming it without the caveat would have promised a lock
+Android does not offer.
+
+A named activity launches as an explicit `ComponentName`, not through
+`getLaunchIntentForPackage`: a kiosk screen is often not the app's launcher entry
+and may not be exported as one. A leading dot expands against the package, the
+same shorthand `component_class()` already handles server-side.
+
 | # | Chunk | Notes |
 |---|---|---|
 | 7 | **Knox layer** | Planned in detail below |

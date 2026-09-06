@@ -110,9 +110,35 @@ class KioskSpec(PolicySpec):
         default=None,
         pattern=_PACKAGE_PATTERN,
         title="Kiosk app",
-        description="Lock the device to this single app. Leave unset for a normal "
-        "(non-kiosk) device.",
-        json_schema_extra={"ui_group": _SINGLE},
+        description="The app this device is locked to. Chosen from the apps "
+        "uploaded to this server, the same way required apps are.",
+        json_schema_extra={"ui_group": _SINGLE, "ui_control": "kiosk_app"},
+    )
+
+    kiosk_activity: Annotated[str | None, Merge(MergeStrategy.HIGHEST_RANK)] = Field(
+        default=None,
+        max_length=255,
+        title="Activity class",
+        description="Launch this screen instead of the app's normal entry point — "
+        "for example com.example.app.KioskActivity. Leave blank to use whatever "
+        "the app opens with.",
+        json_schema_extra={"ui_group": _SINGLE, "ui_control": "str"},
+    )
+
+    kiosk_restrict_to_activity: Annotated[
+        bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
+    ] = Field(
+        default=None,
+        title="Restrict to this activity only",
+        description="Block anything that is not the kiosk app from opening inside "
+        "the locked task. ⚠️ It cannot stop the kiosk app moving between its own "
+        "screens — Android has no per-activity lock, and an app in lock task may "
+        "start its own activities freely.",
+        json_schema_extra={
+            "ui_group": _SINGLE,
+            "ui_true": "Blocked",
+            "ui_false": "Allowed",
+        },
     )
 
     # ----------------------------------------------------------------------- #
@@ -286,6 +312,16 @@ class KioskSpec(PolicySpec):
                 "(IllegalArgumentException: Cannot use LOCK_TASK_FEATURE_NOTIFICATIONS "
                 "without LOCK_TASK_FEATURE_HOME). Allow the home button, which is "
                 "pointed at the kiosk app and does not let the user out"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _restricting_to_an_activity_needs_one(self) -> "KioskSpec":
+        """"This activity only" says nothing without an activity to name."""
+        if self.kiosk_restrict_to_activity and not self.kiosk_activity:
+            raise ValueError(
+                "restrict to this activity only needs an activity class — name the "
+                "screen to lock to, or clear the restriction"
             )
         return self
 

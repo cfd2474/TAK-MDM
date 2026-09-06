@@ -781,7 +781,10 @@ class PolicyApplier(private val context: Context) {
         }
 
         failures += applyKioskPeripherals(spec)
-        failures += launchIntoLockTask(kioskPackage)
+        failures += launchIntoLockTask(
+            kioskPackage,
+            spec.optString("kiosk_activity").takeIf { it.isNotBlank() },
+        )
         return failures
     }
 
@@ -827,6 +830,16 @@ class PolicyApplier(private val context: Context) {
         }
         if (keeps("keep_keyguard", true)) {
             features = features or DevicePolicyManager.LOCK_TASK_FEATURE_KEYGUARD
+        }
+        // ⚠️ "Restrict to this activity only", and it is worth being precise about
+        // what it buys. This blocks activities that are **not on the lock-task
+        // allowlist** from opening inside the locked task. It does *not* stop the
+        // kiosk app moving between its own screens: an app in lock task may start
+        // its own activities freely, and Android has no per-activity lock. The
+        // console says so on the field rather than letting the name imply more.
+        if (spec.optBoolean("kiosk_restrict_to_activity", false)) {
+            features = features or
+                DevicePolicyManager.LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK
         }
         return features
     }
@@ -953,9 +966,24 @@ class PolicyApplier(private val context: Context) {
         }.getOrElse { listOf("kiosk: could not make $packageName the home screen - ${it.message}") }
     }
 
-    private fun launchIntoLockTask(packageName: String): List<String> {
-        val intent = context.packageManager.getLaunchIntentForPackage(packageName)
-            ?: return listOf("kiosk: $packageName has no launchable activity")
+    private fun launchIntoLockTask(packageName: String, activity: String? = null): List<String> {
+        // A named activity is an explicit component, not the app's launcher entry.
+        // Some kiosk screens are deliberately not the default one — and some are
+        // not exported as launchers at all — so "select app with activity" cannot
+        // go through getLaunchIntentForPackage (W61).
+        val intent = if (activity != null) {
+            Intent(Intent.ACTION_MAIN).setComponent(
+                android.content.ComponentName(
+                    packageName,
+                    // A leading dot is Android's shorthand for "relative to the
+                    // package", the same trap component_class() fixes server-side.
+                    if (activity.startsWith(".")) packageName + activity else activity,
+                )
+            )
+        } else {
+            context.packageManager.getLaunchIntentForPackage(packageName)
+                ?: return listOf("kiosk: $packageName has no launchable activity")
+        }
 
         // CLEAR_TASK forces a relaunch. Without it an app that is already running
         // stays exactly as it is, outside lock task, and the kiosk silently is not
@@ -965,9 +993,18 @@ class PolicyApplier(private val context: Context) {
 
         return runCatching {
             context.startActivity(intent, options)
-            AgentLog.i(TAG, "kiosk: launched $packageName into lock task")
+            AgentLog.i(
+                TAG,
+                "kiosk: launched " + (activity?.let { "$packageName/$it" } ?: packageName) +
+                    " into lock task"
+            )
             emptyList<String>()
-        }.getOrElse { listOf("kiosk: could not launch $packageName - ${it.message}") }
+        }.getOrElse {
+            // Names the component, because "could not launch" against a mistyped
+            // class is the likeliest failure here and the class is the clue.
+            val what = activity?.let { a -> "$packageName/$a" } ?: packageName
+            listOf("kiosk: could not launch $what - ${it.message}")
+        }
     }
 
     fun isInstalled(packageName: String): Boolean = runCatching {

@@ -82,6 +82,45 @@
   </div>
 {% endmacro %}
 
+{% macro _kiosk_app(f, value, name, app_packages) %}
+  {#
+    Single-app kiosk (W61). Two shapes, because they are genuinely different
+    instructions and the field alone could not tell them apart: lock to an app, or
+    lock to one screen *of* an app.
+
+    The mode is not stored, and the initial choice is made in JS from whether an
+    activity class is already set — so there is no third piece of state that can
+    disagree with the other two.
+  #}
+  <div data-kiosk-app>
+    <div class="toolbar" style="gap:16px; margin-bottom:10px">
+      <label style="display:flex; align-items:center; gap:6px; margin:0">
+        <input type="radio" name="__kiosk_mode" value="app"
+               data-kiosk-mode checked>
+        Select app
+      </label>
+      <label style="display:flex; align-items:center; gap:6px; margin:0">
+        <input type="radio" name="__kiosk_mode" value="activity"
+               data-kiosk-mode>
+        Select app with activity
+      </label>
+    </div>
+
+    <select name="{{ name }}" class="field-full">
+      <option value="">— pick an uploaded app —</option>
+      {% for p in app_packages %}
+        <option value="{{ p.package_name }}" {{ 'selected' if value == p.package_name }}>
+          {{ p.label or p.package_name }} ({{ p.package_name }})
+        </option>
+      {% endfor %}
+    </select>
+    <div class="muted" style="font-size:12px; margin-top:6px">
+      Only apps uploaded to this server can be locked to — the device is told
+      exactly which build to install and run.
+    </div>
+  </div>
+{% endmacro %}
+
 {% macro _app_list(f, items, name, app_packages) %}
   <div class="rowset" data-rowset="{{ name }}">
     {% for entry in items or [] %}
@@ -393,6 +432,7 @@
   {% elif f.control == 'password' %}{{ _password(f, value, name) }}
   {% elif f.control == 'package_list' %}{{ _package_list(f, value, name) }}
   {% elif f.control == 'app_list' %}{{ _app_list(f, value, name, app_packages) }}
+  {% elif f.control == 'kiosk_app' %}{{ _kiosk_app(f, value, name, app_packages) }}
   {% elif f.control == 'file_list' %}{{ _file_list(f, value, name, managed_files) }}
   {% elif f.control == 'image_file' %}{{ _image_file(f, value, name) }}
   {% elif f.control == 'wifi_list' %}{{ _wifi_list(f, value, name) }}
@@ -432,7 +472,7 @@
 
 {% macro policy_subform(fields, spec, app_packages, managed_files) %}
   {% for f in fields %}
-  <div class="pf-field">
+  <div class="pf-field" data-field="{{ f.name }}">
     <div class="pf-label">
       <label>{{ f.label }}</label>
       {% if f.help %}<div class="muted" style="font-size:12px">{{ f.help }}</div>{% endif %}

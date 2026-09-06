@@ -159,3 +159,45 @@ def test_background_apps_accumulate_across_policies():
     merge = next(m for m in field.metadata if hasattr(m, "strategy"))
 
     assert merge.strategy is MergeStrategy.UNION
+
+
+# --------------------------------------------------------------------------- #
+# Single app: pick an app, or an app with an activity (W61)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_kiosk_app_is_picked_from_uploaded_apps():
+    """It rendered as a blank text box, which told an operator nothing about what
+    to type or which apps were even available."""
+    from app.policies.form_schema import form_fields
+
+    field = next(f for f in form_fields("KIOSK") if f.name == "kiosk_package")
+
+    assert field.control == "kiosk_app"
+
+
+def test_an_activity_can_be_named_alongside_the_app():
+    spec = _spec(kiosk_activity="com.atakmap.app.ATAKActivity")
+
+    assert spec.kiosk_activity == "com.atakmap.app.ATAKActivity"
+    assert spec.kiosk_restrict_to_activity is None
+
+
+def test_restricting_to_an_activity_needs_an_activity_to_restrict_to():
+    """"This activity only" says nothing without naming the activity."""
+    with pytest.raises(ValueError, match="needs an activity class"):
+        _spec(kiosk_restrict_to_activity=True)
+
+
+def test_the_activity_fields_ride_with_the_app_in_the_form():
+    """All three belong to the Single app sub-page, so they are edited together
+    rather than scattered."""
+    from app.policies.form_schema import form_fields
+
+    groups = {
+        f.name: f.group
+        for f in form_fields("KIOSK")
+        if f.name in ("kiosk_package", "kiosk_activity", "kiosk_restrict_to_activity")
+    }
+
+    assert set(groups.values()) == {"Single app"}

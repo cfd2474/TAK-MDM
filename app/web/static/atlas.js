@@ -1083,3 +1083,47 @@
   // A browser restoring the field on back/reload must not leave a stale list.
   apply();
 })();
+
+  /* --- Single-app kiosk: app, or app with activity (W61) ---------------------
+     Two radios decide whether the activity fields are on screen. The mode is not
+     a stored field: it is derived on load from whether an activity class is
+     already set, so there is no third piece of state to fall out of step with
+     the two that are saved.
+
+     ⚠️ Clearing the inputs on the way out is the point. Switching back to
+     "Select app" has to actually mean it — a hidden input still submits, so an
+     activity left behind would keep being sent while the operator could no
+     longer see it. */
+  (function () {
+    var host = document.querySelector("[data-kiosk-app]");
+    if (!host) return;
+
+    var rows = {};
+    ["kiosk_activity", "kiosk_restrict_to_activity"].forEach(function (name) {
+      rows[name] = document.querySelector('.pf-field[data-field="' + name + '"]');
+    });
+    var activity = document.querySelector('[name="kiosk_activity"]');
+    var restrict = document.querySelector('[name="kiosk_restrict_to_activity"]');
+
+    function show(withActivity) {
+      Object.keys(rows).forEach(function (name) {
+        if (rows[name]) rows[name].hidden = !withActivity;
+      });
+      if (!withActivity) {
+        if (activity) activity.value = "";
+        if (restrict) restrict.value = "";
+      }
+    }
+
+    var radios = host.querySelectorAll("[data-kiosk-mode]");
+    radios.forEach(function (radio) {
+      radio.addEventListener("change", function () {
+        show(radio.value === "activity" && radio.checked);
+      });
+    });
+
+    // Derived, not stored: a saved policy with an activity opens on that mode.
+    var hasActivity = !!(activity && activity.value.trim());
+    radios.forEach(function (r) { r.checked = (r.value === "activity") === hasActivity; });
+    show(hasActivity);
+  })();

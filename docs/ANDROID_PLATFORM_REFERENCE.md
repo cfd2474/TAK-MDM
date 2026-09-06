@@ -1229,6 +1229,22 @@ power menu disappears and a field device becomes recoverable only by a hard rese
 failure to apply one will result in a failure to apply the other." ✅ Confirmed — the
 rejected feature set above left `mLockTaskPackages` empty rather than half-applied.
 
+### ⚠️ There is no per-activity lock
+
+📖 *"An app in lock task mode **can start new activities** as long as the activity
+doesn't start a new task."* So an app locked in kiosk moves between its own
+screens freely, and nothing a Device Owner can call prevents it.
+
+`LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK` (API 30, verified present against
+`compileSdk` 36) blocks activities **not on the lock-task allowlist** from opening
+inside the locked task. That is a restriction by *package*, not by activity — it
+is the closest thing available and it is not the same thing, so a control named
+"restrict to this activity only" has to say which of the two it is doing (W61).
+
+📖 Launching a **named** activity is an explicit `ComponentName` intent, not
+`getLaunchIntentForPackage` — a kiosk screen is often deliberately not the app's
+launcher entry, and may not be exported as one at all.
+
 ### Peripheral control while locked in
 
 📖 These are ordinary Device Owner user restrictions, so a kiosk can hold different
