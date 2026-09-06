@@ -68,6 +68,7 @@ class DeviceRead(ORMModel):
     acked_state_version: int
     compliance_status: ComplianceStatus
     compliance_detail: str | None
+    compliance_warnings: str | None = None
     last_checkin_at: datetime | None
     created_at: datetime
 
@@ -589,6 +590,11 @@ class CheckinRequest(BaseModel):
     # What it has actually applied — not the same claim (D28).
     applied_state_version: int | None = None
     apply_errors: list[str] = Field(default_factory=list)
+    #: Things worth reporting about a device that nonetheless converged (W50).
+    #: Kept apart from apply_errors because they must never move compliance:
+    #: a policy asking for an older build than the device carries is a mismatch
+    #: to surface, not a failure to apply.
+    apply_warnings: list[str] = Field(default_factory=list)
 
     agent_version: str | None = None
     # The numeric versionCode. The display version above cannot be compared, and

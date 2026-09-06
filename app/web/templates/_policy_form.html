@@ -292,6 +292,65 @@
   </div>
 {% endmacro %}
 
+{% macro _app_configs(f, items, name, app_packages) %}
+  {#
+    Saved configurations, one row each (W49). A row carries its package and its
+    values as JSON in hidden inputs: the keys belong to the app, not to us, so
+    there is no fixed set of field names to spread them across.
+    The "Add" button opens the frame below, which fetches the app's declared keys
+    and writes a new row here on save.
+  #}
+  <div class="rowset" data-rowset="{{ name }}" data-app-configs>
+    {% for entry in items or [] %}
+      {#
+        ⚠️ `entry['values']`, never `entry.values`. Jinja tries attribute access
+        before item access, and on a dict `.values` finds the built-in **method** —
+        so `entry.values | tojson` serialises a bound method and 500s. The key
+        being named "values" is the whole trap; `entry.package_name` is fine
+        because dicts have no such attribute.
+      #}
+      {% set config_values = entry['values'] or {} %}
+      <div class="rs-row">
+        <input type="hidden" name="{{ name }}__package_name" value="{{ entry.package_name }}">
+        <input type="hidden" name="{{ name }}__values" value="{{ config_values | tojson }}">
+        <div style="flex:1">
+          <strong>{{ entry.package_name }}</strong>
+          <span class="muted" style="font-size:12px">
+            · {{ config_values | length }} key{{ '' if (config_values | length) == 1 else 's' }}
+          </span>
+          <div class="muted" style="font-size:12px">
+            {% for k, v in config_values.items() %}{{ k }}={{ v | truncate(40) }}{{ ', ' if not loop.last }}{% endfor %}
+          </div>
+        </div>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    {% endfor %}
+    <template data-row-template></template>
+    <button type="button" class="ghost" data-app-config-add>Add configuration</button>
+  </div>
+
+  <div class="modal-backdrop" id="app-config-frame" hidden>
+    <div class="modal">
+      <h3>App configuration</h3>
+      <label>Application</label>
+      <select data-app-config-package class="field-full">
+        <option value="">— pick an uploaded app —</option>
+        {% for p in app_packages %}
+          <option value="{{ p.package_name }}">{{ p.label or p.package_name }} ({{ p.package_name }})</option>
+        {% endfor %}
+      </select>
+      <p class="muted" style="font-size:12px">
+        Only the keys the app itself declares can be set. Pick an app to see them.
+      </p>
+      <div data-app-config-fields style="margin-top:12px"></div>
+      <div class="toolbar" style="margin-top:16px; justify-content:flex-end">
+        <button type="button" class="ghost" data-modal-close>Cancel</button>
+        <button type="button" data-app-config-save disabled>Save configuration</button>
+      </div>
+    </div>
+  </div>
+{% endmacro %}
+
 {% macro _control(f, spec, name, app_packages, managed_files) %}
   {% set value = spec.get(f.name) %}
   {% if f.requires %}
@@ -328,6 +387,7 @@
   {% elif f.control == 'wifi_list' %}{{ _wifi_list(f, value, name) }}
   {% elif f.control == 'usage_rules' %}{{ _usage_rules(f, value, name, none) }}
   {% elif f.control == 'app_usage_rules' %}{{ _usage_rules(f, value, name, app_packages) }}
+  {% elif f.control == 'app_configs' %}{{ _app_configs(f, value, name, app_packages) }}
   {% endif %}
 {% endmacro %}
 

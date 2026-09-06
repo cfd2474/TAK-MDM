@@ -22,8 +22,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import fetch_or_404, get_bundle_signer, get_db, require_device
+from app.api.deps import fetch_or_404, get_bundle_signer, get_db, require_device, get_storage
 from app.api.schemas import CommandCreate, CommandRead
+from app.artifacts.storage import ArtifactStorage
 from app.db.models import Device, DeviceCommand
 from app.security.bundle import BundleSigner
 from app.services import commands as command_service
@@ -88,9 +89,10 @@ def get_desired_state(
     device: Device = Depends(require_device),
     session: Session = Depends(get_db),
     signer: BundleSigner = Depends(get_bundle_signer),
+    storage: ArtifactStorage = Depends(get_storage),
 ) -> dict[str, Any]:
     """Exactly what the device would receive, for debugging a divergence."""
-    bundle = desired_state_service.build_signed(session, device, signer)
+    bundle = desired_state_service.build_signed(session, device, signer, storage)
     session.commit()
     return {
         **bundle,

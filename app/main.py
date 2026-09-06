@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import asyncio
+import logging
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -43,8 +45,11 @@ from app.api.routers import (
     wait,
 )
 
+log = logging.getLogger(__name__)
+
+
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app: FastAPI):
     """Give the change bus the serving loop.
 
     Writes happen in FastAPI's threadpool, but long-poll waiters are asyncio events
@@ -52,7 +57,52 @@ async def lifespan(_: FastAPI):
     """
     notifications.bus.bind_loop(asyncio.get_running_loop())
     admin_auth.warn_if_unprotected(get_settings())
+    _start_catalog_backfill(app)
     yield
+
+
+def _start_catalog_backfill(app: FastAPI) -> threading.Thread:
+    """Fill in app names and icons that predate the code that reads them.
+
+    ⚠️ This exists because `backfill_labels` had **no caller at all** — not in the
+    app, not in a test. It was written for W51, never wired up, and so a library
+    uploaded before names could be read stayed named by its package id forever.
+    W53 added icons to the same pass and would have inherited the same fate.
+
+    Runs on a worker thread: re-reading a base APK costs about a second for an app
+    with a large resource table, and boot must not wait for the whole library.
+    It only ever fills values that are **missing**, so running it in every worker
+    of a multi-worker deployment duplicates work but cannot corrupt anything.
+
+    ⚠️ Resolved through `dependency_overrides`, not by importing `SessionLocal`.
+    `get_session_factory` says why in as many words: a background task that
+    imports the factory directly is one that talks to the real database in the
+    middle of a test run.
+    """
+    from app.api.deps import get_session_factory, get_storage
+
+    overrides = app.dependency_overrides
+    session_factory = overrides.get(get_session_factory, get_session_factory)()
+    storage = overrides.get(get_storage, lambda: get_storage(get_settings()))()
+
+    def run() -> None:
+        from app.services import packages as package_service
+
+        try:
+            with session_factory() as session:
+                filled = package_service.backfill_labels(session, storage)
+                session.commit()
+            if filled:
+                log.info("catalog backfill: filled %d package(s)", filled)
+        except Exception:
+            # A convenience pass must never take the server down with it.
+            log.exception("catalog backfill failed; the console is unaffected")
+
+    # Returned so a test can join it instead of racing it. Nothing in the serving
+    # path waits on this thread.
+    thread = threading.Thread(target=run, name="catalog-backfill", daemon=True)
+    thread.start()
+    return thread
 
 
 app = FastAPI(

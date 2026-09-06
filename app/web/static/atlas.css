@@ -636,3 +636,43 @@ dl.kv dd { margin: 0; font-size: 13px; }
 [data-form-factor="phone"] .frame.landscape { height: 190px; aspect-ratio: 19.5 / 9; }
 [data-form-factor="tablet"] .frame.portrait  { height: 190px; aspect-ratio: 3 / 4; }
 [data-form-factor="tablet"] .frame.landscape { height: 190px; aspect-ratio: 4 / 3; }
+
+/* --- App icons (W53) -------------------------------------------------------
+   The launcher icon pulled out of the APK, shown left of the app name.
+
+   Two shapes arrive here and they must be displayed differently. An **adaptive**
+   icon's bytes are its foreground layer, drawn on a 108dp canvas of which only
+   the centre 72dp is guaranteed visible — the rest is bleed for the launcher's
+   mask and parallax. Shown whole it looks shrunken and off-centre, so it is
+   scaled by 108/72 inside a clipping box. A **legacy** icon is already the
+   finished artwork and is shown as-is; scaling that one would crop the picture.
+
+   Doing the crop here rather than server-side is what keeps Pillow out of the
+   dependencies — the stored bytes are the APK's own PNG/WEBP, untouched. */
+.app-icon-col { width: 40px; padding-right: 0; }
+
+.app-icon {
+  display: block;
+  width: 28px;
+  height: 28px;
+  border-radius: 22%;      /* approximates Android's squircle mask */
+  overflow: hidden;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+
+.app-icon img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.app-icon img.adaptive { transform: scale(1.5); }
+
+/* No extractable icon — a vector-drawable icon needs a renderer we do not have.
+   A monogram is deliberate-looking and consistent, where a broken-image glyph or
+   an empty cell reads as a fault. */
+.app-icon-blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--panel-2);
+}

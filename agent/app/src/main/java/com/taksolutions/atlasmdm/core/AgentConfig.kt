@@ -124,6 +124,19 @@ class AgentConfig(context: Context) {
         set(value) = prefs.edit { putStringSet(KEY_APPLY_ERRORS, value.take(20).toSet()) }
 
     /**
+     * Things worth telling the operator about an apply that nonetheless succeeded
+     * (W50) — a policy naming an older build than the device already carries, say.
+     *
+     * Stored apart from [lastApplyErrors] because the server must be able to tell
+     * them apart: an error degrades a device, a warning must not. A degraded device
+     * is refused agent updates, so filing a benign mismatch as an error would cut
+     * that device off from every future agent build.
+     */
+    var lastApplyWarnings: List<String>
+        get() = prefs.getStringSet(KEY_APPLY_WARNINGS, emptySet())?.toList() ?: emptyList()
+        set(value) = prefs.edit { putStringSet(KEY_APPLY_WARNINGS, value.take(20).toSet()) }
+
+    /**
      * The `SCREEN_OFF_TIMEOUT` a policy displaced, in milliseconds, or -1 if the
      * agent has never written that setting.
      *
@@ -205,6 +218,16 @@ class AgentConfig(context: Context) {
     fun forgetWifiNetworkId(ssid: String) =
         prefs.edit { remove("$KEY_WIFI_ID_PREFIX$ssid") }
 
+    /**
+     * Packages this agent has pushed a managed configuration to (W49).
+     *
+     * `setApplicationRestrictions` latches, so an app dropped from the policy would
+     * keep its configuration for good unless the agent remembers it set one.
+     */
+    var appConfigured: Set<String>
+        get() = prefs.getStringSet(KEY_APP_CONFIGURED, emptySet()) ?: emptySet()
+        set(value) = prefs.edit { putStringSet(KEY_APP_CONFIGURED, value) }
+
     /** Optional file ids the user chose in the marketplace (F4). */
     var selectedOptionalFiles: Set<String>
         get() = prefs.getStringSet(KEY_SELECTED_FILES, emptySet()) ?: emptySet()
@@ -274,6 +297,8 @@ class AgentConfig(context: Context) {
         private const val KEY_WALLPAPER_SHA = "applied_wallpaper_sha"
         private const val KEY_SAVED_SCREEN_TIMEOUT = "saved_screen_timeout_ms"
         private const val KEY_APPLY_ERRORS = "last_apply_errors"
+        private const val KEY_APPLY_WARNINGS = "last_apply_warnings"
+        private const val KEY_APP_CONFIGURED = "app_configured"
         private const val KEY_COMMAND_RESULTS = "pending_command_results"
         private const val KEY_HIDDEN_BY_POLICY = "hidden_by_policy"
         private const val KEY_SUSPENDED_BY_POLICY = "suspended_by_policy"

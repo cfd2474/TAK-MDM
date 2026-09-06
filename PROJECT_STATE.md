@@ -5969,7 +5969,771 @@ empty states say so.
 
 ---
 
-### Later chunks (sketch — to be detailed at approval time)
+#### 🔻 W49 — App configurations (Android managed configurations)
+
+**Ask:** a new sub-section under App Management. Scan uploaded APKs for the
+managed-configuration profiles they declare, let the operator pick an app, open a
+frame to fill in its keys, and save it into a list — several per policy.
+
+##### ✅ Feasibility settled first, because the obvious route is closed
+
+An app declares its config schema with
+`<meta-data android:name="android.content.APP_RESTRICTIONS"
+android:resource="@xml/app_restrictions"/>`. That is a **resource reference**, and
+`app/artifacts/axml.py` says in its own comment that it does not parse
+`resources.arsc` — it returns references symbolically (`@0x7f120001`). Resolving
+the id would mean writing an `.arsc` parser robust enough for every APK an
+operator uploads.
+
+**So discovery is by content, not by id:** scan `res/**/*.xml`, parse each with the
+AXML reader already in the tree, and keep the ones whose **root element is
+`<restrictions>`**.
+
+Proven against the real thing before planning anything further — ATAK 5.8.0.4
+declares six keys:
+
+```
+res/Kt.xml   ← obfuscated by resource shrinking
+  enterpriseConfigurationDataPackage    (restrictionType 6 = TYPE_STRING)
+  enterpriseConfigurationDataPackage2..5
+  enterpriseConfigurationPreferences
+```
+
+That filename is the argument for this approach: **`res/Kt.xml` is unguessable**,
+so a name-based lookup would have found nothing, and an id-based one needs the
+parser we do not have. Content-based discovery found it in one pass.
+
+⚠️ **The titles come back unresolved** — `@0x7f0f1488` — for exactly the same
+reason. So the operator sees the **key** as the field label, which for these six
+is the more useful string anyway. Where a `TYPE_CHOICE` app's `entries` /
+`entryValues` are likewise unresolvable, the field degrades to free text rather
+than showing an empty dropdown.
+
+##### Platform contract (SDK source, verified not recalled)
+
+`RestrictionEntry`: `TYPE_NULL 0, TYPE_BOOLEAN 1, TYPE_CHOICE 2,
+TYPE_CHOICE_LEVEL 3, TYPE_MULTI_SELECT 4, TYPE_INTEGER 5, TYPE_STRING 6,
+TYPE_BUNDLE 7, TYPE_BUNDLE_ARRAY 8`. `setApplicationRestrictions(admin, package,
+Bundle)` is DO/PO only, `@WorkerThread`, and *"performs disk I/O and shouldn't be
+called on the main thread"* — the agent applies from the sync worker, so that is
+already satisfied. D11 already established this works without managed Google Play.
+
+##### Plan — chunk 1 of 2 (server + console)
+
+1. Record the contracts and the arsc limitation in the Android reference.
+2. `app/artifacts/app_restrictions.py` — discover a package's declared keys from
+   its stored artifact, cached by artifact sha (content-addressed, so a cache can
+   never go stale).
+3. Spec: `APP_CATALOG.app_configs`, a list of `{package_name, values{}}`, merged
+   by package so two policies cannot half-configure the same app.
+4. Console: the **App configurations** sub-page — saved configs listed, "Add"
+   opens a frame offering only apps that actually declare restrictions, fields
+   rendered by type, saving appends to the list.
+5. Tests, including one built from the real ATAK APK so the parser is pinned
+   against a shipping app rather than a fixture I wrote to pass.
+6. Deploy.
+
+##### Status: ✅ chunk 1 done and deployed, 2026-09-05
+
+**706 server tests** (12 new). Verified through the running console against the
+**real ATAK build**, not a fixture:
+
+```
+GET /policies/app-config-schema?package=com.atakmap.app.civ  → 200
+  enterpriseConfigurationDataPackage    control=str
+  enterpriseConfigurationDataPackage2..5
+  enterpriseConfigurationPreferences
+```
+
+An app that declares nothing answers `200` with an explicit note rather than an
+error — most apps declare nothing, and that is not a fault to go hunting for.
+
+🐛 **Caught only by calling it: `/policies/{policy_id}` was swallowing the new
+route.** FastAPI matches in declaration order, so `app-config-schema` was parsed
+as a UUID and 422'd. The static route now sits ahead of the parameterised one.
+Tests would never have found this — they call functions, not URLs.
+
+⚠️ **A saved configuration still reaches no device.** The agent has no
+`setApplicationRestrictions` applier yet, so `APP_CATALOG.app_configs` travels in
+the desired state and nothing reads it. That is chunk 2, below.
+
+##### ✅ Butterfly IQ is the reference case, and it found a design gap
+
+The operator's actual target is third-party installs, not ATAK. **Butterfly IQ
+2.49.0** — a real enterprise app, already uploaded as `com.butterflynetinc.helios`
+— declares three keys, confirmed through the live endpoint:
+
+| Key | Type | Control |
+|---|---|---|
+| `ApprovedEnterpriseDeviceSecret` | `TYPE_STRING` | text |
+| `ButterflyDomain` | `TYPE_STRING` | text |
+| **`InactivityTimeoutSeconds`** | **`TYPE_INTEGER`** | **number** |
+
+It exercises two things ATAK cannot: an **integer** key, and titles the app
+**inlined as literal strings** ("Butterfly Enterprise Subdomain") rather than
+`@string` references — which proves the key-fallback is a fallback and not
+masking titles that were there all along.
+
+✅ **XAPK handling confirmed by measurement:** the schema is in `base.apk` and in
+**none** of the six splits, which is what makes scanning `PartRole.BASE` correct
+rather than merely convenient. Now asserted in a test, because if a split could
+carry one, every multi-part app would silently appear to declare nothing.
+
+##### ✅ Chrome 152 is the scale case, and changed two decisions
+
+`Google+Chrome_152.0.7977.82_APKPure.xapk` declares **231 keys** in 0.08 s:
+
+| Type | Count |
+|---|---|
+| `TYPE_BOOLEAN` | 93 |
+| `TYPE_STRING` | 93 |
+| `TYPE_CHOICE` | 39 |
+| `TYPE_INTEGER` | 3 |
+| `TYPE_MULTI_SELECT` | 3 |
+
+Three things it proved that the smaller apps could not:
+
+* **The base part is not always called `base.apk`** — Chrome's is
+  `com.android.chrome.apk`. Discovery runs on whichever part the server recorded
+  as `BASE`, so this works; a filename convention would have failed.
+* **All 231 titles are unresolved references**, so the key-fallback is carrying
+  the entire UI here. Chrome's keys are self-describing
+  (`AdditionalDnsQueryTypesEnabled`), so it reads well — but it confirms the
+  fallback is the normal case, not the exception.
+* **No bundles at all**, so the unsupported-type path stays untested by a real
+  app. Kept, but it has still never fired outside a unit test.
+
+**Two changes it forced:**
+
+1. **`choice` and `multi_select` are now their own controls**, not `str`. Their
+   options live in `android:entries` / `entryValues` resource arrays —
+   `AdsSettingForIntrusiveAdsSites` carries `entries=@0x7f040008` — which are
+   references we cannot resolve. A plain text box would imply any value is
+   acceptable; the editor now says the app defines the valid values, and shows
+   the **literal `defaultValue`** (Chrome ships those uncompiled: `1`) as the one
+   real clue available.
+2. **The frame filters its keys** once there are more than a screenful. 231
+   fields in a modal is not a form, it is a wall.
+
+##### 🐛 Gboard found a **real bug**: nesting was being read flat
+
+Gboard declares a `preferences` key of `TYPE_BUNDLE` with **43 keys nested inside
+it**, alongside 82 genuine top-level keys. `axml.parse_elements` decoded only
+start elements and threw the end elements away, so the document came back as a
+flat list and **all 125 read as top-level**.
+
+The consequence was the worst kind: setting `config_theme` would have written it
+to the top of the Bundle, where Gboard never looks. **No error, no effect,
+nothing to see in the console** — and the operator would have had no way to tell
+a nested key from a real one, because the editor offered them identically.
+
+**Fix:** `AxmlElement` now carries `depth`, tracked from the `END_ELEMENT` chunks
+the reader had been ignoring, and discovery takes only `depth == 1`. Gboard now
+reports **82 keys, not 125**, with `preferences` flagged as a bundle this flat
+editor cannot express.
+
+⚠️ **This also means Gboard is barely configurable through ATLAS** — its
+interesting settings are the nested ones. That is a real limitation, and it is now
+visible rather than fictional. Supporting bundles properly is a future decision,
+not a bug to fix quietly.
+
+✅ Gboard is also the **first real app to exercise the unsupported-type path** —
+after Chrome, that branch had still never fired outside a unit test.
+
+##### ✅ Outlook — the well-behaved case, and one last detail
+
+`Microsoft+Outlook_5.2606.0` declares **44 flat keys** (33 boolean, 11 string) in
+0.13 s: no nesting, no bundles, and 43 of 44 titles inlined as real strings. The
+closest thing to a normal enterprise rollout, and the first fixture that found
+nothing wrong.
+
+One detail it did surface: **binary XML stores a boolean as `0`/`1`**, so
+`BlockExternalImagesEnabled` arrives with `default="0"`. Beside a True/False
+control that reads as a different setting entirely, so a boolean default is now
+reported in the control's own language. The one unresolved title,
+`com.microsoft.intune.mam.AllowedAccountUPNs`, falls back to its key — which is
+perfectly descriptive, and exactly what the fallback is for.
+
+##### ✅ Messages — the many-splits case, no bugs
+
+Google Messages ships **22 parts: one base and 19 config splits** (languages,
+density, ABI). The schema is in the base and in none of the splits, which is the
+strongest confirmation yet that scanning the recorded `BASE` part is right rather
+than lucky.
+
+Only two keys — `disable_rcs` (boolean) and `messages_archival` (string) — but
+both defaults are the awkward shapes: `defaultValue=0` as a **bare integer**
+(read as `false`, via the normalisation Outlook prompted) and `defaultValue=""`
+as an **empty string** (read as *no default*, not as an empty value an operator
+might mistake for one). Same obfuscated filename as Gboard, `res/Ktm.xml` — the
+two Google apps share a build toolchain.
+
+##### ✅ ArcGIS Survey123 and Field Maps — same vendor, opposite builds
+
+The most instructive pair, and directly relevant to field operations
+(`portalURL`, `locationSharingMode`, `requireSignIn` are exactly the settings a
+fleet would be issued).
+
+* **Survey123** (10 keys) is the **textbook case**: schema at the canonical
+  **`res/xml/restrictions.xml`**, every title and default inlined
+  (`portalURL` → *"Portal URL"*, default `https://www.arcgis.com`). It is the
+  **only fixture where a name-based lookup would have worked** — which is exactly
+  why it earns a place: content-based discovery has to handle the tidy layout as
+  well as the obfuscated ones it was built for.
+* **Field Maps** (11 keys) is its opposite twin from the same vendor: schema at
+  the obfuscated `res/Kt.xml`, **not one title resolved**, yet integer defaults
+  still literal (`locationSharingUploadLKLFrequency` → `60`).
+
+Two apps from one publisher landing on opposite sides of the design's central
+assumption is the strongest evidence yet that neither path could have been
+assumed.
+
+##### Eight fixtures, eight different failure modes
+
+| App | Keys | What it proves |
+|---|---|---|
+| **Butterfly IQ** | 3 | The reference case: XAPK, an integer key, titles inlined as real strings |
+| **ATAK** | 6 | Obfuscated schema path (`res/Kt.xml`), every title an unresolvable reference |
+| **Chrome** | 231 | Scale, base part not named `base.apk`, unreadable choice options |
+| **Gboard** | 82 | Nesting — the one that broke the parser |
+| **Outlook** | 44 | Flat Intune-style schema; booleans default as `0`/`1` |
+| **Messages** | 2 | 19 splits carrying nothing; integer and empty-string defaults |
+| **Survey123** | 10 | The canonical `res/xml/restrictions.xml` path, everything inlined |
+| **Field Maps** | 11 | Same vendor, obfuscated path, no titles, literal int defaults |
+
+Between them: three XAPKs and five APKs; 2 to 231 keys; canonical and obfuscated
+schema paths; resolved and unresolved titles; nested and flat; five of the nine
+restriction types. Every one a real shipping build — which is how the nesting bug
+surfaced at all, and why the discovery half can now be called done.
+
+**The last three apps found nothing new.** The risk has moved entirely to the
+agent, where the type coercion below is still unbuilt.
+
+##### 🐛 Design gap Butterfly exposed: a string value cannot satisfy an int key
+
+`AppConfig.values` is `dict[str, str]`, which is right for editing. But
+`InactivityTimeoutSeconds` is `TYPE_INTEGER`, and an app reading it calls
+`getApplicationRestrictions().getInt(...)`. **A Bundle holding the String "300"
+returns 0 from `getInt`** — the app silently falls back to its default and nothing
+anywhere reports a failure. This is the exact shape of bug this project keeps
+finding: correct-looking config, no error, no effect.
+
+⚠️ **The agent cannot fix this alone** — the desired state carries values but not
+types, and inferring "looks numeric → send an int" would corrupt a *string* key
+whose value happens to be digits. `ApprovedEnterpriseDeviceSecret` is precisely
+the kind of key that could be all digits.
+
+**So the type has to travel.** The server already holds the APK it is about to
+deploy, so the cleanest answer is to resolve each key's declared type when
+building the desired state, from that exact build — no stored copy that can drift
+from the app it claims to describe.
+
+##### ✅ Chunk 2 — the agent applier. Shipped as v56 (`0.19.0`), 2026-09-05
+
+**726 server tests, 109 agent tests** (7 new). Migration `r8t0v2x4z6b8` applied on
+`209.182.235.108`.
+
+**1. The declared type now travels.** Scanned once at upload into
+`app_package_version.declared_config`, and attached to each configured key when
+the desired state is built. Stored rather than re-read because the desired state
+is rebuilt on every check-in for every device, and rescanning a 130 MB Chrome APK
+each time to recover three integers is not a trade worth making. Safe to store
+because **a version row is immutable** — its bytes never change, so the copy
+cannot drift from the build it describes. `NULL` means *not scanned* and is
+backfilled lazily; an empty object means *scanned, declares nothing*, and the code
+depends on the difference.
+
+✅ **Proven end to end against the real Butterfly XAPK**, through the actual
+device payload:
+
+```json
+"app_configs": [{
+  "package_name": "com.butterflynetinc.helios",
+  "values": {"InactivityTimeoutSeconds": "300", "ButterflyDomain": "ops.example.org"},
+  "types":  {"InactivityTimeoutSeconds": 5,     "ButterflyDomain": 6}
+}]
+```
+
+Type 5 is `TYPE_INTEGER`, 6 is `TYPE_STRING` — so the agent builds
+`putInt(…, 300)` and `putString(…)`. Butterfly predates the column, so this also
+exercised the lazy backfill.
+
+**2–3. `AppConfigPlan` coerces, and refuses rather than guessing.** A value that
+cannot be its declared type is reported as an apply error naming the key; it is
+never sent as a best guess, because a wrong type reads as the app's own default
+and is indistinguishable from never having tried. An **unknown** type is refused
+for the same reason — sending a string would be right for a string key and
+silently wrong for every other.
+
+**4. Configurations are cleared when a policy stops naming an app.**
+`setApplicationRestrictions` latches like every other DPM setter, so the agent
+remembers which packages it configured.
+
+**5. Presence, not provenance (the W50 requirement).** The applier checks the
+package is *installed*, not that the DPC installed it — so an app left alone
+because the device already had a newer build still gets its configuration. Tying
+config to "we installed this" would have skipped exactly the devices an operator
+is most likely to be looking at.
+
+##### 🐛 A 500 reached the operator: `entry.values` in Jinja is a **method**
+
+Saving a policy with a Chrome downgrade and a managed configuration returned an
+internal server error. The save itself was fine — re-rendering the editor blew up:
+
+```
+_policy_form.html, line 307:  value="{{ entry.values | tojson }}"
+TypeError: Object of type builtin_function_or_method is not JSON serializable
+```
+
+**Jinja resolves attributes before items.** `entry` is a plain dict, so
+`entry.values` finds `dict.values` — the built-in **method** — rather than the
+`"values"` key, and `tojson` tried to serialise it. `entry.package_name` works
+only because dicts have no attribute by that name. **Naming the key `values` is
+the entire trap**, and it was invisible until a saved row was rendered.
+
+Fixed with explicit item access (`entry['values']`), bound once at the top of the
+row so the three uses cannot drift apart.
+
+⚠️ **Why the tests missed it:** every existing test exercised *parsing* and
+*validation* — `parse_form`, `registry.validate_spec`, the discovery fixtures.
+**Nothing rendered a saved `app_configs` row.** The regression test now creates a
+policy through the API and fetches the editor page, which is the only shape that
+would have caught this. Same lesson as the `/policies/{policy_id}` route collision
+earlier in W49: tests that call functions do not exercise what a browser does.
+
+##### ⏳ Not yet proven on hardware
+
+`SM-X520` has none of these apps installed, and the server has only the agent
+uploaded. A full proof needs Butterfly (or Chrome) uploaded to
+`209.182.235.108`, assigned with a configuration, and the app present on the
+tablet — at which point `getInt` returning 300 rather than 0 is the whole test.
+
+---
+
+#### 🔻 W50 — A newer app on the device is a warning, not a failure
+
+**Ask:** when a policy names an app at a lower versionCode than the device already
+has, don't attempt the install and don't fail — treat the newer build as
+satisfying the requirement, raise a **compliance warning** about the mismatch, and
+**still apply that app's managed configuration**, because the package is present
+even though the DPC did not put it there.
+
+##### What already works, and the one thing that does not
+
+`AppUpdatePlan.decide` already returns `REFUSED_DOWNGRADE` for exactly this case
+and the reconciler skips the install — Android refuses a downgrade anyway, and the
+only route down destroys the app's data. That half is done.
+
+⚠️ **The reporting is the problem.** The reconciler files it in `apply_errors`,
+which sets `compliance_status = DEGRADED`. Two consequences the operator did not
+ask for:
+
+1. A device is marked broken for a condition this project has just decided is
+   **acceptable** — the newer build satisfies the requirement.
+2. **DEGRADED blocks the agent self-update.** `agent_update.decide()` refuses to
+   offer a build to a device that "is not applying its policy cleanly". So a
+   device carrying a newer Chrome than its policy names would be permanently
+   unable to receive agent updates — the same deadlock W41 hit, arrived at from a
+   different direction.
+
+So the model needs a tier it does not have: **converged, with something worth
+saying**. Errors and warnings are different facts and cannot share a field.
+
+##### Why not a `WARNING` compliance status
+
+Considered and rejected. `compliance_status` answers *"has this device
+converged?"*, and the answer here is genuinely **yes** — the operator has decided
+v12 satisfies a request for v10. A third status would blur that question and force
+every consumer (the update gate, the fleet table, reports) to re-decide what
+"converged" means. The warning is a separate fact **about** a compliant device, so
+it gets its own field.
+
+##### Plan (6 steps)
+
+1. **Agent:** `Reconciler` collects warnings separately from errors;
+   `REFUSED_DOWNGRADE` becomes a warning naming both versions.
+2. **Agent:** report them as `apply_warnings` on check-in, alongside
+   `apply_errors`.
+3. **Server:** `apply_warnings` on `CheckinRequest`, a `compliance_warnings`
+   column, and — critically — **warnings alone never move `compliance_status`**.
+4. **Console:** surface them on the device page and the fleet table as a warn
+   pill, so "compliant, but read this" is visible without hunting.
+5. **Managed configuration must key off presence, not provenance** — an app the
+   DPC declined to install still gets its config, because it is installed. This
+   lands with W49 chunk 2, whose applier does not exist yet; recorded here so it
+   is built that way rather than retrofitted.
+6. Build, ship, and prove on `SM-X520` with a real downgrade case.
+
+⚠️ **Step 5 cannot be demonstrated until W49 chunk 2 exists** — no managed
+configuration reaches any device today. Steps 1–4 stand on their own and are worth
+having regardless.
+
+##### Status: ✅ steps 1–4 shipped, 2026-09-05 (agent **v55**, `0.18.0`)
+
+**726 server tests** (6 new) and the agent suite pass. Migration `p6r8t0v2x4z6`
+applied; `compliance_warnings` confirmed on the live column.
+
+* `ApplyReport(errors, warnings)` carries the two facts separately through the
+  reconciler; `REFUSED_DOWNGRADE` now produces a **warning** naming both
+  versions.
+* Check-in gained `apply_warnings`, and warnings are rewritten on every report —
+  so raising the policy to match the device clears the notice rather than leaving
+  it to haunt the console.
+* **Warnings never move `compliance_status`.** The device page shows them as
+  "Worth knowing", distinct from "Last reported problem".
+
+The test worth keeping is `test_a_warned_device_is_still_offered_agent_updates`.
+It asserts the update gate directly rather than trusting the reasoning: a
+DEGRADED device is refused new builds, so had this stayed an error, **every
+device carrying a newer app than its policy names would have quietly stopped
+receiving agent updates** — W41's deadlock reached from another direction, and
+the whole reason warnings needed their own tier rather than a friendlier message.
+
+##### Not yet proven on hardware
+
+The downgrade path has never run on `SM-X520`. Proving it needs a policy naming a
+**lower** versionCode than an app the device already carries — Chrome would do it,
+but no Chrome build is uploaded to `209.182.235.108` yet. Worth doing before this
+is called done, since the whole change is about what the device reports.
+
+---
+
+#### 🔻 W51 — App display names, an upload modal, and the DPC's icon
+
+Three operator-reported items from uploading Chrome.
+
+##### 1. An unlabelled upload should be named what the device would call it
+
+Uploading the Chrome XAPK with no label recorded it as `com.android.chrome`.
+
+⚠️ **`android:label` is usually a resource reference**, so this runs straight
+into the same `.arsc` wall as W49's schema discovery. Measured across the
+fixtures rather than assumed:
+
+| Source | What is available |
+|---|---|
+| **XAPK `manifest.json`** | ✅ The display name outright — Chrome → `"Chrome"`, Butterfly → `"Butterfly iQ"` |
+| **APK with a literal label** | ✅ Survey123 → `"Survey123"` |
+| **APK with a reference** | ❌ Outlook and ATAK give `@0x7f15038b` |
+
+So: read the XAPK manifest first, fall back to a literal `android:label`, and
+**fall back to the package name only when neither is readable**. That fixes the
+reported case and several others honestly. Inventing a name from the package
+(`com.microsoft.office.outlook` → "Outlook") is deliberately not done — a guess
+that is usually right is worse than a package name that is always true.
+
+##### 2. An upload of any size needs to say what it is doing
+
+A 100 MB+ upload gave no feedback at all. Wanted: a modal that blocks other
+actions, and can cancel.
+
+`XMLHttpRequest` rather than `fetch` — it reports **upload** progress, which
+`fetch` still cannot, and `abort()` gives the cancel button something real to do
+rather than merely hiding the dialog while the transfer continues.
+
+##### 3. The DPC's launcher icon
+
+A complete adaptive set is supplied: `mipmap-{m,h,x,xx,xxx}dpi` with launcher,
+round, foreground, background and monochrome layers, plus the `anydpi-v26`
+adaptive XML. The manifest already points at `@mipmap/ic_launcher` /
+`ic_launcher_round`, so this is a file merge and a version bump, not a code
+change.
+
+##### Plan (6 steps)
+
+1. Read the display name at ingest: XAPK manifest, then a literal label, then the
+   package name.
+2. Backfill the label for builds already uploaded, so Chrome stops showing as its
+   package name without a re-upload.
+3. Upload modal on the Apps page: blocking, real progress, working cancel.
+4. Merge the icon set into the agent and bump the version.
+5. Tests — the name resolution across all three shapes, using the real fixtures.
+6. Ship and deploy.
+
+##### Status: ✅ done, 2026-09-05 — agent **v57** (`0.20.0`), 733 server tests
+
+**1. Display names.** Resolved across the fixtures: Chrome → **"Chrome"**,
+Butterfly → **"Butterfly iQ"**, Messages → **"Messages"**, Survey123 →
+**"Survey123"**. Outlook and Gboard keep their package names, because their
+labels are resource references and inventing a name would be a fabrication that
+happens to be right.
+
+🐛 **`_container_label` already existed and had never been called.** Someone wrote
+the XAPK-manifest reader and never wired it up, which is the entire reason Chrome
+was filed under its package id.
+
+🐛 **And wiring it up exposed a second bug in the same breath.** The obvious call
+site is the `return`, which sits *after* `with archive:` has closed the zip —
+reading a closed `ZipFile` raises `ValueError`, which `_container_label` catches
+and turns into a silent `None`. It looked exactly like "this XAPK has no name".
+The label is now read inside the block.
+
+`backfill_labels` fixes packages already uploaded, and only where the label is
+missing or equals the package name — an operator who typed a name meant it.
+⚠️ It re-reads the **base APK only**, so an XAPK whose name lived solely in
+`manifest.json` cannot be recovered without a re-upload; that limitation is
+stated where the function is.
+
+**2. Upload modal.** Blocking, with real progress and a cancel that genuinely
+aborts. **`XMLHttpRequest`, not `fetch`** — `fetch` still cannot report *upload*
+progress, and cannot be aborted in a way that stops the bytes, so a cancel button
+built on it would hide the dialog while the transfer carried on. It also says
+"the server is unpacking and verifying it" once the last byte lands, because a
+large XAPK spends real time being split and hashed after the bar hits 100%.
+
+**3. Icon.** 27 files merged into the agent's `res/`; the manifest already pointed
+at `@mipmap/ic_launcher`. Verified in the built APK's **resource table** rather
+than by filename — resource shrinking renames these, exactly as it did to ATAK's
+`res/Kt.xml`:
+
+```
+mipmap/ic_launcher   ic_launcher_background   ic_launcher_foreground
+mipmap/ic_launcher_monochrome                 ic_launcher_round
+```
+
+⚠️ **The icon is not visually confirmed.** The resource table proves all five
+layers ship, including the monochrome layer themed icons need; how it looks under
+a launcher's mask is something only the tablet can show.
+
+---
+
+#### 🔻 W52 — Version choices scoped to their app; app icons investigated
+
+##### ✅ The version selector now belongs to the app that was picked
+
+Every `<option>` already carried `data-package` and **nothing ever read it**, so
+the dropdown listed every version of every app at once — 53 entries, 50 of them
+builds of apps that row had nothing to do with, each one a way to pin the wrong
+thing.
+
+Verified in a real DOM (`jsdom` against the live `/policies/new`, throwaway, no
+dependency added):
+
+| | Before | After |
+|---|---|---|
+| Options before an app is chosen | all 53 | **"— pick an app first —"**, disabled |
+| Options after choosing ADSB Direct | 53 | **3** |
+| …belonging to other apps | 50 | **0** |
+
+Options are removed and re-added rather than hidden: browsers honour `hidden` on
+an `<option>` inconsistently, and one that is invisible but still keyboard-
+selectable would be worse than the bug. Wiring is **lazy and per row**, because
+"Add app" clones from a `<template>` long after load — a startup-only pass would
+leave every new row unfiltered, which is the state that shipped.
+
+🐛 **The first jsdom run reported the fix not working.** It asserted synchronously,
+before the `setTimeout(…, 0)` that wires a newly cloned row had run — a browser
+turns that tick long before a human clicks anything. The test was wrong, not the
+code. Worth remembering: a DOM test that does not let timers run measures a state
+no user ever sees.
+
+##### ❌ App icons: measured, and not worth building — ⛔ **RETRACTED, see W53**
+
+> **This section is wrong.** It is kept because the *way* it was wrong is the
+> lesson. The crawler that produced the table below filtered candidate files on
+> `.png`/`.webp`/`.jpg` **extensions**, and resource shrinking strips extensions —
+> Chrome's icon layers are `res/ima`, `res/EFE`, `res/QtC`, all real WEBP files
+> with no extension at all. "Vector drawables all the way down" was an artefact of
+> the filter, not a fact about the APKs. The operator pushed back — *"we should be
+> able to extract the icon that would be installed for each app on the eud"* — and
+> was right. Never conclude "the data isn't there" from a search that filters on a
+> naming convention the toolchain is free to destroy; check magic bytes.
+
+An icon column needs the app's launcher icon, and `android:icon` is a **resource
+reference** in all five fixtures — the `resources.arsc` wall again.
+
+A minimal `.arsc` resolver was prototyped and **works**: Chrome's icon id
+resolved to `res/r2e.xml`, Outlook's to `res/E42.xml`. But those are
+**adaptive-icon XML**, not images, and following the chain down finds:
+
+| App | Icon chain ends at |
+|---|---|
+| Survey123 | ✅ `res/drawable-hdpi-v4/icon.png` |
+| ATAK | ✅ `res/3k.png` |
+| **Chrome, Butterfly, Outlook** | ❌ **vector drawables all the way down** |
+
+Rasterising a `VectorDrawable` server-side means implementing Android's drawable
+pipeline — path data, gradients, clip paths, layer-lists, insets. Outlook's
+foreground is already `inset → layer-list → two items` deep. That is a project,
+not a column, and it would still only reach ~40% of apps.
+
+**Not built. Options, for the operator to choose:** a monogram from the app's
+name (consistent, no parsing, works for every app), an operator-uploaded icon per
+app (reliable but manual), or real icons only where extractable (inconsistent —
+two apps with pictures and three without looks broken).
+
+⚠️ **The prototype is worth keeping in mind for something else.** A working
+`.arsc` resolver would also unlock the *labels* Outlook and Gboard cannot supply
+(W51), managed-configuration **titles** (W49 shows keys instead), and **choice
+option lists** (currently free text). Those are all string lookups — no rendering
+— so they are genuinely reachable. Icons are the one thing on the far side of a
+renderer.
+
+#### 🔻 W53 — Real app icons, extracted from the APK
+
+**Measured first, planned second.** A `resources.arsc` reader plus magic-byte
+detection resolves `application:icon` to the actual image the launcher would draw,
+for four of the six pinned fixtures:
+
+| App | Icon resource | Ends at | Shape |
+|---|---|---|---|
+| Chrome | `res/r2e.xml` | `res/ima` — **WEBP**, 432² | adaptive foreground |
+| Messages | `res/BWP.xml` | `res/vVu.png` — PNG, 432² | adaptive foreground |
+| Survey123 | — | `res/…/icon.png` — PNG, 192² | **legacy raster** |
+| ATAK | — | `res/3k.png` — PNG, 96² | **legacy raster** |
+| Butterfly | `…/ic_launcher.xml` | ❌ `<vector>` foreground | vector only |
+| Outlook | `res/E42.xml` | ❌ `inset → layer-list → <vector>` | vector only |
+
+All four extracted icons were **rendered and looked at**, not merely produced: the
+Chrome disc, the Messages bubble, the Survey123 notebook, the ATAK crest.
+
+Two rules the measurement settled, both easy to get wrong:
+
+* **Provenance decides the crop.** An adaptive foreground is drawn on a 108dp
+  canvas of which only the centre 72dp is guaranteed visible, so it needs a
+  ×1.5 crop; a legacy raster is already the finished icon and cropping it eats the
+  artwork. Survey123 and ATAK came out visibly clipped until this was separated.
+* **Vector-only icons stay unresolved.** Rasterising a `VectorDrawable` is
+  Android's drawable pipeline — path data, gradients, clip paths, insets — and
+  that part of W52 stands. Those apps fall back to the existing placeholder rather
+  than to a fabricated image.
+
+No new Python dependency: the raster is stored **as-is** and the ×1.5 adaptive
+crop is done in CSS, so Pillow stays out of `requirements.txt` (it is present only
+transitively, and the file says so deliberately).
+
+##### ✅ Chunk 1 — extraction (offline, no schema change) — **done, 744 tests**
+
+Built as planned. All four extractable icons were **rendered through the
+production path and looked at**, not just asserted on: Chrome disc, Messages
+bubble, Survey123 notebook, ATAK crest, each correctly cropped for its shape.
+
+Two things worth keeping:
+
+* **Splits are skipped.** `inspect_apk` runs on every part of a container, and a
+  `config.*` split has no launcher entry — parsing its resource table is real work
+  for a guaranteed `None`.
+* **Cost is the table parse, not the search.** Outlook ships a **39.6 MB**
+  `resources.arsc` (22,886 ids) and costs 1.03 s to read; the icon walk is 0.17 s.
+  Chrome's whole extraction is 0.03 s. Acceptable against hashing a 172 MB upload,
+  but it is the reason to resolve labels from the *same* parsed table later rather
+  than re-reading it per question.
+
+1. `app/artifacts/arsc.py` — minimal resource-table reader: resource id → values
+   per configuration, handling the sparse and offset-16 entry encodings. Promote
+   `_StringPool` to public in `axml.py` rather than copying it.
+2. `app/artifacts/app_icon.py` — resolve `application:icon` through adaptive-icon
+   XML to a raster; return bytes + media type + whether the crop applies.
+3. Wire `icon` onto `ApkInfo` and `InspectedBundle`.
+4. Tests pinned to all six fixtures — including the two **refusals**, so a future
+   change that starts inventing icons for vector-only apps fails loudly.
+
+##### ✅ Chunk 2 — labels, persistence, and the column — **done, 751 tests**
+
+Operator asked for *"whichever method will be most reliable"* on whether to fold
+label resolution into the same parse. **Folded in**: one parse answers both
+questions, so the two can never disagree, and a 39.6 MB table is not read twice.
+
+🐛 **Two bugs in chunk 1's reader, found while adding locale support.**
+`ResTable_config` puts density at offset **14**; chunk 1 read it at **12**, which
+is `orientation|touchscreen` — zero for practically every resource. So every entry
+looked density-less, the best-density-first ordering did nothing, and the only
+thing choosing between five candidate rasters was the file-size tiebreak. The
+icons came out right anyway, which is precisely why it survived review. Second:
+values carried no **locale**, and a string resource exists once per translation —
+Outlook's label has **62** of them. "First value wins" meant "whichever
+translation the table happened to list first".
+
+Both now fixed and pinned: Chrome's foreground orders 640→480→320→240→160, and
+the default locale sorts ahead of all 62.
+
+5. Resolve `android:label` through the same table when the manifest gives a
+   reference — completes W51 for Outlook and Gboard.
+6. Migration + columns on `AppPackage`; store at upload; backfill existing rows.
+7. `GET /api/v1/packages/{id}/icon` and the icon column left of the app name,
+   with the ×1.5 adaptive crop in CSS and a placeholder for the vector-only apps.
+
+**Verified on the live Docker stack, not only in tests.** The migration was
+round-tripped on Postgres against a table with 10 existing rows (3 columns → 0 →
+3; `icon_adaptive` NOT NULL took its `server_default` cleanly). After a rebuild
+the catalog reads:
+
+| | |
+|---|---|
+| Packages with a real icon | **9 of 10** |
+| Butterfly iQ | monogram — vector icon, as designed |
+| Rendered on `/apps` | 9 `<img>`, 3 adaptive / 6 legacy, 1 monogram |
+| Icon over HTTP | `200 image/png 12246 bytes` |
+
+🐛 **`backfill_labels` had no caller. Anywhere.** Not in the app, not in a test.
+It was written for W51 to rescue packages named by their package id, and was
+never wired to anything — so it never ran, and nothing failed to say so. W53's
+icon backfill was about to inherit exactly that. It now runs from `lifespan` on a
+worker thread, resolved through `dependency_overrides` rather than importing
+`SessionLocal` (the docstring on `get_session_factory` warns in as many words
+that a background task importing it directly is one that talks to the real
+database during a test run).
+
+The test for it **starts the app** and finds the thread by name, rather than
+calling the function — a test that called it would have passed throughout the
+period the bug existed. Confirmed by deleting the `lifespan` call and watching
+the test fail.
+
+##### ✅ Chunk 3 — hardening, after a pre-commit review found real defects
+
+A 14-agent review of the uncommitted surface (6 dimensions, top findings verified
+by two adversarial refuters each) produced **26 candidates; every one of the 4
+verified was confirmed**. Committing without it would have shipped all of these.
+
+**`resources.arsc` is attacker-chosen content** — the whole point of the inspector
+is to read files it does not trust — and the first draft treated it as merely
+untidy:
+
+| Defect | What it actually did |
+|---|---|
+| `_resolve` bounded **depth, not branching**, and kept no visited set | a **511-byte** APK could ask for years of CPU |
+| `entry_count` was an unchecked uint32, and the slot loop `continue`d rather than stopping | a declared 4 billion entries = 4 billion iterations over a few hundred bytes |
+| `StringPool` decoded every string eagerly with no cap | 2 MB table → **603 MB** of heap; scaled up, an OOM kill of the single uvicorn worker, dropping every in-flight check-in |
+| `read_table` caught `(KeyError, ValueError, ArscError)` | `struct.error` is **not** a `ValueError` — a truncated table escaped as an HTTP 500 and aborted the whole startup backfill |
+
+Fixed with a per-path visited set plus a `_MAX_LOOKUPS` work budget, a clamped
+`entry_count`, a decoded-bytes cap, and — the systemic one — `axml` now converts
+`struct.error`/`IndexError` into its own declared `AxmlError` at the boundary, so
+callers that catch the documented type actually catch everything.
+
+🐛 **Writing those tests found a pre-existing hole the review had not**: a
+truncated `AndroidManifest.xml` raised `struct.error` straight out of
+`parse_elements`, past `_read_manifest`'s `except AxmlError`, as a 500 on upload.
+That predates W53 entirely — the manifest path always had it.
+
+🐛 **The startup backfill never converged.** It selects rows with no icon, but an
+app whose icon is a vector drawable can never *get* one — so Outlook's 172 MB base
+APK was re-read and its 39.6 MB table re-parsed at **every server start, forever**,
+at 1.4 s and 356 MB of heap per attempt, to produce nothing. Now
+`icon_source_version_id` records the version last inspected, checked *before* the
+read; comparing against the version means a new build is still re-examined.
+Verified on the live stack: all 10 packages marked inspected, and a restart logs
+nothing.
+
+🐛 **Multi-select managed configuration was written as a scalar.** Android carries
+`multi-select` as `String[]`; an app reads it with `getStringArray`, which returns
+**null** for a String or an Int — so the app kept its default while the device
+reported the policy applied. Exactly the silent failure `AppConfigPlan` exists to
+prevent, and it had been sharing the `TYPE_CHOICE` branch. Now `AsStringList` →
+`putStringArray`, with 5 tests.
+
+Also: the version-expansion row still spanned 5 columns after a 6th was added.
+
+⚠️ **Our own icon is the heaviest in the library**: 213 KB, a 432² RGBA PNG,
+because the agent's `ic_launcher_foreground` is unoptimised. The resolver is
+right to take the highest density; the asset is what is oversized. Mitigated for
+now by `loading="lazy"` and a 24-hour private cache. Worth optimising the PNG.
+
+##### Later, unlocked by the same reader
+
+Outlook's and Gboard's **display names** (W51's remaining gap), managed-config
+**titles** and **choice lists** (W49 shows raw keys). All string lookups, no
+rendering — genuinely reachable now.
 
 | # | Chunk | Notes |
 |---|---|---|

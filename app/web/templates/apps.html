@@ -17,13 +17,33 @@
   <div class="tab-panel" data-tab-panel="local">
     <div class="panel">
       <h2>Upload a package</h2>
-      <form method="post" action="/apps/upload" enctype="multipart/form-data" class="toolbar">
+      {# data-upload-form: atlas.js takes this over so a 130 MB package reports
+         progress instead of looking like nothing happened (W51). #}
+      <form method="post" action="/apps/upload" enctype="multipart/form-data" class="toolbar"
+            data-upload-form>
         {{ csrf_field(csrf_token) }}
         <input type="file" name="file" accept=".apk,.xapk,.apks,.apkm" required>
         <input type="text" name="label" placeholder="Label (optional)">
         <input type="hidden" name="publish" value="auto">
         <button type="submit">Upload</button>
       </form>
+
+      {# Blocking on purpose: navigating away mid-upload abandons a transfer with
+         no sign it was ever running. #}
+      <div class="modal-backdrop" id="upload-modal" hidden>
+        <div class="modal">
+          <h3 data-upload-title>Uploading</h3>
+          <p class="muted" data-upload-detail>Starting…</p>
+          {# The stylesheet's .progress expects a <span> child; reusing it rather than
+             adding a second bar style. #}
+          <div class="progress"><span data-upload-bar></span></div>
+          <p class="muted" style="font-size:12px" data-upload-bytes></p>
+          <div class="toolbar" style="margin-top:16px; justify-content:flex-end">
+            <button type="button" class="danger" data-upload-cancel>Cancel upload</button>
+            <button type="button" data-upload-close hidden>Close</button>
+          </div>
+        </div>
+      </div>
       <p class="muted" style="font-size:12px">
         The server reads the package name, version, and signing certificate from the
         file. An XAPK is unpacked into base + splits + OBB server-side (D13).
@@ -43,12 +63,39 @@
       {% else %}
       <table data-sortable>
         <thead><tr>
+          {# Icon column: no header text, and not sortable — there is nothing to
+             order by, and a sort control over pictures would be noise. #}
+          <th class="app-icon-col"></th>
           <th data-sort>App name</th><th data-sort>Latest version</th>
           <th data-sort>Parts</th><th>Store</th><th></th>
         </tr></thead>
         <tbody>
         {% for p in packages %}
           <tr>
+            <td class="app-icon-col">
+              {# The real launcher icon when it could be pulled out of the APK
+                 (W53). An adaptive icon's foreground is drawn on a 108dp canvas
+                 of which only the centre 72dp is meant to be seen, so it is
+                 scaled up inside a clipping box; a legacy icon is already the
+                 finished artwork and is shown whole.
+
+                 Apps whose icon is a vector drawable get a monogram instead —
+                 rasterising one needs Android's drawable pipeline. #}
+              {# Presence is asked of `icon_media_type`, not `icon_data`: the bytes
+                 are a deferred column, and touching them here would load one blob
+                 per row on every render of this page. #}
+              {% if p.icon_media_type %}
+                <span class="app-icon">
+                  <img src="/api/v1/packages/{{ p.id }}/icon" alt=""
+                       loading="lazy"
+                       class="{{ 'adaptive' if p.icon_adaptive else '' }}">
+                </span>
+              {% else %}
+                <span class="app-icon app-icon-blank" aria-hidden="true">
+                  {{ (p.label or p.package_name)[0] | upper }}
+                </span>
+              {% endif %}
+            </td>
             <td>
               {# The package name is the identity that has to match the device, so
                  it keeps its place under the name even without its own column. An
@@ -99,7 +146,9 @@
           </tr>
           {% if request.query_params.get('versions') == (p.id | string) %}
           <tr>
-            <td colspan="5" style="background:var(--panel-2)">
+            {# Six columns since the icon column was added (W53). A short colspan
+               leaves the expansion panel narrower than the row above it. #}
+            <td colspan="6" style="background:var(--panel-2)">
               <strong>Versions of {{ p.label or p.package_name }}</strong>
               <p class="muted" style="font-size:12px; margin:4px 0 8px">
                 Only a <em>published</em> build is chosen automatically by a policy

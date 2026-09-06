@@ -34,6 +34,15 @@
 {% if device.compliance_detail %}
   <div class="banner">Last reported problem: {{ device.compliance_detail }}</div>
 {% endif %}
+{#
+  Warnings sit apart from problems on purpose (W50): the device applied its
+  policy, and this is something the operator should know rather than fix. Shown
+  even when the device is compliant — which is exactly when it would otherwise
+  go unnoticed.
+#}
+{% if device.compliance_warnings %}
+  <div class="banner warn">Worth knowing: {{ device.compliance_warnings }}</div>
+{% endif %}
 
 {% if conflicts %}
   <div class="banner bad">

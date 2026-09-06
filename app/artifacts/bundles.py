@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from app.db.models import PartRole  # re-export
 
 from app.artifacts.apk import ApkError, ApkInfo, inspect_apk
+from app.artifacts.app_icon import AppIcon
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,15 @@ class InspectedBundle:
     #: ATAK plugin compatibility key, from the base APK's manifest (D45).
     plugin_api: str | None
     parts: tuple[BundlePart, ...]
+    #: The app's display name — what the launcher shows on the device (W51).
+    #: An XAPK states it outright; a plain APK only when its manifest inlines
+    #: the label rather than referencing a string resource. None when unknown,
+    #: so the caller falls back to the package name rather than inventing one.
+    label: str | None = None
+    #: The launcher icon from the base APK, when extractable (W53). Splits never
+    #: carry it — a `config.*` split holds density-specific resources but the
+    #: manifest that names the icon is the base's.
+    icon: AppIcon | None = None
 
     @property
     def base(self) -> BundlePart:
@@ -103,8 +113,14 @@ def inspect_bundle(data: bytes) -> InspectedBundle:
 
     parts: list[BundlePart] = []
     base_part: BundlePart | None = None
+    container_label: str | None = None
 
     with archive:
+        # Read inside the block: `with archive` closes the zip, and reading a
+        # closed one raises ValueError — which `_container_label` catches and
+        # turns into a silent None.
+        container_label = _container_label(archive)
+
         for name in sorted(archive.namelist()):
             lowered = name.lower()
 
@@ -163,6 +179,10 @@ def inspect_bundle(data: bytes) -> InspectedBundle:
         signature_sha256=base_info.signature_sha256,
         signature_scheme=base_info.signature_scheme,
         plugin_api=base_info.plugin_api,
+        # The container states the display name outright; the base APK's own
+        # label is usually a resource reference (W51).
+        label=container_label or base_info.label,
+        icon=base_info.icon,
         parts=tuple(parts),
     )
 
@@ -184,6 +204,8 @@ def inspect_single_apk(data: bytes) -> InspectedBundle:
         signature_sha256=info.signature_sha256,
         signature_scheme=info.signature_scheme,
         plugin_api=info.plugin_api,
+        label=info.label,
+        icon=info.icon,
         parts=(BundlePart(role=PartRole.BASE, file_name="base.apk", data=data, info=info),),
     )
 

@@ -50,7 +50,22 @@ import com.taksolutions.atlasmdm.policy.WallpaperPlan
 data class SyncOutcome(
     val stateVersion: Int,
     val appliedStateVersion: Int?,
-    val errors: List<String>
+    val errors: List<String>,
+    val warnings: List<String> = emptyList(),
+)
+
+/**
+ * What one pass over the desired state produced (W50).
+ *
+ * Errors and warnings are separate facts and cannot share a list. An error means
+ * the device failed to apply something; a warning means it applied everything and
+ * there is still something the operator should know — a policy naming an older
+ * build than the device already carries, say. Folding the second into the first
+ * marks healthy devices DEGRADED, and a DEGRADED device is refused agent updates.
+ */
+data class ApplyReport(
+    val errors: List<String> = emptyList(),
+    val warnings: List<String> = emptyList(),
 )
 
 /**
@@ -317,6 +332,9 @@ class Reconciler(private val context: Context) {
             // is failing to apply anything: it reported "compliant" while the
             // tablet was stuck a version behind.
             .put("apply_errors", JSONArray(config.lastApplyErrors))
+            // Separate from apply_errors on purpose: these never move
+            // compliance_status (W50).
+            .put("apply_warnings", JSONArray(config.lastApplyWarnings))
             // Outcomes of commands run since the last check-in. Carried on the
             // request, so a result is reported exactly one cycle after execution.
             .put("results", JSONArray(config.pendingCommandResults.map { JSONObject(it) }))
@@ -362,8 +380,10 @@ class Reconciler(private val context: Context) {
         val desired = config.cachedDesiredState?.let { JSONObject(it) }
             ?: return SyncOutcome(serverVersion, null, emptyList())
 
-        val errors = applyDesiredState(desired)
+        val report = applyDesiredState(desired)
+        val errors = report.errors
         config.lastApplyErrors = errors
+        config.lastApplyWarnings = report.warnings
 
         // Advance regardless of errors. acked_state_version means "this version has
         // been processed", not "processed perfectly" — quality is what
@@ -438,8 +458,9 @@ class Reconciler(private val context: Context) {
         return policyApplier.applyKiosk(kiosk)
     }
 
-    fun applyDesiredState(desired: JSONObject): List<String> {
+    fun applyDesiredState(desired: JSONObject): ApplyReport {
         val errors = mutableListOf<String>()
+        val warnings = mutableListOf<String>()
         // A revoked app-op degrades the agent silently otherwise: files stop being
         // placed, or the service is deferred, and it looks like a server fault.
         errors += PermissionRequirement.outstanding(context).map {
@@ -456,7 +477,9 @@ class Reconciler(private val context: Context) {
         }
         val policy = desired.optJSONObject("policy") ?: JSONObject()
         errors += policyApplier.apply(policy)
-        errors += reconcileApps(desired.optJSONArray("apps") ?: JSONArray())
+        val appReport = reconcileApps(desired.optJSONArray("apps") ?: JSONArray())
+        errors += appReport.errors
+        warnings += appReport.warnings
         // After installs, so a package that is both required and removed resolves
         // as removed rather than depending on which ran first. A policy saying both
         // is a mistake, and the guard below reports it instead of flip-flopping the
@@ -477,7 +500,7 @@ class Reconciler(private val context: Context) {
         // job is to forget any warnings it was remembering (W44).
         errors += DataUsageTracker(context)
             .reconcile(policy.optJSONObject("NETWORK_DATA_USE") ?: JSONObject())
-        return errors
+        return ApplyReport(errors, warnings)
     }
 
     /**
@@ -623,8 +646,9 @@ class Reconciler(private val context: Context) {
     // Apps
     // ----------------------------------------------------------------------- //
 
-    private fun reconcileApps(apps: JSONArray): List<String> {
+    private fun reconcileApps(apps: JSONArray): ApplyReport {
         val errors = mutableListOf<String>()
+        val warnings = mutableListOf<String>()
 
         for (index in 0 until apps.length()) {
             val app = apps.optJSONObject(index) ?: continue
@@ -653,16 +677,27 @@ class Reconciler(private val context: Context) {
                     continue
                 }
                 AppUpdatePlan.Action.REFUSED_DOWNGRADE -> {
-                    // An apply_error, not a log line: the whole point is that the
-                    // operator learns from the console rather than from the device.
+                    // A **warning**, not an error (W50). The newer build satisfies
+                    // the requirement — the app is present and usable — so the
+                    // device has converged and must not be marked DEGRADED for it.
+                    //
+                    // That distinction is load-bearing twice over: it stops a
+                    // healthy fleet reading as broken, and a DEGRADED device is
+                    // refused agent updates, so filing this as an error would cut
+                    // the device off from every future agent build over a version
+                    // mismatch nobody intends to act on.
+                    //
+                    // Still reported rather than logged: the operator learns from
+                    // the console, not by walking up to the device.
                     AgentLog.w(
                         TAG,
                         "$packageName is at versionCode $installed but the policy wants " +
-                            "$desiredVersion; Android will not install a downgrade"
+                            "$desiredVersion; keeping the newer build"
                     )
-                    errors += "$packageName: installed versionCode $installed is newer than " +
-                        "the required $desiredVersion. Android refuses to install a downgrade, " +
-                        "and removing it first would erase the app's data, so it was left alone."
+                    warnings += "$packageName: the device has versionCode $installed, newer " +
+                        "than the $desiredVersion this policy installs. The newer build " +
+                        "satisfies the requirement and was kept — Android refuses a downgrade, " +
+                        "and removing it first would erase the app's data."
                     continue
                 }
                 AppUpdatePlan.Action.SKIP_PINNED -> {
@@ -729,7 +764,7 @@ class Reconciler(private val context: Context) {
                 errors += "$packageName: ${result.message}"
             }
         }
-        return errors
+        return ApplyReport(errors, warnings)
     }
 
     /**

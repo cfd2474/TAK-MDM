@@ -32,8 +32,9 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.deps import authenticated_device, get_bundle_signer, get_db
+from app.api.deps import authenticated_device, get_bundle_signer, get_db, get_storage
 from app.api.schemas import CheckinRequest, CheckinResponse, CommandEnvelope
+from app.artifacts.storage import ArtifactStorage
 from app.config import Settings, get_settings
 from app.db.models import ComplianceStatus, Device
 from app.security.bundle import BundleSigner
@@ -61,7 +62,11 @@ def _record_convergence(device: Device, payload: CheckinRequest) -> None:
     reality are different facts, and conflating them is how a fleet dashboard ends
     up reporting compliance it never verified (D28).
     """
-    if payload.applied_state_version is None and not payload.apply_errors:
+    if (
+        payload.applied_state_version is None
+        and not payload.apply_errors
+        and not payload.apply_warnings
+    ):
         return  # nothing reported; leave the previous verdict standing
 
     if payload.applied_state_version is not None:
@@ -69,6 +74,12 @@ def _record_convergence(device: Device, payload: CheckinRequest) -> None:
         device.acked_state_version = max(
             device.acked_state_version, payload.applied_state_version
         )
+
+    # Warnings are recorded on every report, including a clean one, so a mismatch
+    # that has been resolved stops being shown (W50).
+    device.compliance_warnings = (
+        "; ".join(payload.apply_warnings)[:2000] if payload.apply_warnings else None
+    )
 
     if payload.apply_errors:
         device.compliance_status = (
@@ -78,6 +89,11 @@ def _record_convergence(device: Device, payload: CheckinRequest) -> None:
         )
         device.compliance_detail = "; ".join(payload.apply_errors)[:2000]
     else:
+        # ⚠️ Warnings deliberately do not appear here. A device carrying a newer
+        # build than its policy names *has* converged — the operator's own rule is
+        # that the newer build satisfies the requirement — so calling it DEGRADED
+        # would both misreport it and, because the agent-update gate refuses a
+        # DEGRADED device, quietly stop it ever receiving another agent build.
         device.compliance_status = ComplianceStatus.COMPLIANT
         device.compliance_detail = None
 
@@ -89,6 +105,9 @@ def checkin(
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     signer: BundleSigner = Depends(get_bundle_signer),
+    # Only for the one-off scan of a build uploaded before its declared
+    # configuration was recorded (W49); the common path is a DB read.
+    storage: ArtifactStorage = Depends(get_storage),
 ) -> CheckinResponse:
     device.last_checkin_at = datetime.now(timezone.utc)
     device.agent_version = payload.agent_version or device.agent_version
@@ -124,7 +143,9 @@ def checkin(
     send_bundle = policy_changed or payload.force_full
 
     bundle = (
-        desired_state_service.build_signed(session, device, signer) if send_bundle else None
+        desired_state_service.build_signed(session, device, signer, storage)
+        if send_bundle
+        else None
     )
     live_commands = command_service.claim_for_delivery(session, device)
     policy_names = fleet_service.policy_names_for_device(session, device)

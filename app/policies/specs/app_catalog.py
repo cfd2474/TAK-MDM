@@ -26,6 +26,26 @@ from app.policies.strategies import Merge, MergeStrategy
 _PACKAGE_PATTERN = r"^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$"
 
 
+class AppConfig(BaseModel):
+    """One app's managed configuration — the keys it declares, and their values.
+
+    ``values`` is deliberately an open map rather than a typed model: the schema
+    belongs to the app, is read out of its APK at edit time (W49), and differs
+    per build. Pinning it here would mean redeploying the server to configure an
+    app that added a key.
+
+    Values are carried as strings and coerced on the device, where the app's own
+    declared type is authoritative. The console renders the right control from
+    that same declaration, so an operator is not typing "true" into a free-text
+    box unless the app really did declare a string.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    package_name: str = Field(pattern=_PACKAGE_PATTERN)
+    values: dict[str, str] = Field(default_factory=dict)
+
+
 class RequiredApp(BaseModel):
     """One app the device must have installed."""
 
@@ -157,4 +177,22 @@ class AppCatalogSpec(PolicySpec):
         description="Lock the device to this single app. Leave unmanaged for a "
         "normal (non-kiosk) device.",
         json_schema_extra={"ui_group": "Kiosk"},
+    )
+
+    app_configs: Annotated[
+        list[AppConfig] | None,
+        Merge(
+            MergeStrategy.MERGE_BY_KEY,
+            key="package_name",
+            note="One configuration per app: the highest-ranked policy's values win.",
+        ),
+    ] = Field(
+        default=None,
+        title="App configurations",
+        description=(
+            "Managed configuration pushed into an app — the keys the app itself "
+            "declares. Only apps whose uploaded build advertises a configuration "
+            "can be configured here."
+        ),
+        json_schema_extra={"ui_group": "App configurations", "ui_control": "app_configs"},
     )

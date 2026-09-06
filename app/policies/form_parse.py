@@ -22,6 +22,8 @@ so a bad value fails once, in the place that already reports it well.
 
 from __future__ import annotations
 
+import json
+
 from typing import Any, Protocol
 
 from app.policies.form_schema import form_fields
@@ -143,6 +145,37 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
                 if i < len(overwrites) and overwrites[i]:
                     row["overwrite"] = overwrites[i]
                 rows.append(row)
+            if rows:
+                spec[name] = rows
+
+        elif field.control == "app_configs":
+            # values arrives as JSON because the keys belong to the app, not to
+            # this form (W49). Parsed here rather than trusted: it reaches us
+            # through a hidden input, so it is operator-supplied like anything else.
+            packages = form.getlist(f"{name}__package_name")
+            raw_values = form.getlist(f"{name}__values")
+            rows = []
+            for i, package in enumerate(packages):
+                package = (package or "").strip()
+                if not package:
+                    continue
+                try:
+                    values = json.loads(raw_values[i] if i < len(raw_values) else "{}")
+                except (ValueError, IndexError):
+                    continue
+                if not isinstance(values, dict):
+                    continue
+                # A configuration with nothing in it would push an empty Bundle,
+                # which is a real instruction to an app — "forget your settings" —
+                # and never what an operator meant by leaving the form blank.
+                if not values:
+                    continue
+                rows.append(
+                    {
+                        "package_name": package,
+                        "values": {str(k): str(v) for k, v in values.items()},
+                    }
+                )
             if rows:
                 spec[name] = rows
 

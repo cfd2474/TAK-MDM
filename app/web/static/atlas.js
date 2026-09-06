@@ -246,6 +246,343 @@
     refresh();
   })();
 
+  /* --- App configurations (managed configuration, W49) -----------------------
+     Picking an app fetches the keys that app's own APK declares, renders one
+     control per key, and on save writes a row into the rowset. The values travel
+     as JSON in a hidden input because the keys belong to the app: there is no
+     fixed set of field names to spread them across, and a build that adds a key
+     must not need a server change to be configurable. */
+
+  (function () {
+    var set = document.querySelector("[data-app-configs]");
+    if (!set) return;
+    var frame = document.getElementById("app-config-frame");
+    if (!frame) return;
+
+    var picker = frame.querySelector("[data-app-config-package]");
+    var fields = frame.querySelector("[data-app-config-fields]");
+    var save = frame.querySelector("[data-app-config-save]");
+    var addBtn = set.querySelector("[data-app-config-add]");
+    var current = [];
+
+    function reset() {
+      fields.innerHTML = "";
+      current = [];
+      save.disabled = true;
+    }
+
+    addBtn.addEventListener("click", function () {
+      picker.value = "";
+      reset();
+      frame.hidden = false;
+    });
+
+    picker.addEventListener("change", function () {
+      reset();
+      var pkg = picker.value;
+      if (!pkg) return;
+
+      fields.textContent = "Reading the app's declared configuration…";
+      fetch("/policies/app-config-schema?package=" + encodeURIComponent(pkg))
+        .then(function (r) { return r.json(); })
+        .then(function (schema) {
+          fields.innerHTML = "";
+          if (!schema.keys || !schema.keys.length) {
+            // Not an error: most apps declare nothing. Say which it is.
+            fields.textContent = schema.note || "This app declares no managed configuration.";
+            return;
+          }
+          current = schema.keys;
+
+          // Chrome declares 231 keys. A flat wall of them is unusable, so the
+          // frame gets a filter as soon as there are more than a screenful.
+          if (schema.keys.length > 12) {
+            var search = document.createElement("input");
+            search.type = "search";
+            search.className = "field-full";
+            search.placeholder = "Filter " + schema.keys.length + " keys…";
+            search.style.marginBottom = "12px";
+            search.addEventListener("input", function () {
+              var q = search.value.trim().toLowerCase();
+              fields.querySelectorAll("[data-config-field]").forEach(function (row) {
+                row.hidden = q !== "" &&
+                  row.getAttribute("data-config-field").toLowerCase().indexOf(q) === -1;
+              });
+            });
+            fields.appendChild(search);
+          }
+
+          schema.keys.forEach(function (k) {
+            var wrap = document.createElement("div");
+            wrap.style.marginBottom = "10px";
+            // Filtering matches the key and the label together: an operator
+            // hunting "proxy" should not need to know which of the two carries it.
+            wrap.setAttribute("data-config-field", k.key + " " + (k.label || ""));
+
+            var label = document.createElement("label");
+            label.textContent = k.label;
+            wrap.appendChild(label);
+
+            if (k.unsupported_reason) {
+              var note = document.createElement("div");
+              note.className = "muted";
+              note.style.fontSize = "12px";
+              note.textContent = k.unsupported_reason;
+              wrap.appendChild(note);
+            } else if (k.control === "bool") {
+              var sel = document.createElement("select");
+              sel.className = "field-full";
+              [["", "Not set"], ["true", "True"], ["false", "False"]].forEach(function (o) {
+                var opt = document.createElement("option");
+                opt.value = o[0]; opt.textContent = o[1];
+                sel.appendChild(opt);
+              });
+              sel.setAttribute("data-config-key", k.key);
+              wrap.appendChild(sel);
+            } else {
+              var input = document.createElement("input");
+              input.type = k.control === "int" ? "number" : "text";
+              input.className = "field-full";
+              input.placeholder = k.default || "not set";
+              input.setAttribute("data-config-key", k.key);
+              wrap.appendChild(input);
+            }
+
+            // A choice key's options live in a resource array the APK does not
+            // expose in readable form, so say so rather than letting a text box
+            // imply that any value will do. The default is a real clue: Chrome
+            // ships literal ones even where the option list is a reference.
+            if (k.control === "choice" || k.control === "multi_select") {
+                var hint = document.createElement("div");
+                hint.className = "muted";
+                hint.style.fontSize = "11px";
+                hint.textContent =
+                  k.control === "multi_select"
+                    ? "Multi-select: the app defines the accepted values; the APK does not carry them in readable form."
+                    : "Choice: the app defines the accepted values; the APK does not carry them in readable form." +
+                      (k.default ? " Its default is " + k.default + "." : "");
+                wrap.appendChild(hint);
+            }
+
+            // The key is worth showing even when a title survived: it is what the
+            // app actually reads, and what an operator will be given in docs.
+            var keyLine = document.createElement("div");
+            keyLine.className = "muted";
+            keyLine.style.fontSize = "11px";
+            keyLine.textContent = k.key + (k.description ? " — " + k.description : "");
+            wrap.appendChild(keyLine);
+
+            fields.appendChild(wrap);
+          });
+          save.disabled = false;
+        })
+        .catch(function () {
+          fields.textContent = "Could not read this app's configuration.";
+        });
+    });
+
+    save.addEventListener("click", function () {
+      var pkg = picker.value;
+      if (!pkg) return;
+
+      var values = {};
+      fields.querySelectorAll("[data-config-key]").forEach(function (el) {
+        var v = (el.value || "").trim();
+        // Only what the operator actually set: an empty control means "leave this
+        // key alone", not "send an empty string", which an app would act on.
+        if (v !== "") values[el.getAttribute("data-config-key")] = v;
+      });
+
+      var row = document.createElement("div");
+      row.className = "rs-row";
+      var count = Object.keys(values).length;
+      row.innerHTML =
+        '<input type="hidden" name="app_configs__package_name">' +
+        '<input type="hidden" name="app_configs__values">' +
+        '<div style="flex:1"><strong></strong>' +
+        '<span class="muted" style="font-size:12px"></span></div>' +
+        '<button type="button" class="ghost" data-remove-row>Remove</button>';
+      row.querySelector('[name="app_configs__package_name"]').value = pkg;
+      row.querySelector('[name="app_configs__values"]').value = JSON.stringify(values);
+      row.querySelector("strong").textContent = pkg;
+      row.querySelector(".muted").textContent =
+        " · " + count + (count === 1 ? " key" : " keys");
+
+      addBtn.insertAdjacentElement("beforebegin", row);
+      frame.hidden = true;
+    });
+  })();
+
+  /* --- Upload with progress (W51) --------------------------------------------
+     <form data-upload-form> + a #upload-modal with the data-upload-* parts.
+
+     ⚠️ XMLHttpRequest, not fetch. `fetch` still cannot report **upload** progress,
+     and it cannot be aborted in a way that stops the bytes — so a Cancel button
+     built on it would hide the dialog while the transfer carried on. A 130 MB
+     package with no feedback is what prompted this; a fake progress bar would
+     have been worse than none. */
+
+  (function () {
+    var form = document.querySelector("[data-upload-form]");
+    var modal = document.getElementById("upload-modal");
+    if (!form || !modal) return;
+
+    var title = modal.querySelector("[data-upload-title]");
+    var detail = modal.querySelector("[data-upload-detail]");
+    var bar = modal.querySelector("[data-upload-bar]");
+    var bytes = modal.querySelector("[data-upload-bytes]");
+    var cancel = modal.querySelector("[data-upload-cancel]");
+    var close = modal.querySelector("[data-upload-close]");
+    var request = null;
+
+    function mb(n) { return (n / 1048576).toFixed(1) + " MB"; }
+
+    function finish(heading, message) {
+      request = null;
+      title.textContent = heading;
+      detail.textContent = message;
+      cancel.hidden = true;
+      close.hidden = false;
+    }
+
+    form.addEventListener("submit", function (e) {
+      var file = form.querySelector('input[type="file"]').files[0];
+      if (!file) return;  // let the browser's own "required" handling speak
+      e.preventDefault();
+
+      title.textContent = "Uploading " + file.name;
+      detail.textContent = "Starting…";
+      bytes.textContent = "";
+      bar.style.width = "0";
+      cancel.hidden = false;
+      close.hidden = true;
+      modal.hidden = false;
+
+      request = new XMLHttpRequest();
+      request.open("POST", form.getAttribute("action"));
+
+      request.upload.addEventListener("progress", function (event) {
+        if (!event.lengthComputable) {
+          detail.textContent = "Uploading — size unknown";
+          return;
+        }
+        var percent = Math.round((event.loaded / event.total) * 100);
+        bar.style.width = percent + "%";
+        detail.textContent = "Uploading — " + percent + "%";
+        bytes.textContent = mb(event.loaded) + " of " + mb(event.total);
+      });
+
+      // The server still has to unpack an XAPK and hash every part, which on a
+      // large package takes noticeable time *after* the last byte arrives. Saying
+      // so stops the bar sitting at 100% looking stuck.
+      request.upload.addEventListener("load", function () {
+        detail.textContent = "Uploaded — the server is unpacking and verifying it…";
+        bytes.textContent = "";
+      });
+
+      request.addEventListener("load", function () {
+        if (request.status >= 200 && request.status < 400) {
+          // The server answers with a redirect to the refreshed page.
+          window.location = request.responseURL || window.location.pathname;
+          return;
+        }
+        bar.style.width = "0";
+        finish("Upload failed", "The server refused it (HTTP " + request.status + ").");
+      });
+
+      request.addEventListener("error", function () {
+        bar.style.width = "0";
+        finish("Upload failed", "Lost contact with the server.");
+      });
+
+      request.addEventListener("abort", function () {
+        bar.style.width = "0";
+        finish("Upload cancelled", "Nothing was added to the library.");
+      });
+
+      request.send(new FormData(form));
+    });
+
+    cancel.addEventListener("click", function () {
+      // Genuinely stops the transfer rather than just closing the dialog.
+      if (request) request.abort();
+      else modal.hidden = true;
+    });
+
+    close.addEventListener("click", function () { modal.hidden = true; });
+  })();
+
+  /* --- Version choices belong to the app that was picked (W51) ----------------
+     Every option already carried `data-package`; nothing ever read it, so the
+     dropdown listed every version of every app at once — including builds of
+     apps the row has nothing to do with, which is an easy way to pin the wrong
+     one. Now it is empty until an app is chosen, and then shows only that app's.
+
+     Options are removed and re-added rather than hidden: browsers honour
+     `hidden` on an <option> inconsistently, and a "hidden" option that can still
+     be selected by keyboard is worse than the bug being fixed. */
+
+  (function () {
+    // Wired lazily and per row, because "Add app" clones a row from a <template>
+    // long after load — anything done only at startup would leave every new row
+    // showing the unfiltered list again.
+    function wire(choice) {
+      if (choice.hasAttribute("data-version-filtered")) return;
+      var row = choice.closest(".rs-row");
+      var picker = row && row.querySelector('select[name$="__package_name"]');
+      if (!picker) return;
+      choice.setAttribute("data-version-filtered", "");
+
+      // The full set, kept aside so filtering is never destructive.
+      var all = Array.prototype.map.call(choice.options, function (o) { return o; });
+      var latest = all.filter(function (o) { return !o.getAttribute("data-package"); });
+
+      function rebuild(keepValue) {
+        var pkg = picker.value;
+        choice.innerHTML = "";
+
+        if (!pkg) {
+          // Nothing chosen: say so rather than offer a list that cannot apply.
+          var prompt = document.createElement("option");
+          prompt.value = "";
+          prompt.textContent = "— pick an app first —";
+          choice.appendChild(prompt);
+          choice.disabled = true;
+          return;
+        }
+
+        var wanted = all.filter(function (o) {
+          var owner = o.getAttribute("data-package");
+          return !owner || owner === pkg;
+        });
+        choice.disabled = false;
+        wanted.forEach(function (o) { choice.appendChild(o); });
+
+        // Keep the saved choice when it still belongs to this app; otherwise fall
+        // back to "Latest published" rather than silently keeping a pin that now
+        // points at some other app's build.
+        if (keepValue && wanted.some(function (o) { return o.value === keepValue; })) {
+          choice.value = keepValue;
+        } else if (latest.length) {
+          choice.value = latest[0].value;
+        }
+      }
+
+      picker.addEventListener("change", function () { rebuild(null); });
+      rebuild(choice.value);
+    }
+
+    function wireAll() {
+      document.querySelectorAll('select[name$="__version_choice"]').forEach(wire);
+    }
+
+    // After the add-row handler has inserted the clone.
+    document.addEventListener("click", function (e) {
+      if (e.target.closest("[data-add-row]")) setTimeout(wireAll, 0);
+    });
+    wireAll();
+  })();
+
   /* --- Table filter --------------------------------------------------------
      <input type="search" data-filter="#device-table">
      Rows whose text does not contain the query are hidden. Case-insensitive. */

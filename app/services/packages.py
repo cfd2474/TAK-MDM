@@ -28,6 +28,8 @@ failure on a tablet in the field:
 
 from __future__ import annotations
 
+import json
+
 import io
 import uuid
 from dataclasses import dataclass
@@ -156,17 +158,24 @@ def ingest(
     if package is None:
         package = AppPackage(
             package_name=bundle.package_name,
-            label=label,
+            label=label or bundle.label,
             signature_sha256=bundle.signature_sha256,
             signature_scheme=bundle.signature_scheme,
         )
+        _apply_icon(package, bundle)
         session.add(package)
         session.flush()
     else:
         # First upload may predate signature extraction; adopt it once known.
         package.signature_sha256 = package.signature_sha256 or bundle.signature_sha256
         package.signature_scheme = package.signature_scheme or bundle.signature_scheme
-        package.label = label or package.label
+        # An explicit label always wins; otherwise adopt the app's own name if
+        # this package never got one (W51) — a build uploaded before the name
+        # could be read should not stay called by its package id forever.
+        package.label = label or package.label or bundle.label
+        # A newer build may ship a redesigned icon, and the app list should show
+        # what the device will actually draw — so this one does replace.
+        _apply_icon(package, bundle)
 
     existing_version = session.scalar(
         select(AppPackageVersion).where(
@@ -205,6 +214,9 @@ def ingest(
         target_sdk=bundle.target_sdk,
         plugin_api=bundle.plugin_api,
         published=publish,
+        # Scanned once, here, from the base part (W49). The device needs each key's
+        # declared type to build a Bundle the app can actually read.
+        declared_config=json.dumps(_declared_config_of(bundle.base.data)),
     )
     session.add(version)
     session.flush()
@@ -416,6 +428,131 @@ def _reach_of(session: Session, package_name: str) -> tuple[tuple[str, ...], int
                 device_ids |= eff.devices_targeted_by(session, assignment)
 
     return tuple(sorted(set(names))), len(device_ids)
+
+
+def _declared_config_of(base_apk: bytes) -> dict[str, int]:
+    """`{key: restrictionType}` for a base APK's top-level managed configuration.
+
+    Types only — titles and defaults are for the editor, but the device needs the
+    type and nothing else: it is what turns the operator's "300" into an int the
+    app can read rather than a string it silently ignores.
+    """
+    from app.artifacts.app_restrictions import discover
+
+    found = discover(base_apk, "")
+    return {key.key: key.restriction_type for key in found.keys}
+
+
+def declared_config(
+    session: Session, version: AppPackageVersion, storage: ArtifactStorage
+) -> dict[str, int]:
+    """The version's declared configuration, scanning once if it predates W49.
+
+    NULL means never scanned, which is not the same as "declares nothing" — an app
+    that genuinely declares nothing stores an empty object. Without that
+    distinction every un-scanned build would look like an app with no
+    configuration, and the difference is invisible from the outside.
+    """
+    if version.declared_config is not None:
+        try:
+            return json.loads(version.declared_config)
+        except ValueError:
+            return {}
+
+    base = next((f for f in version.files if f.role is PartRole.BASE), None)
+    if base is None:
+        return {}
+    try:
+        with storage.open(base.artifact_sha256) as handle:
+            declared = _declared_config_of(handle.read())
+    except Exception:  # noqa: BLE001 — a missing blob must not fail a check-in
+        return {}
+
+    version.declared_config = json.dumps(declared)
+    session.flush()
+    return declared
+
+
+def _apply_icon(package: AppPackage, bundle: InspectedBundle) -> None:
+    """Record an extracted launcher icon on the package.
+
+    ⚠️ Only when one was found. An APK whose icon is a vector drawable yields
+    None, and that must leave an existing icon alone rather than blanking it —
+    otherwise re-uploading a build with an unreadable icon would erase a good one.
+    """
+    if bundle.icon is None:
+        return
+    package.icon_data = bundle.icon.data
+    package.icon_media_type = bundle.icon.media_type
+    package.icon_adaptive = bundle.icon.adaptive
+
+
+def backfill_labels(session: Session, storage: ArtifactStorage) -> int:
+    """Give a display name and icon to packages uploaded before either was read.
+
+    Chrome went in as `com.android.chrome` because the name was never looked for
+    (W51), and nothing had an icon until W53. Re-reading the base APK fixes both
+    without asking the operator to upload 130 MB again — and reads it **once**,
+    because the name and the icon are two questions about the same file.
+
+    ⚠️ Only fills a **missing** label. An operator who typed their own name meant
+    it, and a convenience pass must not overwrite a deliberate choice. The icon
+    has no such rule: it is never operator-supplied, so a package missing one
+    simply gets it.
+
+    A version whose blob has gone is skipped rather than failing the run — this is
+    a convenience pass, not a migration.
+    """
+    from app.artifacts.bundles import inspect_single_apk
+    from app.artifacts.storage import ArtifactNotFound
+
+    filled = 0
+    needs_label = (AppPackage.label.is_(None)) | (AppPackage.label == AppPackage.package_name)
+    # Filtering on `icon_media_type` rather than `icon_data`: both are equivalent
+    # as SQL, but the small column is also what the loop below tests, and that one
+    # would otherwise load a deferred blob per package just to see if it is there.
+    candidates = session.scalars(
+        select(AppPackage).where(needs_label | AppPackage.icon_media_type.is_(None))
+    ).all()
+    for package in candidates:
+        version = latest_published(session, package)
+        if version is None:
+            continue
+        # ⚠️ Before the read, not after. This APK has already given up everything
+        # it has; an app whose icon is a vector drawable can never satisfy the
+        # `icon_media_type IS NULL` clause above, so without this check its base
+        # APK is re-read in full at every boot, forever, to produce nothing.
+        # Outlook is 172 MB and costs 1.4 s and 356 MB of heap per attempt.
+        if package.icon_source_version_id == version.id:
+            continue
+        base = next((f for f in version.files if f.role is PartRole.BASE), None)
+        if base is None:
+            continue
+        try:
+            with storage.open(base.artifact_sha256) as handle:
+                found = inspect_single_apk(handle.read())
+        except (ArtifactNotFound, ApkError, OSError):
+            continue
+
+        # Recorded whatever the outcome — the point is that it was attempted.
+        package.icon_source_version_id = version.id
+
+        changed = False
+        # ⚠️ The base APK alone. A *referenced* label now resolves through the
+        # resource table, but an XAPK whose name lived only in the container's
+        # manifest.json still cannot be recovered — that file is not kept after
+        # ingest — so such a package keeps its package name until re-uploaded.
+        if found.label and (not package.label or package.label == package.package_name):
+            package.label = found.label
+            changed = True
+        if package.icon_media_type is None and found.icon is not None:
+            _apply_icon(package, found)
+            changed = True
+        if changed:
+            filled += 1
+
+    session.flush()
+    return filled
 
 
 def backfill_plugin_api(session: Session, storage: ArtifactStorage) -> int:

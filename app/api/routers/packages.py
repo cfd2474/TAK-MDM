@@ -89,6 +89,31 @@ def get_package(package_id: uuid.UUID, session: Session = Depends(get_db)) -> Ap
     return fetch_or_404(session, AppPackage, package_id, "package")
 
 
+@router.get("/{package_id}/icon", include_in_schema=False)
+def get_package_icon(
+    package_id: uuid.UUID, session: Session = Depends(get_db)
+) -> Response:
+    """The app's launcher icon, exactly as it was stored in the APK (W53).
+
+    404 when the app has no extractable icon — a vector-drawable icon is a normal
+    outcome, and the page falls back to its placeholder. Served from the row
+    rather than the artifact store, so there is no blob to have gone missing.
+
+    Cached hard and privately: the bytes only change when a build with a
+    redesigned icon is uploaded, and the response is behind the admin guard, so a
+    shared cache must not hold it.
+    """
+    package: AppPackage = fetch_or_404(session, AppPackage, package_id, "package")
+    if not package.icon_data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "this app has no stored icon")
+
+    return Response(
+        content=package.icon_data,
+        media_type=package.icon_media_type or "application/octet-stream",
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
+
+
 @router.patch("/{package_id}", response_model=PackageRead)
 def update_package(
     package_id: uuid.UUID,

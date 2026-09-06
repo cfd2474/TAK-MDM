@@ -22,6 +22,7 @@ import android.app.ActivityOptions
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.Context
+import android.os.Bundle
 import android.content.pm.PackageManager
 import android.net.wifi.WifiConfiguration
 import android.net.wifi.WifiManager
@@ -31,6 +32,7 @@ import android.util.Base64
 import androidx.core.content.ContextCompat
 import com.taksolutions.atlasmdm.core.AgentConfig
 import com.taksolutions.atlasmdm.diag.AgentLog
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import com.taksolutions.atlasmdm.admin.MdmDeviceAdminReceiver
@@ -81,8 +83,82 @@ class PolicyApplier(private val context: Context) {
         failures += applyPassword(policy.optJSONObject("PASSWORD") ?: JSONObject())
         failures += applyRestrictions(policy.optJSONObject("RESTRICTIONS") ?: JSONObject())
         policy.optJSONObject("APP_CATALOG")?.let { failures += applyAppCatalog(it) }
+        // Unconditional, unlike the rest of APP_CATALOG: these latch, so an
+        // empty section has to mean "clear what we set" rather than "skip".
+        failures += applyAppConfigs(policy.optJSONObject("APP_CATALOG") ?: JSONObject())
         failures += applyNetworks(policy.optJSONObject("NETWORKS") ?: JSONObject())
         failures += applyCustomizations(policy.optJSONObject("CUSTOMIZATIONS") ?: JSONObject())
+        return failures
+    }
+
+    /**
+     * Push each app's managed configuration, and clear the ones no longer named.
+     *
+     * ⚠️ **Keyed on the package being present, not on the DPC having installed
+     * it** (W50). A policy naming Chrome 10 on a device already carrying Chrome 12
+     * installs nothing — and the configuration must still apply, because the app
+     * is there and readable. Tying config to "we installed this" would silently
+     * skip exactly the devices an operator is most likely to be looking at.
+     *
+     * `setApplicationRestrictions` latches like every other DPM setter, so an app
+     * dropped from the policy has its configuration cleared rather than left to
+     * outlive the policy that set it.
+     */
+    private fun applyAppConfigs(spec: JSONObject): List<String> {
+        val failures = mutableListOf<String>()
+        val configured = mutableSetOf<String>()
+
+        val entries = spec.optJSONArray("app_configs") ?: JSONArray()
+        for (i in 0 until entries.length()) {
+            val entry = entries.optJSONObject(i) ?: continue
+            val packageName = entry.optString("package_name").takeIf { it.isNotBlank() } ?: continue
+            val values = entry.optJSONObject("values") ?: continue
+            val types = entry.optJSONObject("types") ?: JSONObject()
+
+            if (!isInstalled(packageName)) {
+                // Not an error: the app may simply not have installed yet, and the
+                // install path reports its own failures. Saying it twice would make
+                // one problem look like two.
+                AgentLog.d(TAG, "$packageName not installed; skipping its configuration")
+                continue
+            }
+
+            val bundle = Bundle()
+            for (key in values.keys()) {
+                val raw = values.optString(key)
+                val declared = if (types.has(key)) types.optInt(key) else null
+                when (val coerced = AppConfigPlan.coerce(key, raw, declared)) {
+                    is AppConfigPlan.Value.AsBoolean -> bundle.putBoolean(key, coerced.value)
+                    is AppConfigPlan.Value.AsInt -> bundle.putInt(key, coerced.value)
+                    is AppConfigPlan.Value.AsString -> bundle.putString(key, coerced.value)
+                    // putStringArray, not putString: `getStringArray` returns null
+                    // for a scalar and the app falls back to its default silently.
+                    is AppConfigPlan.Value.AsStringList ->
+                        bundle.putStringArray(key, coerced.value.toTypedArray())
+                    is AppConfigPlan.Value.Rejected ->
+                        // Reported, never sent as a best guess: a wrong type reads
+                        // as the app's default and looks like the setting was
+                        // ignored, which is indistinguishable from not trying.
+                        failures += "$packageName config: ${coerced.reason}"
+                }
+            }
+
+            runCatching {
+                dpm.setApplicationRestrictions(admin, packageName, bundle)
+                configured += packageName
+                AgentLog.i(TAG, "applied ${bundle.size()} config keys to $packageName")
+            }.onFailure { failures += "$packageName config: ${it.message}" }
+        }
+
+        // Anything we configured before and the policy no longer names.
+        for (packageName in config.appConfigured - configured) {
+            runCatching {
+                dpm.setApplicationRestrictions(admin, packageName, Bundle())
+                AgentLog.i(TAG, "cleared managed configuration from $packageName")
+            }.onFailure { failures += "$packageName config: could not clear - ${it.message}" }
+        }
+        config.appConfigured = configured
+
         return failures
     }
 

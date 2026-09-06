@@ -37,6 +37,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Table,
     Text,
@@ -169,6 +170,14 @@ class Device(Base):
         Enum(ComplianceStatus, native_enum=False, length=16), default=ComplianceStatus.UNKNOWN
     )
     compliance_detail: Mapped[str | None] = mapped_column(Text, default=None)
+    # Things worth telling the operator about a device that *has* converged (W50).
+    #
+    # Deliberately not folded into compliance_detail, and deliberately unable to
+    # move compliance_status: a policy naming an older build than the device
+    # already carries is a mismatch to report, not a failure to converge. Filing it
+    # as an error marked healthy devices DEGRADED — which, because the agent-update
+    # gate refuses a DEGRADED device, also cut them off from agent updates entirely.
+    compliance_warnings: Mapped[str | None] = mapped_column(Text, default=None)
     last_checkin_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
 
@@ -692,6 +701,34 @@ class AppPackage(Base):
     label: Mapped[str | None] = mapped_column(String(255), default=None)
     signature_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
     signature_scheme: Mapped[str | None] = mapped_column(String(8), default=None)
+    # The launcher icon, extracted from the APK (W53), stored as the original PNG
+    # or WEBP bytes. On the row rather than in the artifact store because these are
+    # small, and a column cannot go missing independently of the record that points
+    # at it. None for an app whose icon is a vector drawable.
+    #
+    # ⚠️ **Deferred**, and that is load-bearing. Fourteen places `select(AppPackage)`
+    # and one of them — `desired_state` enriching app configs — runs on the **device
+    # check-in path**, once per configured app per check-in. Loaded eagerly, every
+    # check-in would drag a blob across the wire that nothing on that path reads;
+    # our own agent icon is 213 KB. Ask for presence with `icon_media_type`, which
+    # is a 32-char column on the main row, not by touching these bytes.
+    icon_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None, deferred=True)
+    icon_media_type: Mapped[str | None] = mapped_column(String(32), default=None)
+    # The version whose APK was last inspected for a name and an icon.
+    #
+    # ⚠️ Without this the boot-time backfill never converges. It selects rows with
+    # no icon, but an app whose icon is a vector drawable can never *get* one —
+    # so it stays selected, and its base APK is re-read in full at every start,
+    # forever, to produce nothing. Outlook is 172 MB and costs 1.4 s and 356 MB of
+    # heap per attempt. Recording the attempt is what ends that; comparing against
+    # the *version* means a newly uploaded build is still re-examined.
+    icon_source_version_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, default=None)
+    # True when the bytes are an adaptive icon's foreground layer, which is drawn
+    # on a 108dp canvas of which only the centre 72dp is meant to be seen. The
+    # display has to crop it; a legacy icon must be shown whole.
+    icon_adaptive: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=sa_false()
+    )
     # Offered in the ATLAS store — the curated set that ships with a deployment and
     # is presented to operators as ready-to-assign.
     store_listed: Mapped[bool] = mapped_column(
@@ -759,6 +796,16 @@ class AppPackageVersion(Base):
     # meaningfully be ranked against each other (D45). NULL for anything that is
     # not an ATAK plugin.
     plugin_api: Mapped[str | None] = mapped_column(String(128), default=None)
+    # The managed configuration this build declares, as JSON: `{key: restrictionType}`
+    # for every top-level key in its `<restrictions>` document (W49).
+    #
+    # Stored rather than re-read because the desired state is rebuilt on every
+    # check-in for every device, and rescanning a 130 MB Chrome APK each time to
+    # recover three integers is not a trade worth making. Safe to store precisely
+    # because a version row is **immutable** — its bytes never change, so this can
+    # never drift from the build it describes. NULL means "not scanned yet", which
+    # is different from "declares nothing" (an empty object).
+    declared_config: Mapped[str | None] = mapped_column(Text, default=None)
     # Eligible for *automatic* selection — "latest", or "newest above the floor".
     # A held build stays in the library and can still be reached by an explicit
     # `artifact_sha256` pin, because a pin names one exact build and is a

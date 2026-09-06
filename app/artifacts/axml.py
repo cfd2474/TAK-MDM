@@ -28,7 +28,7 @@ Format reference: ``ResChunk_header`` and friends in AOSP
 from __future__ import annotations
 
 import struct
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 # Chunk types
 _RES_STRING_POOL = 0x0001
@@ -39,6 +39,12 @@ _RES_XML_END_ELEMENT = 0x0103
 
 # String pool flags
 _UTF8_FLAG = 1 << 8
+
+#: Ceiling on the characters one string pool may decode to. Outlook's is the
+#: largest real one seen here at ~40 MB of table; this leaves generous room above
+#: any legitimate build while refusing the quadratic blow-up a crafted pool can
+#: otherwise ask for.
+_MAX_POOL_BYTES = 64 * 1024 * 1024
 
 # Res_value data types
 _TYPE_REFERENCE = 0x01
@@ -71,6 +77,14 @@ class AxmlError(ValueError):
 class AxmlElement:
     name: str
     attributes: dict[str, str | int] = field(default_factory=dict)
+    #: Nesting level, root being 0.
+    #:
+    #: Load-bearing wherever a document's shape carries meaning rather than just
+    #: its contents. A managed-configuration schema nests its keys inside a
+    #: `bundle` restriction, and Gboard declares **one** top-level key with 124
+    #: children — read flat, that looks like 125 configurable keys, and setting
+    #: any child would write it where the app never reads (W49).
+    depth: int = 0
 
     def get_int(self, key: str) -> int | None:
         value = self.attributes.get(key)
@@ -81,8 +95,26 @@ class AxmlElement:
         return value if isinstance(value, str) else None
 
 
-class _StringPool:
+class StringPool:
+    """A `ResStringPool` chunk.
+
+    Public because `resources.arsc` uses the identical chunk — the format is
+    shared, so `app.artifacts.arsc` reuses this rather than carrying a second
+    copy of the UTF-8/UTF-16 length quirks to drift out of step with.
+    """
+
     def __init__(self, data: bytes, offset: int):
+        try:
+            self._build(data, offset)
+        except (struct.error, IndexError) as exc:
+            # ⚠️ This module's declared failure is `AxmlError`, and every caller
+            # catches exactly that. `struct.error` is **not** a `ValueError` — its
+            # MRO goes straight to `Exception` — so a truncated buffer used to
+            # sail past `except AxmlError` in `_read_manifest` and surface as an
+            # HTTP 500 on upload. A short manifest is a bad file, not a bug.
+            raise AxmlError(f"malformed string pool: {exc}") from exc
+
+    def _build(self, data: bytes, offset: int) -> None:
         chunk_type, header_size, chunk_size = struct.unpack_from("<HHI", data, offset)
         if chunk_type != _RES_STRING_POOL:
             raise AxmlError(f"expected a string pool, got chunk type {chunk_type:#x}")
@@ -96,13 +128,42 @@ class _StringPool:
         offsets_at = offset + header_size
         base = offset + strings_start
 
+        # ⚠️ `count` is an unchecked uint32 from the file and every string is
+        # decoded eagerly, so the pool is the cheapest place in this parser to ask
+        # for absurd amounts of memory. Two independent bounds, because either
+        # alone leaves a hole:
+        #
+        # * **count** is clamped to the offsets the chunk can actually hold. Left
+        #   unclamped it is read from a buffer it has already run off the end of.
+        # * **total decoded bytes** is capped. A UTF-16 entry may declare a length
+        #   of up to 0x7FFFFFFF code units, and a Python slice *clamps* rather than
+        #   failing — so every string can decode the entire remaining buffer, and
+        #   N strings sharing one offset cost N × len(data). Measured before this
+        #   bound: a 2 MB table with 300 strings took 603 MB of heap; scaled up it
+        #   is an OOM kill of the only uvicorn worker, which drops every device
+        #   check-in in flight.
+        available = max(0, len(data) - offsets_at)
+        count = min(count, available // 4)
+
+        budget = _MAX_POOL_BYTES
         for index in range(count):
             (string_offset,) = struct.unpack_from("<I", data, offsets_at + index * 4)
-            self._strings.append(self._decode(data, base + string_offset))
+            decoded = self._decode(data, base + string_offset)
+            budget -= len(decoded)
+            if budget < 0:
+                raise AxmlError(
+                    f"string pool decodes to more than {_MAX_POOL_BYTES} characters"
+                )
+            self._strings.append(decoded)
 
         self.chunk_size = chunk_size
 
     def _decode(self, data: bytes, position: int) -> str:
+        # A clamped `count` can still point a slot at a wild offset, and every
+        # length field below is attacker-chosen. An out-of-range string is empty,
+        # not fatal — the rest of the pool may still be readable.
+        if position < 0 or position >= len(data):
+            return ""
         if self._utf8:
             # Two length fields: UTF-16 length then byte length, each 1-2 bytes.
             position, _ = self._read_utf8_length(data, position)
@@ -133,7 +194,19 @@ class _StringPool:
 
 
 def parse_elements(data: bytes) -> list[AxmlElement]:
-    """Decode every start element and its attributes, in document order."""
+    """Decode every start element and its attributes, in document order.
+
+    Raises `AxmlError` for anything unreadable — including a buffer that simply
+    stops early. Callers catch that one type, so nothing here may escape as a
+    `struct.error` or an `IndexError`.
+    """
+    try:
+        return _parse_elements(data)
+    except (struct.error, IndexError) as exc:
+        raise AxmlError(f"malformed binary XML: {exc}") from exc
+
+
+def _parse_elements(data: bytes) -> list[AxmlElement]:
     if len(data) < 8:
         raise AxmlError("buffer too small to be binary XML")
 
@@ -141,10 +214,11 @@ def parse_elements(data: bytes) -> list[AxmlElement]:
     if chunk_type != _RES_XML:
         raise AxmlError(f"not binary XML (chunk type {chunk_type:#x})")
 
-    pool = _StringPool(data, header_size)
+    pool = StringPool(data, header_size)
     position = header_size + pool.chunk_size
     resource_ids: list[int] = []
     elements: list[AxmlElement] = []
+    depth = 0
 
     while position + 8 <= len(data):
         chunk_type, chunk_header_size, chunk_size = struct.unpack_from("<HHI", data, position)
@@ -157,9 +231,16 @@ def parse_elements(data: bytes) -> list[AxmlElement]:
                 struct.unpack_from(f"<{count}I", data, position + chunk_header_size)
             )
         elif chunk_type == _RES_XML_START_ELEMENT:
-            elements.append(
-                _parse_start_element(data, position + chunk_header_size, pool, resource_ids)
+            element = _parse_start_element(
+                data, position + chunk_header_size, pool, resource_ids
             )
+            elements.append(replace(element, depth=depth))
+            depth += 1
+        elif chunk_type == _RES_XML_END_ELEMENT:
+            # Tracked only to keep `depth` honest. Without reading the end chunks
+            # the document reads as a flat list, which silently loses any meaning
+            # carried by nesting.
+            depth -= 1
 
         position += chunk_size
 
@@ -167,7 +248,7 @@ def parse_elements(data: bytes) -> list[AxmlElement]:
 
 
 def _parse_start_element(
-    data: bytes, offset: int, pool: _StringPool, resource_ids: list[int]
+    data: bytes, offset: int, pool: StringPool, resource_ids: list[int]
 ) -> AxmlElement:
     _ns, name_index, attribute_start, attribute_size, attribute_count = struct.unpack_from(
         "<IIHHH", data, offset
@@ -201,7 +282,7 @@ def _parse_start_element(
 
 
 def _decode_value(
-    pool: _StringPool, data_type: int, value: int, raw_value_index: int
+    pool: StringPool, data_type: int, value: int, raw_value_index: int
 ) -> str | int | None:
     if data_type == _TYPE_STRING:
         return pool.get(value if value != 0xFFFFFFFF else raw_value_index)

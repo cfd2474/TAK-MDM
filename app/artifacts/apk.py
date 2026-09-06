@@ -37,6 +37,8 @@ from dataclasses import dataclass
 
 from cryptography.hazmat.primitives.serialization import Encoding, pkcs7
 
+from app.artifacts.app_icon import AppIcon, extract_icon, read_table
+from app.artifacts.arsc import ResourceTable
 from app.artifacts.axml import AxmlError, parse_elements
 
 _APK_SIG_BLOCK_MAGIC = b"APK Sig Block 42"
@@ -67,6 +69,12 @@ class ApkInfo:
     # The exact ATAK build an ATAK plugin was compiled against, e.g.
     # "com.atakmap.app@5.5.0.CIV". None for anything that is not an ATAK plugin.
     plugin_api: str | None = None
+    # The app's display name, when the manifest states it literally. None when it
+    # is a resource reference, which is the common case (W51).
+    label: str | None = None
+    # The launcher icon, when one can be extracted. None for an app whose icon is
+    # a vector drawable, which needs a renderer we do not have (W53).
+    icon: AppIcon | None = None
 
     @property
     def provisioning_checksum(self) -> str | None:
@@ -87,7 +95,10 @@ class ApkInfo:
 
 def _read_manifest(
     archive: zipfile.ZipFile,
-) -> tuple[str, int, str | None, int | None, int | None, str | None, tuple[str, ...], str | None]:
+) -> tuple[
+    str, int, str | None, int | None, int | None, str | None, tuple[str, ...],
+    str | None, str | None,
+]:
     try:
         raw = archive.read(_MANIFEST)
     except KeyError:
@@ -142,10 +153,50 @@ def _read_manifest(
         None,
     )
 
+    # The app's own display name — what the launcher shows on the device.
+    #
+    # Returned exactly as the manifest states it, which is usually a resource
+    # reference (`@0x7f15038b`) because most apps put their name in strings.xml.
+    # Resolving that needs `resources.arsc`, and the caller holds it — so the
+    # reference is passed up rather than discarded here (W53).
+    application = next((e for e in elements if e.name == "application"), None)
+    label = application.get_str("label") if application else None
+
     return (
         package_name, version_code, version_name, min_sdk, target_sdk,
-        split_name, receivers, plugin_api,
+        split_name, receivers, plugin_api, label,
     )
+
+
+def _resolve_label(label: str | None, table: ResourceTable | None) -> str | None:
+    """Turn a manifest label into a display name.
+
+    A literal label is already the answer. A resource reference is looked up in
+    the table, taking the **default locale** — the app's name is translated, and
+    an operator's console should not show whichever translation happened to be
+    listed first.
+
+    Returns None rather than the reference when it cannot be resolved: showing
+    `@0x7f15038b` to an operator is worse than showing the package name, and
+    guessing "Outlook" from the package id would be a fabrication that happens to
+    be right, which is worse still.
+    """
+    if not label:
+        return None
+    if not label.startswith("@0x"):
+        return label
+    if table is None:
+        return None
+    try:
+        resource_id = int(label[1:], 16)
+    except ValueError:
+        return None
+    resolved = table.string(resource_id)
+    if not resolved or resolved.startswith("@0x") or resolved.startswith("res/"):
+        # A `res/...` value means the reference landed on a *file* resource rather
+        # than a string — a mislabelled table, not a name.
+        return None
+    return resolved
 
 
 def _qualify(package_name: str, class_name: str) -> str:
@@ -310,9 +361,25 @@ def inspect_apk(data: bytes) -> ApkInfo:
     with archive:
         (
             package_name, version_code, version_name, min_sdk, target_sdk,
-            split_name, receivers, plugin_api,
+            split_name, receivers, plugin_api, label,
         ) = _read_manifest(archive)
         signature_sha256, scheme = extract_signature(data, archive)
+
+        # Inside the `with`: reading a closed archive raises, and the helpers below
+        # turn any read failure into a silent None — the same trap that made
+        # `_container_label` dead code in W51.
+        #
+        # Skipped for a split, which is not an app: it has no launcher entry and no
+        # name of its own, and a `config.*` split ships a resource table big enough
+        # that parsing one per split is real work for a guaranteed None.
+        icon = None
+        if split_name is None:
+            # One parse, two questions. Outlook's table is 39.6 MB.
+            table = read_table(archive)
+            icon = extract_icon(archive, table)
+            label = _resolve_label(label, table)
+        else:
+            label = None
 
     return ApkInfo(
         package_name=package_name,
@@ -325,6 +392,8 @@ def inspect_apk(data: bytes) -> ApkInfo:
         signature_scheme=scheme,
         receivers=receivers,
         plugin_api=plugin_api,
+        label=label,
+        icon=icon,
     )
 
 
