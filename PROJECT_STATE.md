@@ -7534,6 +7534,72 @@ The refusal message was rewritten too: it now says the app is required and shoul
 install on this or the next check-in, rather than stating a fact and leaving the
 operator to guess whether the policy is wrong.
 
+#### 🔻 W65 — Kiosk exit settings, as the operator actually meant them
+
+Screenshot supplied from Hexnode. It shows **Kiosk Exit Settings** meaning a
+deliberate way *out* of kiosk on the device — a passcode, a tap count to summon
+the prompt, reboot behaviour — and not what I built under that name.
+
+⚠️ **I mis-filed the existing section.** `keep_home_button`, `keep_recents_button`,
+`keep_notifications`, `keep_system_info`, `keep_keyguard`, `keep_power_menu` are
+*what the user can still reach while locked in*, not how to get out. They move to
+their own group, **Permitted features**, and "Kiosk exit settings" becomes what
+the screenshot shows. That is the "one more subtopic" — nine now, not a rename.
+
+**Both mechanisms already exist in the agent**, which is why this is buildable:
+`SYSTEM_ALERT_WINDOW` with a working `TYPE_APPLICATION_OVERLAY` (W44's data-usage
+alert), and `RECEIVE_BOOT_COMPLETED` wired into `SyncScheduler`.
+
+⚠️ **The exit passcode is not a security boundary, and the field must say so.**
+It travels in the desired state, which is signed but readable on the device by
+anyone with adb. It stops a user idly tapping their way out of a wall-mounted
+tablet; it does not stop someone determined. Presenting it as security would be
+the more dangerous error, because an operator would then trust it.
+
+⚠️ **A local exit has to survive the next sync**, or the reconciler re-locks the
+device seconds later and the exit reads as broken. That needs device-local state
+the server does not own — the first thing in this project where the device
+legitimately overrides policy until told otherwise.
+
+⚠️ **Hexnode's "exit manually while an app is open" does not map.** It
+distinguishes their kiosk launcher's home screen from a running app; ATLAS has no
+launcher, so the gesture is always over the kiosk app and the option would be a
+control with one possible value. Left out rather than shipped inert.
+
+##### Plan
+
+1. Regroup the lock-task features under **Permitted features**; add the subtopic.
+2. New exit fields: allow manual exit, passcode, tap count, reboot-tap-to-exit,
+   relaunch delay after reboot, auto re-enter.
+3. Validators: a passcode is required to allow manual exit — an exit gesture with
+   no gate is a kiosk anyone can leave by tapping.
+4. Agent: tap-target overlay, passcode prompt, suspension state, reboot delay.
+5. Tests, and the platform contracts recorded.
+
+##### ✅ Done — 820 tests
+
+Nine sub-pages now: **Permitted features** holds the six lock-task controls,
+**Kiosk exit settings** holds the six new ones.
+
+Two window-level details that had to be right:
+
+* The tap target is `FLAG_NOT_FOCUSABLE` and 56dp in a corner. Focusable, it would
+  take the keyboard away from the app the device exists to run; larger, it would
+  eat taps that app needed — turning an escape hatch into a fault in the kiosk.
+* The passcode prompt is a **separate, focusable** window, added only once the
+  taps land. A passcode box that cannot take a keyboard is not a passcode box.
+
+The exit is remembered against `SystemClock.elapsedRealtime()` rather than the
+wall clock: it resets on reboot, which is exactly the intended lifetime, and it
+cannot be extended by changing the device's date. It is recorded **before** the
+release, so a crash between the two leaves the device out of kiosk with the reason
+known rather than locked again with no trace.
+
+⚠️ **Left out on purpose:** Hexnode's *"exit manually while an app is open"*. It
+distinguishes their kiosk launcher's home screen from a running app, and ATLAS has
+no launcher — the gesture is always over the kiosk app, so the control would have
+exactly one possible value.
+
 | # | Chunk | Notes |
 |---|---|---|
 | 7 | **Knox layer** | Planned in detail below |

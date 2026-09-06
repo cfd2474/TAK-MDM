@@ -66,19 +66,25 @@ _MULTI = "Multi app"
 _BACKGROUND = "Background apps"
 _LAUNCHER = "Launcher"
 _PERIPHERAL = "Peripheral settings"
+_PERMITTED = "Permitted features"
 _EXIT = "Kiosk exit settings"
 _WEBSITE = "Website kiosk settings"
 _SCREENSAVER = "Kiosk screensaver"
 
 
 def _keeps(title: str, description: str = ""):
-    """A lock-task feature: does the user keep this while locked in?"""
+    """A lock-task feature: does the user keep this while locked in?
+
+    ⚠️ Grouped under *Permitted features*, not *Kiosk exit settings*. These say
+    what a locked-in user can still reach; leaving kiosk deliberately is a
+    different question with its own section (W65).
+    """
     return Field(
         default=None,
         title=title,
         description=description,
         json_schema_extra={
-            "ui_group": _EXIT,
+            "ui_group": _PERMITTED,
             "ui_true": "Available",
             "ui_false": "Blocked",
         },
@@ -156,7 +162,7 @@ class KioskSpec(PolicySpec):
     )
 
     # ----------------------------------------------------------------------- #
-    # Kiosk exit settings — the lock-task features
+    # Permitted features — the lock-task features
     # ----------------------------------------------------------------------- #
 
     keep_home_button: Annotated[bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)] = _keeps(
@@ -185,6 +191,91 @@ class KioskSpec(PolicySpec):
         "⚠️ Blocking this removes the only on-device way to power off or restart. "
         "A device that then misbehaves in the field is recoverable by factory reset "
         "and little else.",
+    )
+
+    # ----------------------------------------------------------------------- #
+    # Kiosk exit settings — the deliberate way out, on the device
+    # ----------------------------------------------------------------------- #
+
+    allow_manual_exit: Annotated[
+        bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
+    ] = Field(
+        default=None,
+        title="Allow manually exiting kiosk mode",
+        description="Let someone standing at the device leave kiosk by tapping the "
+        "screen a set number of times and entering the passcode below. Off means "
+        "the only way out is to change the policy.",
+        json_schema_extra={
+            "ui_group": _EXIT,
+            "ui_true": "Allowed",
+            "ui_false": "Blocked",
+        },
+    )
+
+    exit_password: Annotated[str | None, Merge(MergeStrategy.HIGHEST_RANK)] = Field(
+        default=None,
+        min_length=4,
+        max_length=32,
+        title="Kiosk exit passcode",
+        description="⚠️ A gate, not a secret. It travels in the policy the device "
+        "holds, so anyone with USB debugging can read it — it stops a user tapping "
+        "their way out of a wall-mounted tablet, and stops nobody who is determined. "
+        "Do not reuse a passcode that protects anything else.",
+        json_schema_extra={"ui_group": _EXIT, "ui_control": "password"},
+    )
+
+    exit_tap_count: Annotated[int | None, Merge(MergeStrategy.MAX)] = Field(
+        default=None,
+        ge=3,
+        le=20,
+        title="Taps to show the passcode prompt",
+        description="How many taps in the corner of the screen summon the prompt. "
+        "Higher is harder to trigger by accident.",
+        json_schema_extra={"ui_group": _EXIT, "ui_unit": "taps"},
+    )
+
+    reboot_tap_to_exit: Annotated[
+        bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
+    ] = Field(
+        default=None,
+        title="Reboot and tap to exit",
+        description="Allow the same tap-and-passcode during the delay after a "
+        "reboot, before the kiosk app relaunches. Useful when the kiosk app itself "
+        "is what is misbehaving.",
+        json_schema_extra={
+            "ui_group": _EXIT,
+            "ui_true": "Allowed",
+            "ui_false": "Blocked",
+        },
+    )
+
+    relaunch_after_reboot_seconds: Annotated[
+        int | None, Merge(MergeStrategy.MIN)
+    ] = Field(
+        default=None,
+        ge=0,
+        le=300,
+        title="Relaunch the kiosk app after a reboot",
+        description="Seconds to wait after boot before locking the device again. "
+        "Zero re-locks immediately. A short delay is what makes the reboot exit "
+        "above usable at all.",
+        json_schema_extra={"ui_group": _EXIT, "ui_unit": "seconds"},
+    )
+
+    auto_reenter_kiosk: Annotated[
+        bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
+    ] = Field(
+        default=None,
+        title="Re-enter kiosk automatically",
+        description="After someone exits with the passcode, whether the device "
+        "locks itself again at the next check-in. Off leaves it out of kiosk until "
+        "it reboots or the policy changes — which is usually what an engineer at "
+        "the device wants.",
+        json_schema_extra={
+            "ui_group": _EXIT,
+            "ui_true": "Re-enter",
+            "ui_false": "Stay out",
+        },
     )
 
     # ----------------------------------------------------------------------- #
@@ -312,6 +403,42 @@ class KioskSpec(PolicySpec):
                 "(IllegalArgumentException: Cannot use LOCK_TASK_FEATURE_NOTIFICATIONS "
                 "without LOCK_TASK_FEATURE_HOME). Allow the home button, which is "
                 "pointed at the kiosk app and does not let the user out"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _a_manual_exit_needs_a_passcode(self) -> "KioskSpec":
+        """An exit gesture with no gate is a kiosk anyone can tap their way out of.
+
+        Refused rather than defaulted: a policy that silently chose a passcode
+        would be one nobody knows, and a policy that silently chose *none* would be
+        a kiosk in name only.
+        """
+        if self.allow_manual_exit and not self.exit_password:
+            raise ValueError(
+                "allowing a manual exit needs an exit passcode — without one the "
+                "tap gesture alone leaves kiosk, which is not a kiosk"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _exit_settings_need_a_manual_exit(self) -> "KioskSpec":
+        """The tap count and the reboot exit describe how the manual exit behaves.
+
+        With the exit switched off they describe nothing, and an operator reading
+        them back would reasonably believe there is a way out of this device.
+        """
+        if self.allow_manual_exit:
+            return self
+        dependent = [
+            name
+            for name in ("exit_tap_count", "reboot_tap_to_exit", "auto_reenter_kiosk")
+            if getattr(self, name) is not None
+        ]
+        if dependent:
+            raise ValueError(
+                f"{', '.join(dependent)} only apply when manually exiting kiosk is "
+                f"allowed — turn that on, or clear these"
             )
         return self
 

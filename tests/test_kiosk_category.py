@@ -59,9 +59,12 @@ def test_the_creator_offers_every_sub_topic_the_operator_asked_for():
     kiosk = next(c for c in CATALOG if c.key == "kiosk")
 
     assert kiosk.policy_type == "KIOSK"
+    # The eight the operator asked for, plus "permitted features" — the lock-task
+    # controls were originally mis-filed under "kiosk exit settings", and their
+    # Hexnode screenshot showed that name means the deliberate way *out* (W65).
     assert kiosk.subtopics == (
         "single app", "multi app", "background apps", "launcher",
-        "peripheral settings", "kiosk exit settings",
+        "permitted features", "peripheral settings", "kiosk exit settings",
         "website kiosk settings", "kiosk screensaver",
     )
 
@@ -318,3 +321,80 @@ def test_no_kiosk_app_adds_nothing():
 
     assert resolve_required_apps(_NoPackages(), {"KIOSK": {}}) == []
     assert resolve_required_apps(_NoPackages(), {}) == []
+
+
+# --------------------------------------------------------------------------- #
+# Kiosk exit settings (W65)
+# --------------------------------------------------------------------------- #
+
+
+def test_exit_settings_are_their_own_sub_page_and_the_lock_task_ones_moved():
+    """⚠️ The lock-task features were mis-filed under "Kiosk exit settings".
+
+    They say what a locked-in user can still *reach*; leaving kiosk deliberately
+    is a different question, and the operator's screenshot is what made that
+    plain. They now live under Permitted features.
+    """
+    from app.policies.form_schema import sub_pages
+
+    pages = {p.label: [f.name for f in p.fields] for p in sub_pages("KIOSK")}
+
+    assert "Permitted features" in pages
+    assert "keep_home_button" in pages["Permitted features"]
+    assert "keep_power_menu" in pages["Permitted features"]
+
+    exit_fields = pages["Kiosk exit settings"]
+    assert "allow_manual_exit" in exit_fields
+    assert "exit_password" in exit_fields
+    assert "exit_tap_count" in exit_fields
+    assert "keep_home_button" not in exit_fields
+
+
+def test_a_full_exit_configuration_is_accepted():
+    spec = _spec(
+        allow_manual_exit=True,
+        exit_password="4242",
+        exit_tap_count=10,
+        reboot_tap_to_exit=True,
+        relaunch_after_reboot_seconds=20,
+        auto_reenter_kiosk=False,
+    )
+
+    assert spec.exit_tap_count == 10
+    assert spec.relaunch_after_reboot_seconds == 20
+    assert spec.auto_reenter_kiosk is False
+
+
+def test_allowing_a_manual_exit_requires_a_passcode():
+    """An exit gesture with no gate is a kiosk anyone can tap their way out of.
+
+    Refused rather than defaulted: a chosen passcode would be one nobody knows,
+    and no passcode would be a kiosk in name only.
+    """
+    with pytest.raises(ValueError, match="needs an exit passcode"):
+        _spec(allow_manual_exit=True)
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [("exit_tap_count", 10), ("reboot_tap_to_exit", True), ("auto_reenter_kiosk", True)],
+)
+def test_exit_details_without_a_manual_exit_are_refused(field, value):
+    """Read back, they would tell an operator there is a way out of this device."""
+    with pytest.raises(ValueError, match="only apply when manually exiting"):
+        _spec(**{field: value})
+
+
+def test_the_passcode_has_a_floor_but_is_not_pretending_to_be_a_secret():
+    """Four characters is enough to stop idle tapping, which is all it is for —
+    it travels in the policy the device holds and anyone with adb can read it."""
+    with pytest.raises(ValueError):
+        _spec(allow_manual_exit=True, exit_password="12")
+
+    assert _spec(allow_manual_exit=True, exit_password="1234").exit_password == "1234"
+
+
+def test_a_relaunch_delay_does_not_need_the_manual_exit():
+    """It is useful on its own — an engineer wants a moment after a reboot before
+    the device locks again, whether or not a passcode exit exists."""
+    assert _spec(relaunch_after_reboot_seconds=30).relaunch_after_reboot_seconds == 30

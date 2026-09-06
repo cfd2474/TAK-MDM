@@ -164,6 +164,22 @@ class AgentConfig(context: Context) {
         set(value) = prefs.edit { putLong(KEY_LAST_SYNC, value) }
 
     /**
+     * Set when someone left kiosk with the exit passcode (W65).
+     *
+     * ⚠️ The one place the **device** overrides policy until told otherwise. The
+     * server still says "this device is a kiosk", and it is right — but a person
+     * standing at it has just said otherwise with a passcode, and re-locking them
+     * out at the next check-in two minutes later would make the exit useless.
+     *
+     * Cleared on reboot, because it is `elapsedRealtime`-based: a restart is the
+     * natural end of "I am working on this device", and it is also the recovery
+     * path if the exit is ever used to strand one.
+     */
+    var kioskExitedAtElapsed: Long
+        get() = prefs.getLong(KEY_KIOSK_EXITED, 0L)
+        set(value) = prefs.edit { putLong(KEY_KIOSK_EXITED, value) }
+
+    /**
      * Command outcomes awaiting delivery, each a serialised result object.
      *
      * Persisted rather than held in memory: a command executed just before the
@@ -294,6 +310,7 @@ class AgentConfig(context: Context) {
         private const val KEY_FILE_PREFIX = "applied_file:"
         private const val KEY_LAST_ERROR = "last_error"
         private const val KEY_LAST_SYNC = "last_sync_at"
+        private const val KEY_KIOSK_EXITED = "kiosk_exited_at_elapsed"
         private const val KEY_WALLPAPER_SHA = "applied_wallpaper_sha"
         private const val KEY_SAVED_SCREEN_TIMEOUT = "saved_screen_timeout_ms"
         private const val KEY_APPLY_ERRORS = "last_apply_errors"

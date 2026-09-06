@@ -1262,6 +1262,26 @@ uniformly and invites the assumption.
 latch like every other DPM setter, so one left behind follows the device out of
 kiosk and nothing else will ever take it off.
 
+### Getting out **on the device** (W65)
+
+A Device Owner can release its own kiosk: clearing the allowlist ejects the locked
+app, and the agent can do that from a `SYSTEM_ALERT_WINDOW` overlay it already has
+permission for. Two things make that usable rather than merely possible:
+
+* 📖 An overlay target must be `FLAG_NOT_FOCUSABLE`, or it steals focus and the
+  kiosk app loses its keyboard. The passcode prompt is the opposite — it needs
+  focus, so it is a **separate** window, added only when the taps land.
+* ⚠️ The release has to be **remembered**, or the next reconcile re-locks the
+  device seconds later and the exit reads as broken. Stored against
+  `SystemClock.elapsedRealtime()`, which resets on reboot — so "I am working on
+  this device" ends at a restart, and a restart is also the recovery if an exit
+  ever strands one.
+
+⚠️ **An exit passcode carried in policy is not a secret.** It is on the device, in
+a document anyone with USB debugging can read. It stops idle tapping; it stops
+nothing else, and a console that implies otherwise is worse than one with no
+passcode at all.
+
 ### Getting out
 
 In order of preference, all verified on `SM-X520`:

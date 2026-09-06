@@ -66,7 +66,7 @@ CATALOG: tuple[Category, ...] = (
         "kiosk", "Kiosk", "KIOSK",
         subtopics=(
             "single app", "multi app", "background apps", "launcher",
-            "peripheral settings", "kiosk exit settings",
+            "permitted features", "peripheral settings", "kiosk exit settings",
             "website kiosk settings", "kiosk screensaver",
         ),
         blurb="Lock a device to one app and decide what the user can still reach. "

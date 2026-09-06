@@ -32,6 +32,7 @@ import android.util.Base64
 import androidx.core.content.ContextCompat
 import com.taksolutions.atlasmdm.core.AgentConfig
 import com.taksolutions.atlasmdm.diag.AgentLog
+import com.taksolutions.atlasmdm.ui.KioskExitGate
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -731,7 +732,38 @@ class PolicyApplier(private val context: Context) {
         val failures = mutableListOf<String>()
 
         if (kioskPackage == null) {
+            KioskExitGate.remove(context)
+            config.kioskExitedAtElapsed = 0L
             failures += releaseKiosk(restrictions)
+            return failures
+        }
+
+        // ⚠️ Someone at the device left kiosk with the passcode (W65). Policy still
+        // says kiosk, and policy is not wrong — but re-locking them out two minutes
+        // later would make the exit useless, so the device's answer stands until it
+        // reboots or the operator turns auto re-entry on.
+        //
+        // elapsedRealtime, not wall clock: it resets on reboot, which *is* the
+        // rule, and cannot be moved by changing the device's date.
+        if (config.kioskExitedAtElapsed > 0) {
+            if (!spec.optBoolean("auto_reenter_kiosk", false)) {
+                AgentLog.i(TAG, "kiosk: exited on-device; leaving it out until reboot")
+                return failures
+            }
+            config.kioskExitedAtElapsed = 0L
+        }
+
+        // A delay after boot, so "reboot and tap to exit" has a window to happen in
+        // — and so an engineer at a device whose kiosk app is the problem is not
+        // racing the lock.
+        val relaunchAfter = spec.optInt("relaunch_after_reboot_seconds", 0) * 1000L
+        val sinceBoot = android.os.SystemClock.elapsedRealtime()
+        if (relaunchAfter > 0 && sinceBoot < relaunchAfter) {
+            armExitGate(spec, kioskPackage)
+            AgentLog.i(
+                TAG,
+                "kiosk: holding off ${(relaunchAfter - sinceBoot) / 1000}s more after boot"
+            )
             return failures
         }
 
@@ -789,6 +821,7 @@ class PolicyApplier(private val context: Context) {
             return listOf("kiosk: the system did not permit lock task for $kioskPackage")
         }
 
+        armExitGate(spec, kioskPackage)
         failures += applyKioskPeripherals(spec)
         failures += launchIntoLockTask(
             kioskPackage,
@@ -935,6 +968,31 @@ class PolicyApplier(private val context: Context) {
             )
         }
         return failures
+    }
+
+    /**
+     * Arm or disarm the on-device exit (W65).
+     *
+     * Idempotent, and called on every reconcile: a kiosk that is still a kiosk must
+     * not stack a new overlay every two minutes.
+     */
+    private fun armExitGate(spec: JSONObject, kioskPackage: String) {
+        val allowed = spec.optBoolean("allow_manual_exit", false)
+        val passcode = spec.optString("exit_password")
+        KioskExitGate.set(
+            context,
+            enabled = allowed,
+            tapCount = spec.optInt("exit_tap_count", 10),
+            passcode = passcode,
+        ) {
+            // Recorded *before* releasing, so a crash between the two leaves the
+            // device out of kiosk with the reason known, rather than locked again
+            // with no trace of why someone was trying to get out.
+            config.kioskExitedAtElapsed = android.os.SystemClock.elapsedRealtime()
+            AgentLog.i(TAG, "kiosk: released on-device by passcode for $kioskPackage")
+            releaseKiosk(JSONObject())
+            KioskExitGate.remove(context)
+        }
     }
 
     /** Undo everything kiosk set, in the reverse order it was applied. */
