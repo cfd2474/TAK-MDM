@@ -7240,6 +7240,27 @@ Two things kept cheap on purpose:
 An app with no extractable icon sends `icon_url: null` rather than a URL that
 would 404 on every device that tried it, and the card simply starts at the name.
 
+##### ✅ Confirmed on hardware
+
+The device fetched the icon itself — nginx logged
+`GET /api/v1/device/apps/com.taksolutions.uasready/icon → 200, 55 949 bytes`,
+matching the stored blob exactly. Chrome's was *not* fetched, which is the lazy
+behaviour working: it sits on the Installed tab, and an icon is only pulled for a
+card actually being drawn.
+
+##### 🟢 Download race: second consecutive clean update
+
+| Build | Requests | Fetched by |
+|---|---|---|
+| 57 / 59 / 60 | 5, 5, 5 | old code |
+| 61 | 1 | old code |
+| 62 | 1 | fixed code |
+| **63** | **1** | **fixed code** |
+
+Two in a row through the fixed downloader, against a bug that previously cost five
+attempts three times running. Still short of proof — 61 managed one attempt on the
+old code — but the pattern is now going the right way and each build adds a sample.
+
 | # | Chunk | Notes |
 |---|---|---|
 | 7 | **Knox layer** | Planned in detail below |
