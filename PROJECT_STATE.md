@@ -7096,6 +7096,21 @@ not carry. Reasoned from the evidence above, not proven by a test.
 unfixed code in 60 and simply did not collide that time. The first update fetched
 **by 61** is the real test.
 
+##### 🟡 First evidence from the fixed downloader — encouraging, not conclusive
+
+| Build | Requests | Fetched by |
+|---|---|---|
+| 57 / 59 / 60 | 5, 5, 5 | old code |
+| 61 | 1 | old code |
+| **62** | **1** | **fixed code** |
+
+Also **zero** `failed verification` lines in the agent log since `0.24.0` started.
+
+⚠️ **One clean run does not settle an intermittent bug**, and 61 shows why: it also
+came down in a single request through the *unfixed* code. The honest reading is
+that nothing contradicts the fix yet. Confidence comes from several consecutive
+clean updates, not this one.
+
 ##### Plan (5 steps)
 
 1. Asset: `drawable-nodpi/atlas_wordmark.webp`, downscaled from the 1.8 MB
