@@ -6724,6 +6724,31 @@ prevent, and it had been sharing the `TYPE_CHOICE` branch. Now `AsStringList` �
 
 Also: the version-expansion row still spanned 5 columns after a 6th was added.
 
+##### ✅ Deployed to `209.182.235.108`, 2026-09-06
+
+Committed as `51dc262` and pushed to `main`. Database backed up to
+`/root/takmdm-20260906-024856.sql.gz` **before** migrating.
+
+| Check | Result |
+|---|---|
+| Alembic | `r8t0v2x4z6b8` → **`t0v2x4z6b8d0`** |
+| Containers | api / db / proxy running |
+| Errors in log since restart | **0** |
+| Backfill on the live catalog | Chrome → WEBP adaptive 9 540 b; ATLAS MDM → PNG adaptive 68 425 b; both marked inspected |
+| `/apps` | 200, 2 icon images, both adaptive |
+| Icon endpoint | `200 image/webp 9540 bytes` |
+| `https://…:8443/healthz` | 200 |
+| `https://…:8443/` | **403** — console still not exposed on the device port |
+| `http://…:8080/api/v1/provisioning/agent.apk` | 200, 7 057 180 b |
+| `http://…:8080/apps` | **403** |
+
+⚠️ **The agent APK on the server was not replaced.** Local `assembleDebug` is
+version **57** and carries the multi-select fix and the new icon; the server still
+serves the older published build. Publishing a new agent updates the fleet, so it
+is a deliberate act, not a side effect of a server deploy — and the two fixes that
+matter on-device (multi-select `String[]`, and `REFUSED_DOWNGRADE` demoted to a
+warning) do not reach any device until it happens.
+
 ⚠️ **Our own icon is the heaviest in the library**: 213 KB, a 432² RGBA PNG,
 because the agent's `ic_launcher_foreground` is unoptimised. The resolver is
 right to take the highest density; the asset is what is oversized. Mitigated for
