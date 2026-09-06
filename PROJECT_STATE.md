@@ -7364,7 +7364,12 @@ device in someone's hand.
 
 8. Multi app, launcher, website kiosk, screensaver: declared so the operator can
    see they exist, refused at validation with the launcher reason — the same
-   pattern the Knox-gated network fields use. Plus the rewrite decision record.
+   pattern the Knox-gated network fields use.
+9. ✅ **Decision record written**: [docs/DECISION-atlas-launcher.md](docs/DECISION-atlas-launcher.md)
+   — three options, the risk each carries to the kiosk **escape hatch**, and the
+   three questions worth answering before spending anything. Recommends a
+   separate launcher APK, and only once multi-app kiosk is a confirmed field
+   requirement rather than a feature-parity checkbox.
 
 | # | Chunk | Notes |
 |---|---|---|
