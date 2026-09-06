@@ -82,6 +82,81 @@
   </div>
 {% endmacro %}
 
+{% macro _kiosk_apps(f, items, name, app_packages) %}
+  {#
+    Multi-app kiosk (W68). An ordered list of tiles plus a live preview of the
+    grid they make.
+
+    ⚠️ The favourite checkbox carries the **package name** as its value, not a
+    positional index. An unchecked checkbox does not submit at all, so pairing by
+    position would shift every favourite after the first unchecked row onto the
+    wrong app — and a wrong favourite looks deliberate rather than broken.
+
+    ⚠️ Order is the DOM order of the rows, so moving a row *is* the edit. There is
+    no stored index to disagree with what the operator sees.
+  #}
+  <div class="rowset" data-rowset data-kiosk-apps>
+    {% for item in items or [] %}
+      <div class="rs-row" data-kiosk-app-row>
+        <button type="button" class="ghost" data-move-up title="Move up">↑</button>
+        <button type="button" class="ghost" data-move-down title="Move down">↓</button>
+        <select name="{{ name }}__package_name" class="field-grow">
+          <option value="">— pick an uploaded app —</option>
+          {% for p in app_packages %}
+            <option value="{{ p.package_name }}"
+              {{ 'selected' if item.package_name == p.package_name }}>
+              {{ p.label or p.package_name }} ({{ p.package_name }})
+            </option>
+          {% endfor %}
+        </select>
+        <input type="text" name="{{ name }}__activity" placeholder="activity (optional)"
+               value="{{ item.activity or '' }}">
+        <label style="display:flex; align-items:center; gap:6px; margin:0; white-space:nowrap">
+          <input type="checkbox" name="{{ name }}__favorite"
+                 value="{{ item.package_name }}" data-favorite
+                 {{ 'checked' if item.favorite }}>
+          Dock
+        </label>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    {% endfor %}
+
+    <template data-row-template>
+      <div class="rs-row" data-kiosk-app-row>
+        <button type="button" class="ghost" data-move-up title="Move up">↑</button>
+        <button type="button" class="ghost" data-move-down title="Move down">↓</button>
+        <select name="{{ name }}__package_name" class="field-grow">
+          <option value="">— pick an uploaded app —</option>
+          {% for p in app_packages %}
+            <option value="{{ p.package_name }}">
+              {{ p.label or p.package_name }} ({{ p.package_name }})
+            </option>
+          {% endfor %}
+        </select>
+        <input type="text" name="{{ name }}__activity" placeholder="activity (optional)">
+        <label style="display:flex; align-items:center; gap:6px; margin:0; white-space:nowrap">
+          <input type="checkbox" name="{{ name }}__favorite" value="" data-favorite>
+          Dock
+        </label>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    </template>
+
+    <button type="button" class="ghost" data-add-row>Add app</button>
+
+    <div class="muted" style="font-size:12px; margin-top:8px">
+      Only apps uploaded to this server can be placed — the device is told exactly
+      which build to install. The ATLAS launcher is added automatically.
+    </div>
+
+    <div class="kiosk-preview" data-kiosk-preview hidden>
+      <div class="kp-label">Home screen</div>
+      <div class="kp-screen" data-kiosk-preview-grid></div>
+      <div class="kp-dock" data-kiosk-preview-dock hidden></div>
+    </div>
+  </div>
+{% endmacro %}
+
 {% macro _kiosk_app(f, value, name, app_packages) %}
   {#
     Single-app kiosk (W61). Two shapes, because they are genuinely different
@@ -446,6 +521,7 @@
   {% elif f.control == 'password' %}{{ _password(f, value, name) }}
   {% elif f.control == 'package_list' %}{{ _package_list(f, value, name) }}
   {% elif f.control == 'app_list' %}{{ _app_list(f, value, name, app_packages) }}
+  {% elif f.control == 'kiosk_apps' %}{{ _kiosk_apps(f, value, name, app_packages) }}
   {% elif f.control == 'kiosk_app' %}{{ _kiosk_app(f, value, name, app_packages) }}
   {% elif f.control == 'activity_choice' %}{{ _activity_choice(f, value, name) }}
   {% elif f.control == 'file_list' %}{{ _file_list(f, value, name, managed_files) }}

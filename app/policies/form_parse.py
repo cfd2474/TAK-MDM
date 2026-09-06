@@ -34,6 +34,10 @@ class _MultiDict(Protocol):
     def getlist(self, key: str) -> list[str]: ...
 
 
+def _looks_numeric(raw: str) -> bool:
+    return raw.lstrip("-").isdigit()
+
+
 def _int_or_none(raw: str | None) -> int | None:
     raw = (raw or "").strip()
     if raw == "":
@@ -59,9 +63,17 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
             # "" -> not managed
 
         elif field.control in ("int", "enum"):
-            value = _int_or_none(form.get(name))
-            if value is not None:
-                spec[name] = value
+            raw = (form.get(name) or "").strip()
+            # ⚠️ An enum's values are not always numbers. Every enum reaching this
+            # form today is an IntEnum, so coercing to int was harmless — until
+            # W68 added string-valued ones, where `_int_or_none` would have
+            # returned None and dropped the operator's choice in silence.
+            if field.control == "enum" and raw and not _looks_numeric(raw):
+                spec[name] = raw
+            else:
+                value = _int_or_none(raw)
+                if value is not None:
+                    spec[name] = value
 
         elif field.control == "image_file":
             # A single managed-file id, or "" for "no image in this slot". Empty is
@@ -80,6 +92,31 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
             raw = (form.get(name) or "").strip()
             if raw:
                 spec[name] = raw
+
+        elif field.control == "kiosk_apps":
+            # ⚠️ Favourites are matched **by package, not by index**. An unchecked
+            # checkbox does not submit at all, so a positional pairing would shift
+            # every favourite after the first unchecked row onto the wrong app —
+            # and the wrong app would look deliberate.
+            packages = form.getlist(f"{name}__package_name")
+            activities = form.getlist(f"{name}__activity")
+            favorites = {v.strip() for v in form.getlist(f"{name}__favorite") if v}
+            rows: list[dict[str, Any]] = []
+            seen_packages: set[str] = set()
+            for i, package in enumerate(packages):
+                package = (package or "").strip()
+                if not package or package in seen_packages:
+                    continue
+                seen_packages.add(package)
+                row: dict[str, Any] = {"package_name": package}
+                activity = (activities[i] if i < len(activities) else "").strip()
+                if activity:
+                    row["activity"] = activity
+                if package in favorites:
+                    row["favorite"] = True
+                rows.append(row)
+            if rows:
+                spec[name] = rows
 
         elif field.control == "package_list":
             items = [v.strip() for v in form.getlist(name) if v and v.strip()]

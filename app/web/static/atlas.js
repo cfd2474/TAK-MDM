@@ -709,8 +709,125 @@
     if (rm) {
       e.preventDefault();
       var row = rm.closest(".rs-row");
+      var set = row && row.closest("[data-kiosk-apps]");
       if (row) row.remove();
+      if (set) renderKioskPreview(set);
     }
+  });
+
+  /* --- Multi-app kiosk: ordering, favourites, and the grid preview (W68) -----
+     Row order IS the order the apps appear on the device, so moving a row is the
+     whole edit — there is no stored index that could disagree with what the
+     operator is looking at.
+
+     The favourite checkbox carries the package name as its value rather than a
+     position, because an unchecked checkbox does not submit at all: pairing by
+     position would shift every favourite after the first unchecked row onto the
+     wrong app, and a wrong favourite looks deliberate rather than broken. The
+     value therefore has to follow the select. */
+
+  function syncFavouriteValues(set) {
+    set.querySelectorAll("[data-kiosk-app-row]").forEach(function (row) {
+      var select = row.querySelector("select");
+      var favourite = row.querySelector("[data-favorite]");
+      if (!select || !favourite) return;
+      favourite.value = select.value;
+      // A row with no app chosen cannot be a favourite of anything.
+      if (!select.value) favourite.checked = false;
+      favourite.disabled = !select.value;
+    });
+  }
+
+  function renderKioskPreview(set) {
+    var preview = set.querySelector("[data-kiosk-preview]");
+    if (!preview) return;
+    var grid = set.querySelector("[data-kiosk-preview-grid]");
+    var dock = set.querySelector("[data-kiosk-preview-dock]");
+    var columnsInput = document.querySelector('[data-field="launcher_columns"] input');
+    var columns = parseInt(columnsInput && columnsInput.value, 10);
+    if (!(columns >= 2 && columns <= 8)) columns = 4;
+
+    var tiles = [];
+    var favourites = [];
+    set.querySelectorAll("[data-kiosk-app-row]").forEach(function (row) {
+      var select = row.querySelector("select");
+      if (!select || !select.value) return;
+      // The app's own name, as the device will show it — not the package, which
+      // is what the device grid looked like before it read labels.
+      var label = select.options[select.selectedIndex].text.replace(/\s*\([^)]*\)\s*$/, "");
+      tiles.push(label);
+      var favourite = row.querySelector("[data-favorite]");
+      if (favourite && favourite.checked) favourites.push(label);
+    });
+
+    preview.hidden = tiles.length === 0;
+    grid.style.gridTemplateColumns = "repeat(" + columns + ", 1fr)";
+    grid.innerHTML = "";
+    tiles.forEach(function (label) {
+      var tile = document.createElement("div");
+      tile.className = "kp-tile";
+      tile.innerHTML = '<span class="kp-icon"></span><span class="kp-name"></span>';
+      tile.querySelector(".kp-name").textContent = label;
+      grid.appendChild(tile);
+    });
+
+    dock.hidden = favourites.length === 0;
+    dock.innerHTML = "";
+    favourites.forEach(function (label) {
+      var tile = document.createElement("span");
+      tile.className = "kp-icon";
+      tile.title = label;
+      dock.appendChild(tile);
+    });
+  }
+
+  document.addEventListener("click", function (e) {
+    var move = e.target.closest("[data-move-up], [data-move-down]");
+    if (!move) return;
+    e.preventDefault();
+    var row = move.closest("[data-kiosk-app-row]");
+    var set = row && row.closest("[data-kiosk-apps]");
+    if (!row || !set) return;
+    var up = move.hasAttribute("data-move-up");
+    var sibling = up ? row.previousElementSibling : row.nextElementSibling;
+    // Only swap with another row: the template and the Add button are siblings
+    // too, and moving past them would take the row out of the list entirely.
+    if (!sibling || !sibling.hasAttribute("data-kiosk-app-row")) return;
+    if (up) sibling.before(row); else sibling.after(row);
+    renderKioskPreview(set);
+  });
+
+  document.addEventListener("change", function (e) {
+    var set = e.target.closest("[data-kiosk-apps]");
+    if (set) {
+      syncFavouriteValues(set);
+      renderKioskPreview(set);
+      return;
+    }
+    // The column count lives in its own field, and the preview is the only place
+    // its effect is visible before the policy reaches a device.
+    if (e.target.closest('[data-field="launcher_columns"]')) {
+      document.querySelectorAll("[data-kiosk-apps]").forEach(renderKioskPreview);
+    }
+  });
+
+  document.addEventListener("input", function (e) {
+    if (e.target.closest('[data-field="launcher_columns"]')) {
+      document.querySelectorAll("[data-kiosk-apps]").forEach(renderKioskPreview);
+    }
+  });
+
+  // Rows added by [data-add-row] arrive after this file runs, so the preview is
+  // redrawn on the same click rather than only on the next change.
+  document.addEventListener("click", function (e) {
+    if (!e.target.closest("[data-add-row]")) return;
+    var set = e.target.closest("[data-kiosk-apps]");
+    if (set) setTimeout(function () { syncFavouriteValues(set); renderKioskPreview(set); }, 0);
+  });
+
+  document.querySelectorAll("[data-kiosk-apps]").forEach(function (set) {
+    syncFavouriteValues(set);
+    renderKioskPreview(set);
   });
 
   /* --- Insert an app group's packages into a required_apps JSON textarea -------

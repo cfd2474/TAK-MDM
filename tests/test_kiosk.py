@@ -23,6 +23,9 @@ from tests.conftest import ADMIN_HEADERS
 
 KIOSK = "com.taksolutions.testapp"
 
+#: Imported rather than retyped: a typo here would pass while the device never locks.
+from app.services.effective_policy import ATLAS_LAUNCHER_PACKAGE  # noqa: E402
+
 
 def policy_with(
     client: TestClient, name: str, spec: dict, policy_type: str = "KIOSK"
@@ -146,3 +149,91 @@ def test_a_kiosk_conflict_is_reported(client: TestClient, enrolled):
     # Losing a kiosk app silently would leave an operator wondering why the tablet
     # locked to the wrong thing.
     assert any(c["field"] == "kiosk_package" for c in body["conflicts"])
+
+
+# --------------------------------------------------------------------------- #
+# Multi-app kiosk — the ATLAS launcher (W68)
+# --------------------------------------------------------------------------- #
+
+
+def required_for(client: TestClient, device_id: str) -> list[str]:
+    """The packages the device is told to install, in order."""
+    body = client.get(
+        f"/api/v1/devices/{device_id}/effective-policy", headers=ADMIN_HEADERS
+    ).json()
+    apps = body.get("apps") or body["values"].get("APP_CATALOG", {}).get("required_apps", [])
+    return [a.get("package_name") for a in apps]
+
+
+def test_a_multi_app_kiosk_requires_the_launcher_and_every_app(
+    client: TestClient, enrolled
+):
+    """⚠️ Three things have to be installed, and missing any of them reads as a
+    broken launcher rather than a missing install:
+
+    * the ATLAS launcher, or there is nothing to lock the device to;
+    * every app on the home screen, or its tile is silently dropped;
+    * and nothing else, because this list is also what lock task permits.
+    """
+    device = enrolled(serial="KIOSK-MULTI")
+    assign(
+        client,
+        policy_with(
+            client,
+            "Multi-app kiosk",
+            {
+                "multi_app_packages": [
+                    {"package_name": KIOSK, "favorite": True},
+                    {"package_name": "com.example.second"},
+                ]
+            },
+        ),
+        device["device_id"],
+    )
+
+    required = required_for(client, device["device_id"])
+    assert ATLAS_LAUNCHER_PACKAGE in required
+    assert KIOSK in required
+    assert "com.example.second" in required
+
+
+def test_a_single_app_kiosk_does_not_drag_the_launcher_in(client: TestClient, enrolled):
+    """The other half: a device that asked for one app must not be handed a
+    launcher it will never show. Installing an unused home-screen app on every
+    kiosk would be a change to what those devices *are*."""
+    device = enrolled(serial="KIOSK-SINGLE-NO-LAUNCHER")
+    assign(
+        client,
+        policy_with(client, "Single app kiosk", {"kiosk_package": KIOSK}),
+        device["device_id"],
+    )
+
+    assert ATLAS_LAUNCHER_PACKAGE not in required_for(client, device["device_id"])
+
+
+def test_the_multi_app_list_reaches_the_device_in_order(client: TestClient, enrolled):
+    """Order is the operator's arrangement of the home screen, and the launcher
+    draws it as given — so it has to survive the effective policy unchanged."""
+    device = enrolled(serial="KIOSK-ORDER")
+    assign(
+        client,
+        policy_with(
+            client,
+            "Ordered kiosk",
+            {
+                "multi_app_packages": [
+                    {"package_name": "com.c"},
+                    {"package_name": "com.a"},
+                    {"package_name": "com.b"},
+                ]
+            },
+        ),
+        device["device_id"],
+    )
+
+    kiosk = catalog_for(client, device["device_id"])
+    assert [a["package_name"] for a in kiosk["multi_app_packages"]] == [
+        "com.c",
+        "com.a",
+        "com.b",
+    ]

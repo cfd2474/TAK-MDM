@@ -467,11 +467,39 @@ multi-app path first touch a device after Chunk 4 ships the console side.
 the server's file plumbing, and the agent's existing `applyWallpaper` is what it
 will route through.
 
-#### Chunk 4 — server and console
-Lift `_refuse_what_needs_a_launcher` for multi-app and wallpaper (website kiosk
-and screensaver stay refused until they are built), the ordered-app-list UI with
-column count and preview, effective-policy requiring the launcher and the chosen
-apps, validators, tests, deploy.
+#### ✅ Chunk 4 — server and console (COMPLETE)
+
+**Ten sub-topics now**, all populated: night mode earned its own, because the
+tint is drawn by the agent over *every* app and so applies to a single-app kiosk
+too — it cannot live under "Launcher".
+
+⚠️ **`launcher_wallpaper_file_id` was deleted, not implemented.** There is already
+a WALLPAPER policy, and the launcher's window is transparent so it shows through.
+A second field would have been two policies writing one device setting, and the
+loser would lose silently.
+
+⚠️ **`_kiosk_settings_need_a_kiosk_app` knew only about `kiosk_package`.** Left
+alone it would have rejected every multi-app kiosk as unconfigured. There are two
+ways to have something to lock to now.
+
+⚠️ **Favourites are matched by package, not by index.** An unchecked checkbox does
+not submit at all, so three rows with only the last ticked send *one* value —
+positional pairing would put that favourite on the **first** app, and a wrong
+favourite looks deliberate rather than broken. Verified by deletion: switching to
+positional pairing fails the test.
+
+⚠️ **Enum parsing was int-only.** Every enum reaching this form was an IntEnum, so
+`_int_or_none` was harmless — until W68 added string-valued ones, where it would
+have returned None and dropped the operator's choice in silence. Both directions
+are now tested.
+
+✅ **Checked in a real DOM** (jsdom, against the rendered page with real packages
+seeded — an empty test DB gives empty selects and a meaningless pass): favourite
+value follows the select, move-up reorders, the top row cannot escape the list,
+one preview tile per row showing the label not the package, and the column count
+drives the preview grid.
+
+826 → 834 server tests.
 
 
 ### ✅ Chunk 1 — Policy stacking engine (COMPLETE)

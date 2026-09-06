@@ -31,7 +31,13 @@ ATAK = "com.atakmap.app.civ"
 
 
 def _spec(**kwargs) -> KioskSpec:
-    return KioskSpec(kiosk_package=ATAK, **kwargs)
+    """A single-app kiosk, which is what most of these rules are about.
+
+    Pass `kiosk_package` explicitly to override it, or use `KioskSpec` directly
+    for a multi-app kiosk, which deliberately has no single app.
+    """
+    kwargs.setdefault("kiosk_package", ATAK)
+    return KioskSpec(**kwargs)
 
 
 # --------------------------------------------------------------------------- #
@@ -59,13 +65,17 @@ def test_the_creator_offers_every_sub_topic_the_operator_asked_for():
     kiosk = next(c for c in CATALOG if c.key == "kiosk")
 
     assert kiosk.policy_type == "KIOSK"
-    # The eight the operator asked for, plus "permitted features" — the lock-task
-    # controls were originally mis-filed under "kiosk exit settings", and their
-    # Hexnode screenshot showed that name means the deliberate way *out* (W65).
+    # The eight the operator asked for, plus two that the work turned up:
+    #   * "permitted features" — the lock-task controls were mis-filed under
+    #     "kiosk exit settings", and their Hexnode screenshot showed that name
+    #     means the deliberate way *out* (W65);
+    #   * "night mode" — the tint is drawn by the agent over every app, so it
+    #     applies to a single-app kiosk too and cannot live under "launcher"
+    #     (W68).
     assert kiosk.subtopics == (
         "single app", "multi app", "background apps", "launcher",
         "permitted features", "peripheral settings", "kiosk exit settings",
-        "website kiosk settings", "kiosk screensaver",
+        "night mode", "website kiosk settings", "kiosk screensaver",
     )
 
 
@@ -98,22 +108,78 @@ def test_the_enforceable_sections_are_accepted():
 @pytest.mark.parametrize(
     "field, value",
     [
-        ("multi_app_packages", ["com.a.b"]),
-        ("launcher_wallpaper_file_id", "abc123"),
         ("website_kiosk_url", "https://example.test"),
         ("screensaver_file_id", "abc123"),
         ("screensaver_idle_seconds", 60),
     ],
 )
-def test_the_launcher_sections_are_refused_rather_than_silently_ignored(field, value):
-    """⚠️ The agent declares no `category.HOME` by design.
+def test_the_unbuilt_sections_are_refused_rather_than_silently_ignored(field, value):
+    """⚠️ The ATLAS launcher shows a grid of apps and nothing else yet.
 
-    There is no kiosk home screen to put a grid of apps, a wallpaper, a web view
-    or a screensaver on. Saving these against the day there is one would hand an
-    operator a policy that locks nothing and says so nowhere.
+    It has no browser shell to hold a web page in and no idle surface to draw a
+    screensaver on. Saving these against the day it does would hand an operator a
+    policy that locks nothing and says so nowhere.
+
+    Multi app left this list in W68 when the launcher was built, and the launcher
+    wallpaper left it by being deleted — the Wallpaper policy already sets the
+    device wallpaper, and the launcher's window is transparent so it shows
+    through.
     """
-    with pytest.raises(ValueError, match="launcher"):
+    with pytest.raises(ValueError, match="not built yet"):
         _spec(**{field: value})
+
+
+def test_a_multi_app_kiosk_is_accepted_now_that_the_launcher_exists():
+    """The other half of the test above: W68 built the launcher, so the section it
+    was blocking has to actually work — a refusal that outlived its reason would
+    be indistinguishable from one that is still needed."""
+    spec = KioskSpec(
+        multi_app_packages=[
+            {"package_name": "com.atakmap.app.civ", "favorite": True},
+            {"package_name": "com.android.chrome"},
+        ],
+        launcher_columns=5,
+    )
+    assert [a.package_name for a in spec.multi_app_packages] == [
+        "com.atakmap.app.civ",
+        "com.android.chrome",
+    ]
+    assert spec.multi_app_packages[0].favorite is True
+    assert spec.launcher_columns == 5
+
+
+def test_a_multi_app_kiosk_needs_no_single_kiosk_app():
+    """⚠️ The trap this guards. Every kiosk field is refused unless there is
+    something to lock to, and that check knew only about `kiosk_package` — so
+    before W68 amended it, a perfectly good multi-app kiosk was rejected as
+    unconfigured."""
+    spec = KioskSpec(
+        multi_app_packages=[{"package_name": "com.a.b"}], keep_power_menu=False
+    )
+    assert spec.kiosk_package is None
+    assert spec.keep_power_menu is False
+
+
+def test_launcher_appearance_without_apps_is_refused():
+    """Set with no apps they configure a home screen that does not exist, and an
+    operator reading them back would believe this device has one."""
+    with pytest.raises(ValueError, match="only applies to a multi-app kiosk"):
+        KioskSpec(kiosk_package=ATAK, launcher_columns=4)
+
+
+def test_the_same_app_cannot_hold_two_tiles():
+    """The launcher draws one tile either way, so a second entry cannot take
+    effect — and two identical rows look like the ordering did not save."""
+    with pytest.raises(ValueError, match="more than once"):
+        KioskSpec(
+            multi_app_packages=[{"package_name": "com.a"}, {"package_name": "com.a"}]
+        )
+
+
+def test_night_settings_without_night_mode_are_refused():
+    """A tint colour and strength with the tint switched off configure nothing."""
+    with pytest.raises(ValueError, match="only applies when night mode is on"):
+        _spec(kiosk_night_hue="red")
 
 
 def test_notifications_cannot_be_asked_for_without_the_home_button():
@@ -128,7 +194,7 @@ def test_kiosk_settings_without_a_kiosk_app_are_refused():
     """Everything else here describes how the kiosk behaves. With no app to lock
     to they describe nothing, and the policy would look configured while doing
     nothing at all."""
-    with pytest.raises(ValueError, match="no kiosk app is set"):
+    with pytest.raises(ValueError, match="nothing is set to lock to"):
         KioskSpec(keep_power_menu=False, kiosk_allow_camera=False)
 
 

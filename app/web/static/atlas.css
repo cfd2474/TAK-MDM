@@ -703,3 +703,64 @@ dl.kv dd { margin: 0; font-size: 13px; }
 }
 
 .config-option input { margin: 0; }
+
+
+/* --- Multi-app kiosk preview (W68) -----------------------------------------
+   Not a mockup for its own sake: the column count and the app order have no
+   other visible effect until the policy reaches a device, so without this an
+   operator arranges a home screen blind and finds out on the tablet. */
+.kiosk-preview {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line, #2a3646);
+  border-radius: 10px;
+  background: #0b1524;
+}
+.kiosk-preview .kp-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted, #8fa3b8);
+  margin-bottom: 10px;
+}
+.kiosk-preview .kp-screen {
+  display: grid;
+  gap: 12px 8px;
+  max-width: 420px;
+}
+.kiosk-preview .kp-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.kiosk-preview .kp-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: linear-gradient(160deg, #2f4d75, #1b2f4a);
+  border: 1px solid #3c5a82;
+  flex: none;
+}
+.kiosk-preview .kp-name {
+  font-size: 10px;
+  line-height: 1.2;
+  color: #cfdcea;
+  text-align: center;
+  /* Two lines then ellipsis, as the tile itself does — a preview that showed a
+     name the device will truncate would be a preview of a different screen. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  max-width: 100%;
+}
+.kiosk-preview .kp-dock {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px dashed #2a3646;
+}

@@ -67,7 +67,7 @@ CATALOG: tuple[Category, ...] = (
         subtopics=(
             "single app", "multi app", "background apps", "launcher",
             "permitted features", "peripheral settings", "kiosk exit settings",
-            "website kiosk settings", "kiosk screensaver",
+            "night mode", "website kiosk settings", "kiosk screensaver",
         ),
         blurb="Lock a device to one app and decide what the user can still reach. "
               "Multi app, launcher, website and screensaver need an ATLAS launcher.",

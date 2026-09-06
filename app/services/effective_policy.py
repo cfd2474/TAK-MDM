@@ -200,14 +200,30 @@ def resolve_required_apps(
     catalog = values.get("APP_CATALOG") or {}
     required = list(catalog.get("required_apps") or [])
 
-    kiosk_package = (values.get("KIOSK") or {}).get("kiosk_package")
-    if kiosk_package and not any(
-        entry.get("package_name") == kiosk_package for entry in required
-    ):
+    kiosk = values.get("KIOSK") or {}
+
+    def _require(package_name: str) -> None:
         # No version constraint: an explicit `required_apps` entry for the same app
         # keeps its own pin or floor, because an operator who pinned a build meant
         # it. This only covers the case where nobody said anything at all.
-        required.append({"package_name": kiosk_package})
+        if package_name and not any(
+            entry.get("package_name") == package_name for entry in required
+        ):
+            required.append({"package_name": package_name})
+
+    if kiosk.get("kiosk_package"):
+        _require(kiosk["kiosk_package"])
+
+    # ⚠️ A multi-app kiosk needs **three** kinds of app present, and missing any of
+    # them looks like a broken launcher rather than a missing install (W68):
+    #   * the ATLAS launcher, or there is nothing to lock the device to;
+    #   * every app on the home screen, or its tile is silently dropped;
+    #   * nothing else — this list is also what lock task permits.
+    multi_app = kiosk.get("multi_app_packages") or []
+    if multi_app:
+        _require(ATLAS_LAUNCHER_PACKAGE)
+        for entry in multi_app:
+            _require((entry or {}).get("package_name") or "")
 
     resolved: list[dict[str, Any]] = []
 
@@ -310,6 +326,13 @@ def _icon_url(version: AppPackageVersion | None) -> str | None:
     if package is None or not package.icon_media_type:
         return None
     return f"/api/v1/device/apps/{package.package_name}/icon"
+
+
+#: The ATLAS launcher (W68). A separate APK, required only by a multi-app kiosk.
+#: Must match `PolicyApplier.LAUNCHER_PACKAGE` in the agent — the two are one
+#: contract expressed in two languages, and a typo here is a kiosk that never
+#: locks.
+ATLAS_LAUNCHER_PACKAGE = "com.taksolutions.atlaslauncher"
 
 
 def resolve_store_apps(
