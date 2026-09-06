@@ -480,6 +480,17 @@ class PolicyApplier(private val context: Context) {
 
     private fun applyScreenTimeout(spec: JSONObject): List<String> {
         val config = AgentConfig(context)
+
+        // ⚠️ The kiosk user has set this themselves and is still being offered the
+        // control, so policy stands aside (W71). Without this the setting would be
+        // driven back every two minutes and the control would look broken.
+        //
+        // Presence *is* the rule: the override exists only while the control is
+        // offered, because the kiosk applier clears it when the operator stops.
+        // That clearing runs after this in the same cycle, so a withdrawn control
+        // is honoured from the next reconcile rather than this one.
+        config.screenTimeoutUserChoiceMillis?.let { return emptyList() }
+
         val desired = if (spec.has("screen_timeout_seconds")) {
             spec.getInt("screen_timeout_seconds")
         } else {
@@ -1086,6 +1097,9 @@ class PolicyApplier(private val context: Context) {
             config.nightModeUserChoice = null
             config.nightLevelUserChoice = null
         }
+        if (DeviceSettingsPlan.shouldForget(spec, DeviceSettingsPlan.OFFER_SCREEN_TIMEOUT)) {
+            config.screenTimeoutUserChoiceMillis = null
+        }
         val (on, level) = DeviceSettingsPlan.nightMode(
             spec, config.nightModeUserChoice, config.nightLevelUserChoice,
         ).value
@@ -1277,6 +1291,23 @@ class PolicyApplier(private val context: Context) {
         true
     }.getOrElse {
         AgentLog.w(TAG, "could not set brightness: ${it.message}")
+        false
+    }
+
+    /**
+     * Screen timeout, for the kiosk's Device Settings screen (W71).
+     *
+     * The third of the three keys `setSystemSetting` accepts — and the reason a
+     * user can change this on a locked device where the ordinary route needs
+     * `WRITE_SETTINGS`.
+     */
+    fun setScreenTimeout(millis: Int): Boolean = runCatching {
+        dpm.setSystemSetting(
+            admin, Settings.System.SCREEN_OFF_TIMEOUT, millis.coerceAtLeast(5_000).toString(),
+        )
+        true
+    }.getOrElse {
+        AgentLog.w(TAG, "could not set the screen timeout: ${it.message}")
         false
     }
 

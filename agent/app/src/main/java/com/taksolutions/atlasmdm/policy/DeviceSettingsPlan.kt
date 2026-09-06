@@ -83,11 +83,15 @@ object DeviceSettingsPlan {
     }
 
     /**
-     * True when the user's stored overrides should be forgotten.
+     * True when the user's stored override for [offer] should be forgotten.
      *
-     * ⚠️ Called on every reconcile. A device whose operator withdrew the control
+     * ⚠️ Called on every reconcile. A device whose operator withdrew a control
      * must go back to what policy says, and keeping the override would leave a
      * setting nobody on the device can reach and nobody in the console can see.
      */
-    fun shouldForgetOverrides(kiosk: JSONObject): Boolean = !offers(kiosk, OFFER_NIGHT_MODE)
+    fun shouldForget(kiosk: JSONObject, offer: String): Boolean = !offers(kiosk, offer)
+
+    /** The night-mode override specifically, kept for readability at the call site. */
+    fun shouldForgetOverrides(kiosk: JSONObject): Boolean =
+        shouldForget(kiosk, OFFER_NIGHT_MODE)
 }

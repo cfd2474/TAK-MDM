@@ -403,9 +403,36 @@ Verified by deletion: removing the offered-gate fails that test.
 
 839 server tests, agent suite green.
 
-#### Chunk 2 — the remaining controls
-Screen timeout, volume, flashlight, Wi-Fi. Wi-Fi last, because it is the one that
-may turn out to be impossible on this hardware.
+#### ✅ Chunk 2 — the remaining controls (COMPLETE, not yet deployed)
+
+Screen timeout, volume, flashlight, Wi-Fi. Rendered and looked at.
+
+⚠️ **The screen timeout is owned by another policy section**, which drives it back
+to the policy value on every reconcile. The user's stored override is what
+suspends that, and its *presence* is the whole rule — so it exists only while the
+control is offered, and the kiosk applier clears it when the operator stops. The
+clearing runs after `applyScreenTimeout` in the same cycle, so a withdrawn
+control is honoured from the **next** reconcile rather than that one.
+
+⚠️ **The torch cannot be read**, only written — Android offers no getter without
+registering a callback. The switch therefore starts at off every time, which is
+honest: claiming a state the screen cannot know would be worse than the oddity.
+
+⚠️ **`setWifiEnabled` returns false rather than throwing** when refused, so the
+control reads the state back instead of trusting the call. Still unverified on
+`SM-X520`.
+
+**Deliberately absent, though the Hexnode screens show them:** airplane mode
+cannot be set by any app; Bluetooth on/off lost `BluetoothAdapter.enable()` in
+API 33 in favour of a user-consent intent, which is not something to raise from a
+locked kiosk. A control that silently did nothing would be worse than its absence.
+
+⚠️ **A near miss worth recording.** The edit that added all four sections was in a
+shell heredoc that died on a quoting error and never ran. The build still
+succeeded, the tests still passed, and the strings and `DeviceControls` were all
+in place — nothing referenced them. It was caught only by going back to adjust
+the layout. **A green build is not evidence that an edit landed**; check the
+symbols exist.
 
 #### Chunk 3 — deploy and verify on the tablet
 Including whether `setWifiEnabled` actually works as Device Owner on `SM-X520`.

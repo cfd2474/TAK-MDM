@@ -77,9 +77,25 @@ class DeviceSettingsActivity : AppCompatActivity() {
             root.addView(ConsoleViews.sectionTitle(this, getString(R.string.night_mode)))
             root.addView(nightModeCard(kiosk))
         }
-        if (DeviceSettingsPlan.offers(kiosk, DeviceSettingsPlan.OFFER_BRIGHTNESS)) {
+        val brightness = DeviceSettingsPlan.offers(kiosk, DeviceSettingsPlan.OFFER_BRIGHTNESS)
+        val timeout = DeviceSettingsPlan.offers(kiosk, DeviceSettingsPlan.OFFER_SCREEN_TIMEOUT)
+        if (brightness || timeout) {
+            // One Display card holding whichever of the two is offered. Two cards
+            // each with a single row reads as a screen missing its other half.
             root.addView(ConsoleViews.sectionTitle(this, getString(R.string.display)))
-            root.addView(brightnessCard())
+            root.addView(displayCard(brightness, timeout))
+        }
+
+        val volume = DeviceSettingsPlan.offers(kiosk, DeviceSettingsPlan.OFFER_VOLUME)
+        val flashlight = DeviceSettingsPlan.offers(kiosk, DeviceSettingsPlan.OFFER_FLASHLIGHT)
+        if (volume || flashlight) {
+            root.addView(ConsoleViews.sectionTitle(this, getString(R.string.device_section)))
+            root.addView(deviceCard(volume, flashlight))
+        }
+
+        if (DeviceSettingsPlan.offers(kiosk, DeviceSettingsPlan.OFFER_WIFI)) {
+            root.addView(ConsoleViews.sectionTitle(this, getString(R.string.network)))
+            root.addView(wifiCard())
         }
 
         setContentView(ScrollView(this).apply { addView(root) })
@@ -132,9 +148,43 @@ class DeviceSettingsActivity : AppCompatActivity() {
     // Brightness
     // ----------------------------------------------------------------------- #
 
-    private fun brightnessCard() = ConsoleViews.card(this).also { card ->
-        val body = ConsoleViews.body(card)
+    private fun displayCard(brightness: Boolean, timeout: Boolean) =
+        ConsoleViews.card(this).also { card ->
+            val body = ConsoleViews.body(card)
+            if (brightness) addBrightness(body)
+            // A rule between them, not just spacing. Drawn without one, the
+            // brightness note sat between the two sliders and read as if it might
+            // belong to either - and a note about adaptive brightness attached to
+            // the screen timeout is worse than no note at all.
+            if (brightness && timeout) body.addView(ConsoleViews.divider(this))
+            if (timeout) addScreenTimeout(body)
+        }
 
+    private fun addScreenTimeout(body: LinearLayout) {
+        val current = runCatching {
+            Settings.System.getInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT)
+        }.getOrDefault(TIMEOUTS_MILLIS[2])
+        // Nearest offered step, so a device sitting on a value the operator set
+        // does not jump the moment this screen is opened.
+        val index = TIMEOUTS_MILLIS.indices.minByOrNull {
+            kotlin.math.abs(TIMEOUTS_MILLIS[it] - current)
+        } ?: 2
+
+        body.addView(
+            SettingsViews.sliderRow(
+                this, getString(R.string.screen_timeout), 0, TIMEOUTS_MILLIS.lastIndex, index,
+                { getString(TIMEOUT_LABELS[it]) },
+            ) { step ->
+                val millis = TIMEOUTS_MILLIS[step]
+                // Stored first: its presence is what stops the policy driving the
+                // value back at the next reconcile.
+                config.screenTimeoutUserChoiceMillis = millis
+                applier.setScreenTimeout(millis)
+            }
+        )
+    }
+
+    private fun addBrightness(body: LinearLayout) {
         body.addView(
             SettingsViews.switchRow(
                 this, getString(R.string.brightness_auto),
@@ -154,6 +204,58 @@ class DeviceSettingsActivity : AppCompatActivity() {
         )
         body.addView(
             SettingsViews.note(this, getString(R.string.brightness_note))
+        )
+    }
+
+    // ----------------------------------------------------------------------- #
+    // Volume, flashlight, Wi-Fi
+    // ----------------------------------------------------------------------- #
+
+    private fun deviceCard(volume: Boolean, flashlight: Boolean) =
+        ConsoleViews.card(this).also { card ->
+            val body = ConsoleViews.body(card)
+
+            if (volume) {
+                body.addView(
+                    SettingsViews.sliderRow(
+                        this, getString(R.string.volume), 0, 100,
+                        DeviceControls.volumePercent(this), { pct -> "${'$'}pct%" },
+                    ) { wanted -> DeviceControls.setVolumePercent(this, wanted) }
+                )
+            }
+            if (volume && flashlight) body.addView(ConsoleViews.divider(this))
+
+            if (flashlight) {
+                if (DeviceControls.hasTorch(this)) {
+                    body.addView(
+                        // Starts off every time, because Android gives no way to
+                        // read the torch without registering a callback. Claiming
+                        // a state this screen cannot know would be worse than the
+                        // small oddity of a switch that resets.
+                        SettingsViews.switchRow(
+                            this, getString(R.string.flashlight),
+                            getString(R.string.flashlight_summary), false,
+                        ) { wanted -> DeviceControls.setTorch(this, wanted) }
+                    )
+                } else {
+                    // Said, not hidden. The operator offered it, and silence would
+                    // leave them wondering whether the policy reached the device.
+                    body.addView(SettingsViews.note(this, getString(R.string.no_torch)))
+                }
+            }
+        }
+
+    private fun wifiCard() = ConsoleViews.card(this).also { card ->
+        ConsoleViews.body(card).addView(
+            SettingsViews.switchRow(
+                this, getString(R.string.wifi), getString(R.string.wifi_summary),
+                DeviceControls.isWifiEnabled(this),
+            ) { wanted ->
+                // Reads the state back: setWifiEnabled returns false rather than
+                // throwing when refused, and a switch that stayed where the user
+                // put it while Wi-Fi did not move is the lie this screen avoids.
+                DeviceControls.setWifiEnabled(this, wanted)
+            }
         )
     }
 
@@ -189,5 +291,20 @@ class DeviceSettingsActivity : AppCompatActivity() {
         /** Android's own range for `SCREEN_BRIGHTNESS`. 0 is not black, it is dimmest. */
         const val MIN_BRIGHTNESS = 1
         const val MAX_BRIGHTNESS = 255
+
+        /**
+         * Fixed steps rather than a free slider: these are the values Android's
+         * own display settings offer, and a kiosk timeout of "37 seconds" helps
+         * nobody. 15 s is the floor because anything shorter makes a mounted
+         * device unusable.
+         */
+        val TIMEOUTS_MILLIS = intArrayOf(
+            15_000, 30_000, 60_000, 120_000, 300_000, 600_000, 1_800_000,
+        )
+        val TIMEOUT_LABELS = intArrayOf(
+            R.string.timeout_15s, R.string.timeout_30s, R.string.timeout_1m,
+            R.string.timeout_2m, R.string.timeout_5m, R.string.timeout_10m,
+            R.string.timeout_30m,
+        )
     }
 }

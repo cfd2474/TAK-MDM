@@ -212,6 +212,20 @@ class AgentConfig(context: Context) {
             if (value == null) remove(KEY_NIGHT_USER) else putBoolean(KEY_NIGHT_USER, value)
         }
 
+    /**
+     * The user's own screen timeout in milliseconds, or null (W71).
+     *
+     * ⚠️ Read by `applyScreenTimeout`, which otherwise drives the setting back to
+     * the policy value on every reconcile. Its mere presence is what suspends
+     * that — so it exists only while the operator offers the control, and the
+     * kiosk applier clears it when they stop.
+     */
+    var screenTimeoutUserChoiceMillis: Int?
+        get() = prefs.getInt(KEY_TIMEOUT_USER, -1).takeIf { it > 0 }
+        set(value) = prefs.edit {
+            if (value == null) remove(KEY_TIMEOUT_USER) else putInt(KEY_TIMEOUT_USER, value)
+        }
+
     /** The user's own night-mode strength, 0-100, or null. */
     var nightLevelUserChoice: Int?
         get() = prefs.getInt(KEY_NIGHT_LEVEL_USER, -1).takeIf { it >= 0 }
@@ -378,6 +392,7 @@ class AgentConfig(context: Context) {
         private const val KEY_LAST_ERROR = "last_error"
         private const val KEY_LAST_SYNC = "last_sync_at"
         private const val KEY_KIOSK_EXITED = "kiosk_exited_at_elapsed"
+        private const val KEY_TIMEOUT_USER = "screen_timeout_user_choice"
         private const val KEY_NIGHT_USER = "night_mode_user_choice"
         private const val KEY_NIGHT_LEVEL_USER = "night_level_user_choice"
         private const val KEY_KIOSK_HOME = "kiosk_home_package"

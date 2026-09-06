@@ -118,5 +118,21 @@
     <string name="brightness">Brightness</string>
     <string name="brightness_auto">Adaptive brightness</string>
     <string name="brightness_auto_summary">Adjust to available light</string>
+    <string name="screen_timeout">Screen timeout</string>
+    <string name="timeout_15s">15 seconds</string>
+    <string name="timeout_30s">30 seconds</string>
+    <string name="timeout_1m">1 minute</string>
+    <string name="timeout_2m">2 minutes</string>
+    <string name="timeout_5m">5 minutes</string>
+    <string name="timeout_10m">10 minutes</string>
+    <string name="timeout_30m">30 minutes</string>
+    <string name="device_section">Device</string>
+    <string name="volume">Volume</string>
+    <string name="flashlight">Flashlight</string>
+    <string name="flashlight_summary">Turns off when the screen locks</string>
+    <string name="no_torch">This device has no flashlight.</string>
+    <string name="network">Network</string>
+    <string name="wifi">Wi-Fi</string>
+    <string name="wifi_summary">Turn the wireless radio on or off</string>
     <string name="brightness_note">With adaptive brightness on, the device may move the slider itself.</string>
 </resources>

@@ -116,4 +116,47 @@ class DeviceSettingsPlanTest {
             .nightMode(kiosk("""{"kiosk_night_level": 400}"""), null, null).value
         assertEquals(100, level)
     }
+
+    // ----------------------------------------------------------------------- #
+    // Each control's override is forgotten on its own (W71, chunk 2)
+    // ----------------------------------------------------------------------- #
+
+    @Test
+    fun `withdrawing one control does not forget another`() {
+        val onlyNight = kiosk("""{"device_setting_night_mode": true}""")
+        assertFalse(
+            "night mode is still offered",
+            DeviceSettingsPlan.shouldForget(onlyNight, DeviceSettingsPlan.OFFER_NIGHT_MODE),
+        )
+        assertTrue(
+            "screen timeout is not, so its override must go",
+            DeviceSettingsPlan.shouldForget(onlyNight, DeviceSettingsPlan.OFFER_SCREEN_TIMEOUT),
+        )
+    }
+
+    /**
+     * ⚠️ The screen timeout is owned by another policy section, which drives it
+     * back to the policy value on every reconcile. The user's override is what
+     * suspends that, and its *presence* is the whole rule — so forgetting it at
+     * the right moment is what hands the setting back to policy.
+     */
+    @Test
+    fun `an offered screen timeout keeps its override`() {
+        val offered = kiosk("""{"device_setting_screen_timeout": true}""")
+        assertFalse(
+            DeviceSettingsPlan.shouldForget(offered, DeviceSettingsPlan.OFFER_SCREEN_TIMEOUT)
+        )
+    }
+
+    @Test
+    fun `every control is forgotten when the policy offers nothing`() {
+        val nothing = kiosk("{}")
+        for (offer in listOf(
+            DeviceSettingsPlan.OFFER_NIGHT_MODE, DeviceSettingsPlan.OFFER_BRIGHTNESS,
+            DeviceSettingsPlan.OFFER_SCREEN_TIMEOUT, DeviceSettingsPlan.OFFER_VOLUME,
+            DeviceSettingsPlan.OFFER_FLASHLIGHT, DeviceSettingsPlan.OFFER_WIFI,
+        )) {
+            assertTrue(offer, DeviceSettingsPlan.shouldForget(nothing, offer))
+        }
+    }
 }
