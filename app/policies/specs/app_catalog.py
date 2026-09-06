@@ -169,16 +169,6 @@ class AppCatalogSpec(PolicySpec):
         json_schema_extra={"ui_group": "Allowlist", "ui_control": "package_list"},
     )
 
-    # No natural ordering between two kiosk apps — someone has to lose, loudly.
-    kiosk_package: Annotated[str | None, Merge(MergeStrategy.HIGHEST_RANK)] = Field(
-        default=None,
-        pattern=_PACKAGE_PATTERN,
-        title="Kiosk app",
-        description="Lock the device to this single app. Leave unmanaged for a "
-        "normal (non-kiosk) device.",
-        json_schema_extra={"ui_group": "Kiosk"},
-    )
-
     app_configs: Annotated[
         list[AppConfig] | None,
         Merge(

@@ -213,15 +213,15 @@ def test_explain_unknown_field_is_404(client: TestClient, make_device):
 
 def test_conflicts_are_reported(client: TestClient, make_policy, make_device, assign):
     device = make_device()
-    a = make_policy("Field Kiosk", "APP_CATALOG", {"kiosk_package": "com.atak"})
-    b = make_policy("Warehouse", "APP_CATALOG", {"kiosk_package": "com.scanner"})
+    a = make_policy("Field Kiosk", "KIOSK", {"kiosk_package": "com.atak"})
+    b = make_policy("Warehouse", "KIOSK", {"kiosk_package": "com.scanner"})
 
     assign(a["id"], device["id"], rank=50)
     assign(b["id"], device["id"], rank=10)
 
     body = effective(client, device["id"])
 
-    assert body["values"]["APP_CATALOG"]["kiosk_package"] == "com.atak"
+    assert body["values"]["KIOSK"]["kiosk_package"] == "com.atak"
     assert len(body["conflicts"]) == 1
     assert body["conflicts"][0]["field"] == "kiosk_package"
 
@@ -390,10 +390,10 @@ def test_preview_surfaces_new_conflicts_before_publish(
     client: TestClient, make_policy, make_device, assign
 ):
     device = make_device()
-    current = make_policy("Field Kiosk", "APP_CATALOG", {"kiosk_package": "com.atak"})
+    current = make_policy("Field Kiosk", "KIOSK", {"kiosk_package": "com.atak"})
     assign(current["id"], device["id"], rank=10)
 
-    rival = make_policy("Warehouse", "APP_CATALOG", {"kiosk_package": "com.scanner"})
+    rival = make_policy("Warehouse", "KIOSK", {"kiosk_package": "com.scanner"})
     body = client.post(
         f"/api/v1/devices/{device['id']}/effective-policy/preview",
         json={"add": [{"policy_id": rival["id"], "rank": 99}]},

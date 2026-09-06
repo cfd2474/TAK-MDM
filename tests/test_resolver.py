@@ -220,12 +220,12 @@ def test_merge_by_key_identical_entries_are_not_a_conflict():
 
 
 def test_highest_rank_wins_and_reports_a_conflict():
-    a = make_assignment("APP_CATALOG", {"kiosk_package": "com.atak"}, rank=50, name="Field Kiosk")
-    b = make_assignment("APP_CATALOG", {"kiosk_package": "com.scanner"}, rank=10, name="Warehouse")
+    a = make_assignment("KIOSK", {"kiosk_package": "com.atak"}, rank=50, name="Field Kiosk")
+    b = make_assignment("KIOSK", {"kiosk_package": "com.scanner"}, rank=10, name="Warehouse")
 
     result = resolve("dev-1", [a, b])
 
-    assert result.values["APP_CATALOG"]["kiosk_package"] == "com.atak"
+    assert result.values["KIOSK"]["kiosk_package"] == "com.atak"
     assert len(result.conflicts) == 1
     conflict = result.conflicts[0]
     assert conflict.field_name == "kiosk_package"
@@ -234,8 +234,8 @@ def test_highest_rank_wins_and_reports_a_conflict():
 
 
 def test_highest_rank_agreement_is_not_a_conflict():
-    a = make_assignment("APP_CATALOG", {"kiosk_package": "com.atak"}, rank=50)
-    b = make_assignment("APP_CATALOG", {"kiosk_package": "com.atak"}, rank=10)
+    a = make_assignment("KIOSK", {"kiosk_package": "com.atak"}, rank=50)
+    b = make_assignment("KIOSK", {"kiosk_package": "com.atak"}, rank=10)
 
     assert resolve("dev-1", [a, b]).conflicts == ()
 

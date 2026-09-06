@@ -7312,6 +7312,60 @@ A resumed transfer adds what is already on disk to the running total, so the bar
 measures the **whole file**. Reporting only the remainder would make a resumed
 download start at 70% and crawl, which is worse than showing nothing.
 
+#### 🔻 W59 — Kiosk becomes its own category
+
+Operator: remove the kiosk sub-type from App Management; Kiosk becomes a category
+with eight sub-topics — single app, multi app, background apps, launcher,
+peripheral settings, kiosk exit settings, website kiosk settings, kiosk
+screensaver.
+
+Three things were established **before** building, and two changed the shape:
+
+⚠️ **Hexnode's documentation could not be read.** Their help pages are
+JS-rendered; `WebFetch` returned navigation menus and no setting names. Operator's
+call: **build from Android capability**, using Hexnode's section names as the
+structure but not inventing their exact fields.
+
+⚠️ **Four of the eight need the agent to become a launcher.** The manifest
+deliberately declares no `category.HOME`, and the platform reference is blunt:
+*"adding kiosk to a background agent is two API calls; removing launcher behaviour
+from a launcher is a rewrite."* Multi app, launcher, website kiosk and screensaver
+all need that. Operator's call: **build the enforceable half now, write the
+launcher rewrite up as a decision record.**
+
+✅ **Peripheral settings — the operator's answer beat all three options offered.**
+The overlap with the existing `RESTRICTIONS` policy is resolved *temporally*, not
+spatially: **kiosk peripheral settings apply while the device is locked; the
+standard restrictions resume when it leaves kiosk.** Nothing is set in two places
+at once, so there is no conflict for the resolver to arbitrate — and it matches
+what a kiosk is for, since a device on a wall wants different rules from the same
+device in someone's hand.
+
+##### Chunk 1 — structure
+
+1. New `KIOSK` policy type and spec; `kiosk_package` moves out of `APP_CATALOG`.
+2. Category in the creator catalog carrying all eight sub-topics.
+3. ⚠️ The agent reads kiosk from `APP_CATALOG` today. It must read `KIOSK` **and
+   fall back**, or a device that has not taken the new build loses its kiosk the
+   moment the server deploys.
+
+##### Chunk 2 — the enforceable sections
+
+4. **Single app** — `kiosk_package`, already working and hardware-verified.
+5. **Background apps** — extra packages added to the lock-task allowlist.
+6. **Kiosk exit settings** — the `setLockTaskFeatures` flags, which map onto this
+   section exactly. ⚠️ Two rules from the reference are load-bearing:
+   `NOTIFICATIONS` cannot be set without `HOME`, and omitting `GLOBAL_ACTIONS`
+   removes the power menu, leaving a field device recoverable only by hard reset.
+7. **Peripheral settings** — kiosk-scoped overrides, applied on entering kiosk and
+   released on leaving it.
+
+##### Chunk 3 — declared and refused
+
+8. Multi app, launcher, website kiosk, screensaver: declared so the operator can
+   see they exist, refused at validation with the launcher reason — the same
+   pattern the Knox-gated network fields use. Plus the rewrite decision record.
+
 | # | Chunk | Notes |
 |---|---|---|
 | 7 | **Knox layer** | Planned in detail below |

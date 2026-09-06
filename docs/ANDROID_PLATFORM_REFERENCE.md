@@ -1229,6 +1229,23 @@ power menu disappears and a field device becomes recoverable only by a hard rese
 failure to apply one will result in a failure to apply the other." ✅ Confirmed — the
 rejected feature set above left `mLockTaskPackages` empty rather than half-applied.
 
+### Peripheral control while locked in
+
+📖 These are ordinary Device Owner user restrictions, so a kiosk can hold different
+rules from the same device out of kiosk with no OEM extension:
+`DISALLOW_BLUETOOTH`, `DISALLOW_CONFIG_WIFI`, `DISALLOW_ADJUST_VOLUME`,
+`DISALLOW_CONFIG_BRIGHTNESS` (API 28+), `DISALLOW_AIRPLANE_MODE` (API 28+).
+
+⚠️ **Camera is not one of them.** There is no `DISALLOW_CAMERA`; it is
+`setCameraDisabled(admin, boolean)`. Screen capture is likewise
+`setScreenCaptureDisabled`. Both were assumed to be user restrictions in W59 and
+the compiler caught it — worth stating because the rest of the group behaves
+uniformly and invites the assumption.
+
+⚠️ Restrictions applied on entering kiosk **must be cleared on leaving it**. They
+latch like every other DPM setter, so one left behind follows the device out of
+kiosk and nothing else will ever take it off.
+
 ### Getting out
 
 In order of preference, all verified on `SM-X520`:

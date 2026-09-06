@@ -60,7 +60,17 @@ CATALOG: tuple[Category, ...] = (
             "required apps", "blocklist / allowlist", "app catalog",
             "app configurations", "app permissions", "app notifications",
         ),
-        blurb="Required apps, blocklist, allowlist, and kiosk app.",
+        blurb="Required apps, blocklist, and allowlist.",
+    ),
+    Category(
+        "kiosk", "Kiosk", "KIOSK",
+        subtopics=(
+            "single app", "multi app", "background apps", "launcher",
+            "peripheral settings", "kiosk exit settings",
+            "website kiosk settings", "kiosk screensaver",
+        ),
+        blurb="Lock a device to one app and decide what the user can still reach. "
+              "Multi app, launcher, website and screensaver need an ATLAS launcher.",
     ),
     Category(
         "networks", "Networks", "NETWORKS",

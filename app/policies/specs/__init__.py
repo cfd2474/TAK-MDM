@@ -22,6 +22,7 @@ from app.policies.specs.app_catalog import AppCatalogSpec
 from app.policies.specs.base import PolicySpec
 from app.policies.specs.customizations import CustomizationsSpec
 from app.policies.specs.files import FilesSpec
+from app.policies.specs.kiosk import KioskSpec
 from app.policies.specs.network_data_use import NetworkDataUseSpec
 from app.policies.specs.networks import NetworksSpec
 from app.policies.specs.password import PasswordSpec
@@ -32,6 +33,7 @@ __all__ = [
     "AppCatalogSpec",
     "CustomizationsSpec",
     "FilesSpec",
+    "KioskSpec",
     "NetworkDataUseSpec",
     "NetworksSpec",
     "PasswordSpec",

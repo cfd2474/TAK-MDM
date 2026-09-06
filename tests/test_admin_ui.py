@@ -762,7 +762,10 @@ def test_creator_rail_shows_subpages(client: TestClient):
     # App Management splits into a sub-page per field
     assert 'data-page="app_management:required-apps"' in body
     assert 'data-page="app_management:blocklist"' in body
-    assert 'data-page="app_management:kiosk"' in body
+    # Kiosk left App Management in W59 and is its own category now.
+    assert 'data-page="app_management:kiosk"' not in body
+    assert 'data-page="kiosk:single-app"' in body
+    assert 'data-page="kiosk:kiosk-exit-settings"' in body
     # Restrictions splits by group
     assert 'data-page="restrictions:device-functionality"' in body
 
@@ -1165,11 +1168,11 @@ def test_profile_stacks_against_a_standalone_policy_by_rank(
 ):
     device = enrolled(serial="W4B-RANK")
     standalone = create_policy(
-        client, "Loose kiosk", "APP_CATALOG", '{"kiosk_package": "com.standalone"}'
+        client, "Loose kiosk", "KIOSK", '{"kiosk_package": "com.standalone"}'
     )
     assign(standalone, device["device_id"], rank=1)
     pid = _make_profile(
-        client, "Tight kiosk", {"app_management": {"kiosk_package": "com.profile"}}
+        client, "Tight kiosk", {"kiosk": {"kiosk_package": "com.profile"}}
     )
     client.put(
         f"/api/v1/profiles/{pid}/targets",
@@ -1178,7 +1181,7 @@ def test_profile_stacks_against_a_standalone_policy_by_rank(
     )
 
     # Profile at rank 99 wins the HIGHEST_RANK field.
-    assert _effective(client, device["device_id"])["values"]["APP_CATALOG"][
+    assert _effective(client, device["device_id"])["values"]["KIOSK"][
         "kiosk_package"
     ] == "com.profile"
 
@@ -1269,7 +1272,7 @@ def test_removing_a_section_stops_it_applying(client: TestClient, enrolled):
     pid = _make_profile(
         client,
         "Two Section",
-        {"password": {"min_length": 11}, "app_management": {"kiosk_package": "com.k"}},
+        {"password": {"min_length": 11}, "kiosk": {"kiosk_package": "com.k"}},
     )
     client.put(
         f"/api/v1/profiles/{pid}/targets",
@@ -1455,8 +1458,8 @@ def test_device_page_lists_policies_in_resolution_order(client: TestClient, enro
 
 def test_device_page_surfaces_conflicts(client: TestClient, enrolled, assign):
     device = enrolled(serial="UI-CONFLICT")
-    first = create_policy(client, "Field Kiosk", "APP_CATALOG", '{"kiosk_package": "com.atakmap.app"}')
-    second = create_policy(client, "Warehouse", "APP_CATALOG", '{"kiosk_package": "com.scanner"}')
+    first = create_policy(client, "Field Kiosk", "KIOSK", '{"kiosk_package": "com.atakmap.app"}')
+    second = create_policy(client, "Warehouse", "KIOSK", '{"kiosk_package": "com.scanner"}')
     assign(first, device["device_id"], rank=50)
     assign(second, device["device_id"], rank=10)
 

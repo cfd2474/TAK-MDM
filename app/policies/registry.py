@@ -31,6 +31,7 @@ from app.policies.specs import (
     AppCatalogSpec,
     CustomizationsSpec,
     FilesSpec,
+    KioskSpec,
     NetworkDataUseSpec,
     NetworksSpec,
     PasswordSpec,
@@ -146,7 +147,12 @@ registry.register(
     "RESTRICTIONS", RestrictionsSpec, "Device feature restrictions and screen timeout."
 )
 registry.register(
-    "APP_CATALOG", AppCatalogSpec, "Required apps, blocklist, allowlist, and kiosk app."
+    "APP_CATALOG", AppCatalogSpec, "Required apps, blocklist, and allowlist."
+)
+registry.register(
+    "KIOSK",
+    KioskSpec,
+    "Lock a device to one app, and decide what the user can still reach.",
 )
 registry.register(
     "FILES",

@@ -1,4 +1,4 @@
-"""Kiosk / lock task policy (F6).
+"""Kiosk / lock task policy (F6), its own policy type since W59.
 
 Copyright 2026 TAK-Solutions LLC
 
@@ -24,10 +24,12 @@ from tests.conftest import ADMIN_HEADERS
 KIOSK = "com.taksolutions.testapp"
 
 
-def policy_with(client: TestClient, name: str, spec: dict) -> str:
+def policy_with(
+    client: TestClient, name: str, spec: dict, policy_type: str = "KIOSK"
+) -> str:
     policy = client.post(
         "/api/v1/policies",
-        json={"name": name, "policy_type": "APP_CATALOG"},
+        json={"name": name, "policy_type": policy_type},
         headers=ADMIN_HEADERS,
     ).json()
     client.post(
@@ -47,15 +49,26 @@ def assign(client: TestClient, policy_id: str, device_id: str, rank: int = 10):
 
 
 def catalog_for(client: TestClient, device_id: str) -> dict:
+    """The KIOSK section of the device's effective policy.
+
+    Kiosk moved out of APP_CATALOG in W59: "which apps are installed" and "what
+    this device is allowed to be" are different questions that merely both name
+    an app.
+    """
     body = client.get(f"/api/v1/devices/{device_id}/effective-policy").json()
-    return body["values"].get("APP_CATALOG", {})
+    return body["values"].get("KIOSK", {})
 
 
 def test_kiosk_is_absent_unless_a_policy_asks(client: TestClient, enrolled):
     device = enrolled(serial="KIOSK-OFF")
     assign(
         client,
-        policy_with(client, "No kiosk", {"required_apps": [{"package_name": KIOSK}]}),
+        policy_with(
+            client,
+            "No kiosk",
+            {"required_apps": [{"package_name": KIOSK}]},
+            policy_type="APP_CATALOG",
+        ),
         device["device_id"],
     )
 

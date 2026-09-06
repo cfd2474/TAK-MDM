@@ -86,6 +86,14 @@ class PolicyApplier(private val context: Context) {
         // Unconditional, unlike the rest of APP_CATALOG: these latch, so an
         // empty section has to mean "clear what we set" rather than "skip".
         failures += applyAppConfigs(policy.optJSONObject("APP_CATALOG") ?: JSONObject())
+        // ⚠️ Unconditional, and it reads **both** places. Kiosk moved out of
+        // APP_CATALOG into its own policy in W59, and a device running an older
+        // agent — or an older server — must not silently drop out of kiosk during
+        // the changeover. KIOSK wins when present; APP_CATALOG is the fallback.
+        failures += applyKioskPolicy(
+            policy.optJSONObject("KIOSK") ?: JSONObject(),
+            policy.optJSONObject("APP_CATALOG") ?: JSONObject(),
+        )
         failures += applyNetworks(policy.optJSONObject("NETWORKS") ?: JSONObject())
         failures += applyCustomizations(policy.optJSONObject("CUSTOMIZATIONS") ?: JSONObject())
         return failures
@@ -533,9 +541,8 @@ class PolicyApplier(private val context: Context) {
         // here: blacklisting now tries uninstall before falling back to hiding, and
         // that needs PackageInstaller as well as DevicePolicyManager.
 
-        // Kiosk is opt-in (F6). No kiosk_package means the agent stays a background
-        // service and leaves the home screen alone.
-        failures += applyKiosk(spec.optString("kiosk_package").takeIf { it.isNotBlank() })
+        // Kiosk moved to its own KIOSK policy (W59) and is applied from `apply`,
+        // not from here.
 
         return failures
     }
@@ -694,7 +701,21 @@ class PolicyApplier(private val context: Context) {
      * `ActivityOptions.setLockTaskEnabled` "doesn't affect activities that are
      * already running", so the app has to be relaunched rather than merely allowed.
      */
-    fun applyKiosk(kioskPackage: String?): List<String> {
+    /**
+     * Apply the KIOSK policy, falling back to the old APP_CATALOG location (W59).
+     *
+     * The fallback is not tidiness. Kiosk lived on APP_CATALOG until W59, and a
+     * device whose agent or server is mid-changeover would otherwise drop straight
+     * out of kiosk the moment one side deploys — a wall-mounted tablet quietly
+     * becoming a general-purpose one.
+     */
+    fun applyKioskPolicy(kiosk: JSONObject, appCatalog: JSONObject): List<String> {
+        val pkg = kiosk.optString("kiosk_package").takeIf { it.isNotBlank() }
+            ?: appCatalog.optString("kiosk_package").takeIf { it.isNotBlank() }
+        return applyKiosk(pkg, kiosk)
+    }
+
+    fun applyKiosk(kioskPackage: String?, spec: JSONObject = JSONObject()): List<String> {
         val failures = mutableListOf<String>()
 
         if (kioskPackage == null) {
@@ -714,7 +735,17 @@ class PolicyApplier(private val context: Context) {
         failures += setHomeTo(kioskPackage)
 
         runCatching {
-            dpm.setLockTaskPackages(admin, arrayOf(kioskPackage, context.packageName))
+            // The kiosk app, this agent, and anything the policy names as a
+            // background app — a keyboard, a VPN client, an app the kiosk hands
+            // off to. Without being on this list, entering one of those breaks
+            // the user out of lock task entirely.
+            val permitted = linkedSetOf(kioskPackage, context.packageName)
+            spec.optJSONArray("background_packages")?.let { extras ->
+                for (i in 0 until extras.length()) {
+                    extras.optString(i).takeIf { it.isNotBlank() }?.let { permitted += it }
+                }
+            }
+            dpm.setLockTaskPackages(admin, permitted.toTypedArray())
             // GLOBAL_ACTIONS is the default but must be repeated: any feature not
             // named here is implicitly disabled. Dropping it would remove the power
             // menu and leave a field device recoverable only by a hard reset.
@@ -730,13 +761,7 @@ class PolicyApplier(private val context: Context) {
             // app itself, so pressing it returns to the kiosk rather than escaping
             // to the launcher. The two decisions turn out to depend on each other:
             // without the home takeover, enabling HOME here would be a way out.
-            dpm.setLockTaskFeatures(
-                admin,
-                DevicePolicyManager.LOCK_TASK_FEATURE_GLOBAL_ACTIONS or
-                    DevicePolicyManager.LOCK_TASK_FEATURE_HOME or
-                    DevicePolicyManager.LOCK_TASK_FEATURE_NOTIFICATIONS or
-                    DevicePolicyManager.LOCK_TASK_FEATURE_KEYGUARD
-            )
+            dpm.setLockTaskFeatures(admin, lockTaskFeatures(spec))
         }.onFailure { return listOf("kiosk: could not configure lock task - ${it.message}") }
 
         // Asked rather than assumed: startActivity throws SecurityException when the
@@ -746,13 +771,120 @@ class PolicyApplier(private val context: Context) {
             return listOf("kiosk: the system did not permit lock task for $kioskPackage")
         }
 
+        failures += applyKioskPeripherals(spec)
         failures += launchIntoLockTask(kioskPackage)
+        return failures
+    }
+
+    /**
+     * Which lock-task features the user keeps, from the Kiosk policy (W59).
+     *
+     * ⚠️ Every flag omitted here is **implicitly disabled** — `setLockTaskFeatures`
+     * replaces the set rather than adding to it. That is why each default is
+     * stated rather than left out, and why the power menu defaults to *on*:
+     * dropping GLOBAL_ACTIONS removes the only on-device way to power off, and a
+     * field device that then misbehaves is recoverable by factory reset and little
+     * else.
+     *
+     * HOME defaults on because `setHomeTo()` has already pointed it at the kiosk
+     * app, so it returns there rather than escaping to the launcher — and because
+     * NOTIFICATIONS cannot be set without it. The server refuses that combination
+     * before it reaches here; this keeps the device safe if an older server sends
+     * one anyway, since from Android 14 a rejected feature set takes the package
+     * allowlist down with it.
+     */
+    private fun lockTaskFeatures(spec: JSONObject): Int {
+        fun keeps(key: String, default: Boolean): Boolean =
+            if (spec.has(key) && !spec.isNull(key)) spec.optBoolean(key, default) else default
+
+        val home = keeps("keep_home_button", true)
+        // Asked for but impossible without HOME: honour the intent by keeping HOME
+        // rather than dropping notifications, because HOME is already safe here.
+        val notifications = keeps("keep_notifications", true)
+
+        var features = 0
+        if (keeps("keep_power_menu", true)) {
+            features = features or DevicePolicyManager.LOCK_TASK_FEATURE_GLOBAL_ACTIONS
+        }
+        if (home || notifications) features = features or DevicePolicyManager.LOCK_TASK_FEATURE_HOME
+        if (notifications) {
+            features = features or DevicePolicyManager.LOCK_TASK_FEATURE_NOTIFICATIONS
+        }
+        if (keeps("keep_recents_button", false)) {
+            features = features or DevicePolicyManager.LOCK_TASK_FEATURE_OVERVIEW
+        }
+        if (keeps("keep_system_info", true)) {
+            features = features or DevicePolicyManager.LOCK_TASK_FEATURE_SYSTEM_INFO
+        }
+        if (keeps("keep_keyguard", true)) {
+            features = features or DevicePolicyManager.LOCK_TASK_FEATURE_KEYGUARD
+        }
+        return features
+    }
+
+    /**
+     * Peripheral restrictions that hold **only while the device is in kiosk** (W59).
+     *
+     * The operator's design, and a better one than a second copy of the
+     * Restrictions policy: a device bolted to a wall wants different rules from the
+     * same device in someone's hand, so the overlap is resolved in *time* rather
+     * than by two policies disagreeing about one setting.
+     *
+     * ⚠️ Which means [releaseKiosk] must put every one of these back. A restriction
+     * applied on entry and left behind on exit would follow the device out of
+     * kiosk, and nothing in the Restrictions policy would ever take it off — the
+     * latching trap this file already carries three scars from.
+     */
+    private fun applyKioskPeripherals(spec: JSONObject): List<String> {
+        val failures = mutableListOf<String>()
+        for ((key, restriction) in KIOSK_PERIPHERALS) {
+            if (!spec.has(key) || spec.isNull(key)) continue
+            val allowed = spec.optBoolean(key, true)
+            runCatching {
+                if (allowed) dpm.clearUserRestriction(admin, restriction)
+                else dpm.addUserRestriction(admin, restriction)
+            }.onFailure {
+                failures += "kiosk peripheral $key: ${it.message}"
+            }
+        }
+        // Camera and screen capture have dedicated setters rather than user
+        // restrictions, so they sit outside the loop above.
+        if (spec.has("kiosk_allow_camera") && !spec.isNull("kiosk_allow_camera")) {
+            runCatching {
+                dpm.setCameraDisabled(admin, !spec.optBoolean("kiosk_allow_camera", true))
+            }.onFailure { failures += "kiosk peripheral camera: ${it.message}" }
+        }
+        if (spec.has("kiosk_allow_screen_capture") && !spec.isNull("kiosk_allow_screen_capture")) {
+            runCatching {
+                dpm.setScreenCaptureDisabled(admin, !spec.optBoolean("kiosk_allow_screen_capture", true))
+            }.onFailure { failures += "kiosk peripheral screen capture: ${it.message}" }
+        }
+        return failures
+    }
+
+    /** Hand the device back to the ordinary Restrictions policy (W59). */
+    private fun releaseKioskPeripherals(): List<String> {
+        val failures = mutableListOf<String>()
+        for (restriction in KIOSK_PERIPHERALS.values) {
+            runCatching { dpm.clearUserRestriction(admin, restriction) }
+                .onFailure { failures += "kiosk peripheral release: ${it.message}" }
+        }
+        // Camera and screen capture are handed back permissive and left to the
+        // Restrictions policy, which runs unconditionally on every apply and will
+        // re-disable either if that is what policy says.
+        runCatching { dpm.setCameraDisabled(admin, false) }
+        runCatching { dpm.setScreenCaptureDisabled(admin, false) }
         return failures
     }
 
     /** Undo everything kiosk set, in the reverse order it was applied. */
     fun releaseKiosk(): List<String> {
         val failures = mutableListOf<String>()
+
+        // ⚠️ First, and unconditionally. Kiosk peripheral rules apply only while
+        // the device is locked in; left behind they would follow it out of kiosk,
+        // and the Restrictions policy has no way to know it should take them off.
+        failures += releaseKioskPeripherals()
 
         runCatching {
             // Clearing the allowlist is what actually ejects an app that is
@@ -890,6 +1022,22 @@ class PolicyApplier(private val context: Context) {
         private val LEGACY_STORAGE_PERMISSIONS = setOf(
             "android.permission.READ_EXTERNAL_STORAGE",
             "android.permission.WRITE_EXTERNAL_STORAGE"
+        )
+
+        /**
+         * Kiosk peripheral field → the `UserManager` restriction that enforces it.
+         *
+         * Every one is a documented Device Owner restriction, so this whole section
+         * works on AOSP with no OEM extension. Camera and screen capture are
+         * deliberately absent: neither is a user restriction — there is no
+         * `DISALLOW_CAMERA` — and both have their own setter.
+         */
+        private val KIOSK_PERIPHERALS = linkedMapOf(
+            "kiosk_allow_bluetooth" to UserManager.DISALLOW_BLUETOOTH,
+            "kiosk_allow_wifi_config" to UserManager.DISALLOW_CONFIG_WIFI,
+            "kiosk_allow_volume_change" to UserManager.DISALLOW_ADJUST_VOLUME,
+            "kiosk_allow_brightness_change" to UserManager.DISALLOW_CONFIG_BRIGHTNESS,
+            "kiosk_allow_airplane_mode" to UserManager.DISALLOW_AIRPLANE_MODE,
         )
     }
 }
