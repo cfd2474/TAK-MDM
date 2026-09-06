@@ -7605,10 +7605,15 @@ so the agent version row now reads `0.33.1  (build 71)`.
 Banner logo replaced with `Test Files/atlasplain.png`, texture unchanged.
 
 ⚠️ The new artwork has a **real alpha channel**; the one it replaced was opaque
-and carried its own dark field. That inverts the old layout constraint — the old
-one had to run edge to edge or its lighter top and bottom read as two seams, and
-this one must *not*, because drawn flush at 64dp the globe's spike touches the
-bar edge. 56dp with 4dp above and below, which keeps the bar's height as it was.
+and carried its own dark field. The old one had to run edge to edge or its
+lighter top and bottom read as two seams — this one has no edges to hide, so it
+fills the bar's full 64dp, trimmed to its own opaque bounds.
+
+⚠️ It fills the height only while width is not binding. `fitCenter` keeps the
+aspect ratio, so between the 132dp margins the logo goes width-limited below
+roughly a 600dp screen and draws shorter — 45dp on a 411dp phone. On the tablet
+this project targets it fills; on a phone the margins are the constraint, and
+they are what keep the logo centred rather than under the Sync button.
 
 Kept **lossless** (228 KiB): composited over the pattern, lossy left a max
 visible error of 74/255 even at q95, on the chrome outlines where the logo meets

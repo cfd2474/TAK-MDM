@@ -26,20 +26,22 @@
         android:layout_height="wrap_content"
         android:background="@drawable/banner_texture">
 
-        <!-- ⚠️ 56dp plus 4dp above and below, **not** 64dp flush. The artwork
-             this replaced was opaque and had to run edge to edge, or its lighter
-             top and bottom showed as two seams and it read as a rectangle pasted
-             on the bar. This one has a real alpha channel and sits *on* the
-             texture, so the old constraint is gone — and drawn flush at 64dp the
-             globe's top spike touches the bar edge. The 4dp is the breathing
-             room; the 56+4+4 keeps the bar's height exactly what it was. -->
+        <!-- The logo fills the bar's full height: 64dp, no vertical margin. The
+             asset is trimmed to its own opaque bounds, so "64dp" is 64dp of
+             artwork — the globe's spike reaches the top edge and the arrow's
+             point the bottom.
+
+             ⚠️ It only fills the height while **width** is not the binding
+             constraint. `fitCenter` honours the aspect ratio, so between the
+             132dp margins below a screen of about 600dp the logo is limited by
+             the width instead and draws shorter than the bar — 45dp on a 411dp
+             phone. That is the margins doing their job (see above); the fix, if
+             a phone ever matters, is the margins, not this height. -->
         <ImageView
             android:id="@+id/header_banner"
             android:layout_width="wrap_content"
-            android:layout_height="56dp"
+            android:layout_height="64dp"
             android:layout_gravity="center"
-            android:layout_marginTop="4dp"
-            android:layout_marginBottom="4dp"
             android:layout_marginStart="132dp"
             android:layout_marginEnd="132dp"
             android:adjustViewBounds="true"
