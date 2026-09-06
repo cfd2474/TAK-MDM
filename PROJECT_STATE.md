@@ -6880,13 +6880,56 @@ first. Agent published under the operator's standing authorisation.
 | Second schema request (memoised) | **0.023 s** |
 | `https://…:8443/healthz` | 200 |
 | `https://…:8443/` | **403** |
-| `http://…:8080/…/agent.apk` | 200, 7 196 444 b (now v58) |
+| `http://…:8080/…/agent.apk` | 200 — serves **58 (0.21.0)**, 20 719 350 b, checksum `IJS8…yxkQ` |
 | `http://…:8080/policies/…` | **403** |
 
 ⚠️ **The signing key was verified before publishing, not after.** A release built
 with a different key would have been un-installable over the existing agent on
 every device and would have broken QR provisioning — the kind of thing worth
 checking while it is still cheap.
+
+🐛 **"Published" means two different things, and I conflated them.** Uploading the
+APK sets `AppPackageVersion.published`, which puts the build in the **library**.
+Aiming the **fleet** at it is a separate pointer — `agent.current_version_code` in
+`app_setting`, written by `agent_update.publish()` from the Admin page. After the
+upload above, the library held 58 and the channel still read **57**, so the one
+enrolled device (`R5GL40MMHRN`) would have stayed on 0.20.0 indefinitely while
+everything looked deployed. Reporting it as shipped to devices was wrong.
+
+`agent_update`'s own docstring is explicit that there is "exactly one pointer,
+`agent.current_version_code`, and publishing aims it at the whole fleet" — the
+information was there to be read. Channel now set to 58, and
+`offer_for()` confirms the device is offered
+`0.21.0 / 20 719 350 b` at its next check-in.
+
+##### ✅ Hardware: the agent replaced itself, 2026-09-06
+
+`R5GL40MMHRN` went **0.20.0 / 57 → 0.21.0 / 58** at 03:56:50, roughly two
+check-ins after the channel was aimed at 58 — no operator action on the tablet.
+
+| After the update | |
+|---|---|
+| Compliance | **COMPLIANT** |
+| `acked_state_version` | 13, equal to `state_version` |
+| Rollout | `on_published=1, behind=0, unhealthy=0` |
+
+That is the Device-Owner self-replacement path proven on hardware, and it is the
+one with no rollback — Android refuses a downgrade, so a bad build could only be
+cured by another build.
+
+⚠️ **What this does *not* prove.** No policy on that device uses a multi-select
+key, so the `String[]` fix rode along but was never exercised. And a COMPLIANT
+status one check-in after an update is weak evidence about apply errors, which
+lag a check-in (the trap recorded at W44). Both still want a deliberate test:
+assign a policy with a multi-select managed-config key and read the device's own
+report.
+
+⚠️ **A curl size is not a file size.** The W53 record said the provisioning APK
+was "7 057 180 b" and W54's first draft said "7 196 444 b" — both were
+`curl -m 30` giving up mid-transfer over the public link, and both were reported
+as if they were the artifact's size. Measured on the host, the endpoint serves
+the full **20 719 350 b** with the right checksum. A number that arrives without
+an error is not therefore a measurement of the thing intended.
 
 ##### Chunk 1 — resolution (original plan)
 
