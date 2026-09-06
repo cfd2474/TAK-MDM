@@ -501,6 +501,32 @@ drives the preview grid.
 
 826 → 834 server tests.
 
+##### ✅ On hardware — `SM-X520`, agent 0.35.0 (75)
+
+First multi-app kiosk applied end to end, with nothing hand-fed to the device:
+
+```
+13:53:11  installing com.taksolutions.atlaslauncher versionCode 1
+13:53:42  base part verified (7,428,238 bytes)
+13:53:44  com.taksolutions.atlaslauncher installed
+13:53:51  kiosk: launcher configured with 3 apps
+13:53:51  kiosk: launched com.taksolutions.atlaslauncher into lock task
+13:55:52  kiosk: already in lock task; brought to front
+13:57:52  kiosk: already in lock task; brought to front
+```
+
+Proven by this run: the launcher is pulled in as a required app the operator
+never named, installs, receives its managed configuration, and the device locks
+to it — and **W67's fix is confirmed on hardware**, because the first apply says
+*launched* and every one after says *brought to front*, where before it said
+*launched* every two minutes.
+
+⚠️ **Not proven by this run: whether the grid has anything in it.** The agent's
+log cannot see the launcher's own screen, and an empty grid from a wrong
+`<queries>` looks exactly like a working one from here — package-visibility
+filtering is indistinguishable from "not installed". That needs eyes on the
+tablet or logcat.
+
 
 ### ✅ Chunk 1 — Policy stacking engine (COMPLETE)
 

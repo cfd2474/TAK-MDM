@@ -1304,7 +1304,7 @@ Recolour the existing view rather than remove-and-re-add: the gap between the tw
 flashes the untinted screen, which at night is the one thing the feature exists
 to prevent.
 
-### Entering lock task is not idempotent (W67) ✅ observed
+### Entering lock task is not idempotent (W67) ✅ observed, ✅ fix verified on `SM-X520`
 
 `startActivity(intent, ActivityOptions.makeBasic().setLockTaskEnabled(true))` is
 how a Device Owner puts an app into lock task, and `FLAG_ACTIVITY_CLEAR_TASK` is
@@ -1323,6 +1323,11 @@ trace is the DPC's own log saying it launched the app, over and over, which read
 as normal operation. There is no API to ask "is this package already in lock
 task" — `ActivityManager.getLockTaskModeState()` answers only for the caller's own
 task — so the DPC has to remember what it launched.
+
+✅ **Verified on hardware (W68's first multi-app kiosk).** The agent log now reads
+`launched … into lock task` **once**, then `already in lock task; brought to
+front` on every sync after — where before the fix it said `launched` every two
+minutes.
 
 Front an already-launched kiosk with `NEW_TASK or SINGLE_TOP` instead: a no-op
 when it is in front, and it recovers the kiosk if anything got on top of it.
