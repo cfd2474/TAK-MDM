@@ -434,8 +434,37 @@ in place — nothing referenced them. It was caught only by going back to adjust
 the layout. **A green build is not evidence that an edit landed**; check the
 symbols exist.
 
-#### Chunk 3 — deploy and verify on the tablet
-Including whether `setWifiEnabled` actually works as Device Owner on `SM-X520`.
+#### ✅ Chunk 3 — deployed and verified on `SM-X520`
+
+Agent **0.38.0 (78)**, launcher **0.3.0 (3)**. The launcher moved too: its
+de-duplication now keys on package *and* activity, without which the second agent
+tile would have been dropped silently.
+
+✅ **The tile is there.** `kiosk: launcher configured with 5 apps` — three policy
+apps, the console, and Device Settings.
+
+✅ **Night mode works from the device, and the override holds.**
+
+```
+15:30:03  NightOverlay: night mode on (alpha 77)
+15:30:32  NightOverlay: night mode off
+15:30:47  kiosk: launcher configured with 5 apps   (no re-enable)
+15:30:51  ... 15:31:54  ... still off
+```
+
+That is the whole W71 rule proven on hardware: the user turned the tint off and
+policy did **not** turn it back on at the next three reconciles.
+
+⚠️ **Wi-Fi remains unproven, and the log could not answer it.** `setWifiEnabled`
+logged only refusals, so a successful toggle said nothing — silence meant either
+"it worked" or "nobody tried it". There is an `ENETUNREACH` at 15:30:34 that is
+consistent with Wi-Fi being switched off from the screen, and that is an
+inference, not evidence. Now logged **either way**, so the next device answers it
+from its own log.
+
+⚠️ Brightness, timeout, volume and flashlight are likewise unconfirmed — they are
+visible to whoever is holding the tablet, and nothing reaches the log unless they
+fail.
 
 
 ### ✅ W70 — the ATLAS console is always a tile in a multi-app kiosk

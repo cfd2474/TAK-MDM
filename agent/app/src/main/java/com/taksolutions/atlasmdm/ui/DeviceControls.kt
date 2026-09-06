@@ -127,8 +127,17 @@ object DeviceControls {
             AgentLog.w(TAG, "could not set Wi-Fi: ${it.message}")
             false
         }
-        if (!accepted) AgentLog.w(TAG, "the platform refused to turn Wi-Fi ${if (enabled) "on" else "off"}")
-        return isWifiEnabled(context)
+        val actual = isWifiEnabled(context)
+        // ⚠️ Logged either way, on purpose. Logging only refusals made this
+        // unanswerable from a device: a successful toggle said nothing, so
+        // silence in the log meant either "it worked" or "nobody tried it", and
+        // this is the one control whose Device-Owner permission is unverified.
+        if (!accepted || actual != enabled) {
+            AgentLog.w(TAG, "the platform refused to turn Wi-Fi ${if (enabled) "on" else "off"}")
+        } else {
+            AgentLog.i(TAG, "Wi-Fi turned ${if (enabled) "on" else "off"} from Device Settings")
+        }
+        return actual
     }
 
     private const val TAG = "DeviceControls"
