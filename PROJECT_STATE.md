@@ -333,6 +333,49 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### 🔨 W72 — Device Settings, second round (IN PROGRESS)
+
+From testing W71 on the tablet. ✅ Wi-Fi works; ✅ the "no flashlight" message was
+correct on hardware.
+
+**Operator decisions:**
+
+| Question | Answer |
+|---|---|
+| Wi-Fi picker | **Full picker** — scan and join any network |
+| Airplane mode | Not achievable; a **"Radios off"** control instead |
+| Power off | **Accessibility-backed power menu** only |
+
+⚠️ **The full Wi-Fi picker was chosen over the provisioned-only list with the
+consequence stated**: it puts credential entry on a locked device and lets a
+kiosk user attach the device to a network they control. Recorded once here; it is
+the operator's call, not a defect.
+
+⚠️ **Power off has no fallback by choice.** Without the accessibility grant on a
+device there is no power control at all — `dpm.reboot()` was offered as a
+grant-free alternative and declined. The screen must therefore make a missing
+grant *visible* rather than simply omitting the row.
+
+#### Chunk 1 — the tile's own identity, Bluetooth, Radios off *(this chunk)*
+1. A gear icon and the label "Settings" on the activity.
+2. ⚠️ The real bug behind the wrong icon: `AppCatalog` reads the **application's**
+   label and icon even when the tile names an activity.
+3. Bluetooth on/off — API 33 deprecated `enable()` **for ordinary apps**; device
+   owners are exempt, which is why this is in after all.
+4. A Radios off control.
+5. Policy fields and tests.
+
+#### Chunk 2 — the Wi-Fi picker
+Scan, list with signal, join with a password. Needs the keyboard to work inside
+lock task.
+
+#### Chunk 3 — the power menu
+An `AccessibilityService` performing `GLOBAL_ACTION_POWER_DIALOG`, its grant in
+the setup wizard, and a visible "needs enabling" state on the settings screen.
+
+#### Chunk 4 — deploy and verify on the tablet
+
+
 ### 🔨 W71 — Device Settings on the launcher (IN PROGRESS)
 
 Operator's requirement, with Hexnode's *Peripheral Settings* screens as the

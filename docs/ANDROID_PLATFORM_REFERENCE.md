@@ -1283,6 +1283,42 @@ launcher has to go — and **uninstall, not hide**: a hidden package still exist
 but reads as missing to `getPackageInfo`, so the DPC's own installer decides it
 needs installing again on the next kiosk.
 
+### ✅ A Device Owner *can* turn Wi-Fi on and off (W72) — verified on `SM-X520`
+
+`WifiManager.setWifiEnabled()` has returned false for ordinary apps since
+Android 10. A **Device Owner is exempt**, and this is confirmed on hardware: the
+kiosk's Device Settings screen toggled the radio on and off on Android 16.
+
+⚠️ It returns **false** rather than throwing when refused, so read the state back
+rather than trusting the call — and log both outcomes. Logging only failures made
+this unanswerable from a device's own log: a successful toggle said nothing, so
+silence meant either "it worked" or "nobody tried it".
+
+### ❌ Airplane mode cannot be toggled by any app (W72)
+
+`Settings.Global.AIRPLANE_MODE_ON` needs `WRITE_SECURE_SETTINGS`
+(`signature|privileged|development`), which a Device Owner **cannot self-grant** —
+`setPermissionGrantState` reaches only `dangerous` runtime permissions. And
+`setGlobalSetting`'s allowlist is `ADB_ENABLED`, `USB_MASS_STORAGE_ENABLED`,
+`STAY_ON_WHILE_PLUGGED_IN`, `WIFI_DEVICE_OWNER_CONFIGS_LOCKDOWN` — airplane mode
+is not on it and throws.
+
+The same wall as the OS device name (W24). What a Device Owner *can* do is turn
+the radios it controls off individually, and forbid the user changing airplane
+mode with `DISALLOW_AIRPLANE_MODE`.
+
+### ❌ A DPC cannot remap a hardware key (W72)
+
+There is no API to make the side key long-press do anything. In lock task,
+`LOCK_TASK_FEATURE_GLOBAL_ACTIONS` decides whether the power menu may appear at
+all — but if the OEM has mapped the key elsewhere (Bixby on Samsung), enabling
+the feature changes nothing, because the key never raises the menu.
+
+⚠️ The only route to a power menu from an app is an **AccessibilityService**
+performing `GLOBAL_ACTION_POWER_DIALOG`, and that service needs a **manual grant
+per device** — the same class of grant as the overlay permission. `dpm.reboot()`
+is the one power action available with no grant at all.
+
 ### A launcher cannot see other apps (W68)
 
 ⚠️ From Android 11 an ordinary app cannot enumerate installed packages, and a
