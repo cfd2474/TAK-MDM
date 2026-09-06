@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The banner's background: the ATLAS contour texture, tiled (W60).
+  The banner's background: the ATLAS contour texture, tiled (W60, retextured W64).
+
+  Source is `Test Files/splash.png` — a finer, more even contour field than the
+  original. Tiled plain rather than mirrored: its two vertical edges differ by
+  4.4/255 on average, so the repeat does not show, and mirroring would double the
+  asset to hide a seam that is not there.
 
   ⚠️ `tileMode` repeats the bitmap at its **intrinsic** size, so the asset's
   density bucket is what decides how big the tile looks. It ships at xhdpi
