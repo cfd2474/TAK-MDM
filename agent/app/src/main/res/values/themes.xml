@@ -26,6 +26,17 @@
         <item name="android:statusBarColor">@color/atlas_navy_deep</item>
         <item name="android:navigationBarColor">@color/atlas_navy_deep</item>
         <item name="android:windowLightStatusBar">false</item>
+
+        <!-- ⚠️ From Android 12 the system draws its own splash on every cold
+             start and an app **cannot** suppress it (minSdk here is 33, so this
+             always applies). Our 3-second logo splash therefore runs *after* it,
+             and left alone the operator would see two unrelated splashes in a
+             row, which reads as a bug rather than a brand.
+
+             Painting the system splash in the logo's own field colour makes the
+             handover invisible: the same near-black is on screen throughout, and
+             only the artwork changes. -->
+        <item name="android:windowSplashScreenBackground">@color/atlas_logo_field</item>
     </style>
 
     <style name="Widget.Atlas.Card" parent="Widget.Material3.CardView.Filled">

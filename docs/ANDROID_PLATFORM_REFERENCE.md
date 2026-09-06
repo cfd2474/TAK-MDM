@@ -1252,10 +1252,32 @@ app.
 | Android 11 (30) | Scoped storage enforced; `MANAGE_EXTERNAL_STORAGE` introduced | Section 6 |
 | Android 11+ | `WRITE_EXTERNAL_STORAGE` grant locks out all-files access | ⚠️ trap above |
 | Android 12 (31) | Both provisioning activities **required**; `ACTION_PROVISION_MANAGED_DEVICE` fails | Section 3 |
+| Android 12 (31) | **System splash screen is mandatory** on cold start — an app cannot opt out | ⚠️ trap below |
 | Android 14 (34) | Installs blocked below `targetSdk` 23 | — |
 | Android 15 (35) | Floor raised to API 24 | — |
 | Android 16 (36) | Floor **unchanged** at 24 | Section 5 |
 | Android 16 | Advanced Protection Mode blocks user sideloading; enterprise policy control not until Android 17 | Does not affect Device Owner installs — confirmed in production |
+
+### ⚠️ A custom splash is always the *second* splash
+
+From Android 12 the system draws its own splash screen on every cold start, built
+from the app icon and `windowSplashScreenBackground`, and **there is no way to
+disable it**. `minSdk` here is 33, so this always applies.
+
+Anything the app draws itself therefore appears *after* it. Left unstyled the
+result is two unrelated splashes in a row — the system's icon on the default
+background, then the app's own — which reads as a defect rather than branding.
+
+The fix is to make the handover invisible rather than to fight it: set
+`android:windowSplashScreenBackground` to the same colour the custom splash uses,
+so one continuous field is on screen throughout and only the artwork changes.
+
+`SplashScreen.setKeepOnScreenCondition()` can hold the *system* splash instead,
+but it shows the **app icon**, masked to the launcher's shape — no use for a wide
+wordmark, which is why W55 draws its own.
+
+> Sources: [Splash screens](https://developer.android.com/develop/ui/views/launch/splash-screen),
+> [Migrate your splash screen](https://developer.android.com/develop/ui/views/launch/splash-screen/migrate).
 
 ---
 

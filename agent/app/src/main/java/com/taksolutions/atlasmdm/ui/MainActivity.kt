@@ -88,7 +88,36 @@ class MainActivity : AppCompatActivity() {
             selectedItemId = R.id.nav_device
         }
 
+        showSplash(savedInstanceState)
+
         SyncScheduler.startAll(this)
+    }
+
+    /**
+     * Hold the ATLAS logo over the screen for [SPLASH_MILLIS], then fade it out.
+     *
+     * ⚠️ **Only on a fresh start.** `onCreate` runs again on every configuration
+     * change — a rotation, a font-size change, folding a device — and a splash
+     * that replays each time would cover the app for three seconds every time the
+     * operator turns the tablet. `savedInstanceState` being non-null is what tells
+     * the two apart.
+     *
+     * The view is posted away rather than merely hidden: it is a full-screen
+     * `FrameLayout` over the whole UI, and leaving it in the hierarchy would keep
+     * costing a measure and draw pass for the life of the activity.
+     */
+    private fun showSplash(savedInstanceState: Bundle?) {
+        val splash = findViewById<View>(R.id.splash)
+        if (savedInstanceState != null) {
+            (splash.parent as? ViewGroup)?.removeView(splash)
+            return
+        }
+        splash.postDelayed({
+            splash.animate()
+                .alpha(0f)
+                .setDuration(SPLASH_FADE_MILLIS)
+                .withEndAction { (splash.parent as? ViewGroup)?.removeView(splash) }
+        }, SPLASH_MILLIS)
     }
 
     override fun onResume() {
@@ -664,4 +693,12 @@ class MainActivity : AppCompatActivity() {
      */
     private fun JSONObject.str(key: String): String? =
         if (isNull(key)) null else optString(key).takeIf { it.isNotBlank() }
+
+    private companion object {
+        /** How long the ATLAS logo is held on screen, as the operator asked. */
+        const val SPLASH_MILLIS = 3_000L
+
+        /** Fade, so the logo hands over to the app rather than vanishing. */
+        const val SPLASH_FADE_MILLIS = 320L
+    }
 }

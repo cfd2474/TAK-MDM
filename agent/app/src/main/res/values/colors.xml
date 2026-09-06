@@ -22,4 +22,8 @@
     <color name="atlas_error">#FFFF5C6C</color>
 
     <color name="atlas_on_blue">#FFFFFFFF</color>
+    <!-- The ATLAS artwork's own background. The banner and splash sit on this
+         rather than on atlas_navy_deep, so the image blends into its surround
+         instead of showing as a black rectangle pasted onto navy (W55). -->
+    <color name="atlas_logo_field">#FF000203</color>
 </resources>

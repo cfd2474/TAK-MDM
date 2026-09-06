@@ -1,40 +1,54 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- A FrameLayout root so the splash can sit *over* the finished screen (W55).
+     Overlaying rather than using a separate splash Activity keeps one launcher
+     entry and avoids the blank frame between two activities. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/atlas_navy_deep">
+
+<LinearLayout
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/atlas_navy_deep"
     android:orientation="vertical">
 
-    <!-- Header -->
+    <!-- Header: the ATLAS artwork as the banner, whole and uncropped.
+         The bar spans the width in the logo's own near-black field, so the image
+         has no visible edge against it — inset into the navy header instead, it
+         read as a black rectangle pasted on.
+
+         ⚠️ `fitStart` at a fixed height, **not** a full-bleed `centerCrop`. The
+         artwork is 2.5∶1, so filling a tablet's width makes it ~320dp tall;
+         cropping that back to a header-sized band cuts through the glyph and the
+         wordmark. Scaling the whole logo to fit the bar keeps every part of it
+         intact, and the tagline — too small to read at this height — is shown at
+         full size on the splash. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@drawable/bg_header"
+        android:background="@color/atlas_logo_field"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingStart="16dp"
+        android:paddingStart="12dp"
         android:paddingEnd="12dp"
-        android:paddingTop="14dp"
-        android:paddingBottom="14dp">
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp">
 
         <ImageView
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:id="@+id/header_banner"
+            android:layout_width="wrap_content"
+            android:layout_height="56dp"
+            android:adjustViewBounds="true"
             android:contentDescription="@string/app_name"
-            android:src="@drawable/ic_atlas_fg" />
+            android:scaleType="fitStart"
+            android:src="@drawable/atlas_wordmark" />
 
-        <TextView
+        <Space
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:layout_weight="1"
-            android:fontFamily="sans-serif-condensed"
-            android:letterSpacing="0.08"
-            android:text="@string/app_name"
-            android:textColor="@color/atlas_text"
-            android:textSize="19sp"
-            android:textStyle="bold" />
+            android:layout_height="1dp"
+            android:layout_weight="1" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/sync_now"
@@ -139,3 +153,31 @@
         app:labelVisibilityMode="labeled"
         app:menu="@menu/bottom_nav" />
 </LinearLayout>
+
+    <!-- Splash (W55). Drawn over the finished screen and removed after 3s, so
+         there is no second Activity and no blank frame handing over to one.
+
+         `clickable` is not decoration: without it, taps land on the live UI
+         underneath while the splash is still covering it. -->
+    <FrameLayout
+        android:id="@+id/splash"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/atlas_logo_field"
+        android:clickable="true"
+        android:focusable="true">
+
+        <!-- fitCenter, not centerCrop: the splash is where the whole logo is
+             meant to be readable, tagline included. -->
+        <ImageView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:adjustViewBounds="true"
+            android:contentDescription="@string/app_name"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/atlas_wordmark" />
+    </FrameLayout>
+</FrameLayout>

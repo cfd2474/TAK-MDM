@@ -6995,6 +6995,46 @@ an error is not therefore a measurement of the thing intended.
    operator, 2026-09-06: *"its always ok to push the agent apk and server updates
    - we are in development."*
 
+#### 🔻 W55 — ATLAS branding in the DPC: splash and banner
+
+Operator: *"the dpc app to show a splash screen upon load … the logo in the test
+files called atlas.png … persist for 3 seconds. i also want that same logo to be
+the top banner."*
+
+`Test Files/ATLAS.png` is 1983×793 (2.5∶1) — a finished banner artwork, not a
+transparent mark: the ATLAS glyph, wordmark, an MDM badge, the tagline "ATAK
+TACTICAL LIFECYCLE & ADMINISTRATION SYSTEM", and "A TAK-Solutions product", all
+on a near-black `#000203` field with a topographic/world texture.
+
+Two things that came out of *looking* at it rather than assuming:
+
+* **Its background is near-black; the app's is navy `#071528`.** Dropping it into
+  the existing header would show a black rectangle pasted on navy. So the banner
+  is **full-bleed** — the logo *is* the header, and there is no mismatch to see.
+* **At header size the whole logo is illegible.** Full width on a tablet, 2.5∶1
+  is ~320dp tall — absurd for a header. Simulated `centerCrop` bands at 72/88/104
+  dp and looked at them: **88dp** keeps the mark, wordmark and MDM badge crisp
+  and drops only the tagline, which the splash still shows in full.
+
+⚠️ **Platform contract, not previously recorded.** minSdk is 33, and from Android
+12 the **system splash screen always shows and cannot be suppressed** — an app
+gets one whether it asks or not. A custom 3-second splash therefore runs *after*
+it, and two unrelated splashes in a row look like a bug. The system splash is
+themed to the same near-black so the sequence reads as one thing.
+
+##### Plan (5 steps)
+
+1. Asset: `drawable-nodpi/atlas_wordmark.webp`, downscaled from the 1.8 MB
+   source — matching the existing `ic_atlas_fg.png` nodpi convention.
+2. Header becomes a full-bleed 88dp banner; the Sync button moves to its own row
+   beneath, since a full-bleed image leaves nowhere to sit.
+3. Splash overlay inside `activity_main.xml`, shown on load and dismissed after
+   **3 s**, with the whole logo `fitCenter` on its own background colour.
+4. Theme `windowSplashScreenBackground` to match, so the unavoidable system
+   splash hands over invisibly.
+5. Build, deploy to the fleet, and **have the operator confirm what appeared** —
+   a build that compiles proves nothing about what is on screen.
+
 | # | Chunk | Notes |
 |---|---|---|
 | 7 | **Knox layer** | Planned in detail below |
