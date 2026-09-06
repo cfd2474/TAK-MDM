@@ -7609,6 +7609,14 @@ and carried its own dark field. The old one had to run edge to edge or its
 lighter top and bottom read as two seams — this one has no edges to hide, so it
 fills the bar's full 64dp, trimmed to its own opaque bounds.
 
+⚠️ **`getbbox()` is the wrong way to trim this artwork.** It keeps any pixel
+that is not exactly zero, and the logo has a halo at alpha 1–8 — at most 3%
+opacity, invisible — below it. Trimmed that way the asset carried **11dp of dead
+space at the bottom and none at the top**, so the logo sat high in a bar that was
+nominally full height, and the gap read as an oversized margin. Trim on
+`alpha > 8`. Measured, not eyeballed: 0.25dp above / 11.25dp below before,
+1.5dp / 1.5dp after.
+
 ⚠️ It fills the height only while width is not binding. `fitCenter` keeps the
 aspect ratio, so between the 132dp margins the logo goes width-limited below
 roughly a 600dp screen and draws shorter — 45dp on a 411dp phone. On the tablet

@@ -23,24 +23,31 @@
          under the button on a narrow screen. -->
     <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="64dp"
         android:background="@drawable/banner_texture">
 
-        <!-- The logo fills the bar's full height: 64dp, no vertical margin. The
-             asset is trimmed to its own opaque bounds, so "64dp" is 64dp of
-             artwork — the globe's spike reaches the top edge and the arrow's
-             point the bottom.
+        <!-- 61dp centred in the 64dp bar: about 1.5dp of texture above and
+             below the artwork.
 
-             ⚠️ It only fills the height while **width** is not the binding
+             ⚠️ This number is only meaningful because the asset is trimmed to
+             its **visible** bounds. It was previously trimmed with `getbbox()`,
+             which keeps any pixel that is not exactly zero — the logo has a
+             halo at alpha 1–8 (at most 3% opacity, invisible) below it, so the
+             asset carried 11dp of dead space at the bottom and none at the top,
+             and the artwork sat high in a bar that was nominally "full height".
+             Re-trim on alpha > 8, not on `getbbox()`, if this artwork is ever
+             replaced.
+
+             ⚠️ Fills the height only while **width** is not the binding
              constraint. `fitCenter` honours the aspect ratio, so between the
              132dp margins below a screen of about 600dp the logo is limited by
-             the width instead and draws shorter than the bar — 45dp on a 411dp
-             phone. That is the margins doing their job (see above); the fix, if
-             a phone ever matters, is the margins, not this height. -->
+             the width instead and draws shorter — that is the margins doing
+             their job (see above), and the fix, if a phone ever matters, is the
+             margins, not this height. -->
         <ImageView
             android:id="@+id/header_banner"
             android:layout_width="wrap_content"
-            android:layout_height="64dp"
+            android:layout_height="61dp"
             android:layout_gravity="center"
             android:layout_marginStart="132dp"
             android:layout_marginEnd="132dp"
