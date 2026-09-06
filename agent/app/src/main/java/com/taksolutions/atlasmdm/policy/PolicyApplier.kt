@@ -33,6 +33,7 @@ import androidx.core.content.ContextCompat
 import com.taksolutions.atlasmdm.core.AgentConfig
 import com.taksolutions.atlasmdm.diag.AgentLog
 import com.taksolutions.atlasmdm.ui.KioskExitGate
+import com.taksolutions.atlasmdm.ui.NightOverlay
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -719,15 +720,98 @@ class PolicyApplier(private val context: Context) {
         appCatalog: JSONObject,
         restrictions: JSONObject = JSONObject(),
     ): List<String> {
+        // ⚠️ Multi-app wins over a single kiosk app, and the thing locked to is
+        // the **launcher** (W68). Both fields set is a policy that cannot be
+        // honoured two ways: locking to one app would silently discard the app
+        // list an operator arranged, so the richer intent is the one obeyed.
+        val plan = LauncherConfigPlan.from(kiosk)
+        if (plan.apps.isNotEmpty()) {
+            return applyMultiAppKiosk(plan, kiosk, restrictions)
+        }
+
         val pkg = kiosk.optString("kiosk_package").takeIf { it.isNotBlank() }
             ?: appCatalog.optString("kiosk_package").takeIf { it.isNotBlank() }
         return applyKiosk(pkg, kiosk, restrictions)
+    }
+
+    /**
+     * Lock the device to the ATLAS launcher, showing the apps policy names (W68).
+     *
+     * ⚠️ The launcher is an **ordinary required app** as far as installing goes —
+     * the server adds it to the required list, and the reconciler installs it
+     * before kiosk is applied, exactly as it does for a single kiosk app (W63).
+     * Nothing here installs anything; it refuses and says why, and the next
+     * check-in succeeds.
+     */
+    private fun applyMultiAppKiosk(
+        plan: LauncherConfigPlan.Plan,
+        spec: JSONObject,
+        restrictions: JSONObject,
+    ): List<String> {
+        if (!isInstalled(LAUNCHER_PACKAGE)) {
+            return listOf(
+                "kiosk: the ATLAS launcher ($LAUNCHER_PACKAGE) is not installed yet, so " +
+                    "the device was not locked to it. It is a required app of any " +
+                    "multi-app kiosk and should install on this or the next check-in; " +
+                    "if it never does, the install error says why."
+            )
+        }
+
+        // Before locking, so the launcher has its apps the first time it is drawn
+        // rather than showing "no apps assigned" until the next reconcile.
+        val failures = mutableListOf<String>()
+        failures += pushLauncherConfig(plan)
+
+        // ⚠️ The apps the launcher offers must be lock-task permitted too, or
+        // every tile opens onto a refusal. `applyKiosk` adds the launcher itself,
+        // this agent and any background packages.
+        return failures + applyKiosk(
+            LAUNCHER_PACKAGE,
+            spec,
+            restrictions,
+            alsoPermitted = plan.packages,
+        )
+    }
+
+    /**
+     * Hand the launcher its configuration as managed configuration.
+     *
+     * ⚠️ `bundle_array`, matching the launcher's declared schema. A `putString`
+     * where the app reads an array comes back null and the app falls back to its
+     * default silently — the same failure the app-config coercion exists to stop,
+     * and here it would be an empty home screen on a locked device.
+     */
+    private fun pushLauncherConfig(plan: LauncherConfigPlan.Plan): List<String> {
+        val apps = plan.apps.map { app ->
+            Bundle().apply {
+                putString("package", app.packageName)
+                app.activity?.let { putString("activity", it) }
+                putBoolean("favorite", app.favorite)
+            }
+        }.toTypedArray()
+
+        val bundle = Bundle().apply {
+            putParcelableArray("apps", apps)
+            putInt("columns", plan.columns)
+            putBoolean("show_search", plan.showSearch)
+            putBoolean("show_clock", plan.showClock)
+            putBoolean("clock_zulu", plan.clockZulu)
+            putString("orientation", plan.orientation)
+        }
+
+        return runCatching {
+            dpm.setApplicationRestrictions(admin, LAUNCHER_PACKAGE, bundle)
+            AgentLog.i(TAG, "kiosk: launcher configured with ${plan.apps.size} apps")
+            emptyList<String>()
+        }.getOrElse { listOf("kiosk: could not configure the launcher - ${it.message}") }
     }
 
     fun applyKiosk(
         kioskPackage: String?,
         spec: JSONObject = JSONObject(),
         restrictions: JSONObject = JSONObject(),
+        /** Extra packages lock task must permit — a multi-app kiosk's tiles. */
+        alsoPermitted: List<String> = emptyList(),
     ): List<String> {
         val failures = mutableListOf<String>()
 
@@ -790,6 +874,7 @@ class PolicyApplier(private val context: Context) {
             // off to. Without being on this list, entering one of those breaks
             // the user out of lock task entirely.
             val permitted = linkedSetOf(kioskPackage, context.packageName)
+            permitted += alsoPermitted
             spec.optJSONArray("background_packages")?.let { extras ->
                 for (i in 0 until extras.length()) {
                     extras.optString(i).takeIf { it.isNotBlank() }?.let { permitted += it }
@@ -822,6 +907,7 @@ class PolicyApplier(private val context: Context) {
         }
 
         armExitGate(spec, kioskPackage)
+        applyNightMode(spec)
         failures += applyKioskPeripherals(spec)
         failures += launchIntoLockTask(
             kioskPackage,
@@ -971,6 +1057,24 @@ class PolicyApplier(private val context: Context) {
     }
 
     /**
+     * The night wash, from Kiosk policy (W68).
+     *
+     * ⚠️ Not a failure when it cannot be drawn. The overlay needs
+     * `SYSTEM_ALERT_WINDOW`, which is an app-op a **person** grants — no Device
+     * Owner can grant it, so a device without it would otherwise report DEGRADED
+     * forever for a tint. `NightOverlay` says so once in the log; the agent's own
+     * permissions screen is where an operator fixes it.
+     */
+    private fun applyNightMode(spec: JSONObject) {
+        NightOverlay.set(
+            context,
+            enabled = spec.optBoolean("kiosk_night_mode", false),
+            hue = NightOverlay.Hue.from(spec.optString("kiosk_night_hue")),
+            level = spec.optInt("kiosk_night_level", 50),
+        )
+    }
+
+    /**
      * Arm or disarm the on-device exit (W65).
      *
      * Idempotent, and called on every reconcile: a kiosk that is still a kiosk must
@@ -1014,6 +1118,21 @@ class PolicyApplier(private val context: Context) {
         runCatching {
             dpm.clearPackagePersistentPreferredActivities(admin, context.packageName)
         }.onFailure { failures += "kiosk: could not restore the home screen - ${it.message}" }
+
+        // ⚠️ The wash follows the device out of kiosk. Left behind it would tint
+        // a device nobody has told about it, and the only way back would be to
+        // re-apply and remove a kiosk policy — a red screen with no explanation
+        // and no obvious cure (W68).
+        NightOverlay.remove(context)
+
+        // ⚠️ And so does the launcher's configuration. It latches like every other
+        // DPM setter, so a device that leaves a multi-app kiosk would keep a home
+        // screen full of apps it is no longer permitted to open.
+        runCatching {
+            if (isInstalled(LAUNCHER_PACKAGE)) {
+                dpm.setApplicationRestrictions(admin, LAUNCHER_PACKAGE, Bundle())
+            }
+        }.onFailure { failures += "kiosk: could not clear the launcher config - ${it.message}" }
 
         // Here rather than in the callers, because this is the one place the
         // device actually leaves lock task — the on-device passcode exit reaches
@@ -1182,6 +1301,13 @@ class PolicyApplier(private val context: Context) {
 
     companion object {
         private const val TAG = "PolicyApplier"
+
+        /**
+         * The ATLAS launcher (W68). A separate APK, installed only where a
+         * multi-app kiosk policy asks for it — see docs/DECISION-atlas-launcher.md
+         * for why it is not an activity inside this agent.
+         */
+        const val LAUNCHER_PACKAGE = "com.taksolutions.atlaslauncher"
         private const val PERMISSION_MANAGE_EXTERNAL_STORAGE =
             "android.permission.MANAGE_EXTERNAL_STORAGE"
         private val LEGACY_STORAGE_PERMISSIONS = setOf(

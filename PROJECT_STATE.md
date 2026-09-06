@@ -431,10 +431,41 @@ of what night mode is for. It now has its own dark translucent background.
 
 Search hides itself below 8 tiles: a filter box above four apps is furniture.
 
-#### Chunk 3 — agent side
-Install/remove the launcher on policy, push its config, point HOME at it,
-`setLockTaskPackages(launcher + chosen apps)`, launch it through
-`KioskLaunchPlan`, and undo all of it in `releaseKiosk`.
+#### ✅ Chunk 3 — agent side (COMPLETE)
+
+**Nothing here installs the launcher.** It is an ordinary *required app*: the
+server adds it to the required list (Chunk 4) and the reconciler installs it
+before kiosk is applied, exactly as W63 made it do for a single kiosk app. The
+applier refuses with a sentence and the next check-in succeeds.
+
+⚠️ **Multi-app wins over `kiosk_package`.** Both set is a policy that cannot be
+honoured two ways, and locking to one app would silently discard the list an
+operator arranged.
+
+⚠️ **The tiles must be lock-task permitted too**, not just the launcher — else
+every tile opens onto a refusal, which reads as a broken launcher rather than a
+broken allowlist. `applyKiosk` gained `alsoPermitted` for exactly this.
+
+⚠️ **`LauncherConfigPlan` accepts both wire shapes** — plain package strings and
+objects with activity/favourite. Agent and launcher are separate APKs on separate
+update schedules, so neither may assume the other's version; refusing old-shape
+input would turn a working kiosk into one with no apps, which looks like a broken
+launcher rather than an old policy. Verified by deletion: removing the string
+branch fails five tests.
+
+⚠️ **Both the wash and the launcher config are undone in `releaseKiosk`.** Both
+latch. A tint left behind would redden a device nobody has told about it, curable
+only by re-applying and removing a kiosk policy; a config left behind would leave
+a home screen full of apps the device may no longer open.
+
+139 agent tests, 12 of them the new plan's.
+
+**Not yet on hardware:** `<queries>`, the overlay, orientation and the whole
+multi-app path first touch a device after Chunk 4 ships the console side.
+
+⚠️ **Kiosk wallpaper is deferred to Chunk 4** — `launcher_wallpaper_file_id` needs
+the server's file plumbing, and the agent's existing `applyWallpaper` is what it
+will route through.
 
 #### Chunk 4 — server and console
 Lift `_refuse_what_needs_a_launcher` for multi-app and wallpaper (website kiosk
