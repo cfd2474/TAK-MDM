@@ -389,9 +389,39 @@ message names both, or the operator fixes one and hits the refusal again.
 with the background colour, which hid the light hub ring and nearly had me delete
 a correct element. On Android that hole is transparent and the ring shows
 through. 844 server tests.
-#### Chunk 2 — the Wi-Fi picker
-Scan, list with signal, join with a password. Needs the keyboard to work inside
-lock task.
+#### ✅ Chunk 2 — the Wi-Fi picker (COMPLETE, not yet deployed)
+
+⚠️ **Scan results are empty without location services, and Android says nothing
+about why.** `getScanResults()` just returns an empty list — indistinguishable
+from "no networks here" while standing in a building full of them. The screen
+names the reason instead.
+
+⚠️ **`startScan` is throttled to four calls per two minutes** for ordinary apps
+since Android 9; a Device Owner is exempt, which is the only reason a live
+refreshing list is worth having.
+
+⚠️ **WPA3 transitional advertises both `SAE` and `WPA2-PSK`.** Testing PSK first
+joins it as WPA2 — which *works*, and silently gives up the WPA3 the network
+offered. `EAP` is tested before everything, or an enterprise network gets a
+password box it can never satisfy. Both have tests.
+
+⚠️ **One row per SSID, strongest access point winning.** A site with four APs on
+one network scans as four results, and showing all four looks broken.
+
+⚠️ **`joinWifi` reuses `buildWifiConfig`**, so a network joined by hand is
+configured exactly as one pushed by policy — a second builder would drift, and the
+difference would surface as one working on an OEM where the other failed. It is
+deliberately **not** recorded in `wifiByPolicy`: that set is what the agent removes
+when policy stops naming a network, and a network the user added was never the
+policy's to take away.
+
+⚠️ **The picker refuses to draw unless the policy offers Wi-Fi**, and is not
+exported. A settings screen reachable on a device whose operator never offered
+Wi-Fi would be a way round policy rather than an expression of it.
+
+⚠️ **The operator's stated trade:** a kiosk user can attach the device to any
+network they can see, including one they control. Chosen over the
+provisioned-only list with that consequence stated.
 
 #### Chunk 3 — the power menu
 An `AccessibilityService` performing `GLOBAL_ACTION_POWER_DIALOG`, its grant in

@@ -182,6 +182,20 @@ object DeviceControls {
     // Wi-Fi
     // ----------------------------------------------------------------------- #
 
+    /**
+     * The network the device is on, or null.
+     *
+     * ⚠️ Android reports `<unknown ssid>` rather than null when it will not say —
+     * which happens while associating, and without location permission. Showing
+     * that string to a user would be worse than showing nothing.
+     */
+    @Suppress("DEPRECATION", "MissingPermission")
+    fun connectedSsid(context: Context): String? = runCatching {
+        context.getSystemService(WifiManager::class.java)
+            ?.connectionInfo?.ssid?.trim('"')
+            ?.takeIf { it.isNotBlank() && it != "<unknown ssid>" }
+    }.getOrNull()
+
     fun isWifiEnabled(context: Context): Boolean =
         context.getSystemService(WifiManager::class.java)?.isWifiEnabled ?: false
 

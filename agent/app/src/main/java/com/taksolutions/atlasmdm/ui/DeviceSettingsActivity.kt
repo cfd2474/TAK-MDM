@@ -52,6 +52,7 @@ class DeviceSettingsActivity : AppCompatActivity() {
 
     private val config by lazy { AgentConfig(this) }
     private val applier by lazy { PolicyApplier(this) }
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -262,9 +263,28 @@ class DeviceSettingsActivity : AppCompatActivity() {
                         // than throwing when refused, and a switch that stayed where
                         // the user put it while Wi-Fi did not move is the lie this
                         // screen exists to avoid.
-                        DeviceControls.setWifiEnabled(this, wanted)
+                        val actual = DeviceControls.setWifiEnabled(this, wanted)
+                        // The network row below only means anything while the radio
+                        // is up, so the card is redrawn rather than left showing a
+                        // network name on a device with Wi-Fi off.
+                        main.post { recreate() }
+                        actual
                     }
                 )
+                if (DeviceControls.isWifiEnabled(this)) {
+                    body.addView(ConsoleViews.divider(this))
+                    body.addView(
+                        SettingsViews.actionRow(
+                            this, getString(R.string.wifi_network),
+                            DeviceControls.connectedSsid(this)
+                                ?: getString(R.string.wifi_pick_none),
+                        ) {
+                            startActivity(
+                                android.content.Intent(this, WifiPickerActivity::class.java)
+                            )
+                        }
+                    )
+                }
             }
 
             if (bluetooth) {

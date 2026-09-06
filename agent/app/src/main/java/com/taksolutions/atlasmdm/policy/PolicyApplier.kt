@@ -612,6 +612,49 @@ class PolicyApplier(private val context: Context) {
         return failures
     }
 
+    /**
+     * Join a network the kiosk user picked (W72).
+     *
+     * ⚠️ Reuses [buildWifiConfig], so a network joined by hand is configured
+     * exactly as one pushed by policy. A second builder here would drift from the
+     * first, and the difference would show up as one of them failing on an OEM
+     * while the other worked.
+     *
+     * ⚠️ **Not recorded in `wifiByPolicy`.** That set is what the agent removes
+     * when a policy stops naming a network, and a network the *user* added was
+     * never the policy's to take away.
+     *
+     * @return null on success, or a sentence saying what went wrong.
+     */
+    @Suppress("DEPRECATION")
+    fun joinWifi(ssid: String, security: String, password: String?): String? {
+        val wifi = context.getSystemService(WifiManager::class.java)
+            ?: return "Wi-Fi is unavailable on this device"
+
+        val spec = DesiredWifi(
+            ssid = ssid, security = security, password = password, hidden = false,
+        )
+        return runCatching {
+            val id = wifi.addNetwork(buildWifiConfig(spec))
+            if (id == -1) {
+                // A normal app always gets -1 here; a Device Owner gets a real id.
+                // If this ever fires on our own hardware the grandfathering has
+                // gone, and the message has to say so rather than blaming the
+                // password.
+                AgentLog.w(TAG, "addNetwork returned -1 for $ssid")
+                return "The device would not save this network."
+            }
+            // true, unlike the policy path: the user picked this one and expects
+            // to be on it now, not at the radio's next convenience.
+            wifi.enableNetwork(id, true)
+            AgentLog.i(TAG, "joined $ssid from Device Settings")
+            null
+        }.getOrElse {
+            AgentLog.w(TAG, "could not join $ssid: ${it.message}")
+            "Could not join this network."
+        }
+    }
+
     @Suppress("DEPRECATION")
     private fun buildWifiConfig(n: DesiredWifi): WifiConfiguration = WifiConfiguration().apply {
         SSID = "\"${n.ssid}\""

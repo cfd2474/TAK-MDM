@@ -97,6 +97,20 @@
           a stale entry in recents is a way to re-enter a screen policy has since
           withdrawn.
         -->
+        <!--
+          The Wi-Fi picker, opened from Device Settings (W72).
+
+          Not exported: only this app opens it, and it refuses to draw unless the
+          policy offers Wi-Fi. An exported settings screen on a locked device
+          would be a way round the policy rather than an expression of it.
+        -->
+        <activity
+            android:name=".ui.WifiPickerActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:label="@string/wifi_pick_title" />
+
         <activity
             android:name=".ui.DeviceSettingsActivity"
             android:exported="true"
