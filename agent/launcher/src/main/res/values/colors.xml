@@ -9,4 +9,7 @@
     <color name="search_stroke">#4D7C93AD</color>
     <color name="search_text">#FFECF2F8</color>
     <color name="search_hint">#99B9C6D4</color>
+    <!-- Dimmer than the local row: both are wanted, but only one is the one
+         someone glances at to know the time where they are standing. -->
+    <color name="clock_zulu">#FF96B4D7</color>
 </resources>

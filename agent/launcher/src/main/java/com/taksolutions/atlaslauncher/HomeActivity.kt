@@ -61,6 +61,7 @@ class HomeActivity : AppCompatActivity() {
     private lateinit var dock: RecyclerView
     private lateinit var empty: LinearLayout
     private lateinit var clock: TextView
+    private lateinit var clockZulu: TextView
     private lateinit var search: EditText
     private lateinit var gridAdapter: AppAdapter
     private lateinit var dockAdapter: AppAdapter
@@ -84,7 +85,9 @@ class HomeActivity : AppCompatActivity() {
 
     private val tick = object : Runnable {
         override fun run() {
-            clock.text = Clock.format(Instant.now(), config.clockZulu, ZoneId.systemDefault())
+            val now = Instant.now()
+            clock.text = Clock.local(now, ZoneId.systemDefault())
+            clockZulu.text = Clock.zulu(now)
             ticker.postDelayed(this, 1_000L)
         }
     }
@@ -97,6 +100,7 @@ class HomeActivity : AppCompatActivity() {
         dock = findViewById(R.id.dock)
         empty = findViewById(R.id.empty)
         clock = findViewById(R.id.clock)
+        clockZulu = findViewById(R.id.clock_zulu)
         search = findViewById(R.id.search)
 
         gridAdapter = AppAdapter(emptyList(), ::open)
@@ -165,6 +169,10 @@ class HomeActivity : AppCompatActivity() {
         if (search.visibility == View.GONE) search.setText("")
 
         clock.visibility = if (config.showClock) View.VISIBLE else View.GONE
+        // The Zulu row is the second half of the clock, so it cannot be shown
+        // without the first — "Zulu on, clock off" is not a screen anyone means.
+        clockZulu.visibility =
+            if (config.showClock && config.clockZulu) View.VISIBLE else View.GONE
         ticker.removeCallbacks(tick)
         if (config.showClock) ticker.post(tick)
 

@@ -388,9 +388,11 @@ class KioskSpec(PolicySpec):
         bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
     ] = Field(
         default=None,
-        title="Zulu time",
-        description="Show the clock in UTC rather than the device time zone.",
-        json_schema_extra={"ui_group": _LAUNCHER, "ui_true": "Zulu", "ui_false": "Local"},
+        title="Zulu row",
+        description="Add a Zulu (UTC) row beneath the local time. The local row is "
+        "always shown and always 24-hour; this is the second line, not a choice "
+        "between the two.",
+        json_schema_extra={"ui_group": _LAUNCHER, "ui_true": "Shown", "ui_false": "Hidden"},
     )
     launcher_orientation: Annotated[
         LauncherOrientation | None, Merge(MergeStrategy.HIGHEST_RANK)

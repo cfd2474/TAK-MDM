@@ -17,6 +17,7 @@
 package com.taksolutions.atlaslauncher
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 import java.time.Instant
 import java.time.ZoneId
@@ -30,35 +31,50 @@ class ClockTest {
     private val newYork = ZoneId.of("America/New_York")
 
     @Test
-    fun `zulu is UTC whatever the device zone is`() {
-        assertEquals("141530Z", Clock.format(instant, zulu = true, zone = newYork))
-        assertEquals("141530Z", Clock.format(instant, zulu = true, zone = ZoneId.of("Asia/Tokyo")))
+    fun `the local row is the device zone, 24-hour, with separators`() {
+        assertEquals("10:15:30", Clock.local(instant, newYork))
+        assertEquals("23:15:30", Clock.local(instant, ZoneId.of("Asia/Tokyo")))
     }
 
     /**
-     * The bug this guards against: reading the device zone and *labelling* it Z.
+     * The bug this guards against: showing the device's own time on the Zulu row.
      * Four hours wrong and confidently marked as the shared reference is worse
-     * than an unlabelled clock, because someone would act on it.
+     * than no Zulu row at all, because someone would act on it.
      */
     @Test
-    fun `local time is the device zone and is not labelled Z`() {
-        assertEquals("10:15:30", Clock.format(instant, zulu = false, zone = newYork))
-        assertEquals("23:15:30", Clock.format(instant, zulu = false, zone = ZoneId.of("Asia/Tokyo")))
+    fun `the zulu row is UTC whatever the device zone is`() {
+        assertEquals("141530Z", Clock.zulu(instant))
     }
 
     @Test
-    fun `zulu is the TAK form - no separators, trailing Z`() {
-        val text = Clock.format(instant, zulu = true, zone = ZoneId.of("UTC"))
+    fun `the two rows differ by the offset, so a mix-up is visible`() {
+        // Not a tautology: if `zulu` ever read the device zone, these would be
+        // equal for every device, and the test would be the only thing that saw
+        // it — the screen would just show the same time twice.
+        assertNotEquals(
+            Clock.local(instant, newYork).replace(":", ""),
+            Clock.zulu(instant).dropLast(1),
+        )
+    }
+
+    @Test
+    fun `zulu keeps the TAK form - no separators, trailing Z`() {
+        val text = Clock.zulu(instant)
         assertEquals(7, text.length)
         assertEquals('Z', text.last())
         assertEquals(true, text.dropLast(1).all { it.isDigit() })
     }
 
     @Test
-    fun `midnight is zero-padded, not blank`() {
-        assertEquals(
-            "000500Z",
-            Clock.format(Instant.parse("2026-09-06T00:05:00Z"), zulu = true, zone = newYork),
-        )
+    fun `local uses a 24-hour clock, never AM or PM`() {
+        val evening = Instant.parse("2026-09-06T23:45:00Z")
+        assertEquals("19:45:00", Clock.local(evening, newYork))
+    }
+
+    @Test
+    fun `midnight is zero-padded on both rows, not blank`() {
+        val justAfterMidnight = Instant.parse("2026-09-06T00:05:00Z")
+        assertEquals("000500Z", Clock.zulu(justAfterMidnight))
+        assertEquals("00:05:00", Clock.local(justAfterMidnight, ZoneId.of("UTC")))
     }
 }

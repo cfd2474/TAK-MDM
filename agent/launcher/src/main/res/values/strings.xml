@@ -21,7 +21,7 @@
     <string name="cfg_show_clock">Show the clock</string>
     <string name="cfg_show_clock_desc">A clock across the top of the home screen.</string>
     <string name="cfg_clock_zulu">Zulu time</string>
-    <string name="cfg_clock_zulu_desc">Show the clock in UTC rather than the device time zone.</string>
+    <string name="cfg_clock_zulu_desc">Add a Zulu (UTC) row beneath the local time. The local row is always 24-hour.</string>
     <string name="cfg_orientation">Screen orientation</string>
     <string name="cfg_orientation_desc">Pin the kiosk to portrait or landscape, or let the device rotate.</string>
 </resources>

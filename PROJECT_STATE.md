@@ -521,7 +521,23 @@ to it — and **W67's fix is confirmed on hardware**, because the first apply sa
 *launched* and every one after says *brought to front*, where before it said
 *launched* every two minutes.
 
-⚠️ **Not proven by this run: whether the grid has anything in it.** The agent's
+✅ **Apps appear on the tablet** — so `<queries>` is right, which was the risk
+that would have failed silently.
+
+##### Clock: two rows, local on top (operator, 2026-09-06)
+
+Local 24-hour on top, Zulu beneath, and `launcher_clock_zulu` now decides whether
+the *second row* appears rather than which single time is shown — both are wanted
+at once, so it was never a choice between them.
+
+⚠️ The Zulu row keeps TAK's separator-less form (`141530Z`) beside the local
+row's `10:15:30`. Rendered with colons on both, it reads as the same clock
+printed twice with a stray Z; the differing form is what tells them apart at a
+glance. Monospace on both, or the digits shift the line width every second.
+
+##### Superseded
+
+⚠️ **Not proven by the first run: whether the grid has anything in it.** The agent's
 log cannot see the launcher's own screen, and an empty grid from a wrong
 `<queries>` looks exactly like a working one from here — package-visibility
 filtering is indistinguishable from "not installed". That needs eyes on the

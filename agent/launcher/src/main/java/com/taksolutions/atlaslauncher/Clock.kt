@@ -23,6 +23,10 @@ import java.time.format.DateTimeFormatter
 /**
  * The home screen clock (W68, Chunk 2).
  *
+ * Two rows: the device's own time on top, Zulu beneath it. Both are wanted at
+ * once — the local row is what someone at the device reads, the Zulu row is what
+ * they say on the net — so this is not a choice between them.
+ *
  * Pure formatting, taking the instant and the zone rather than reading them, so
  * the Zulu rule can be tested rather than trusted.
  */
@@ -33,13 +37,19 @@ object Clock {
      * purpose is coordinating with other people on a shared time reference, the
      * trailing Z is what says *which* reference, and it is the form those people
      * read on every other surface they use.
+     *
+     * ⚠️ Keeping the separators off is also what tells the two rows apart at a
+     * glance. Rendered with colons beside the local row it reads as the same
+     * clock printed twice with a stray Z.
      */
     private val ZULU: DateTimeFormatter = DateTimeFormatter.ofPattern("HHmmss'Z'")
 
-    /** Local time keeps the separators, because nothing depends on reading it fast. */
+    /** 24-hour, always: a kiosk clock that needed AM/PM read would be worse. */
     private val LOCAL: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
 
-    fun format(instant: Instant, zulu: Boolean, zone: ZoneId): String =
-        if (zulu) ZULU.format(instant.atZone(ZoneId.of("UTC")))
-        else LOCAL.format(instant.atZone(zone))
+    /** The device's own time zone, 24-hour. The top row. */
+    fun local(instant: Instant, zone: ZoneId): String = LOCAL.format(instant.atZone(zone))
+
+    /** UTC, whatever the device's zone is. The row beneath. */
+    fun zulu(instant: Instant): String = ZULU.format(instant.atZone(ZoneId.of("UTC")))
 }

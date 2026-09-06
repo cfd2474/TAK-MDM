@@ -13,6 +13,11 @@
     android:orientation="vertical"
     android:fitsSystemWindows="true">
 
+    <!--
+      Two rows, local on top (W68). Monospace on both, so the digits do not shift
+      the line's width every second — a proportional clock jitters, and a kiosk
+      clock is on screen permanently.
+    -->
     <TextView
         android:id="@+id/clock"
         android:layout_width="match_parent"
@@ -23,6 +28,18 @@
         android:shadowColor="@color/tile_label_shadow"
         android:shadowRadius="6"
         android:textSize="28sp"
+        android:fontFamily="monospace"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/clock_zulu"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:textColor="@color/clock_zulu"
+        android:shadowColor="@color/tile_label_shadow"
+        android:shadowRadius="6"
+        android:textSize="18sp"
         android:fontFamily="monospace"
         android:visibility="gone" />
 
