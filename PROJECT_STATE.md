@@ -364,6 +364,35 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W81 — a stalled enrolment is flagged, not deleted
+
+Asked as *"can we automate the removal of device records that fail?"* — after I
+had wrongly said the failed phone's record needed deleting before re-enrolment.
+
+⚠️ **It does not.** `resolve()` matches a re-enrolling device on a *set* of
+identifiers and readopts the existing record;
+`test_reenrollment_readopts_the_device_and_revokes_the_old_certificate` pins that
+a wipe-and-reprovision keeps the same `device_id`, keeps group membership, and
+revokes the old certificate on the way through. The need I described was one I
+invented.
+
+⚠️ **Automatic deletion would also be wrong.** "Failing" and "offline" are the
+same thing from the server: a tablet on a boat for three weeks looks exactly like
+a broken one, and those are the devices this exists for. The record also carries
+the policy stack — deleting it turns a device that would have come back
+configured into one an operator must set up again.
+
+What *was* missing is the signal. The console said "never" in Last seen, which is
+equally true of a device enrolled ten seconds ago. A device that **enrolled and
+then never checked in at all** is unambiguous, and now shows a red *never checked
+in* pill whose tooltip names both causes that have actually happened — a
+certificate that does not match the key (W80), or a server URL it cannot reach
+(W76) — and says the record survives a reset, so nobody deletes it trying to help.
+
+`STALLED_AFTER` is 10 minutes: generous, because a healthy device syncs seconds
+after provisioning, so anything past it is stuck rather than slow.
+
+
 ### ⚠️ W80 — enrolling twice at once bricks a device's identity
 
 `SM-G736U1` enrolled and then failed every sync with *"Failure in SSL library"*.

@@ -78,7 +78,14 @@
           {% set c = d.compliance_status.value %}
           <span class="pill {{ 'good' if c == 'compliant' else 'warn' if c == 'degraded' else 'bad' if c == 'failed' }}">{{ c }}</span>
         </td>
-        <td class="muted">{{ d.last_checkin_at.strftime('%Y-%m-%d %H:%M') if d.last_checkin_at else 'never' }}</td>
+        <td class="muted">
+          {%- if d.last_checkin_at %}{{ d.last_checkin_at.strftime('%Y-%m-%d %H:%M') }}
+          {%- elif d.id in stalled %}
+            {# "never" is equally true of a device enrolled ten seconds ago. This
+               one enrolled long enough ago that it is stuck, not starting. #}
+            <span class="pill bad" title="{{ stalled_reason }}">never checked in</span>
+          {%- else %}never{% endif %}
+        </td>
         <td>
           <form method="post" action="/devices/{{ d.id }}/checkin" style="margin:0">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

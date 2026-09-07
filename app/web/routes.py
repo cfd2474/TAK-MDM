@@ -100,6 +100,7 @@ from app.policies import creator_catalog
 from app.policies import form_parse, form_schema
 from app.policies.registry import PolicyTypeError, registry
 from app.services import agent_update as agent_update_service
+from app.services import device_health
 from app.services import atak_compat
 from app.services import import_jobs
 from app.services import tak_gov
@@ -241,6 +242,13 @@ def dashboard(
         "manage.html",
         identity=identity,
         rows=rows,
+        # Computed here rather than in the template: "enrolled but never arrived"
+        # is a judgement about how devices fail, not a formatting choice, and it
+        # is tested where it lives.
+        stalled={
+            r.device.id for r in rows if device_health.enrollment_stalled(r.device)
+        },
+        stalled_reason=device_health.stalled_reason(),
         counts={
             "devices": len(rows),
             "policies": len(list(session.scalars(select(Policy).where(Policy.archived_at.is_(None))))),
