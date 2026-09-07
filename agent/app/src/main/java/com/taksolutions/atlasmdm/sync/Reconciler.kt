@@ -129,7 +129,25 @@ class Reconciler(private val context: Context) {
     // Enrollment
     // ----------------------------------------------------------------------- //
 
-    fun enrollIfNeeded(): Boolean {
+    fun enrollIfNeeded(): Boolean = synchronized(ENROLL_LOCK) { enrollIfNeededLocked() }
+
+    /**
+     * ⚠️ **Must only be called under [ENROLL_LOCK].**
+     *
+     * Enrolling twice at once leaves the device holding one attempt's certificate
+     * and the other attempt's private key, because both steps write to fixed
+     * slots: `generateKeyPair` replaces the keystore entry and `installCertificate`
+     * replaces the certificate. The TLS handshake then fails with "bad signature"
+     * - the certificate's public key cannot verify what the private key signed -
+     * and the device can never check in again.
+     *
+     * Observed on `SM-G736U1`: two `POST /api/v1/enroll` calls in the same second
+     * at provisioning, two certificates issued, the first revoked by the second,
+     * and every subsequent handshake refused.
+     */
+    private fun enrollIfNeededLocked(): Boolean {
+        // Re-checked inside the lock: the caller that waited here may find the
+        // one that held it has already enrolled, and must not do it again.
         if (config.isEnrolled && DeviceIdentity.hasCertificate()) return true
 
         val token = config.enrollmentToken
@@ -1286,6 +1304,16 @@ class Reconciler(private val context: Context) {
 
     companion object {
         private const val TAG = "Reconciler"
+
+        /**
+         * Serialises enrollment across every `Reconciler` in the process.
+         *
+         * ⚠️ Class-level, not per-instance, and that is the whole point: at
+         * provisioning `PolicyComplianceActivity` runs a sync directly while
+         * `MdmDeviceAdminReceiver` starts the scheduler, and each builds its own
+         * `Reconciler`. An instance lock would have serialised nothing.
+         */
+        private val ENROLL_LOCK = Any()
 
         /**
          * Read from the build rather than written here.

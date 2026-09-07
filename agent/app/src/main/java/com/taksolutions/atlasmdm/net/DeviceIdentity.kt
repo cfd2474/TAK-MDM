@@ -172,13 +172,36 @@ object DeviceIdentity {
      * is the supported way to install a real certificate over the self-signed
      * placeholder that key generation creates.
      */
+    /**
+     * ⚠️ Refuses a certificate whose public key is not this device's.
+     *
+     * Storing one leaves an identity that cannot complete a TLS handshake -
+     * nginx reports "bad signature" and the device is unreachable for good,
+     * because it can no longer check in to be told anything. Failing here
+     * instead leaves the previous identity intact and says why.
+     */
     fun installCertificate(certificatePem: String, caPem: String?) {
         val store = keyStore()
         val privateKey = store.getKey(ALIAS, null) as? PrivateKey
             ?: error("no private key at alias $ALIAS")
 
+        val leaf = parseCertificate(certificatePem)
+
+        // ⚠️ The certificate has to belong to the key that is about to be paired
+        // with it. A hardware-backed private key cannot be read back to compare,
+        // so the check is against the public key the keystore holds for this
+        // alias - which is the one the CSR carried.
+        val ours = store.getCertificate(ALIAS)?.publicKey
+        if (ours != null && ours != leaf.publicKey) {
+            error(
+                "the issued certificate is for a different key than this device " +
+                    "holds; refusing to install it. Enrolling twice at once causes " +
+                    "this, and storing it would make the device unreachable."
+            )
+        }
+
         val chain = buildList {
-            add(parseCertificate(certificatePem))
+            add(leaf)
             caPem?.let { add(parseCertificate(it)) }
         }.toTypedArray()
 

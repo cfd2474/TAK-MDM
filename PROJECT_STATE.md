@@ -364,6 +364,43 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ⚠️ W80 — enrolling twice at once bricks a device's identity
+
+`SM-G736U1` enrolled and then failed every sync with *"Failure in SSL library"*.
+nginx said what the phone could not: `SSL_do_handshake() failed (error:0A00007B:
+bad signature)`.
+
+**What happened.** Two `POST /api/v1/enroll` calls landed in the same second and
+two certificates were issued; the second revoked the first. `enrollIfNeeded` does
+
+```
+generateKeyPair()      // replaces the keystore entry
+api.enroll(csr)        // network
+installCertificate()   // replaces the certificate
+```
+
+and both steps write to **fixed slots**. Interleaved, the device ends up holding
+one attempt's certificate and the other attempt's private key. The certificate's
+public key then cannot verify what the private key signed, which is precisely
+"bad signature".
+
+⚠️ **Nothing was serialising them.** At provisioning `PolicyComplianceActivity`
+runs a sync directly *and* `MdmDeviceAdminReceiver` starts the scheduler, and each
+builds its own `Reconciler` — so an instance-level guard would have serialised
+nothing. The lock is on the **companion object**.
+
+⚠️ **It is unrecoverable over the air.** The device cannot complete a handshake,
+so it cannot check in to be told anything — including about a fixed agent. Its
+enrollment token was consumed and cleared, so it cannot re-enrol either. **Factory
+reset and re-provision is the only route back.**
+
+Also added: `installCertificate` refuses a certificate whose public key is not the
+one this device holds. That turns a permanent silent bricking into a visible
+enrollment failure with the previous identity left intact.
+
+Fixed in agent **0.42.1 (84)**.
+
+
 ### ✅ W79 — Peripheral restrictions merged into Peripheral Settings
 
 The operator read the two sub-pages as duplicates. Four of the seven restrictions
