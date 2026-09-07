@@ -250,6 +250,37 @@ Knox is strictly additive.
 
 ## Operational notes — read before debugging anything "impossible"
 
+### ⚠️ Provisioning fails opaquely when `.env` describes another deployment (W76)
+
+`SM-X828U` reached *"Something went wrong"* after downloading the DPC. Nothing
+about it appeared in this server's logs, because the QR did not point at this
+server. `/opt/atlas/.env` held a different deployment's values:
+
+| Setting | Was | Should be |
+|---|---|---|
+| `TAKMDM_SERVER_URL` | `https://192.168.68.89:8443` | `https://209.182.235.108:8443` |
+| `TAKMDM_AGENT_APK_URL` | `http://192.168.68.89:8080/…` | `http://209.182.235.108/…` |
+| `TAKMDM_AGENT_SIGNATURE_CHECKSUM` | `h5QFWJTb…` | `IJS8zAVMaB…` |
+
+⚠️ **The checksum alone is fatal.** Android verifies the downloaded APK's signing
+certificate against it and aborts on a mismatch — and `h5QF…` is a different
+signing key from the one every agent build here uses. There is no message beyond
+"Something went wrong", and the device asks for a factory reset.
+
+⚠️ **Three independent faults, any one of them fatal**, which is why the symptom
+is worthless as a diagnostic: wrong download host, wrong signing key, and a
+`server_ca_pem` (this server's cert, valid only for `209.182.235.108`) that could
+never have matched an enrolment at `192.168.68.89`.
+
+✅ **Check it with `verify_qr`, not by provisioning a tablet.** The payload can be
+checked against the APK the URL actually serves and the cert the agent is handed,
+in seconds, on the server. Burning a factory reset to learn "something went
+wrong" is the expensive way to find a typo.
+
+⚠️ `docker compose up -d` **recreates the container and wipes its `/tmp`.** Scripts
+copied in with `docker compose cp` disappear; a watch loop left polling one of
+them reports nothing and looks like a device that stopped checking in.
+
 Traps that have each cost real time in this project. When a change appears to have
 no effect, check this list before investigating the code.
 
