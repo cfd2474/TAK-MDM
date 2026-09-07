@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import page_header, csrf_field, empty_state %}
+{% from "_macros.html" import page_header, csrf_field, empty_state, device_label %}
 {% from "_policy_form.html" import policy_subform, app_group_buttons, app_compat_blob %}
 {% set nav = 'policies' %}
 {% block title %}{{ (profile.name if profile else 'New policy') }} — ATLAS{% endblock %}
@@ -143,7 +143,7 @@
               <label>
                 <input type="checkbox" name="device_ids" value="{{ d.id }}"
                        {% if d.id in assigned.device %}checked{% endif %}>
-                <span class="mono">{{ d.name or d.serial_number }}</span>
+                {{ device_label(d) }}
               </label>
             {% else %}<p class="muted">No devices enrolled.</p>{% endfor %}
           </div>

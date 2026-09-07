@@ -306,6 +306,23 @@ label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 12.5
 .checks label { display: flex; gap: 8px; align-items: center; margin: 4px 0; color: var(--ink); }
 .checks input { width: auto; }
 
+/* --- A device in a picker: its name, then what identifies it (W78) ----------
+   Two lines rather than one, because a name and a serial run together read as a
+   single odd string - "TEST TAB R5GL40MMHRN SM-X520" - and the operator has to
+   parse where one ends. Stacked, the name is what they scan and the serial is
+   there to confirm against the tablet in their hand. */
+.checks label:has(.dev) { align-items: flex-start; }
+.dev { flex: 1; min-width: 0; }
+.dev-name { display: block; line-height: 1.3; }
+.dev-id {
+  display: block;
+  font-size: 11px;
+  line-height: 1.3;
+  /* The serial is a fallback identity, not the headline - legible when looked
+     for, quiet when not. */
+  color: var(--muted);
+}
+
 .stat { display: flex; gap: 28px; flex-wrap: wrap; }
 .stat div span { display: block; font-size: 22px; font-weight: 600; }
 .stat div small { color: var(--muted); }

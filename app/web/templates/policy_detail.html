@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import csrf_field %}
+{% from "_macros.html" import csrf_field, device_label %}
 {% from "_policy_form.html" import policy_subform, app_compat_blob %}
 {% set nav = 'policies' %}
 {% block main_class %}wide{% endblock %}
@@ -58,8 +58,7 @@
             <label>
               <input type="checkbox" name="device_ids" value="{{ d.id }}"
                      {% if d.id in assigned.device %}checked{% endif %}>
-              <span class="mono">{{ d.serial_number }}</span>
-              <span class="muted">{{ d.model or '' }}</span>
+              {{ device_label(d) }}
             </label>
           {% else %}<p class="muted">No devices enrolled.</p>{% endfor %}
         </div>

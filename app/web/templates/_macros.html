@@ -51,3 +51,32 @@
   </div>
 </div>
 {%- endmacro %}
+
+{% macro device_label(d) -%}
+{#
+  How a device is named wherever one is chosen from a list.
+
+  ⚠️ The name **and** the serial, never one instead of the other. The name is what
+  an operator recognises - it is the whole reason they typed it - and the serial
+  is what identifies the tablet in their hand. The assignment pickers had one
+  each: policy_detail showed serial and model with no name, profile_editor showed
+  the name and dropped the serial, so neither could confirm both at once.
+
+  A device nobody has named falls back to the serial as its title, rather than
+  showing a blank line above it.
+#}
+{#
+  Wrapped, because `.checks label` is a flex row: two bare spans would sit beside
+  the checkbox and beside each other, which is the run-on line this exists to
+  avoid. The wrapper is the flex item; the lines stack inside it.
+#}
+<span class="dev">
+{%- if d.name %}
+  <span class="dev-name">{{ d.name }}</span>
+  <span class="mono dev-id">{{ d.serial_number }}{% if d.model %} · {{ d.model }}{% endif %}</span>
+{%- else %}
+  <span class="mono dev-name">{{ d.serial_number }}</span>
+  {%- if d.model %}<span class="dev-id">{{ d.model }}</span>{% endif %}
+{%- endif %}
+</span>
+{%- endmacro %}
