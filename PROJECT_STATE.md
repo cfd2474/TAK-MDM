@@ -364,6 +364,44 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W87 — the download icon reverted to the app icon, and the artwork was never the problem
+
+Reported on build 86: *"it showed the new icon for a brief second, then reverted
+back to the app icon while downloading a new app"* — the same symptom W84 was
+supposed to have fixed by replacing the `animation-list` with a static PNG.
+
+**The static PNG was fine.** The agent was posting **two** notifications: the
+foreground service's permanent "keeping this device up to date" notice (id 1001,
+`ic_stat_atlas`) and the install notice beside it (id 1002, `ic_stat_download`).
+Two notifications from one package are auto-grouped, and the group's status-bar
+entry is drawn from the **app launcher icon** — the full-colour logo with its
+wordmark. The download arrow showed for the moment before grouping settled.
+
+Two different causes, one identical wrong picture. That is why the second one
+read as the first one not having been fixed.
+
+**Fix: the agent posts exactly one notification.** `AgentNotification` owns all
+three states — idle, downloading, installing — on the single id 1001.
+`InstallNotifier` swaps the state on that id instead of adding one, and
+`SyncService` hands over the notification it starts foreground with.
+
+⚠️ **`clear()` re-posts; it does not cancel.** 1001 is the foreground service's
+notification, so cancelling it drops the service out of the foreground and
+Android kills it. The mirror case matters too: when no service holds the id (a
+`SyncWorker`-only download), an `ongoing` notification left behind cannot be
+dismissed by hand, so *that* path must cancel. `SyncService` sets
+`AgentNotification.serviceIsForeground` at both ends of its life and `rest()`
+branches on it.
+
+`DataUsageTracker`'s threshold warning is a third notification, but it fires only
+on a breach, never during a download, so it is left alone.
+
+**Not verified from here.** The grouping behaviour is One UI's, observed on the
+operator's hardware and not reproducible on this machine. Agent **87 / 0.43.2**
+is published (fleet pointer 87); the operator confirms whether the arrow now
+stays put for a whole download.
+
+
 ### ⚠️ W84 — the animated icon became the app icon; now a static arrow
 
 The animation attempt failed exactly where I said it was unverified. On the

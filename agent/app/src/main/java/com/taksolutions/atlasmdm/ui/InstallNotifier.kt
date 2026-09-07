@@ -20,26 +20,23 @@ import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
 import android.os.SystemClock
-import com.taksolutions.atlasmdm.R
-import com.taksolutions.atlasmdm.sync.SyncScheduler
 
 /**
  * What the agent is doing to the device's apps, while it is doing it (W75).
  *
- * ⚠️ **Separate from the ongoing service notice.** That one says the agent is
- * alive; this one says work is happening and will go away when it stops. Folding
- * them together would leave a progress bar on screen permanently at 100%, or a
- * device that looks busy when it is idle.
+ * ⚠️ **It replaces the service's notice rather than adding a second one** (W87).
+ * A second notification from the same app collapses the One UI status bar to one
+ * entry showing the **app's launcher icon** — the full-colour logo with its
+ * wordmark — so the download arrow appeared for an instant and was then replaced.
+ * With one notification there is nothing to collapse.
  *
- * ⚠️ **The download symbol here, the ATLAS mark there.** The operator's point was
- * that a permanent notice showing a download arrow reads as a stuck download.
- * This notification *is* a download, so the arrow is right — and the two being
- * different is what makes them tellable apart in the status bar.
+ * The worry that drove the original split — a progress bar stuck on screen at
+ * 100% forever — is [clear]'s job: it puts the resting notice back.
  */
 object InstallNotifier {
 
-    /** Distinct from the foreground service's, or one would replace the other. */
-    private const val NOTIFICATION_ID = 1002
+    /** The foreground service's own id: this replaces that notification. */
+    private const val NOTIFICATION_ID = AgentNotification.ID
 
     /**
      * ⚠️ Android drops notification updates posted more often than about five a
@@ -63,13 +60,7 @@ object InstallNotifier {
         lastPostedAt = now
         lastPercent = percent
 
-        post(
-            context,
-            title = context.getString(R.string.notify_downloading, label),
-            text = context.getString(R.string.notify_percent, percent),
-            progress = percent,
-            indeterminate = total <= 0,
-        )
+        post(context, AgentNotification.downloading(context, label, percent, total <= 0))
     }
 
     /**
@@ -81,46 +72,18 @@ object InstallNotifier {
      */
     fun installing(context: Context, label: String) {
         lastPercent = -1
-        post(
-            context,
-            title = context.getString(R.string.notify_installing, label),
-            text = null,
-            progress = 0,
-            indeterminate = true,
-        )
+        post(context, AgentNotification.installing(context, label))
     }
 
-    /** Take it away. Safe to call when nothing was ever shown. */
+    /** Back to the resting state — see [AgentNotification.rest]. */
     fun clear(context: Context) {
         lastPercent = -1
         lastPostedAt = 0L
-        runCatching {
-            context.getSystemService(NotificationManager::class.java)?.cancel(NOTIFICATION_ID)
-        }
+        AgentNotification.rest(context)
     }
 
-    private fun post(
-        context: Context,
-        title: String,
-        text: String?,
-        progress: Int,
-        indeterminate: Boolean,
-    ) {
+    private fun post(context: Context, notification: Notification) {
         val notifications = context.getSystemService(NotificationManager::class.java) ?: return
-        val builder = Notification.Builder(context, SyncScheduler.NOTIFICATION_CHANNEL)
-            .setContentTitle(title)
-            // ⚠️ Ours, not `android.R.drawable.stat_sys_download`. That is a
-            // hidden system resource whose artwork differs by OEM, so the icon
-            // an operator sees would be whichever glyph the vendor drew. This
-            // one is an animation-list the status bar drives itself.
-            .setSmallIcon(R.drawable.ic_stat_download)
-            .setProgress(100, progress, indeterminate)
-            // Ongoing while it runs: this is work in progress, not an alert, and
-            // a user swiping it away mid-install would be told nothing when it
-            // finished or failed.
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-        text?.let { builder.setContentText(it) }
-        runCatching { notifications.notify(NOTIFICATION_ID, builder.build()) }
+        runCatching { notifications.notify(NOTIFICATION_ID, notification) }
     }
 }

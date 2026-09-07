@@ -16,7 +16,6 @@
 
 package com.taksolutions.atlasmdm.sync
 
-import android.app.Notification
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -31,9 +30,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import com.taksolutions.atlasmdm.R
 import com.taksolutions.atlasmdm.core.AgentConfig
-import com.taksolutions.atlasmdm.ui.MainActivity
+import com.taksolutions.atlasmdm.ui.AgentNotification
 
 /**
  * Foreground service holding the long-poll doorbell.
@@ -57,9 +55,13 @@ class SyncService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(
             NOTIFICATION_ID,
-            buildNotification(),
+            AgentNotification.idle(this),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
         )
+        // ⚠️ Tells InstallNotifier that resting on this id is safe. Without a
+        // foreground service holding it, an ongoing notification cannot be
+        // dismissed by anyone.
+        AgentNotification.serviceIsForeground = true
         if (loop?.isActive != true) loop = scope.launch { runLoop() }
         // STICKY: on a managed device this should come back after a process kill.
         return START_STICKY
@@ -104,33 +106,18 @@ class SyncService : Service() {
         }
     }
 
-    private fun buildNotification(): Notification {
-        val open = android.app.PendingIntent.getActivity(
-            this, 0,
-            Intent(this, MainActivity::class.java),
-            android.app.PendingIntent.FLAG_IMMUTABLE
-        )
-        return Notification.Builder(this, SyncScheduler.NOTIFICATION_CHANNEL)
-            .setContentTitle(getString(R.string.sync_notification_title))
-            .setContentText(getString(R.string.sync_notification_text))
-            // ⚠️ The ATLAS mark, not a download arrow. This notice is permanent,
-            // and the platform's download glyph on a permanent notification reads
-            // as a transfer that never finishes - which is what the operator saw.
-            // The download symbol now means only what it says: see InstallNotifier.
-            .setSmallIcon(R.drawable.ic_stat_atlas)
-            .setContentIntent(open)
-            .setOngoing(true)
-            .build()
-    }
-
     override fun onDestroy() {
+        AgentNotification.serviceIsForeground = false
         scope.cancel()
         super.onDestroy()
     }
 
     companion object {
         private const val TAG = "SyncService"
-        private const val NOTIFICATION_ID = 1001
+        // ⚠️ The only id the agent posts to. A second notification from this
+        // app collapses the One UI status bar onto the launcher icon, which
+        // is how the download arrow got replaced by the ATLAS wordmark.
+        private val NOTIFICATION_ID = AgentNotification.ID
         private const val WAIT_SECONDS = 120L
         private const val MAX_BACKOFF_SECONDS = 300L
 

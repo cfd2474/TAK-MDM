@@ -1298,6 +1298,28 @@ AOSP's `StatusBarIconView` does start an `AnimationDrawable` it is handed, which
 is how the platform's *own* `stat_sys_download` moves — but that path is not
 reachable for a third-party notification here. Ship a **static** silhouette.
 
+### ❌ Two notifications from one app ⇒ the status bar shows the app icon (W87) ✅ observed
+
+Static artwork did not fix the symptom above. With the download notice as a
+**second** notification beside the agent's ongoing service notice, `SM-X828U`
+showed the download arrow for about a second and then reverted to the app's
+launcher icon — the same wordmark smudge, from a different cause.
+
+Two notifications from one package are auto-grouped, and the group's status-bar
+entry is drawn from the **app icon**, not from either notification's
+`setSmallIcon`. A single notification never groups, so the icon in the bar is
+always the one the app chose.
+
+⚠️ The consequence for a foreground service: its notification id is the only one
+to post to, and finishing background work must **re-post** a resting notification
+over that id rather than cancel it. Cancelling takes the service out of the
+foreground, and Android then kills it. Conversely, when no foreground service
+holds the id, an `ongoing` notification left behind cannot be dismissed by hand —
+so that case has to cancel. See `AgentNotification.rest`.
+
+Both failures are silent, and both produce the *same* wrong picture, which is
+what made the second one look like the first one not being fixed.
+
 ### ✅ A Device Owner *can* turn Wi-Fi on and off (W72) — verified on `SM-X520`
 
 `WifiManager.setWifiEnabled()` has returned false for ordinary apps since
