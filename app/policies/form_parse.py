@@ -216,6 +216,28 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
             if rows:
                 spec[name] = rows
 
+        elif field.control == "data_package_list":
+            # ⚠️ No destination, no persist, no overwrite — a data package has
+            # none of those by design (see DataPackageEntry). The row carries the
+            # managed file and a title, and nothing that could express "put it
+            # back", which is the one instruction that must never reach a device.
+            file_ids = form.getlist(f"{name}__file_id")
+            titles = form.getlist(f"{name}__title")
+            rows: list[dict[str, Any]] = []
+            seen_ids: set[str] = set()
+            for i, file_id in enumerate(file_ids):
+                file_id = (file_id or "").strip()
+                if not file_id or file_id in seen_ids:
+                    continue
+                seen_ids.add(file_id)
+                row: dict[str, Any] = {"file_id": file_id}
+                title = (titles[i] if i < len(titles) else "").strip()
+                if title:
+                    row["title"] = title
+                rows.append(row)
+            if rows:
+                spec[name] = rows
+
         elif field.control == "atak_core_prefs":
             # ⚠️ An empty box means "not managed", exactly as it does for every
             # other text control here — never "set this setting to the empty

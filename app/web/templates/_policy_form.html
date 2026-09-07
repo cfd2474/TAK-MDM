@@ -606,6 +606,66 @@
   </div>
 {% endmacro %}
 
+{% macro _data_package_list(f, items, name, managed_files) %}
+  {#
+    Data packages already on this policy. Uploading and building them is the
+    Content library's job (W91 B2); this picks from what is there.
+
+    ⚠️ There is deliberately no destination, overwrite or persist control here.
+    ATAK watches one directory and consumes what it finds, so the only honest
+    settings are *which* package and *what to call it*.
+  #}
+  <div class="rowset" data-rowset="{{ name }}" data-data-packages>
+    {% for entry in items or [] %}
+      <div class="rs-row">
+        <input type="hidden" name="{{ name }}__file_id" value="{{ entry.file_id }}">
+        <div style="flex:1">
+          <strong>{{ entry.title or (managed_files | selectattr('id', 'equalto', entry.file_id) | map(attribute='name') | first) or entry.file_id }}</strong>
+          <div class="muted" style="font-size:12px">
+            Delivered once per device, then never re-sent.
+          </div>
+        </div>
+        <input name="{{ name }}__title" value="{{ entry.title or '' }}"
+               placeholder="Name shown in the console" style="max-width:260px">
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    {% endfor %}
+    <div class="toolbar" style="margin-top:10px">
+      <select data-package-pick>
+        <option value="">— add a data package —</option>
+        {% for p in managed_files or [] if p.is_data_package %}
+          <option value="{{ p.id }}">{{ p.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% if not (managed_files | selectattr('is_data_package') | list) %}
+      <p class="muted" style="font-size:12px">
+        No data packages in the library yet. Upload or build one on the Content
+        page — ⚠️ only packages validated against ATAK's rules are offered here,
+        so an arbitrary zip cannot be sent as one.
+      </p>
+    {% endif %}
+    <template data-row-template>
+      <div class="rs-row">
+        <input type="hidden" name="{{ name }}__file_id">
+        <div style="flex:1"><strong data-package-label></strong>
+          <div class="muted" style="font-size:12px">
+            Delivered once per device, then never re-sent.
+          </div>
+        </div>
+        <input name="{{ name }}__title" placeholder="Name shown in the console" style="max-width:260px">
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    </template>
+    <p class="muted" style="font-size:12px; margin-top:10px">
+      ⚠️ A data package is delivered <strong>once</strong>. ATAK imports the zip
+      and consumes it, so the file going missing afterwards is expected — the MDM
+      will not put it back, because re-importing the same package repeatedly can
+      take ATAK down.
+    </p>
+  </div>
+{% endmacro %}
+
 {% macro _control(f, spec, name, app_packages, managed_files) %}
   {% set value = spec.get(f.name) %}
   {% if f.requires %}
@@ -648,6 +708,7 @@
   {% elif f.control == 'app_configs' %}{{ _app_configs(f, value, name, app_packages) }}
   {% elif f.control == 'atak_core_prefs' %}{{ _atak_core_prefs(f, value, name) }}
   {% elif f.control == 'plugin_prefs' %}{{ _plugin_prefs(f, value, name, app_packages) }}
+  {% elif f.control == 'data_package_list' %}{{ _data_package_list(f, value, name, managed_files) }}
   {% endif %}
 {% endmacro %}
 

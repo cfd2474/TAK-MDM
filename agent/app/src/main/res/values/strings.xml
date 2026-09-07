@@ -80,6 +80,12 @@
     <string name="app_status_nothing">Nothing uploaded for this app</string>
     <string name="file_tag_automatic">Automatic</string>
     <string name="file_tag_optional">Optional</string>
+    <string name="file_tag_data_package">Data package</string>
+    <!-- Delivered, not "Imported": whether ATAK read the package is not
+         something this app can see. -->
+    <string name="file_state_delivered">Delivered</string>
+    <string name="redownload">Re-download</string>
+    <string name="redownload_note">ATAK imports the package and removes the file. Send it again if you need it re-imported.</string>
 
     <string name="empty_apps">No managed apps.</string>
 

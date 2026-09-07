@@ -144,7 +144,15 @@ CATALOG: tuple[Category, ...] = (
     Category("app_usage", "App usage management", None),
     Category(
         "file_management", "File management", "FILES",
-        blurb="Files placed on the device, required or offered in the marketplace.",
+        stub_pages=(
+            StubPage(
+                "atak-dted", "ATAK DTED",
+                "Terrain elevation data for ATAK. Being built next; until then, "
+                "DTED archives can be pushed through General Files with "
+                "extraction turned on.",
+            ),
+        ),
+        blurb="Files placed on the device, ATAK data packages, and terrain data.",
     ),
     Category(
         "tracking_fencing", "Tracking and fencing", None,

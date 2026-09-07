@@ -21,6 +21,73 @@
   </p>
 </div>
 
+<div class="panel">
+  <h2>ATAK data packages</h2>
+  <p class="sub" style="margin-bottom:14px">
+    A data package is a zip carrying <code>MANIFEST/manifest.xml</code>. ATAK
+    imports it and files the contents itself, so nothing here needs a destination.
+    ⚠️ Delivered to a device <strong>once</strong> and never re-sent — ATAK
+    consumes the file, and importing the same package repeatedly can take the app
+    down.
+  </p>
+
+  <div class="row">
+    <div>
+      <label>Upload a package you already have</label>
+      <form method="post" action="/content/data-package/upload"
+            enctype="multipart/form-data" class="toolbar">
+        {{ csrf_field(csrf_token) }}
+        <input type="file" name="file" accept=".zip,application/zip" required>
+        <input type="text" name="name" placeholder="Name (defaults to the manifest's)">
+        <button type="submit">Upload package</button>
+      </form>
+      <p class="muted" style="font-size:12px">
+        Checked against ATAK's own rules before it is catalogued. A zip without a
+        valid manifest is refused here, where you can see why.
+      </p>
+    </div>
+    <div>
+      <label>Or build one from loose files</label>
+      <div class="toolbar">
+        <button type="button" data-package-create-open>Create Data Package</button>
+      </div>
+      <p class="muted" style="font-size:12px">
+        Name it, add the files, and ATLAS writes the manifest.
+      </p>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="package-create" hidden>
+  <div class="modal">
+    <h3>Create data package</h3>
+    <form method="post" action="/content/data-package/create" enctype="multipart/form-data">
+      {{ csrf_field(csrf_token) }}
+      <label for="pkg-name">Package name</label>
+      <input id="pkg-name" name="name" class="field-full" required
+             placeholder="Ops overlay — north">
+      <label for="pkg-desc">Description (optional)</label>
+      <input id="pkg-desc" name="description" class="field-full">
+
+      <label>Files</label>
+      <div data-package-files>
+        <div class="rs-row"><input type="file" name="files" required></div>
+      </div>
+      <button type="button" class="ghost" data-package-add-file>Add another file</button>
+      <p class="muted" style="font-size:12px; margin-top:10px">
+        Every file is listed in the manifest ATLAS writes. ⚠️ Names must be
+        unique, and nothing can be placed inside <code>MANIFEST/</code> — the
+        package is rejected rather than silently renamed.
+      </p>
+
+      <div class="toolbar" style="margin-top:16px; justify-content:flex-end">
+        <button type="button" class="ghost" data-modal-close>Cancel</button>
+        <button type="submit">Create package</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 {% if not rows %}
   <div class="panel">{{ empty_state('No files uploaded yet.') }}</div>
 {% endif %}
@@ -30,9 +97,18 @@
 <div class="panel">
   <div class="toolbar">
     <strong>{{ f.name }}</strong>
+    {% if f.is_data_package %}<span class="pill accent">data package</span>{% endif %}
+
     {% if f.is_archive %}<span class="pill accent">archive</span>{% endif %}
     <span class="muted">{{ f.original_filename }} · {{ row.size_bytes | filesizeformat }} · {{ f.media_type }}</span>
     <span class="spacer"></span>
+    {% set mf = manifests.get(f.id | string) if manifests else none %}
+    {% if f.is_data_package and mf %}
+      <span class="muted" style="font-size:12px">
+        · {{ mf.content_count }} file{{ '' if mf.content_count == 1 else 's' }}
+        · manifest name “{{ mf.name }}”
+      </span>
+    {% endif %}
     <form method="post" action="/content/{{ f.id }}/delete" style="margin:0"
           data-confirm="Delete {{ f.name }}?">
       {{ csrf_field(csrf_token) }}
@@ -40,6 +116,18 @@
     </form>
   </div>
   {% if f.description %}<p class="sub">{{ f.description }}</p>{% endif %}
+  {% set mf = manifests.get(f.id | string) if manifests else none %}
+  {% if mf and mf.missing %}
+    {#
+      ATAK tolerates this — it imports what is there — so it is a warning, not a
+      refusal. The operator still wants telling: a package that silently carries
+      less than its manifest claims is one nobody notices is short.
+    #}
+    <div class="banner warn" style="margin-top:10px">
+      The manifest names {{ mf.missing | length }} file(s) this zip does not
+      contain: {{ mf.missing | join(', ') }}. ATAK will import what is present.
+    </div>
+  {% endif %}
 
   <h3>Deployed by</h3>
   {% if not row.references %}

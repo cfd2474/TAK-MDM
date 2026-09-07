@@ -39,6 +39,7 @@ import com.taksolutions.atlasmdm.R
 import com.taksolutions.atlasmdm.admin.MdmDeviceAdminReceiver
 import com.taksolutions.atlasmdm.admin.PolicyComplianceActivity
 import com.taksolutions.atlasmdm.core.AgentConfig
+import com.taksolutions.atlasmdm.diag.AgentLog
 import com.taksolutions.atlasmdm.files.FileDeployer
 import com.taksolutions.atlasmdm.install.AppInstaller
 import com.taksolutions.atlasmdm.net.ApiClient
@@ -656,6 +657,19 @@ class MainActivity : AppCompatActivity() {
         val size = entry.optLong("size_bytes", 0)
         val placed = deployer.isDeployed(entry, size)
         val selected = entry.optString("file_id") in config.selectedOptionalFiles
+        val dataPackage = entry.optBoolean("data_package", false)
+        // ⚠️ The record, not the disk. A data package is *supposed* to vanish —
+        // ATAK consumes the zip — so asking the filesystem would show Pending
+        // forever on a package that was delivered perfectly (W91).
+        val deliveredOnce =
+            config.appliedFileHash(deployer.stateKey(entry)) == entry.optString("sha256")
+        val state = FileCardPlan.stateFor(
+            dataPackage = dataPackage,
+            optional = optional,
+            selected = selected,
+            deliveredOnce = deliveredOnce,
+            onDisk = placed,
+        )
 
         val card = ConsoleViews.card(this)
         ConsoleViews.body(card).apply {
@@ -671,7 +685,13 @@ class MainActivity : AppCompatActivity() {
             })
             head.addView(ConsoleViews.pill(
                 this@MainActivity,
-                getString(if (optional) R.string.file_tag_optional else R.string.file_tag_automatic),
+                getString(
+                    when {
+                        dataPackage -> R.string.file_tag_data_package
+                        optional -> R.string.file_tag_optional
+                        else -> R.string.file_tag_automatic
+                    }
+                ),
                 if (optional) Tone.NEUTRAL else Tone.OK,
             ))
             addView(head)
@@ -706,15 +726,51 @@ class MainActivity : AppCompatActivity() {
             } else {
                 addView(ConsoleViews.pill(
                     this@MainActivity,
-                    if (placed) getString(R.string.installed) else "Pending",
-                    if (placed) Tone.OK else Tone.WARN,
+                    when (state) {
+                        FileCardPlan.State.DELIVERED -> getString(R.string.file_state_delivered)
+                        FileCardPlan.State.INSTALLED -> getString(R.string.installed)
+                        else -> "Pending"
+                    },
+                    if (state == FileCardPlan.State.PENDING) Tone.WARN else Tone.OK,
                 ).apply {
                     (layoutParams as LinearLayout.LayoutParams).topMargin =
                         ConsoleViews.dp(this@MainActivity, 8)
                 })
+
+                if (FileCardPlan.offersRedownload(dataPackage, deliveredOnce)) {
+                    addView(TextView(this@MainActivity).apply {
+                        text = getString(R.string.redownload_note)
+                        setTextAppearance(R.style.TextAppearance_Atlas_Value)
+                        textSize = 12f
+                        setTextColor(getColor(R.color.atlas_text_muted))
+                        setPadding(0, ConsoleViews.dp(this@MainActivity, 6), 0, 0)
+                    })
+                    addView(MaterialButton(this@MainActivity).apply {
+                        text = getString(R.string.redownload)
+                        layoutParams = LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                        ).apply { topMargin = ConsoleViews.dp(this@MainActivity, 8) }
+                        setOnClickListener { redownloadPackage(entry) }
+                    })
+                }
             }
         }
         return card
+    }
+
+    /**
+     * Send a data package again, on the user's say-so (W91).
+     *
+     * ⚠️ **Forgetting the record is the whole mechanism.** `persist: false` means
+     * the reconciler skips a package whose applied-content hash it already has,
+     * gone from disk or not — so dropping that record is exactly and only what
+     * makes the next sync place it again. The same primitive the marketplace
+     * uses when a user unticks an offer, which hardware already proved re-pushes.
+     */
+    private fun redownloadPackage(entry: JSONObject) {
+        config.forgetAppliedFile(FileDeployer.stateKeyFor(entry))
+        AgentLog.i(TAG, "re-download requested for ${entry.optString("file_id")}")
+        syncNow()
     }
 
     /** F4: the admin curates what is available; the user picks. Applied at once. */
@@ -952,6 +1008,8 @@ class MainActivity : AppCompatActivity() {
         if (isNull(key)) null else optString(key).takeIf { it.isNotBlank() }
 
     private companion object {
+        private const val TAG = "MainActivity"
+
         /**
          * Marks a merged entry as a store offer rather than a required app (W56).
          *

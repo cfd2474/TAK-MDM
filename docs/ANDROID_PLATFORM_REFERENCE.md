@@ -1677,6 +1677,98 @@ of scanning. Say so rather than presenting the list as complete.
 
 ---
 
+## 11. ATAK data packages ("mission packages")
+
+⚠️ **An *app* contract again**, here for the same reason as §10: it fails
+quietly, and the failure looks like a broken MDM rather than a rejected file.
+
+Read out of `atak-civ` `com/atakmap/android/missionpackage/`, 2026-09-07.
+
+### 11a. What makes a zip a data package
+
+`MissionPackageBuilder.MANIFEST_PATH = "MANIFEST"`, so the document is
+`MANIFEST/manifest.xml`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<MissionPackageManifest version="2">
+  <Configuration>
+    <Parameter name="uid" value="…"/>
+    <Parameter name="name" value="…"/>
+  </Configuration>
+  <Contents>
+    <Content ignore="false" zipEntry="overlay.kml"/>
+  </Contents>
+</MissionPackageManifest>
+```
+
+| Rule | Where it is enforced |
+|---|---|
+| `version="2"` | `@Attribute(name="version", required=true) private int VERSION = 2` |
+| `<Configuration>` and `<Contents>` both present | both `@Element(required = true)` |
+| Configuration holds **more than one** `<Parameter>`, **and** `name`, **and** `uid` | `MissionPackageConfiguration.isValid()` |
+| Each `<Content>` carries `zipEntry` | `@Attribute(name="zipEntry", required=true)` |
+| `<Contents>` **may be empty** | `MissionPackageContents.isValid()` returns `true` unconditionally |
+
+### 11b. ⚠️ The manifest is found by suffix, at any depth
+
+`MissionPackageExtractorFactory.HasManifest` scans entries for
+`entry.getName().endsWith("MANIFEST/manifest.xml")` and stops at the **first**
+match. So `mydata/MANIFEST/manifest.xml` is a valid package, and **everything the
+manifest names is relative to the MANIFEST directory's parent** — `mydata/`, not
+the zip root.
+
+That nested shape is what a Windows right-click *"compress folder"* produces, and
+`MissionPackageManifest` documents it explicitly. A validator that only looks at
+the zip root rejects a large share of the packages that actually exist.
+
+### 11c. ⚠️ ATAK accepts a zip with no manifest
+
+`GetExtractor` returns `PlainZipExtractor` when `HasManifest` is false, so a
+plain zip is still unpacked — with none of the manifest's placement or
+`onReceiveImport` semantics. **ATLAS refuses those anyway**, by operator
+decision, because where their contents land is unpredictable. Any rejection
+message must say ATAK *would* have taken it, or the operator goes looking for a
+fault in their file.
+
+### 11d. ⚠️ `incoming/` is not the drop folder
+
+| Directory | What `MissionPackageFileIO` does |
+|---|---|
+| `atak/tools/datapackage/` | **Watched.** *"watch missionPackageDir, auto-import any .zips found there (e.g. received or **manually placed**), no HTTP serving, **no auto-cleanup**"* |
+| `atak/tools/datapackage/incoming/` | **`// no watch`**, and registered with `DirectoryCleanup` — **anything older than 2 hours is deleted** |
+
+Every use of `incoming` in the tree is a landing area for **network** transfers:
+`MissionPackageReceiver` writes a `UUID.randomUUID()` temp file there and the
+downloader processes it explicitly. **Nothing scans it for manually placed
+files**, so a package pushed there is likely to be swept two hours later having
+never been imported — with no error anywhere.
+
+✅ **ATLAS writes to `atak/tools/datapackage/`.** Settled with the operator
+2026-09-07 after this was raised; their hardware experience and the source agreed
+once compared.
+
+### 11e. ⚠️ Deliver it once, and never again
+
+The watcher imports whatever appears. A package the MDM keeps re-writing is a
+package ATAK keeps re-importing — which, on the operator's own account, can take
+the app down.
+
+**Absence is the expected end state**, not a fault to correct.
+
+✅ **ATLAS already has exactly this rule: `persist: false`.** `Reconciler.applyFile`
+consults the presence check `FileDeployer.isDeployed` **only when `persist` is
+true**; with it false, a matching applied-content hash ends the matter and the
+file is never re-pushed, gone or not. Proven on `SM-X520` 2026-09-01 by deleting
+two files at once and watching one reconcile pass leave one alone and replace the
+other, decided purely by the flag.
+
+⚠️ **An earlier draft of this section claimed a new mechanism was needed.** That
+came from reading `isDeployed`'s docstring without opening its caller — the exact
+failure this file exists to prevent. Recorded rather than quietly deleted.
+
+---
+
 ## Sources
 
 * [Provision for device management — AOSP](https://source.android.com/docs/devices/admin/provision)
@@ -1690,6 +1782,7 @@ of scanning. Say so rather than presenting the list as complete.
 * [Android minimum targetSdk matrix — Jason Bayton](https://bayton.org/android/android-minimum-targetsdk-matrix/)
 * [Advanced Protection Mode](https://developer.android.com/privacy-and-security/advanced-protection-mode)
 * [`PreferenceControl.java` — ATAK-CIV](https://github.com/TAK-Product-Center/atak-civ/blob/main/atak/ATAK/app/src/main/java/com/atakmap/app/preferences/PreferenceControl.java) — the `.pref` format, the enterprise-configuration keys, and the unguarded number parsing behind §10
+* [`MissionPackageBuilder` / `MissionPackageManifest` / `MissionPackageExtractorFactory` / `MissionPackageFileIO` — ATAK-CIV](https://github.com/TAK-Product-Center/atak-civ/tree/main/atak/ATAK/app/src/main/java/com/atakmap/android/missionpackage) — the data-package format, the manifest lookup, and the watched vs. `incoming` directories behind §11
 * [RestrictionsManager.getApplicationRestrictions](https://developer.android.com/reference/android/content/RestrictionsManager#getApplicationRestrictions()) and [ACTION_APPLICATION_RESTRICTIONS_CHANGED](https://developer.android.com/reference/android/content/Intent#ACTION_APPLICATION_RESTRICTIONS_CHANGED) — the channel §10 travels in
 * [Knox SDK deprecation policy](https://docs.samsungknox.com/dev/knox-sdk/faq/general/)
 * [Log info disclosure](https://developer.android.com/privacy-and-security/risks/log-info-disclosure) — `READ_LOGS` restriction, and the "manage your own logs" recommendation

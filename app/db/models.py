@@ -872,6 +872,18 @@ class ManagedFile(Base):
     # Detected at upload, so the policy layer can refuse to mark a non-archive for
     # extraction instead of failing on the device.
     is_archive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # A zip carrying MANIFEST/manifest.xml that satisfies ATAK's own validity
+    # rules (W91, Android reference §11). Detected at upload for the same reason
+    # `is_archive` is: the policy picker can then offer packages rather than
+    # arbitrary zips, and a file ATAK would ignore is refused where the operator
+    # is standing rather than on a tablet.
+    #
+    # ⚠️ Not every archive is a data package and not every data package is only
+    # an archive, so this is its own column rather than a refinement of
+    # `is_archive`.
+    is_data_package: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=sa_text("false")
+    )
     artifact_sha256: Mapped[str] = mapped_column(
         String(64), ForeignKey("artifact.sha256", ondelete="RESTRICT"), index=True
     )

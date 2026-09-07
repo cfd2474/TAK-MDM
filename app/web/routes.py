@@ -101,8 +101,12 @@ from app.policies import form_parse, form_schema
 from app.policies.registry import PolicyTypeError, registry
 from app.services import agent_update as agent_update_service
 from app.services import device_health
+from starlette.datastructures import UploadFile as StarletteUploadFile
+
+from app.artifacts import mission_package
 from app.services import atak_compat
 from app.services import atak_config
+from app.services import data_packages as data_package_service
 from app.services import import_jobs
 from app.services import tak_gov
 from app.services import tak_gov_link
@@ -2077,13 +2081,23 @@ def content_raw(
 def content_page(
     request: Request,
     session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
     identity: AdminIdentity = Depends(admin_required),
 ) -> HTMLResponse:
+    rows = content_admin.content_rows(session)
     return _render(
         request,
         "content.html",
         identity=identity,
-        rows=content_admin.content_rows(session),
+        rows=rows,
+        # What each package declares, so the page can show a package as a package
+        # rather than as a zip of unknown provenance. Read through a cache keyed
+        # on the artifact hash; an unreadable one is simply absent.
+        manifests={
+            str(row.file.id): data_package_service.manifest_of(storage, row.file)
+            for row in rows
+            if row.file.is_data_package
+        },
     )
 
 
@@ -2116,6 +2130,97 @@ def upload_content_form(
     except file_service.FileError as exc:
         return _redirect(f"/content?error={_quote(str(exc))}")
     return _redirect("/content")
+
+
+@router.post("/content/data-package/upload")
+def upload_data_package_form(
+    name: str = Form(default=""),
+    description: str = Form(default=""),
+    file: UploadFile = File(...),
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+    settings: Settings = Depends(get_settings),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Take an already-built ATAK data package, checked before it is catalogued (W91).
+
+    ⚠️ **Validated here rather than at delivery.** A zip ATAK will not import
+    fails on a tablet as nothing happening at all — no error, no import, no
+    trace. The operator is standing in front of this form, so this is the only
+    place the refusal can actually reach them.
+    """
+    data = file.file.read()
+    if not data:
+        return _redirect("/content?error=the+uploaded+file+is+empty")
+    if len(data) > settings.max_upload_bytes:
+        return _redirect(
+            f"/content?error={_quote(f'upload exceeds {settings.max_upload_bytes} bytes')}"
+        )
+    try:
+        package = data_package_service.ingest_upload(
+            session,
+            storage,
+            data,
+            name=name,
+            original_filename=file.filename or "package.zip",
+            description=description or None,
+        )
+        session.commit()
+    except mission_package.DataPackageError as exc:
+        return _redirect(f"/content?error={_quote(str(exc))}")
+    except file_service.FileError as exc:
+        return _redirect(f"/content?error={_quote(str(exc))}")
+    return _redirect(f"/content?created={_quote(package.name)}")
+
+
+@router.post("/content/data-package/create")
+async def create_data_package_form(
+    request: Request,
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+    settings: Settings = Depends(get_settings),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Build a data package out of loose files (W91).
+
+    Read from the raw form rather than typed parameters because the file field is
+    repeated, and the count is the operator's choice.
+    """
+    form = await request.form()
+    name = str(form.get("name") or "").strip()
+    description = str(form.get("description") or "").strip()
+
+    # ⚠️ `starlette`'s UploadFile, not FastAPI's. FastAPI's is a *subclass*, and
+    # `request.form()` yields the base class — so an isinstance check against the
+    # subclass silently matches nothing and the package looks empty. It fails as
+    # "a data package needs at least one file" while the operator is looking at
+    # the files they just attached.
+    uploads = [u for u in form.getlist("files") if isinstance(u, StarletteUploadFile)]
+    payloads: list[tuple[str, bytes]] = []
+    total = 0
+    for upload in uploads:
+        content = await upload.read()
+        if not content:
+            # A file input left empty submits as a zero-byte part; it is not an
+            # error, it is a row the operator did not fill in.
+            continue
+        total += len(content)
+        if total > settings.max_upload_bytes:
+            return _redirect(
+                f"/content?error={_quote(f'the package exceeds {settings.max_upload_bytes} bytes')}"
+            )
+        payloads.append((upload.filename or "file", content))
+
+    try:
+        package = data_package_service.create(
+            session, storage, name=name, files=payloads, description=description or None
+        )
+        session.commit()
+    except mission_package.DataPackageError as exc:
+        return _redirect(f"/content?error={_quote(str(exc))}")
+    except file_service.FileError as exc:
+        return _redirect(f"/content?error={_quote(str(exc))}")
+    return _redirect(f"/content?created={_quote(package.name)}")
 
 
 @router.post("/content/{file_id}/edit")

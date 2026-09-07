@@ -147,6 +147,29 @@ class FileEntry(BaseModel):
         return self
 
 
+class DataPackageEntry(BaseModel):
+    """One ATAK data package, delivered to the device exactly once.
+
+    ⚠️ **Deliberately none of `FileEntry`'s controls.** A data package has no
+    destination to choose — ATAK watches one directory — and no `persist`,
+    `overwrite` or `availability`, because every one of those would express
+    "put it back if it goes away", which is the single thing that must never
+    happen here.
+
+    ATAK's watcher imports whatever appears in its directory and, on the
+    operator's own account, re-importing the same package repeatedly can take
+    the app down. Absence is therefore the **expected** end state after a
+    successful import, not a fault to correct. See W91.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    file_id: uuid.UUID
+    #: Shown in the console. Falls back to the managed file's own name, and to
+    #: the manifest's `name` parameter before that.
+    title: str | None = Field(default=None, max_length=255)
+
+
 class FilesSpec(PolicySpec):
     entries: Annotated[
         list[FileEntry] | None,
@@ -160,5 +183,27 @@ class FilesSpec(PolicySpec):
         default=None,
         title="Files",
         description="Files placed on the device. Pick from uploaded content.",
-        json_schema_extra={"ui_group": "Files", "ui_control": "file_list"},
+        json_schema_extra={"ui_group": "General Files", "ui_control": "file_list"},
+    )
+
+    data_packages: Annotated[
+        list[DataPackageEntry] | None,
+        Merge(
+            MergeStrategy.MERGE_BY_KEY,
+            key="file_id",
+            note="Stacked policies union by package. A package already delivered "
+            "to a device is not delivered again, whichever policy names it.",
+        ),
+    ] = Field(
+        default=None,
+        title="ATAK data packages",
+        description=(
+            "Zips ATAK imports and unpacks itself. Delivered once per device and "
+            "never re-sent — ATAK consumes the file, and pushing it again makes "
+            "ATAK import it again."
+        ),
+        json_schema_extra={
+            "ui_group": "ATAK Data Packages",
+            "ui_control": "data_package_list",
+        },
     )

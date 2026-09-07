@@ -1772,3 +1772,62 @@
     });
   })();
 })();
+
+/* --- Data packages (W91) ----------------------------------------------------
+   Two small behaviours: the Create Data Package modal grows a file row on
+   demand, and the policy editor's picker turns a chosen package into a row.
+
+   ⚠️ The picker deliberately offers only packages the server validated at
+   upload. An arbitrary zip would be unpacked by ATAK as a plain archive with
+   none of the manifest's placement rules, and nothing in the console would say
+   that had happened. */
+
+(function () {
+  var open = document.querySelector("[data-package-create-open]");
+  var frame = document.getElementById("package-create");
+  if (open && frame) {
+    open.addEventListener("click", function () { frame.hidden = false; });
+
+    var add = frame.querySelector("[data-package-add-file]");
+    var list = frame.querySelector("[data-package-files]");
+    if (add && list) {
+      add.addEventListener("click", function () {
+        var row = document.createElement("div");
+        row.className = "rs-row";
+        // Not `required`: only the first row must be filled, and an empty extra
+        // row is a row the operator added and changed their mind about. The
+        // server drops zero-byte parts for the same reason.
+        row.innerHTML =
+          '<input type="file" name="files">' +
+          '<button type="button" class="ghost" data-remove-row>Remove</button>';
+        list.appendChild(row);
+      });
+    }
+  }
+
+  var set = document.querySelector("[data-data-packages]");
+  if (!set) return;
+  var pick = set.querySelector("[data-package-pick]");
+  var template = set.querySelector("[data-row-template]");
+  if (!pick || !template) return;
+
+  pick.addEventListener("change", function () {
+    var id = pick.value;
+    if (!id) return;
+    var label = pick.options[pick.selectedIndex].textContent.trim();
+
+    // Already on the policy? Adding it twice would be two rows the merge then
+    // has to reconcile against one file, and the spec keys on file_id anyway.
+    var existing = set.querySelectorAll('input[name="data_packages__file_id"]');
+    for (var i = 0; i < existing.length; i++) {
+      if (existing[i].value === id) { pick.value = ""; return; }
+    }
+
+    var row = template.content.firstElementChild.cloneNode(true);
+    row.querySelector('[name="data_packages__file_id"]').value = id;
+    var name = row.querySelector("[data-package-label]");
+    if (name) name.textContent = label;
+    pick.parentNode.insertAdjacentElement("beforebegin", row);
+    pick.value = "";
+  });
+})();

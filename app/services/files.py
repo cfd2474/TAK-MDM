@@ -113,6 +113,15 @@ def delete_file(session: Session, storage: ArtifactStorage, managed: ManagedFile
     session.flush()
 
 
+#: Where ATAK watches for data packages to import (W91).
+#:
+#: ⚠️ **The watched directory, not `incoming/`.** `MissionPackageFileIO` marks
+#: `incoming` `// no watch` and registers it with `DirectoryCleanup`, which
+#: deletes anything older than two hours — so a package left there is swept
+#: having never been imported. See the Android reference §11d.
+DATA_PACKAGE_DEST = "/sdcard/atak/tools/datapackage"
+
+
 def resolve_files(session: Session, values: Mapping[str, Any]) -> dict[str, Any]:
     """Turn ``FILES.entries`` into concrete, downloadable instructions.
 
@@ -121,9 +130,32 @@ def resolve_files(session: Session, values: Mapping[str, Any]) -> dict[str, Any]
     them here keeps that distinction out of the agent's parsing logic.
     """
     spec = values.get("FILES") or {}
-    entries = spec.get("entries") or []
-    if not entries:
+    entries = list(spec.get("entries") or [])
+    packages = list(spec.get("data_packages") or [])
+    if not entries and not packages:
         return {"required": [], "available": []}
+
+    # ⚠️ A data package is an ordinary file entry with the settings that make it
+    # one, decided here rather than offered to the operator (W91). The device
+    # needs no new contract: `persist: false` already means "placed once,
+    # remembered by content hash, never re-pushed even when gone", which is
+    # exactly right for a zip ATAK consumes — hardware-proven 2026-09-01.
+    #
+    # `data_package` rides along so the agent can render the card honestly; the
+    # delivery decision is `persist`, and nothing reads this flag to make it.
+    entries = entries + [
+        {
+            "file_id": package.get("file_id"),
+            "title": package.get("title"),
+            "dest_path": DATA_PACKAGE_DEST,
+            "persist": False,
+            "overwrite": "always",
+            "extract": False,
+            "availability": "required",
+            "data_package": True,
+        }
+        for package in packages
+    ]
 
     file_ids = []
     for entry in entries:
@@ -152,7 +184,11 @@ def resolve_files(session: Session, values: Mapping[str, Any]) -> dict[str, Any]
         if managed is None:
             # Referenced but deleted from the catalog. Reported rather than dropped,
             # so a broken policy is visible instead of silently doing nothing.
-            required.append({"file_id": str(file_id), "available": False})
+            required.append({
+                "file_id": str(file_id),
+                "available": False,
+                "data_package": bool(entry.get("data_package")),
+            })
             continue
 
         resolved = {
@@ -179,6 +215,7 @@ def resolve_files(session: Session, values: Mapping[str, Any]) -> dict[str, Any]
                 if entry.get("persist") is not None
                 else entry.get("availability", "required") != "optional"
             ),
+            "data_package": bool(entry.get("data_package")),
             "sha256": managed.artifact_sha256,
             "size_bytes": managed.artifact.size_bytes if managed.artifact else None,
             "url": f"/api/v1/device/artifacts/{managed.artifact_sha256}",

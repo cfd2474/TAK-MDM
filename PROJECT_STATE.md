@@ -48,7 +48,7 @@ PASSWORD policy, hardware-proven; W21 unified every policy into the composite
 kind with a values-in-fields editor; W22 added quick archive from the list with
 an impact modal; W23 hardened live push and added a "Check in now" button; W24
 made the DPC show policy names and added console inline rename.**
-957 server tests + 52 agent tests.
+1012 server tests + 206 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -404,6 +404,290 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ---
 
 ## Chunk plan
+
+### 🚧 W91 — File management: General Files, ATAK Data Packages, ATAK DTED
+
+Operator, 2026-09-07: split the File management category into sub-topics. The
+current file setup becomes **General Files**; **ATAK Data Packages** and **ATAK
+DTED** are new. DTED is explicitly deferred until data packages are done, so it
+ships as a D94 stub sub-page — the mechanism ATAK Config already uses for
+*Plugin behavior*.
+
+#### Ground truth from the ATAK source, before any code
+
+Read out of `atak-civ` (`com/atakmap/android/missionpackage/`), not recalled.
+
+**A data package is a zip containing `MANIFEST/manifest.xml`**
+(`MissionPackageBuilder.MANIFEST_PATH = "MANIFEST"`). The document is:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<MissionPackageManifest version="2">
+  <Configuration>
+    <Parameter name="uid" value="…"/>
+    <Parameter name="name" value="…"/>
+  </Configuration>
+  <Contents>
+    <Content ignore="false" zipEntry="path/inside/the/zip.kml"/>
+  </Contents>
+</MissionPackageManifest>
+```
+
+**What ATAK actually requires**, from the `isValid()` chain:
+
+| Rule | Source |
+|---|---|
+| `version` attribute, `2` | `@Attribute(name="version", required=true) private int VERSION = 2` |
+| `<Configuration>` and `<Contents>` both present | both `@Element(required = true)` |
+| Configuration has **more than one** parameter, **and** `name`, **and** `uid` | `MissionPackageConfiguration.isValid()` |
+| Every `<Content>` carries `zipEntry` | `@Attribute(name="zipEntry", required=true)`; `isValid()` is `!isEmpty(_manifestUid)` |
+| The manifest is found by **`entry.getName().endsWith("MANIFEST/manifest.xml")`** | `MissionPackageExtractorFactory.HasManifest` — which is exactly why nesting works |
+| `<Contents>` may be **empty** | `MissionPackageContents.isValid()` returns `true` unconditionally |
+
+⚠️ **Content paths are relative to the MANIFEST directory, not the zip root.**
+`<zip>/MANIFEST/manifest.xml` requires `<zip>/test.kml`, but
+`<zip>/mydata/MANIFEST/manifest.xml` requires `<zip>/mydata/test.kml` — ATAK
+supports the nested form because that is what a Windows right-click "compress
+folder" produces. A validator that only looks at the zip root will reject
+perfectly good packages.
+
+#### ⚠️ The destination in the request does not match the source
+
+The request says push to `tools/datapackage/incoming`. The source says that is
+the wrong directory, and says so twice:
+
+| Directory | What `MissionPackageFileIO` does with it |
+|---|---|
+| `atak/tools/datapackage/` | **Watched.** Comment: *"watch missionPackageDir, auto-import any .zips found there (e.g. received or **manually placed**), no HTTP serving, **no auto-cleanup**"* |
+| `atak/tools/datapackage/incoming/` | **`// no watch`**, and registered with `DirectoryCleanup`, which **deletes anything older than 2 hours** |
+
+Every use of `incoming` in the tree is a landing area for **network** transfers —
+`MissionPackageReceiver` writes a `UUID.randomUUID()` temp file there and the
+downloader processes it explicitly afterwards. Nothing scans it for manually
+placed files.
+
+So a package pushed to `incoming` is likely to be **silently deleted two hours
+later having never been imported** — the "fails green" shape this project keeps
+running into. The watched parent directory is what the source says to use for a
+manually placed zip.
+
+✅ **Settled with the operator, 2026-09-07: `atak/tools/datapackage/`** — the
+watched directory the source points to. Asked rather than guessed, because the
+operator has hardware experience here and their ATAK build could have differed
+from the source; it did not.
+
+⚠️ **The operator's core instruction stands regardless, and matters more in the
+watched directory**: the watcher imports whatever appears, so a package the MDM
+keeps re-writing is a package ATAK keeps re-importing.
+
+⚠️ **ATAK itself accepts a zip with no manifest** — `GetExtractor` falls back to
+`PlainZipExtractor`. Rejecting those is a deliberate **MDM-side** rule the
+operator asked for, not ATAK's: a plain zip is extracted with none of the
+manifest's placement or `onReceiveImport` semantics, so what lands where is far
+less predictable. Worth saying out loud in the rejection message so nobody
+concludes ATAK cannot read their file.
+
+#### ✅ Deliver-once is `persist: false`, and it is already hardware-proven
+
+⚠️ **Corrected 2026-09-07. The earlier claim here — that data packages needed a
+new agent mechanism — was wrong**, and it was wrong in the way this project's own
+documentation warns about: `FileDeployer.isDeployed` was read, its
+presence-based docstring taken at face value, and the **caller never opened**.
+
+`Reconciler.applyFile` consults `isDeployed` **only when `persist` is true**:
+
+```kotlin
+if (config.appliedFileHash(key) == sha) {
+    val persist = entry.optBoolean("persist", true)
+    if (!persist) { …; return emptyList() }        // never re-pushed, absent or not
+    if (deployer.isDeployed(entry, size)) { …; return emptyList() }
+    // persisted but missing → replace
+}
+```
+
+So `persist: false` already means **placed once, remembered by content hash, and
+never re-pushed even when the file is gone** — exactly what a data package needs,
+because ATAK consumes the zip and absence is the *expected* end state.
+
+**Proven on `SM-X520`, 2026-09-01**, by a differential test where two files were
+deleted in the same breath and one reconcile pass produced opposite outcomes
+decided purely by the flag:
+
+```
+4de83813 already placed at /sdcard/atak/DTED; not persisted, leaving it
+39c93edb is persisted but missing or incomplete at /sdcard/atak/imagery; replacing
+```
+
+⚠️ **And the re-download primitive already exists too.** The marketplace's untick
+calls `config.forgetAppliedFile(FileDeployer.stateKeyFor(entry))` so the user can
+take a file again — hardware-proven in the same run ("delete it, tick again →
+re-pushed, so the record was forgotten rather than the file abandoned").
+
+**What actually remains for B3 is therefore much smaller**: resolve
+`data_packages` into FILES entries server-side (fixed destination,
+`persist: false`) the way ATAK Config resolves into `app_configs` (D92), and add
+the device-side affordance below.
+
+##### ✅ Chunk B1 complete (2026-09-07) — the manifest contract and the sub-topics
+
+**983 server tests pass** (26 new, in `tests/test_mission_package.py`); no
+existing test changed behaviour.
+
+1. ✅ `app/artifacts/mission_package.py` — `inspect()` applies ATAK's own
+   `isValid` chain and refuses with a reason worth showing an operator.
+2. ✅ `build()` — name + files → a conforming package. A package it builds
+   round-trips through its own validator, which is the property that makes
+   *Create Data Package* and *upload* the same thing to a device.
+3. ✅ File management now splits **General Files** / **ATAK Data Packages**;
+   `form_parse` and a list control follow.
+4. ✅ **ATAK DTED** is a D94 stub sub-page, the same mechanism *Plugin behavior*
+   uses in ATAK Config.
+5. ✅ Tests written against ATAK's requirements rather than this module's
+   conveniences — including the nested-MANIFEST layout, the empty-Contents case
+   ATAK allows, and the traversal and MANIFEST-shadowing refusals.
+6. ✅ Recorded as **§11** of `docs/ANDROID_PLATFORM_REFERENCE.md`, with sources.
+
+⚠️ **`DataPackageEntry` deliberately has none of `FileEntry`'s controls** — no
+`dest_path`, `persist`, `overwrite` or `availability`. ATAK watches one
+directory, so there is no destination to choose; and every one of the others
+expresses some form of *"put it back if it goes away"*, which is the single
+instruction that must never reach a device here. The spec refuses them rather
+than ignoring them.
+
+⚠️ **Refusing a manifest-less zip is ATLAS's rule, not ATAK's** (§11c), so the
+rejection says ATAK would have taken it. Otherwise the operator goes hunting for
+a fault in a file that does not have one.
+
+##### ✅ Chunk B2 complete (2026-09-07) — upload and create, in the console
+
+A data package is an ordinary `ManagedFile` — same artifact store, same dedupe,
+same reference counting and delete. What it needs is to be **distinguishable**,
+so the policy picker can offer packages rather than arbitrary zips.
+
+⚠️ **`is_archive` is the precedent, and its comment is the argument**: *"detected
+at upload, so the policy layer can refuse a non-archive for extraction instead of
+failing on the device."* Same reasoning, same shape.
+
+1. **`managed_file.is_data_package`** — boolean, `server_default false`, set at
+   ingest by running the B1 validator. Hand-written migration: autogenerate never
+   infers `server_default`, and a `NOT NULL` column added without one fails on
+   Postgres against a table with rows (Operational notes).
+2. **Upload path** — validate on the data-package route and reject with the B1
+   reason verbatim. An ordinary Content upload is unaffected; a zip is still just
+   a zip there.
+3. **Create Data Package** — a modal taking a name and several files, building
+   the zip server-side with `mission_package.build`, and ingesting the result. It
+   round-trips through the same validator an upload does.
+4. **Content page** — show a package as one: manifest name, uid, how many
+   entries, and any the manifest names but the zip lacks.
+5. **The policy picker** offers only validated packages.
+6. Tests, and update this file.
+
+⚠️ **Two uploads of identical bytes dedupe to one artifact but two
+`ManagedFile` rows.** That is existing behaviour and fine for content; it becomes
+a question for B3, where "have I delivered this?" needs an identity. Noted here so
+the B3 decision is deliberate rather than inherited.
+
+**1001 server tests pass** (18 new, in `tests/test_data_packages_ui.py`). The
+migration was applied to a **seeded** database and rolled back again, per the
+Alembic note — not to an empty one, where a missing `server_default` would not
+have shown.
+
+###### Two bugs worth keeping, both silent
+
+⚠️ **`fastapi.UploadFile` is a *subclass* of `starlette`'s, and
+`request.form()` yields the base class.** So `isinstance(u, UploadFile)` against
+the FastAPI import matched **nothing**, every attached file was discarded, and
+the route reported *"a data package needs at least one file"* while the operator
+looked at the files they had just attached. The isinstance check now names
+`starlette.datastructures.UploadFile` explicitly, with the reason.
+
+⚠️ **Jinja macros do not inherit the page context** — the trap already documented
+for `atak_target` — so `data_package_files`, dutifully added to `_form_catalogs`,
+was Undefined inside the macro and the picker rendered empty with no error.
+Fixed by *deleting* that plumbing: `managed_files` is already threaded through
+every control and carries `is_data_package`, so the macro filters the list it
+already has. One list, one source, nothing to keep in step.
+
+⚠️ A third, caught by a test rather than by reading: the "manifest names files
+this zip lacks" warning first landed **inside** the *Deployed by* table's `else`
+branch, so it only rendered for packages a policy already used — the least likely
+case to be looked at.
+
+##### 🚧 Chunk B3 — deliver once, re-download on demand (steps 1–6 done, hardware pending)
+
+**Operator's design, 2026-09-07:** the policy delivers a package once; it then
+lives in the DPC's Files section with a **Re-download** button that sends it
+again on demand. That turns re-delivery into a deliberate act on the device
+instead of a policy that loops — and it lands almost entirely on machinery that
+already exists and is hardware-proven (see the corrected note above).
+
+1. **Resolve `data_packages` into the files payload**, in
+   `files.resolve_files`, alongside `entries`. Fixed
+   `dest_path = /sdcard/atak/tools/datapackage`, `persist = false`,
+   `overwrite = always`, `extract = false`. Same move as ATAK Config resolving
+   into `app_configs` (D92): **no new delivery path and no new device contract**,
+   so the agent's existing reconcile carries it unchanged.
+2. **Flag the entry** `data_package: true` in the resolved payload. The agent
+   needs it only to render the card differently — the delivery decision is
+   already `persist`.
+3. **Agent: the card.** ⚠️ A delivered package would otherwise render with the
+   presence-based **"Pending"** pill, which becomes permanently wrong the moment
+   ATAK consumes the zip — the file is *supposed* to disappear. It reads
+   **Delivered** instead, decided by the applied-content record rather than by
+   looking at the disk.
+4. **Agent: Re-download**, calling `config.forgetAppliedFile(stateKeyFor(entry))`
+   then a sync — the same primitive the marketplace's untick already uses and
+   that hardware already proved re-pushes.
+5. **Tests** both sides: the server's resolution and its fixed destination; the
+   agent's card decision as a pure function, so it is testable off-device.
+6. **Agent release** (version bump, build, publish through the update channel)
+   and a server deploy.
+7. **Hardware verification** on `SM-X520`: the package lands in
+   `tools/datapackage`, ATAK imports it, the file goes away, the card still says
+   Delivered and **does not** re-push, and Re-download sends it again exactly
+   once.
+
+⚠️ **"Delivered" is the strongest claim ATLAS can honestly make.** Whether ATAK
+then *imported* the package is not observable from here — the watcher leaves no
+trace the MDM can read, and the zip vanishing is equally consistent with import
+and with a user deleting it. Saying "Imported" would assert something unknown,
+which is the failure this codebase keeps designing against. The same distinction
+as W90's `applied N config keys` proving the Bundle was set and nothing more.
+
+⚠️ **Re-download is per device and per file id.** The state key is
+`file_id|dest_path`, so a package re-uploaded to the library as a new row is a
+new identity and delivers again on its own — two levers, both explicit, neither
+requiring new schema.
+
+###### Built (2026-09-07)
+
+**1012 server tests + 206 agent tests pass** (11 and 8 new). Agent **0.45.0
+(90)** built and staged; server and agent deployed together to
+`209.182.235.108`.
+
+* `files.DATA_PACKAGE_DEST` = `/sdcard/atak/tools/datapackage`, and a test
+  asserts the destination does **not** contain `incoming` — the mistake the
+  request originally carried, kept as a regression guard rather than a memory.
+* `resolve_files` folds `data_packages` into the same `required` list as ordinary
+  files with `persist: false`, `overwrite: always`, `extract: false`. **No new
+  device contract**, so the agent's proven reconcile carries it.
+* `FileCardPlan` decides what a card claims, as a pure object testable off-device
+  — the `*Plan` convention this codebase uses wherever a *judgement* hides inside
+  a rendering.
+* `MainActivity.redownloadPackage` drops the applied-content record and syncs.
+
+⚠️ **The card reads the record, not the disk.** `deliveredOnce` compares
+`config.appliedFileHash(stateKey)` against the entry's sha; the presence check is
+never consulted for a package. Had the card asked the filesystem — which is what
+every other file card does — a perfectly delivered package would have shown
+**Pending forever**, because ATAK consuming the zip is the *success* case.
+
+⚠️ **Re-download is offered only after delivery.** Before that the reconciler is
+still going to place the package by itself, and a button racing the reconciler is
+a button that sometimes appears to do nothing.
+
+
 
 ### ✅ W89 — sweeping the backlog W88 could not reach
 
