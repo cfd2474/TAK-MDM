@@ -364,6 +364,37 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W82 — "Single app" was ticked on every new policy
+
+Reported as *kiosk › single app showing active with no app selected*.
+
+⚠️ **The tick came from a presentational control.** The rail recomputes "what have
+I filled in?" from the form, and its content test counted any checked radio:
+
+```js
+if (el.type === "checkbox" || el.type === "radio") return el.checked;
+```
+
+The Single app panel holds `__kiosk_mode`, the radio pair choosing *Select app* vs
+*Select app with activity*. One is checked the instant the page renders, so the
+page reported content before an app existed. That code's own comment says it
+"deliberately mirrors what `parse_form` keeps" — and `parse_form` never reads
+`__kiosk_mode` at all.
+
+Controls whose name **starts with** `__` no longer count. Prefix, not substring:
+`multi_app_packages__package_name` is a real field with a double underscore in the
+middle.
+
+⚠️ **The saved state was never wrong** — production profiles marked exactly the
+right pages, and a bare policy stored `{}`. Only the live in-browser hint lied,
+which is why it took rendering the page to find rather than reading the model.
+
+`scripts/check_rail_checks.js` drives the real creator page in jsdom and pins both
+halves: nothing ticked untouched, Single app ticked once an app is chosen. It
+asserts the presentational radio *is* checked, so the first half cannot pass for
+the wrong reason. Confirmed it fails without the fix — `["kiosk:single-app"]`.
+
+
 ### ✅ W81 — a stalled enrolment is flagged, not deleted
 
 Asked as *"can we automate the removal of device records that fail?"* — after I

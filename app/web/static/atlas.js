@@ -202,7 +202,18 @@
       // are not submitted either.
       return Array.prototype.filter.call(
         scope.querySelectorAll("input, select, textarea"),
-        function (el) { return !el.disabled && el.name !== "csrf_token" && el.type !== "file"; }
+        function (el) {
+          // `__`-prefixed names are presentational only - `__kiosk_mode` picks
+          // which single-app form to show and is never read by parse_form. One
+          // of its radios is checked from the moment the page renders, so
+          // counting it marked "Single app" as filled on every new policy,
+          // before an app had been chosen.
+          //
+          // Prefix, not substring: multi_app_packages__package_name is a real
+          // field and contains a double underscore in the middle.
+          if (el.name && el.name.indexOf("__") === 0) return false;
+          return !el.disabled && el.name !== "csrf_token" && el.type !== "file";
+        }
       );
     }
 
