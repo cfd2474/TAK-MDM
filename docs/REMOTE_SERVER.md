@@ -229,6 +229,21 @@ These are real failures from previous sessions, not hypotheticals.
   corrupted. The bytes are usually fine — check them before "fixing" the source.
   Python writing to stdout may also die on `UnicodeEncodeError`; set
   `PYTHONIOENCODING=utf-8`.
+- **A policy change made through `docker compose exec` does not wake anything.**
+  The live-push bus is a set of `asyncio` waiters **inside the uvicorn process**
+  (`app/services/notifications.py`: "waiters live in this process"). A script run
+  with `docker compose exec` is a *different* process, so its post-commit wake
+  reaches no parked long-poll, and the device only sees the change on its next
+  scheduled poll — up to ~15 minutes later. Nothing reports this: the write
+  succeeds, `state_version` bumps, and the device simply looks slow. Either wait
+  for the poll, or make the change through the HTTP API so it happens inside the
+  serving process.
+
+- **`docker compose up -d --build` wipes the container's `/tmp`.** Scripts copied
+  in with `docker compose cp` disappear with the old container, so a deploy in the
+  middle of a session silently removes the tooling you staged before it. Re-copy
+  after every rebuild.
+
 - **Do not guess database column names** for an ad-hoc query. Read the model in
   `app/db/models.py`; previous sessions wrote watch scripts against columns that
   do not exist and spent the time debugging the wrong thing.
