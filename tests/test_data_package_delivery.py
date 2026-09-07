@@ -66,18 +66,19 @@ def _entry(db, client, **overrides) -> dict:
 # --------------------------------------------------------------------------- #
 
 
-def test_a_package_goes_to_the_directory_atak_watches(client, db):
+def test_a_package_goes_where_atak_picks_it_up(client, db):
+    """✅ `incoming/`, settled on hardware rather than by reading.
+
+    Both directories were tried on `SM-X520` with a package each. The watched
+    parent imported, as the source says. `incoming/` **also** imported, which the
+    source says it should not — and the reason it works is still unidentified
+    (R17). The operator chose it for `DirectoryCleanup`: packages are swept after
+    two hours instead of accumulating in ATAK's directory forever.
+    """
     entry = _entry(db, client)
 
-    assert entry["dest_path"] == "/sdcard/atak/tools/datapackage"
+    assert entry["dest_path"] == "/sdcard/atak/tools/datapackage/incoming"
     assert entry["dest_path"] == file_service.DATA_PACKAGE_DEST
-
-
-def test_the_destination_is_not_the_incoming_folder(client, db):
-    """⚠️ `incoming/` is `// no watch` and swept by `DirectoryCleanup` after two
-    hours, so a package left there is deleted having never been imported. The
-    request originally named it; the source disagreed and won."""
-    assert "incoming" not in _entry(db, client)["dest_path"]
 
 
 def test_a_package_is_never_re_pushed(client, db):

@@ -1731,22 +1731,36 @@ decision, because where their contents land is unpredictable. Any rejection
 message must say ATAK *would* have taken it, or the operator goes looking for a
 fault in their file.
 
-### 11d. ⚠️ `incoming/` is not the drop folder
+### 11d. Where to drop a package — settled on hardware, against the source
 
-| Directory | What `MissionPackageFileIO` does |
-|---|---|
-| `atak/tools/datapackage/` | **Watched.** *"watch missionPackageDir, auto-import any .zips found there (e.g. received or **manually placed**), no HTTP serving, **no auto-cleanup**"* |
-| `atak/tools/datapackage/incoming/` | **`// no watch`**, and registered with `DirectoryCleanup` — **anything older than 2 hours is deleted** |
+Both directories were tried on `SM-X520` on 2026-09-07, one package each, with
+placemarks in different cities so the result could not be ambiguous.
 
-Every use of `incoming` in the tree is a landing area for **network** transfers:
-`MissionPackageReceiver` writes a `UUID.randomUUID()` temp file there and the
-downloader processes it explicitly. **Nothing scans it for manually placed
-files**, so a package pushed there is likely to be swept two hours later having
-never been imported — with no error anywhere.
+| Directory | What the source says | What the tablet did |
+|---|---|---|
+| `atak/tools/datapackage/` | **Watched** — *"auto-import any .zips found there (e.g. received or **manually placed**), no HTTP serving, **no auto-cleanup**"* | ✅ imported (San Diego pin) |
+| `atak/tools/datapackage/incoming/` | **`// no watch`**, and registered with `DirectoryCleanup` (deletes >2h) | ✅ **imported anyway** (Los Angeles pin) |
 
-✅ **ATLAS writes to `atak/tools/datapackage/`.** Settled with the operator
-2026-09-07 after this was raised; their hardware experience and the source agreed
-once compared.
+⚠️ **The source is wrong, or at least incomplete, about `incoming/`.** It says
+`// no watch`; the parent's watcher is provably **non-recursive** —
+`DirectoryWatcher.onEvent` ignores directory events outright and carries TODOs
+about adding sub-directory listeners — and **nothing else in `com/atakmap`
+references that directory** except `MissionPackageReceiver` and the HTTP
+downloader writing network transfers into it. Yet a manually placed zip was
+imported from it.
+
+⚠️ **So the mechanism is unidentified**, and that is the risk: behaviour nobody
+can point at in source is behaviour that can change between ATAK releases without
+anyone noticing. Tracked as **R17**.
+
+✅ **ATLAS writes to `incoming/` regardless**, by operator decision, for a reason
+the source does support: `DirectoryCleanup` sweeps it after two hours, so
+delivered packages do not pile up in ATAK's directory forever — which is exactly
+what the watched parent does, with its explicit `no auto-cleanup`.
+
+⚠️ **The sweep itself is still unconfirmed.** It is expected, not observed. If it
+does *not* happen, `incoming/` accumulates exactly like the parent and the reason
+for choosing it evaporates. Part of R17.
 
 ### 11e. ⚠️ Deliver it once, and never again
 

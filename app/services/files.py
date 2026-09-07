@@ -113,13 +113,24 @@ def delete_file(session: Session, storage: ArtifactStorage, managed: ManagedFile
     session.flush()
 
 
-#: Where ATAK watches for data packages to import (W91).
+#: Where ATLAS drops a data package for ATAK to import (W91).
 #:
-#: ⚠️ **The watched directory, not `incoming/`.** `MissionPackageFileIO` marks
-#: `incoming` `// no watch` and registers it with `DirectoryCleanup`, which
-#: deletes anything older than two hours — so a package left there is swept
-#: having never been imported. See the Android reference §11d.
-DATA_PACKAGE_DEST = "/sdcard/atak/tools/datapackage"
+#: ✅ **`incoming/`, chosen on hardware evidence over the source.** Both
+#: directories were tested on `SM-X520` with a package each: the watched parent
+#: imported, and `incoming/` imported too — which the source says it should not,
+#: since `MissionPackageFileIO` marks it `// no watch` and the parent's watcher
+#: is provably non-recursive (it ignores directory events outright).
+#:
+#: ⚠️ **The mechanism that imports from `incoming/` is unidentified.** Nothing in
+#: `com/atakmap` references this directory except the network-transfer path. It
+#: works; *why* it works is not established, which makes it version-fragile in a
+#: way the watched directory is not. Recorded as R17.
+#:
+#: The reason to prefer it anyway is `DirectoryCleanup`: it sweeps `incoming/`
+#: after two hours, so delivered packages do not accumulate in ATAK's directory
+#: forever — which is exactly what the watched parent, with its explicit
+#: `no auto-cleanup`, does.
+DATA_PACKAGE_DEST = "/sdcard/atak/tools/datapackage/incoming"
 
 
 def resolve_files(session: Session, values: Mapping[str, Any]) -> dict[str, Any]:
