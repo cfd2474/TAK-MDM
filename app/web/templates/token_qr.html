@@ -61,8 +61,18 @@
           times in the same spot to open the scanner, then scan this.
           Device Owner can only be established during initial setup.
         </p>
+        {#
+          A countdown rather than a time of day: the person reading this is
+          standing over a factory-reset tablet, and "expires 14:32:10 UTC" makes
+          them work out how long they have got. The `title` keeps the absolute
+          time for anyone who wants it.
+        #}
         <p>
-          <span class="pill warn">expires {{ qr_expires_at.strftime('%H:%M:%S') }} UTC</span>
+          <span class="pill warn" data-countdown="{{ qr_expires_in }}"
+                data-countdown-expired="expired — generate a new QR"
+                title="expires {{ qr_expires_at.strftime('%H:%M:%S') }} UTC">
+            expires in <span data-countdown-value>{{ '%d:%02d' % (qr_expires_in // 60, qr_expires_in % 60) }}</span>
+          </span>
           <span class="muted">— good for any number of devices until then.</span>
         </p>
         {% if wifi_ssid %}

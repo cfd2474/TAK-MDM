@@ -1339,6 +1339,12 @@ def _render_primary_qr(
         "payload": None,
         "secret": None,
         "qr_expires_at": None,
+        # ⚠️ Seconds remaining, not a wall-clock instant. The countdown runs in a
+        # browser whose clock the server does not control, and one a few minutes
+        # off would show a confidently wrong time to the person holding the
+        # tablet. Counting down from a duration is immune to that; the only error
+        # is the page load itself.
+        "qr_expires_in": None,
         "problem": None,
     }
 
@@ -1370,6 +1376,7 @@ def _render_primary_qr(
     context["qr_expires_at"] = datetime.now(timezone.utc) + timedelta(
         seconds=settings.enrollment_qr_ttl_seconds
     )
+    context["qr_expires_in"] = settings.enrollment_qr_ttl_seconds
     context["qr_svg"] = _qr_svg(json.dumps(payload))
     return _render(request, "token_qr.html", identity=identity, **context)
 

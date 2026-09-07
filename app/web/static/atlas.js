@@ -1289,3 +1289,57 @@
     show(hasActivity);
     if (hasActivity) loadActivities(activity.value);
   })();
+/* --- Countdown pills (W77) -------------------------------------------------
+   <span data-countdown="900" data-countdown-expired="expired - ...">
+     expires in <span data-countdown-value>15:00</span>
+   </span>
+
+   Counts down from a duration the server supplied, NOT towards a timestamp.
+   The clock in this browser is not the server's, and one a few minutes out
+   would show a confidently wrong answer to someone standing over a
+   factory-reset tablet. A duration cannot be wrong that way.
+
+   Driven by the wall clock rather than by counting ticks: a background tab is
+   throttled to roughly one timer a minute, so a counter that decremented per
+   tick would drift minutes behind over a 15-minute token and still claim to be
+   live after it had expired. */
+
+(function () {
+  var pills = document.querySelectorAll("[data-countdown]");
+  if (!pills.length) return;
+
+  pills.forEach(function (pill) {
+    var seconds = parseInt(pill.getAttribute("data-countdown"), 10);
+    if (!(seconds > 0)) return;
+    var value = pill.querySelector("[data-countdown-value]");
+    if (!value) return;
+    var endsAt = Date.now() + seconds * 1000;
+
+    function paint() {
+      var left = Math.round((endsAt - Date.now()) / 1000);
+      if (left <= 0) {
+        // The pill stops being a countdown and becomes the reason it is dead.
+        // Leaving "0:00" on screen reads as a display that has stopped
+        // updating, not as a token that has expired.
+        pill.textContent = pill.getAttribute("data-countdown-expired") || "expired";
+        pill.classList.remove("warn");
+        pill.classList.add("bad");
+        clearInterval(timer);
+        return;
+      }
+      var m = Math.floor(left / 60);
+      var s = left % 60;
+      value.textContent = m + ":" + (s < 10 ? "0" : "") + s;
+      // Under a minute is the point at which someone should stop starting a
+      // new tablet and generate a fresh code instead.
+      if (left <= 60) {
+        pill.classList.remove("warn");
+        pill.classList.add("bad");
+      }
+    }
+
+    var timer = setInterval(paint, 1000);
+    paint();
+  });
+})();
+
