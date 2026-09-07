@@ -297,3 +297,17 @@ def test_extra_configuration_parameters_are_carried_through():
 
     assert package.parameters["onReceiveImport"] == "true"
     assert package.parameters["remarks"] == "hi"
+
+
+def test_a_built_package_gets_a_tidy_filename():
+    """It is the name an operator reads in ATAK's own directory.
+
+    "ATLAS test overlay (W91)" landed on hardware as
+    `atlas-test-overlay--w91.zip` — " (" is two characters and each became its
+    own hyphen.
+    """
+    from app.services.data_packages import _slug
+
+    assert _slug("ATLAS test overlay (W91)") == "atlas-test-overlay-w91"
+    assert _slug("Recon  ///  north") == "recon-north"
+    assert _slug("   ") == "data-package"

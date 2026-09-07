@@ -614,7 +614,7 @@ this zip lacks" warning first landed **inside** the *Deployed by* table's `else`
 branch, so it only rendered for packages a policy already used — the least likely
 case to be looked at.
 
-##### 🚧 Chunk B3 — deliver once, re-download on demand (steps 1–6 done, hardware pending)
+##### ✅ Chunk B3 complete (2026-09-07) — deliver once, re-download on demand
 
 **Operator's design, 2026-09-07:** the policy delivers a package once; it then
 lives in the DPC's Files section with a **Re-download** button that sends it
@@ -660,6 +660,35 @@ as W90's `applied N config keys` proving the Bundle was set and nothing more.
 new identity and delivers again on its own — two levers, both explicit, neither
 requiring new schema.
 
+###### ✅ On hardware — `SM-X520`, 2026-09-07
+
+The agent's own log, device-local:
+
+```
+14:03:36 I/Reconciler:   deploying 0e53d351… to /sdcard/atak/tools/datapackage
+14:03:36 D/FileDeployer: resolves to /storage/emulated/0/atak/tools/datapackage
+                         (all-files access: true)
+14:03:36 I/FileDeployer: placed …/tools/datapackage/atlas-test-overlay--w91.zip (674 bytes)
+14:06:06 D/Reconciler:   already placed …; not persisted, leaving it
+```
+
+| Claim | Result |
+|---|---|
+| Lands in the watched directory | ✅ |
+| **Not re-pushed on the next reconcile** | ✅ `not persisted, leaving it`, 2½ minutes later |
+| ATAK imports it | ✅ operator confirmed the overlay in ATAK |
+| The zip survives the import | ✅ — and **contradicts what this file first claimed**, see below |
+| **Re-download** re-sends it | ✅ operator confirmed |
+
+The tablet had already self-updated to **0.45.0** over the agent-update channel
+by the time the package arrived, so the Delivered pill and the button were live
+without anyone sideloading anything.
+
+⚠️ **Cosmetic flaw the run exposed:** the file landed as
+`atlas-test-overlay--w91.zip` — `" ("` is two characters and each became its own
+hyphen. `_slug` now collapses runs. It is the name an operator reads in ATAK's
+own directory, so it is worth the two lines.
+
 ###### Built (2026-09-07)
 
 **1012 server tests + 206 agent tests pass** (11 and 8 new). Agent **0.45.0
@@ -679,9 +708,17 @@ requiring new schema.
 
 ⚠️ **The card reads the record, not the disk.** `deliveredOnce` compares
 `config.appliedFileHash(stateKey)` against the entry's sha; the presence check is
-never consulted for a package. Had the card asked the filesystem — which is what
-every other file card does — a perfectly delivered package would have shown
-**Pending forever**, because ATAK consuming the zip is the *success* case.
+never consulted for a package. The disk cannot answer the question: the file
+being gone is not a failed delivery, and re-writing it is what makes ATAK import
+the package a second time.
+
+⚠️ **Corrected by hardware, 2026-09-07.** This section first said "ATAK consumes
+the zip, so absence is the expected end state". It does not — ATAK imported the
+package and **left the file in `tools/datapackage/`**, exactly as that
+directory's `no auto-cleanup` note implies. The consuming behaviour belongs to
+`incoming/`, and was assumed onto the watched directory. **The design is
+unchanged and the reason is different**: deliver-once matters because re-writing
+a watched file re-imports it, not because the file disappears.
 
 ⚠️ **Re-download is offered only after delivery.** Before that the reconciler is
 still going to place the package by itself, and a button racing the reconciler is

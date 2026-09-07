@@ -20,11 +20,15 @@ package com.taksolutions.atlasmdm.ui
  * What a file's card should say, and what it should offer (W91).
  *
  * Pure, and separate from [MainActivity], because the interesting case is a
- * judgement rather than a rendering: **a data package is supposed to disappear.**
- * ATAK watches `tools/datapackage`, imports what it finds and consumes the zip,
- * so asking the disk whether the file is there — which is what an ordinary
- * managed file's card does — answers "no" forever and would show **Pending** on
- * a package that was delivered perfectly.
+ * judgement rather than a rendering: **whether the file is still there says
+ * nothing about whether the package was delivered.**
+ *
+ * ATAK watches `tools/datapackage` and imports what it finds. Verified on
+ * hardware 2026-09-07: it **leaves the zip in place** afterwards, so the file
+ * usually survives — but a user may delete it, and ATAK's `incoming/` sweeps its
+ * contents after two hours. Either way the disk is the wrong question: the file
+ * being gone is not a delivery that failed, and re-writing it would make the
+ * watcher import the package a second time.
  *
  * The applied-content record is the honest source for a package: the MDM knows
  * what it placed, and that does not stop being true when ATAK takes it.
@@ -71,8 +75,9 @@ object FileCardPlan {
         onDisk: Boolean,
     ): State = when {
         // ⚠️ Checked before `onDisk` on purpose. A package that has been handed
-        // over is Delivered whether or not the file survives, and the whole point
-        // is that it usually will not.
+        // over is Delivered whether or not the file survives — and re-sending it
+        // because the file went missing is precisely the repeated import this
+        // design exists to prevent.
         dataPackage && deliveredOnce -> State.DELIVERED
         dataPackage -> State.PENDING
         optional && !selected -> State.OFFERED

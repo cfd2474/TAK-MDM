@@ -1754,7 +1754,18 @@ The watcher imports whatever appears. A package the MDM keeps re-writing is a
 package ATAK keeps re-importing — which, on the operator's own account, can take
 the app down.
 
-**Absence is the expected end state**, not a fault to correct.
+⚠️ **The zip is NOT deleted after import.** ✅ Verified on `SM-X520` 2026-09-07:
+ATAK imported the package and **left the file in `tools/datapackage/`**, which
+matches that directory's own `no auto-cleanup` note. An earlier draft here said
+"ATAK consumes the zip, so absence is the expected end state" — that is the
+behaviour of `incoming/`, not of the watched directory, and it was assumed rather
+than observed.
+
+**The rule survives the correction, but for a different reason.** Delivering once
+matters not because the file disappears but because **re-writing a file the
+watcher is watching is what makes ATAK import it again**. Absence is a *possible*
+end state — a user may delete it — and a re-push on those grounds would be an
+unwanted import, so the applied-content record is still the right gate.
 
 ✅ **ATLAS already has exactly this rule: `persist: false`.** `Reconciler.applyFile`
 consults the presence check `FileDeployer.isDeployed` **only when `persist` is

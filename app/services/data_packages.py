@@ -32,6 +32,7 @@ into "works when built here, refused when uploaded".
 
 from __future__ import annotations
 
+import re
 from collections import OrderedDict
 
 from sqlalchemy.orm import Session
@@ -136,5 +137,13 @@ def _trim() -> None:
 
 
 def _slug(name: str) -> str:
+    """A filename for the built zip, derived from the operator's package name.
+
+    Runs of separators collapse: "ATLAS test overlay (W91)" would otherwise land
+    on the device as `atlas-test-overlay--w91.zip`, because " (" is two
+    characters and each became its own hyphen. Cosmetic, but it is the name an
+    operator reads in ATAK's own directory.
+    """
     cleaned = "".join(c if c.isalnum() or c in "-_" else "-" for c in name.strip())
+    cleaned = re.sub(r"-{2,}", "-", cleaned)
     return cleaned.strip("-").lower() or "data-package"

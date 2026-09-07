@@ -40,7 +40,9 @@ class FileCardPlanTest {
 
     @Test
     fun `a delivered package reads Delivered even though the file is gone`() {
-        // ⚠️ The whole point. ATAK consumed the zip; that is success, not a fault.
+        // ⚠️ The whole point. ATAK leaves the zip in place after importing
+        // (verified on hardware), so absence usually means a user removed it —
+        // and re-sending on those grounds is the repeated import this prevents.
         assertEquals(
             FileCardPlan.State.DELIVERED,
             state(dataPackage = true, deliveredOnce = true, onDisk = false),
@@ -49,8 +51,9 @@ class FileCardPlanTest {
 
     @Test
     fun `a delivered package still reads Delivered while the file is present`() {
-        // The window before ATAK's watcher picks it up. Same claim either way:
-        // what the MDM knows is that it handed the package over.
+        // The ordinary case on hardware: ATAK imports and leaves the zip. Same
+        // claim either way — what the MDM knows is that it handed the package
+        // over, not what ATAK did with it.
         assertEquals(
             FileCardPlan.State.DELIVERED,
             state(dataPackage = true, deliveredOnce = true, onDisk = true),
