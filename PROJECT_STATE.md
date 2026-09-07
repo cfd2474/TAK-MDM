@@ -48,7 +48,7 @@ PASSWORD policy, hardware-proven; W21 unified every policy into the composite
 kind with a values-in-fields editor; W22 added quick archive from the list with
 an impact modal; W23 hardened live push and added a "Check in now" button; W24
 made the DPC show policy names and added console inline rename.**
-1012 server tests + 206 agent tests.
+1022 server tests + 206 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -614,6 +614,58 @@ this zip lacks" warning first landed **inside** the *Deployed by* table's `else`
 branch, so it only rendered for packages a policy already used — the least likely
 case to be looked at.
 
+##### ✅ Chunk B4 complete (2026-09-07) — upload and create from inside the policy
+
+**Operator, 2026-09-07:** the ATAK Data Packages sub-page should let an operator
+**upload a package zip** (manifest-checked) or **create one** through the modal,
+without leaving the policy. The result lands in the Content section like any
+other package.
+
+⚠️ **The picker stays.** An earlier reading of "none of the file managers should
+pull already-uploaded data" would have removed it; the operator said to disregard
+that. This chunk is purely **additive**.
+
+The precedent is W46's in-policy image upload: post the bytes, get an id back,
+and let the still-unsaved form hold it. `in_library` differs deliberately — a
+wallpaper is `False` because picking an image for one policy is not publishing a
+fleet asset, whereas here the operator explicitly asked for the package to reach
+Content.
+
+1. **`POST /policies/data-package/upload`** — JSON in, JSON out, reusing
+   `data_packages.ingest_upload`. Returns `{id, name}` or `{error}` with the
+   validator's own words.
+2. **`POST /policies/data-package/create`** — the same, over
+   `data_packages.create`, taking a name and several files.
+3. **The sub-page**: an upload control and a *Create data package* button beside
+   the existing list, which already removes rows.
+4. **The modal**, matching the Content page's — name, description, repeatable
+   file rows.
+5. **JS**: post, then append a row from the returned id. ⚠️ Errors render
+   **inline**; a redirect would throw away every unsaved change on a page that
+   holds the whole policy.
+6. Tests, state file, deploy.
+
+⚠️ **Both routes must go through `data_packages`, not re-implement it.** The
+console would otherwise have two definitions of "is this a data package", and the
+one an operator hit would decide whether their file was accepted.
+
+**1022 server tests pass** (10 new). Both routes call `data_packages`, and a test
+takes a package built through the policy editor and runs it back through the
+upload validator — the property that stops the two paths drifting into "works
+when built here, refused when uploaded".
+
+⚠️ **The modal is mounted outside the sub-page and posted by script.** HTML
+forbids a nested `<form>` and this markup sits inside the policy's own, so the
+fields are gathered with `FormData` instead. Submitting normally would post the
+*policy* — every category of it, half-filled.
+
+⚠️ **Nothing here redirects.** The editor holds an entire unsaved policy, so a
+failed upload reports inline and a successful one hands back an id the form keeps
+until the operator saves. The wallpaper upload (W46) answers the same way for the
+same reason; the difference is `in_library`, left **true** here because the
+operator asked for packages to reach the Content section — a package is fleet
+content someone may reuse, not an asset private to one policy.
+
 ##### ✅ Chunk B3 complete (2026-09-07) — deliver once, re-download on demand
 
 **Operator's design, 2026-09-07:** the policy delivers a package once; it then
@@ -679,6 +731,20 @@ The agent's own log, device-local:
 | ATAK imports it | ✅ operator confirmed the overlay in ATAK |
 | The zip survives the import | ✅ — and **contradicts what this file first claimed**, see below |
 | **Re-download** re-sends it | ✅ operator confirmed |
+| `incoming/` also imports | ✅ **unexpectedly** — see R17 |
+
+⚠️ **Both directories work, and only one of them should.** A second package was
+delivered to `tools/datapackage/incoming/` as an experiment, with a Los Angeles
+placemark against the first package's San Diego one so the outcome could not be
+misread. It imported. The source says it cannot: that directory is `// no watch`,
+the parent's watcher is provably non-recursive, and nothing else in `com/atakmap`
+touches it. **The mechanism is unidentified** — R17.
+
+The destination is now `incoming/` by operator decision, for the one advantage
+the source does support: `DirectoryCleanup` sweeps it after two hours, where the
+watched parent keeps every package ever delivered. ⚠️ That sweep is **expected,
+not observed**, and if it turns out not to happen the reason for the choice
+evaporates — also R17.
 
 The tablet had already self-updated to **0.45.0** over the agent-update channel
 by the time the package arrived, so the Delivered pill and the button were live

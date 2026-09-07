@@ -23,6 +23,7 @@ this is the only place a refusal can actually reach them.
 from __future__ import annotations
 
 import io
+import uuid
 import zipfile
 
 from fastapi.testclient import TestClient
@@ -270,3 +271,140 @@ def test_dted_says_it_is_coming_rather_than_offering_a_form(client: TestClient):
 
     assert "Not available yet." in panel
     assert "data_packages__file_id" not in panel
+
+
+# --------------------------------------------------------------------------- #
+# Upload and create from inside the policy editor (B4)
+# --------------------------------------------------------------------------- #
+
+
+def _policy_upload(client: TestClient, data: bytes, *, name: str = "", filename="pkg.zip"):
+    return client.post(
+        "/policies/data-package/upload",
+        data={"name": name},
+        files={"file": (filename, data, ZIP)},
+        headers=ADMIN_HEADERS,
+    )
+
+
+def _policy_create(client: TestClient, name: str, files: list[tuple[str, bytes]]):
+    return client.post(
+        "/policies/data-package/create",
+        data={"name": name},
+        files=[("files", (n, p, "application/octet-stream")) for n, p in files],
+        headers=ADMIN_HEADERS,
+    )
+
+
+def test_uploading_from_the_policy_returns_an_id_rather_than_redirecting(
+    client: TestClient, db
+):
+    """⚠️ The policy is unsaved while this happens.
+
+    A redirect would take every other category's changes with it, which is why
+    W46's wallpaper upload answers the same way.
+    """
+    response = _policy_upload(client, _valid_package("Ops Layer"))
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["name"] == "Ops Layer"
+    assert db.scalar(select(ManagedFile)).id == uuid.UUID(body["id"])
+
+
+def test_a_package_uploaded_from_a_policy_reaches_the_content_section(
+    client: TestClient, db
+):
+    """The operator asked for these to be library content, unlike a wallpaper —
+    a package is fleet content someone may reuse, not an asset private to one
+    policy."""
+    _policy_upload(client, _valid_package("Ops Layer"))
+
+    managed = db.scalar(select(ManagedFile))
+    assert managed.in_library is True
+    assert managed.is_data_package is True
+    assert "Ops Layer" in client.get("/content").text
+
+
+def test_a_zip_without_a_manifest_is_refused_with_the_reason(client: TestClient, db):
+    """⚠️ The check the operator asked to be sure of.
+
+    The message is the validator's own: told only "rejected", an operator goes
+    looking for a fault that may not be in their file.
+    """
+    response = _policy_upload(client, _plain_zip())
+
+    assert response.status_code == 422
+    assert "MANIFEST" in response.json()["error"]
+    assert db.scalar(select(ManagedFile)) is None
+
+
+def test_a_non_zip_is_refused_from_the_policy_too(client: TestClient, db):
+    response = _policy_upload(client, b"not a zip", filename="notes.txt")
+
+    assert response.status_code == 422
+    assert "not a readable zip" in response.json()["error"]
+    assert db.scalar(select(ManagedFile)) is None
+
+
+def test_creating_from_the_policy_builds_and_returns_an_id(client: TestClient, db):
+    response = _policy_create(client, "Recon set", [("a.kml", b"<kml/>")])
+
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "Recon set"
+    assert db.scalar(select(ManagedFile)).is_data_package is True
+
+
+def test_a_package_built_in_the_policy_is_valid_to_the_same_validator(
+    client: TestClient, db, artifact_storage
+):
+    """⚠️ Both routes must agree. Two definitions of "is this a data package"
+    would mean the one an operator happened to hit decided whether their file was
+    accepted."""
+    _policy_create(client, "Recon set", [("a.kml", b"<kml/>")])
+    managed = db.scalar(select(ManagedFile))
+
+    with artifact_storage.open(managed.artifact_sha256) as handle:
+        package = mp.inspect(handle.read())
+
+    assert package.name == "Recon set"
+    assert [c.zip_entry for c in package.contents] == ["a.kml"]
+
+
+def test_creating_without_a_name_is_refused_with_a_reason(client: TestClient, db):
+    response = _policy_create(client, "  ", [("a.kml", b"x")])
+
+    assert response.status_code == 422
+    assert "name" in response.json()["error"]
+    assert db.scalar(select(ManagedFile)) is None
+
+
+def test_creating_with_duplicate_names_is_refused(client: TestClient, db):
+    response = _policy_create(client, "Clash", [("a.kml", b"1"), ("a.kml", b"2")])
+
+    assert response.status_code == 422
+    assert "more than once" in response.json()["error"]
+    assert db.scalar(select(ManagedFile)) is None
+
+
+def test_the_policy_page_offers_upload_and_create(client: TestClient):
+    body = client.get("/policies/new").text
+    panel = body[body.index('data-page-panel="file_management:atak-data-packages"'):]
+    panel = panel[: panel.index("</section>")]
+
+    assert "data-package-upload" in panel
+    assert "data-package-create-open" in panel
+    assert "MANIFEST/manifest.xml" in panel
+
+
+def test_the_create_modal_is_on_the_page(client: TestClient):
+    """⚠️ Mounted outside the sub-page panel and posted by script.
+
+    HTML forbids a nested <form>, and this sits inside the policy's own — so the
+    fields are collected with FormData rather than submitted.
+    """
+    body = client.get("/policies/new").text
+
+    assert 'id="policy-package-create"' in body
+    assert "data-ppkg-save" in body
+    assert body.count('id="policy-package-create"') == 1

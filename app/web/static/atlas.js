@@ -1831,3 +1831,154 @@
     pick.value = "";
   });
 })();
+
+/* --- Data packages from inside the policy editor (W91 B4) --------------------
+   Upload a zip, or build one from loose files, without leaving the policy.
+
+   ⚠️ Everything here posts by script and reports **inline**. The policy editor
+   holds an entire unsaved policy; a form post or a redirect would take every
+   other category's changes with it. Same reasoning as the wallpaper upload. */
+
+(function () {
+  var set = document.querySelector("[data-data-packages]");
+  if (!set) return;
+
+  var status = set.querySelector("[data-package-status]");
+  var template = set.querySelector("[data-row-template]");
+  var addBefore = set.querySelector("[data-package-pick]");
+  var anchor = addBefore ? addBefore.parentNode : set.querySelector("[data-package-status]");
+
+  function csrf(body) {
+    var token = document.querySelector('input[name="csrf_token"]');
+    if (token) body.append("csrf_token", token.value);
+    return body;
+  }
+
+  function say(message, bad) {
+    if (!status) return;
+    status.textContent = message || "";
+    status.style.color = bad ? "var(--bad)" : "";
+  }
+
+  /** Add a saved package to the policy, exactly as the picker would. */
+  function addRow(id, name) {
+    var existing = set.querySelectorAll('input[name="data_packages__file_id"]');
+    for (var i = 0; i < existing.length; i++) {
+      // Already on this policy. The spec keys on file_id, so a second row would
+      // be one file described twice for the merge to reconcile.
+      if (existing[i].value === id) return false;
+    }
+    var row = template.content.firstElementChild.cloneNode(true);
+    row.querySelector('[name="data_packages__file_id"]').value = id;
+    var label = row.querySelector("[data-package-label]");
+    if (label) label.textContent = name;
+    anchor.insertAdjacentElement("beforebegin", row);
+    // The rail's completion check ran before this row existed.
+    set.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  }
+
+  var upload = set.querySelector("[data-package-upload]");
+  if (upload) {
+    upload.addEventListener("change", function () {
+      var file = upload.files && upload.files[0];
+      if (!file) return;
+      say("Checking " + file.name + "…");
+
+      var body = csrf(new FormData());
+      body.append("file", file);
+      fetch("/policies/data-package/upload", { method: "POST", body: body })
+        .then(function (r) {
+          return r.json().then(function (j) { return { ok: r.ok, body: j }; });
+        })
+        .then(function (res) {
+          upload.value = "";
+          if (!res.ok || !res.body.id) {
+            // The server's words, not ours: it knows *why* the manifest failed.
+            say(res.body.error || "upload failed", true);
+            return;
+          }
+          addRow(res.body.id, res.body.name);
+          say(res.body.name + " added");
+        })
+        .catch(function () {
+          upload.value = "";
+          say("upload failed", true);
+        });
+    });
+  }
+
+  var frame = document.getElementById("policy-package-create");
+  var open = set.querySelector("[data-package-create-open]");
+  if (!frame || !open) return;
+
+  var nameField = frame.querySelector("[data-ppkg-name]");
+  var descField = frame.querySelector("[data-ppkg-desc]");
+  var fileList = frame.querySelector("[data-ppkg-files]");
+  var addFile = frame.querySelector("[data-ppkg-add-file]");
+  var save = frame.querySelector("[data-ppkg-save]");
+  var error = frame.querySelector("[data-ppkg-error]");
+
+  function fail(message) {
+    error.hidden = false;
+    error.textContent = message;
+  }
+
+  open.addEventListener("click", function () {
+    nameField.value = "";
+    descField.value = "";
+    fileList.innerHTML = '<div class="rs-row"><input type="file" data-ppkg-file></div>';
+    error.hidden = true;
+    frame.hidden = false;
+  });
+
+  addFile.addEventListener("click", function () {
+    var row = document.createElement("div");
+    row.className = "rs-row";
+    row.innerHTML =
+      '<input type="file" data-ppkg-file>' +
+      '<button type="button" class="ghost" data-remove-row>Remove</button>';
+    fileList.appendChild(row);
+  });
+
+  save.addEventListener("click", function () {
+    var body = csrf(new FormData());
+    body.append("name", nameField.value || "");
+    body.append("description", descField.value || "");
+
+    var chosen = 0;
+    fileList.querySelectorAll("[data-ppkg-file]").forEach(function (input) {
+      if (input.files && input.files[0]) {
+        body.append("files", input.files[0]);
+        chosen += 1;
+      }
+    });
+    if (!chosen) {
+      // Refused here rather than round-tripping: the server says the same thing,
+      // but the operator is looking at the empty rows right now.
+      fail("Add at least one file.");
+      return;
+    }
+
+    error.hidden = true;
+    save.disabled = true;
+    fetch("/policies/data-package/create", { method: "POST", body: body })
+      .then(function (r) {
+        return r.json().then(function (j) { return { ok: r.ok, body: j }; });
+      })
+      .then(function (res) {
+        save.disabled = false;
+        if (!res.ok || !res.body.id) {
+          fail(res.body.error || "could not create the package");
+          return;
+        }
+        addRow(res.body.id, res.body.name);
+        say(res.body.name + " created");
+        frame.hidden = true;
+      })
+      .catch(function () {
+        save.disabled = false;
+        fail("could not create the package");
+      });
+  });
+})();

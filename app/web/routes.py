@@ -2132,6 +2132,98 @@ def upload_content_form(
     return _redirect("/content")
 
 
+@router.post("/policies/data-package/upload")
+def upload_policy_data_package(
+    file: UploadFile = File(...),
+    name: str = Form(default=""),
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+    settings: Settings = Depends(get_settings),
+    identity: AdminIdentity = Depends(admin_required),
+) -> JSONResponse:
+    """Take a package chosen inside a policy editor and hand back its id (W91).
+
+    Returns the id rather than redirecting because the policy has not been saved
+    yet — the form holds the id until the operator commits the whole thing. The
+    same shape as the wallpaper upload W46 introduced, for the same reason: a
+    redirect here would discard every unsaved change on a page that holds an
+    entire policy.
+
+    ⚠️ Ingested **into the library** (`in_library` left true), unlike the
+    wallpaper. The operator asked for these to reach the Content section: a data
+    package is fleet content someone may want to reuse or inspect, not an asset
+    private to one policy.
+    """
+    data = file.file.read()
+    if not data:
+        return JSONResponse({"error": "the uploaded file is empty"}, status_code=422)
+    if len(data) > settings.max_upload_bytes:
+        return JSONResponse(
+            {"error": f"upload exceeds {settings.max_upload_bytes} bytes"}, status_code=413
+        )
+    try:
+        package = data_package_service.ingest_upload(
+            session,
+            storage,
+            data,
+            name=name,
+            original_filename=file.filename or "package.zip",
+        )
+        session.commit()
+    except mission_package.DataPackageError as exc:
+        # The validator's own words: the operator is standing here, and "rejected"
+        # on its own sends them hunting for a fault that may not be in the file.
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except file_service.FileError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+
+    return JSONResponse({"id": str(package.id), "name": package.name})
+
+
+@router.post("/policies/data-package/create")
+async def create_policy_data_package(
+    request: Request,
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+    settings: Settings = Depends(get_settings),
+    identity: AdminIdentity = Depends(admin_required),
+) -> JSONResponse:
+    """Build a package from loose files, without leaving the policy editor (W91)."""
+    form = await request.form()
+    name = str(form.get("name") or "").strip()
+    description = str(form.get("description") or "").strip()
+
+    payloads: list[tuple[str, bytes]] = []
+    total = 0
+    for upload in form.getlist("files"):
+        if not isinstance(upload, StarletteUploadFile):
+            continue
+        content = await upload.read()
+        if not content:
+            # An empty file input is a row the operator added and left blank, not
+            # an error worth refusing the whole package for.
+            continue
+        total += len(content)
+        if total > settings.max_upload_bytes:
+            return JSONResponse(
+                {"error": f"the package exceeds {settings.max_upload_bytes} bytes"},
+                status_code=413,
+            )
+        payloads.append((upload.filename or "file", content))
+
+    try:
+        package = data_package_service.create(
+            session, storage, name=name, files=payloads, description=description or None
+        )
+        session.commit()
+    except mission_package.DataPackageError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except file_service.FileError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+
+    return JSONResponse({"id": str(package.id), "name": package.name})
+
+
 @router.post("/content/data-package/upload")
 def upload_data_package_form(
     name: str = Form(default=""),
