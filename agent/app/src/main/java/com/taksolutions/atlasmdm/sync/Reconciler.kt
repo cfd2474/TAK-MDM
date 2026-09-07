@@ -44,6 +44,7 @@ import com.taksolutions.atlasmdm.permissions.PermissionRequirement
 import com.taksolutions.atlasmdm.policy.AllowlistPlan
 import com.taksolutions.atlasmdm.policy.AppUpdatePlan
 import com.taksolutions.atlasmdm.policy.DataUsageTracker
+import com.taksolutions.atlasmdm.policy.ArtifactSweepPlan
 import com.taksolutions.atlasmdm.policy.InstallerCachePlan
 import com.taksolutions.atlasmdm.policy.LauncherConfigPlan
 import com.taksolutions.atlasmdm.policy.PolicyApplier
@@ -416,6 +417,11 @@ class Reconciler(private val context: Context) {
         // version behind forever over a single missing permission, and made a
         // genuinely stuck device indistinguishable from a slightly degraded one.
         config.appliedStateVersion = config.stateVersion
+
+        // Before the self-update, which never returns. Also after applying, so a
+        // file this pass downloaded and installed is judged on what the device
+        // holds now rather than on what it held when the sync started.
+        sweepArtifactCache(desired)
 
         // Absolutely last, and only from a clean pass (W27). Installing over
         // ourselves kills this process mid-call, so anything after it would not
@@ -1285,6 +1291,53 @@ class Reconciler(private val context: Context) {
             discardInstallerFiles(packageName, parts)
         }
         return if (result.success) StoreInstall.Done else StoreInstall.Failed(result.message)
+    }
+
+    /**
+     * Clear cached artifacts nothing needs any more (W89).
+     *
+     * W88 stops the cache growing from here on, but could not touch what the
+     * fielded devices had already accumulated: an app that is installed never
+     * reaches the code that would discard its APK. This sweep asks the question
+     * from the other side — *is there a remaining reason to keep this file?* — so
+     * the backlog goes on the first sync after the upgrade.
+     *
+     * ⚠️ **`lastModified` is 0 for a file the agent cannot stat**, and an age of
+     * "now" would then look like a file written in 1970 — comfortably older than
+     * the guard, and deleted. Anything without a usable timestamp is treated as
+     * brand new instead, which at worst keeps it another cycle.
+     *
+     * Best-effort throughout: this reclaims disk, and no part of it is worth
+     * failing a converged reconcile over.
+     */
+    private fun sweepArtifactCache(desired: JSONObject) {
+        runCatching {
+            val now = System.currentTimeMillis()
+            val present = cacheDir.listFiles()?.filter { it.isFile } ?: return
+            val byName = present.associateBy { it.name }
+            val doomed = ArtifactSweepPlan.sweep(
+                names = present.map { it.name },
+                ageMillis = { name ->
+                    val modified = byName[name]?.lastModified() ?: 0L
+                    if (modified <= 0L) 0L else now - modified
+                },
+                desired = desired,
+                installedVersionCode = { installer.installedVersionCode(it) },
+                keep = setOfNotNull(config.pendingSelfUpdateSha),
+            )
+            if (doomed.isEmpty()) return
+            var freed = 0L
+            for (name in doomed) {
+                val file = byName[name] ?: continue
+                val size = file.length()
+                if (file.delete()) freed += size
+                else AgentLog.w(TAG, "cache sweep: could not delete $name")
+            }
+            AgentLog.i(
+                TAG,
+                "cache sweep: reclaimed ${freed / 1024} KB from ${doomed.size} spent artifact(s)"
+            )
+        }.onFailure { AgentLog.w(TAG, "cache sweep failed: ${it.message}") }
     }
 
     /**

@@ -3,7 +3,7 @@
 Running state file per [CLAUDE.md](CLAUDE.md). Read before starting any step;
 update after every completed step.
 
-**Last updated:** 2026-09-05
+**Last updated:** 2026-09-06
 
 ---
 
@@ -363,6 +363,165 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ---
 
 ## Chunk plan
+
+### ✅ W89 — sweeping the backlog W88 could not reach
+
+W88 stopped the artifact cache growing, but left everything already on the three
+fielded devices. The reason is structural: a device only revisits an app's files
+when it has something to install, and an app already installed never gets that
+far. The cleanup had to come from the other direction — asking of each cached
+file *is there a remaining reason to keep this?*
+
+⚠️ **"Unreferenced" is the wrong question, and getting it wrong keeps the whole
+backlog.** A spent APK is still named by the very policy that installed it, so a
+sweeper testing references first deletes almost nothing. `ArtifactSweepPlan`
+tests **spent** first: an app the device already has, decided by `AppUpdatePlan`
+rather than by comparing version codes a second time. Every outcome except
+INSTALL and UPGRADE means nothing will ever be installed from those files —
+including REFUSED_DOWNGRADE and SKIP_PINNED, where the reconciler has already
+decided it will not use them.
+
+⚠️ **The references are found by walking the bundle, not by reading the fields we
+know about.** A sweeper enumerating *apps, files, wallpaper…* would quietly start
+deleting live artifacts the day the server grew a new kind, and the symptom would
+land on a fielded device as something that re-downloads forever. Anything shaped
+like a sha256 is treated as referenced; at worst it keeps a file it needn't.
+
+⚠️ **`MIN_AGE_MILLIS` (6 h) is load-bearing, not a tidy default.** It is the only
+thing protecting the store-install window: `installFromStore` runs from the Apps
+screen while a sync runs, and holds a verified download for as long as the user
+takes to confirm. Nothing else visible to the sweep can see that happening. The
+backlog is days old, so it is eligible on the first sweep regardless.
+
+Also guarded: `lastModified` returning 0 for an unstattable file, which as an age
+would read as 1970 and delete it — treated as brand new instead.
+
+12 tests. Confirmed by mutation that both non-obvious rules are load-bearing:
+dropping the spent test fails two tests, dropping the age guard fails one. (A
+first attempt at mutating the branch order turned out to be logically equivalent
+and proved nothing — noted because it looked like a passing check.)
+
+Agent **89 / 0.44.0** published (fleet pointer 89). The backlog clears on each
+device's first sync after it takes the update; the reclaimed total is in the
+agent log as `cache sweep: reclaimed N KB`.
+
+
+### 🚧 W89 — ATAK Config category (the TAK pack's pref half, Chunk 8)
+
+The long-planned Chunk 8 "TAK pack" row, narrowed to the part that pays now:
+**ATAK Config** in the policy creator, with three sub-topics —
+*Plugin behavior* (stub), *ATAK Core Pref Config*, *Plugin Pref Config*.
+
+Reference: the operator's own [TAK_pref_configurator](https://github.com/cfd2474/TAK_pref_configurator).
+Its analysis method is adopted wholesale (discover preference XML by **content**,
+resolve `@string`/`@array` references, infer the control from the widget class,
+keep `entries`/`entryValues` paired by index). Its *static schema* is not — see
+the decisions below.
+
+#### Ground truth established before planning (2026-09-06)
+
+Measured with this project's **own** parsers against
+`Test Files/ATAK-5.8.0.4-174b425-civSmall-release.apk`, and against
+`atak-civ`'s `PreferenceControl.java`. Nothing here is inferred from behaviour.
+
+| Finding | Evidence |
+|---|---|
+| ATAK's resource names are **shrunk** (`res/-v.xml`, `res/0P.xml`) | 1006 `res/**/*.xml`; no name-based lookup could ever find them. Content-based discovery is the only route — the same conclusion `app_restrictions` reached for `res/Kt.xml` (W49). |
+| **65** `PreferenceScreen` documents → **505** keys | `axml.parse_elements` over every `res/` XML |
+| **477 / 477** title references resolved | `app_icon.read_table` + `arsc.ResourceTable.string` |
+| **46 / 47** `entries`/`entryValues` pairs resolved to real label→value dropdowns | e.g. `pref_grid_type` → MGRS / Decimal Degrees / DMS; `auth_flow_trust_model` → `BAKED_IN` / `PRECONFIGURED` / `SYSTEM` |
+| ATAK declares exactly **6** managed-configuration keys | `enterpriseConfigurationDataPackage` slots 1–5, plus `enterpriseConfigurationPreferences` |
+
+⚠️ **`enterpriseConfigurationPreferences` is the delivery mechanism, and it is
+ATAK's own.** `PreferenceControl.processEnterpriseConfigurationPreferences()`
+reads it from `RestrictionsManager.getApplicationRestrictions()` — precisely what
+a Device Owner's `setApplicationRestrictions` writes — and:
+
+* takes the `.pref` XML as **plain text**, *not* base64. (The *data package*
+  slots beside it **are** `Base64.decode`d. Two adjacent keys, two encodings;
+  getting this backwards produces no error, just a config that never applies.)
+* writes it to `filesDir/defaults` and calls `loadSettings(f)`, then deletes it;
+* **de-dupes by MD5** — re-pushing identical content is a genuine no-op, so an
+  idempotent reconcile costs nothing;
+* reloads on `ACTION_APPLICATION_RESTRICTIONS_CHANGED`, so **no ATAK restart**;
+* is capped near **64 KB** by the Binder transaction, which ATAK's own key
+  description states outright.
+
+This route needs **no `MANAGE_EXTERNAL_STORAGE`, no file push, and no Knox** —
+it rides the `setApplicationRestrictions` path the agent already proved in W49.
+It therefore sidesteps R1 entirely rather than depending on it.
+
+`loadSettings` switches on the `class` attribute verbatim
+(`class java.lang.String` / `Boolean` / `Integer` / `Float` / `Long`), and maps
+the legacy group names `com.atakmap.{app,civ,fvey}_preferences` onto
+`<packageName>_preferences`.
+
+#### Decisions
+
+| # | Decision | Rationale |
+|---|---|---|
+| D91 | **The pref schema is scanned from the uploaded ATAK build**, not from a bundled JSON file | Same reasoning as `declared_config` (W49): a schema read from the APK being deployed cannot drift from it. The reference project ships static JSON because it has no APK to read; this console has one. Cost, accepted: the sub-page shows an "upload an ATAK build first" state until one exists. |
+| D92 | **ATAK_CONFIG resolves into the `app_configs` channel server-side**, in the desired-state builder | ATAK Config and an operator-authored App-Management config for `com.atakmap.app.civ` both end at `setApplicationRestrictions` for the *same package*, and that call **replaces the whole Bundle**. Merged at one deterministic seam on the server, the collision cannot happen; left to the agent it would be a silent last-writer-wins that wipes whichever the operator looked at last. **No new agent applier, no new agent release.** |
+| D93 | Value types are derived from the **widget class**, not guessed from the value | `PanCheckBoxPreference` → Boolean, `PanListPreference`/`PanEditTextPreference` → String, `SeekBarPreference` → Integer. An `EditTextPreference` holding a port is a **String** even though it looks numeric — that is what a real EUD export contains, and what `getString` on the device expects. Guessing "looks numeric → Integer" produces a `ClassCastException` inside ATAK. |
+| D94 | A **wired** category may declare *stub* sub-pages | "Plugin behavior" must sit alongside two working sub-pages. Today a category is all-stub or all-wired, and sub-pages derive only from `ui_group`. One optional field on `Category`, rendered by the existing stub panel. |
+
+#### Out of scope, deliberately
+
+* **CoT connections** (`cot_inputs` / `cot_outputs` / `cot_streams`). Separate
+  preference groups with their own `connectString` grammar, count-indexed
+  entries and `.p12` handling — and TAK-server enrolment touches PKI. A chunk of
+  its own; the generator is built so the groups can be added without reshaping it.
+* **Plugin behavior** — stub only, per the operator.
+
+⚠️ **Only what the plugin declares in `res/xml` is visible.** Code-only settings
+and custom stores (`NWSharedPreferences`) cannot be scanned, and the console must
+say so rather than imply the list is complete.
+
+⚠️ **A plugin can only be scanned if its APK is in the library.** "Select from
+the installed apps" resolves to the uploaded app packages — the same picker App
+Management already uses — because a plugin seen only in a device's reported
+inventory has no bytes here to read. Apps declaring `plugin-api` are flagged as
+plugins (`atak_compat` already reads it), but any app may be picked: plugins have
+no naming convention to filter on.
+
+##### Chunk A1 (6 steps) — scanner and generator, no UI
+
+1. `app/artifacts/pref_screens.py` — discover preference XML by content, resolve
+   titles/summaries/options through the ARSC table, keep `PreferenceCategory`
+   sections. Mirrors `app_restrictions.discover_in` and reuses its resource
+   reader; it does **not** re-implement one.
+2. Plugin preference-group detection: scan the dex for `x.y.z_preferences`,
+   default to `com.atakmap.app.civ_preferences` (the reference project's rule).
+3. `app/services/atak_pref.py` — `.pref` XML generator in ATAK's exact byte
+   format, and the 64 KB refusal.
+4. Tests: synthetic preference-screen APKs via `tests/apk_fixtures.py`, plus a
+   real-ATAK test skipped when `Test Files/` is absent.
+5. Record the ATAK contract in `docs/ANDROID_PLATFORM_REFERENCE.md` (CLAUDE.md §6).
+6. Update this file.
+
+##### Chunk A2 (6 steps) — policy type and desired state
+
+1. `ATAK_CONFIG` spec (`core_prefs`, `plugin_prefs`) + registry entry.
+2. `creator_catalog` category, with D94's stub sub-page for Plugin behavior.
+3. Desired-state resolution: generate the `.pref`, merge it into
+   `com.atakmap.app.civ`'s `app_configs` entry (D92).
+4. Bounded LRU over scans keyed on artifact sha, as `_APP_CONFIG_SCANS` is.
+5. Tests: stacking/merge, the App-Management collision, `.pref` round-trip.
+6. Update this file.
+
+##### Chunk A3 (6 steps) — the console
+
+1. Schema endpoints for the core prefs and for one picked plugin.
+2. `atak_core_prefs` control — sectioned, searchable, per-key "Not managed".
+3. `plugin_prefs` control — app picker → scan → fields → row, mirroring the
+   `app_configs` frame.
+4. Stub sub-page rendering for Plugin behavior.
+5. Rail completion checks for dict-valued fields.
+6. Tests + update this file.
+
+**Hardware verification will be needed** and is not covered by any of the three
+chunks: no real ATAK **plugin** APK is present in `Test Files/`, so the plugin
+path can be proven only against a synthetic fixture until one is supplied.
 
 ### ✅ W88 — installer APKs were kept forever after the app was installed
 
