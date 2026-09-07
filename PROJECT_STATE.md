@@ -48,7 +48,7 @@ PASSWORD policy, hardware-proven; W21 unified every policy into the composite
 kind with a values-in-fields editor; W22 added quick archive from the list with
 an impact modal; W23 hardened live push and added a "Check in now" button; W24
 made the DPC show policy names and added console inline rename.**
-1022 server tests + 206 agent tests.
+1026 server tests + 206 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -613,6 +613,32 @@ already has. One list, one source, nothing to keep in step.
 this zip lacks" warning first landed **inside** the *Deployed by* table's `else`
 branch, so it only rendered for packages a policy already used — the least likely
 case to be looked at.
+
+##### ✅ B5 (2026-09-07) — the upload reads as an action, and the check has a surface
+
+Operator, after testing B4: a real package was accepted, a plain zip refused, and
+Create worked. Two things to fix, both about where the operator's attention is.
+
+⚠️ **The upload control was styled text, not a button.** It was written as
+`<label class="ghost">`, and `button.ghost` is the styled selector — `label`'s own
+rule (block, muted, 12.5px) wins, so it rendered as grey clickable text that did
+not read as an action. Now a real `<button>` clicking a hidden file input.
+
+⚠️ **A refusal was a line of muted text beside the control.** On a page holding an
+entire policy that is easy to miss, and the refusal is the *whole point* of
+checking here — a package ATAK will not import fails on a tablet as nothing at
+all. Uploading now opens a modal that shows the check running and keeps it open
+on failure with the reason.
+
+**Accepted packages close the modal immediately** and let the new row be the
+confirmation, rather than making an operator dismiss a dialog to see what they
+just added. The status line carries the manifest's content count, so it says
+*what* was accepted — which is how someone notices they picked the wrong file.
+
+The "ATAK would have taken this" note shows **only** for the manifest refusal.
+For that one it is reassurance; on any other failure it would be noise.
+
+**1026 server tests.**
 
 ##### ✅ Chunk B4 complete (2026-09-07) — upload and create from inside the policy
 

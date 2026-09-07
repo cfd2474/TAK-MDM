@@ -2177,7 +2177,16 @@ def upload_policy_data_package(
     except file_service.FileError as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
 
-    return JSONResponse({"id": str(package.id), "name": package.name})
+    # The manifest's own content count, so the confirmation says what was
+    # accepted rather than merely that something was.
+    manifest = data_package_service.manifest_of(storage, package)
+    return JSONResponse(
+        {
+            "id": str(package.id),
+            "name": package.name,
+            "contents": manifest.content_count if manifest else 0,
+        }
+    )
 
 
 @router.post("/policies/data-package/create")
@@ -2221,7 +2230,14 @@ async def create_policy_data_package(
     except file_service.FileError as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
 
-    return JSONResponse({"id": str(package.id), "name": package.name})
+    manifest = data_package_service.manifest_of(storage, package)
+    return JSONResponse(
+        {
+            "id": str(package.id),
+            "name": package.name,
+            "contents": manifest.content_count if manifest else 0,
+        }
+    )
 
 
 @router.post("/content/data-package/upload")

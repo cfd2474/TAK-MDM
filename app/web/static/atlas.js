@@ -1878,12 +1878,50 @@
     return true;
   }
 
+  /* The manifest check gets its own modal. A refusal is the whole point of
+     validating here, and a line of muted text beside the control is easy to miss
+     on a page that holds an entire policy. */
   var upload = set.querySelector("[data-package-upload]");
-  if (upload) {
+  var openUpload = set.querySelector("[data-package-upload-open]");
+  var check = document.getElementById("package-check");
+
+  if (openUpload && upload) {
+    openUpload.addEventListener("click", function () { upload.click(); });
+  }
+
+  if (upload && check) {
+    var checkTitle = check.querySelector("[data-check-title]");
+    var checkFile = check.querySelector("[data-check-file]");
+    var checkProgress = check.querySelector("[data-check-progress]");
+    var checkError = check.querySelector("[data-check-error]");
+    var checkNote = check.querySelector("[data-check-note]");
+    var checkClose = check.querySelector("[data-check-close]");
+
+    function checking(fileName) {
+      checkTitle.textContent = "Checking data package";
+      checkFile.textContent = fileName;
+      checkProgress.hidden = false;
+      checkError.hidden = true;
+      checkNote.hidden = true;
+      checkClose.hidden = true;
+      check.hidden = false;
+    }
+
+    function refused(message) {
+      checkTitle.textContent = "Package refused";
+      checkProgress.hidden = true;
+      checkError.hidden = false;
+      checkError.textContent = message;
+      // Only for the manifest case: the note explains that ATAK would have taken
+      // the file, which is reassurance for that refusal and noise for any other.
+      checkNote.hidden = message.indexOf("MANIFEST") === -1;
+      checkClose.hidden = false;
+    }
+
     upload.addEventListener("change", function () {
       var file = upload.files && upload.files[0];
       if (!file) return;
-      say("Checking " + file.name + "…");
+      checking(file.name);
 
       var body = csrf(new FormData());
       body.append("file", file);
@@ -1895,15 +1933,20 @@
           upload.value = "";
           if (!res.ok || !res.body.id) {
             // The server's words, not ours: it knows *why* the manifest failed.
-            say(res.body.error || "upload failed", true);
+            refused(res.body.error || "the upload failed");
             return;
           }
+          // Accepted: close and let the new row be the confirmation, rather than
+          // making the operator dismiss a dialog to see what they just added.
+          check.hidden = true;
           addRow(res.body.id, res.body.name);
-          say(res.body.name + " added");
+          var count = res.body.contents;
+          say(res.body.name + " added" +
+              (count ? " (" + count + (count === 1 ? " file)" : " files)") : ""));
         })
         .catch(function () {
           upload.value = "";
-          say("upload failed", true);
+          refused("the upload failed");
         });
     });
   }

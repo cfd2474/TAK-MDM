@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import page_header, csrf_field, empty_state, device_label %}
-{% from "_policy_form.html" import policy_subform, app_group_buttons, app_compat_blob, data_package_modal %}
+{% from "_policy_form.html" import policy_subform, app_group_buttons, app_compat_blob, data_package_modal, data_package_check_modal %}
 {% set nav = 'policies' %}
 {% block title %}{{ (profile.name if profile else 'New policy') }} — ATLAS{% endblock %}
 {% block main_class %}wide{% endblock %}
@@ -40,6 +40,7 @@
 {% block content %}
 {{ app_compat_blob(app_compat) }}
 {{ data_package_modal(csrf_token) }}
+{{ data_package_check_modal() }}
 {% if mode == 'new' %}
   {{ page_header('New policy', 'A policy bundles single-concern settings into one unit, organised by category. Fill in the categories you need and leave the rest — an empty category is simply not part of the policy.') }}
   <p class="sub"><a href="/policies">← policies</a></p>

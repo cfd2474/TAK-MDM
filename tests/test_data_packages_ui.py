@@ -408,3 +408,40 @@ def test_the_create_modal_is_on_the_page(client: TestClient):
     assert 'id="policy-package-create"' in body
     assert "data-ppkg-save" in body
     assert body.count('id="policy-package-create"') == 1
+
+
+def test_the_upload_control_is_a_button_not_a_label(client: TestClient):
+    """⚠️ `button.ghost` is the styled selector.
+
+    A `<label class="ghost">` loses to `label`'s own rule — block, muted, 12.5px
+    — so the first version rendered as grey clickable text that did not read as
+    an action at all.
+    """
+    body = client.get("/policies/new").text
+    panel = body[body.index('data-page-panel="file_management:atak-data-packages"'):]
+    panel = panel[: panel.index("</section>")]
+
+    assert '<button type="button" class="ghost" data-package-upload-open>' in panel
+    assert 'class="ghost" style="margin:0; cursor:pointer"' not in panel
+
+
+def test_the_check_modal_is_on_the_page(client: TestClient):
+    body = client.get("/policies/new").text
+
+    assert 'id="package-check"' in body
+    assert body.count('id="package-check"') == 1
+    for hook in ("data-check-progress", "data-check-error", "data-check-close"):
+        assert hook in body, f"{hook} missing — the check modal would not render"
+
+
+def test_the_upload_confirmation_says_what_was_accepted(client: TestClient):
+    """Not merely that something was: the count is how an operator notices they
+    uploaded the wrong package."""
+    response = _policy_upload(client, _valid_package("Ops Layer"))
+
+    assert response.json()["contents"] == 2
+
+
+def test_a_created_package_reports_its_contents_too(client: TestClient):
+    response = _policy_create(client, "Recon", [("a.kml", b"x"), ("b.txt", b"y")])
+    assert response.json()["contents"] == 2

@@ -658,10 +658,14 @@
       </div>
     </template>
     <div class="prefs-toolbar" style="margin-top:12px">
-      <label class="ghost" style="margin:0; cursor:pointer">
-        Upload package zip
-        <input type="file" accept=".zip,application/zip" data-package-upload hidden>
-      </label>
+      {#
+        ⚠️ A real <button>, not a <label class="ghost">. `button.ghost` is the
+        styled selector, and a label's own rule — block, muted, 12.5px — wins
+        over it, so the first version rendered as grey clickable text that did
+        not read as an action at all.
+      #}
+      <button type="button" class="ghost" data-package-upload-open>Upload package zip</button>
+      <input type="file" accept=".zip,application/zip" data-package-upload hidden>
       <button type="button" class="ghost" data-package-create-open>Create data package</button>
       <span class="muted" data-package-status style="font-size:12px"></span>
     </div>
@@ -675,6 +679,41 @@
       Uploads are checked for <code>MANIFEST/manifest.xml</code> before they are
       accepted, and land in the Content section.
     </p>
+  </div>
+{% endmacro %}
+
+{% macro data_package_check_modal() %}
+  {#
+    What happened to an uploaded zip, while it happens (W91 B5).
+
+    The check is the interesting part of an upload here — a package ATAK will not
+    import fails on a tablet as nothing at all — so it gets a surface of its own
+    rather than a line of muted text beside the control, where a refusal is easy
+    to miss on a page this long.
+  #}
+  <div class="modal-backdrop" id="package-check" hidden>
+    <div class="modal">
+      <h3 data-check-title>Checking data package</h3>
+      <p class="muted" data-check-file style="font-size:12px"></p>
+
+      <div data-check-progress>
+        <p>Reading <code>MANIFEST/manifest.xml</code> and checking it against
+        ATAK's own rules…</p>
+      </div>
+
+      <div class="banner bad" data-check-error hidden></div>
+
+      <p class="muted" data-check-note style="font-size:12px" hidden>
+        ⚠️ ATAK <em>would</em> unpack a zip without a manifest — as a plain
+        archive, with none of the manifest's placement rules. ATLAS refuses it so
+        that what lands on a device is predictable, not because the file is
+        broken.
+      </p>
+
+      <div class="toolbar" style="margin-top:16px; justify-content:flex-end">
+        <button type="button" class="ghost" data-modal-close data-check-close hidden>Close</button>
+      </div>
+    </div>
   </div>
 {% endmacro %}
 
