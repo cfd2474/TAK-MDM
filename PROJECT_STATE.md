@@ -405,6 +405,83 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W92 — Field tips instead of placeholders, sitewide
+
+Operator, 2026-09-07: remove placeholders from text fields and use a visible tip
+above or below the field instead.
+
+⚠️ **The reason is not tidiness.** A placeholder renders as grey text *inside*
+the box, which reads as a value the field already holds. An operator leaves it
+and saves — and for the General Files destination the spec then refuses the entry
+for having no destination, so the hint meant to help is what caused the
+rejection. It is also invisible the moment anyone types, which is exactly when a
+format hint is most wanted.
+
+#### The 41 placeholders are not one thing
+
+Surveyed before touching any: they fall into groups that deserve different
+answers, and a blanket removal damages two of them.
+
+| Group | Example | Decision |
+|---|---|---|
+| **State** | `not managed`, `not set` | ✅ **Kept** (operator, 2026-09-07) |
+| **Filter / search** | `Filter by name, serial, model…` | Tip below |
+| **Example values** | `com.example.app`, `/sdcard/atak/imagery` | Tip — the harmful group |
+| **Optionality** | `Label (optional)`, `extract to (opt)` | Tip |
+| **Instructions** | `leave blank for an open network` | Tip |
+
+⚠️ **"not managed" is kept because it is not a hint — it is the field's state.**
+Blank genuinely *means* unmanaged in W10's tri-state design, so the placeholder
+describes what is true rather than suggesting what to type, and nobody can leave
+it and save the wrong thing. A tip above it would repeat what the empty box
+already says.
+
+##### Plan (6 steps)
+
+1. **One `.field-tip` class** in `atlas.css` — muted, small, sitting tight under
+   its field. One class, so the console does not grow three shapes of hint.
+2. **A `tip()` macro** in `_macros.html` for template use, so a tip is one call
+   rather than a hand-rolled `<p class="muted">` each time.
+3. **Convert the harmful groups** — example values, optionality, instructions —
+   across the 13 templates.
+4. **Filters and searches** get a tip below, since their placeholder was their
+   only label.
+5. **The General Files destination** moves from the `title=` tooltip added an
+   hour ago to the same `.field-tip`, so the console has one idiom rather than
+   two. ⚠️ That supersedes the tooltip, deliberately.
+6. Tests asserting no `placeholder=` survives outside the state group, and that
+   each converted field kept its guidance. Then deploy.
+
+⚠️ **Placeholders set from `atlas.js` count too** — four of them, on rows the
+script builds. A rule that holds only in Jinja is a rule that decays the moment a
+row is added at runtime.
+
+###### Done (2026-09-07)
+
+**36 placeholders removed across 13 templates and 2 in `atlas.js`**; 3 state
+placeholders kept. **1041 server tests** (5 new in `tests/test_field_tips.py`).
+
+⚠️ **The rule is enforced at source, not by rendering.** Checking pages would
+only cover the handful a test happens to fetch, and the next placeholder would
+land in whichever template nobody asserts against. `test_field_tips.py` reads the
+templates and the script directly.
+
+⚠️ **`test_wallpaper.py` already recorded this bug once**, for one field: an
+enrolment placeholder reading `TAK-Field` was kept by an operator as if it were a
+real SSID. W92 is that fix generalised, and the test moved to the new markup
+rather than being deleted — its guarantee never changed.
+
+⚠️ **Two script placeholders were kept and commented**, both of the form
+"default: X" / "not set". They say *what happens if you leave this blank*, which
+is state and cannot be mistaken for something the operator typed.
+
+⚠️ **A self-inflicted regression worth recording.** The first pass tidied the
+whitespace left by the removal with `[ 	]{2,}` before an attribute — which also
+collapsed the **indentation of every continuation line**, 55 of them across the
+templates. Reverted with `git checkout` and redone with a pattern that takes only
+the single space before `placeholder=`. ⚠️ A cleanup regex that is not anchored
+to what it is cleaning will find something else to match.
+
 ### 🚧 W91 — File management: General Files, ATAK Data Packages, ATAK DTED
 
 Operator, 2026-09-07: split the File management category into sub-topics. The

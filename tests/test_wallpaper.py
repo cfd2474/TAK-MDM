@@ -231,6 +231,13 @@ def test_the_enrollment_page_prompts_for_a_network_name(client: TestClient):
 
     The field only renders once a primary token exists, so the token has to be
     minted first — asserting against the tokenless page would pass vacuously.
+
+    ⚠️ **W92 generalised the very fix this test protects.** The prompt was moved
+    out of the placeholder and into a field tip: grey text inside a box reads as
+    a value the field already holds, which is precisely how "TAK-Field" was
+    mistaken for one. The guarantee is unchanged — the page still says what the
+    field is for — so the assertion moved with the markup rather than being
+    dropped.
     """
     client.post(
         "/enrollment/primary", data={"name": "T"}, headers=ADMIN_HEADERS,
@@ -239,5 +246,6 @@ def test_the_enrollment_page_prompts_for_a_network_name(client: TestClient):
     body = client.get("/enrollment", headers=ADMIN_HEADERS).text
 
     assert 'name="wifi_ssid"' in body, "the SSID field should be on the page"
-    assert 'placeholder="Enter Network Name"' in body
+    assert "The network a device joins during provisioning." in body
+    assert 'placeholder="Enter Network Name"' not in body
     assert "TAK-Field" not in body

@@ -71,11 +71,11 @@
 {% macro _package_list(f, items, name) %}
   <div class="rowset" data-rowset>
     {% for item in items or [] %}
-      <div class="rs-row"><input type="text" name="{{ name }}" value="{{ item }}" placeholder="com.example.app">
+      <div class="rs-row"><input type="text" name="{{ name }}" value="{{ item }}">
         <button type="button" class="ghost" data-remove-row>Remove</button></div>
     {% endfor %}
     <template data-row-template>
-      <div class="rs-row"><input type="text" name="{{ name }}" placeholder="com.example.app">
+      <div class="rs-row"><input type="text" name="{{ name }}">
         <button type="button" class="ghost" data-remove-row>Remove</button></div>
     </template>
     <button type="button" class="ghost" data-add-row>Add package</button>
@@ -109,8 +109,11 @@
             </option>
           {% endfor %}
         </select>
-        <input type="text" name="{{ name }}__activity" placeholder="activity (optional)"
-               value="{{ item.activity or '' }}">
+        <div>
+          <input type="text" name="{{ name }}__activity"
+                 value="{{ item.activity or '' }}" aria-label="Activity">
+          <p class="field-tip">Optional. A specific activity to launch.</p>
+        </div>
         <label style="display:flex; align-items:center; gap:6px; margin:0; white-space:nowrap">
           <input type="checkbox" name="{{ name }}__favorite"
                  value="{{ item.package_name }}" data-favorite
@@ -133,7 +136,10 @@
             </option>
           {% endfor %}
         </select>
-        <input type="text" name="{{ name }}__activity" placeholder="activity (optional)">
+        <div>
+          <input type="text" name="{{ name }}__activity" aria-label="Activity">
+          <p class="field-tip">Optional. A specific activity to launch.</p>
+        </div>
         <label style="display:flex; align-items:center; gap:6px; margin:0; white-space:nowrap">
           <input type="checkbox" name="{{ name }}__favorite" value="" data-favorite>
           Dock
@@ -351,15 +357,17 @@
       {% endfor %}
     </select>
     {#
-      ⚠️ A tooltip rather than a placeholder. A placeholder reads as a *value*
-      the field already has — operators leave it and save, and the spec then
-      rejects the entry for having no destination. The hint carries the real
-      trap too: `/atak/imagery` is how ATAK paths are conventionally written and
-      it resolves from the filesystem root, where nothing is writable.
+      ⚠️ A tip, not a placeholder. Grey text inside the box reads as a value the
+      field already holds — an operator leaves it and saves, and the spec then
+      rejects the entry for having no destination, so the hint meant to help is
+      what caused the refusal. It also disappears the moment anyone types, which
+      is when a format hint is most wanted.
     #}
-    <input type="text" name="{{ name }}__dest_path" style="min-width:220px"
-           value="{{ entry.dest_path if entry else '' }}"
-           title="Directory on the device, e.g. /sdcard/atak/imagery&#10;&#10;Must be under /sdcard (or /storage/emulated/0). Writing it the way ATAK docs do — /atak/imagery — resolves from the filesystem root instead, where nothing can be written, so the policy refuses it.">
+    <div>
+      <input type="text" name="{{ name }}__dest_path" style="min-width:220px"
+             value="{{ entry.dest_path if entry else '' }}" aria-label="Destination">
+      <p class="field-tip">Directory on the device, e.g. <code>/sdcard/atak/imagery</code>. ⚠️ Must sit under <code>/sdcard</code> — written the way ATAK’s own docs do, <code>/atak/imagery</code> resolves from the filesystem root where nothing is writable, and the policy refuses it.</p>
+    </div>
     <select name="{{ name }}__availability">
       <option value="required" {{ 'selected' if not entry or entry.availability != 'optional' }}>required</option>
       <option value="optional" {{ 'selected' if entry and entry.availability == 'optional' }}>optional (marketplace)</option>
@@ -372,8 +380,11 @@
     <label class="muted" style="display:flex;gap:4px;align-items:center;margin:0">
       <input type="checkbox" name="{{ name }}__extract" style="width:auto" {{ 'checked' if entry and entry.extract }}> extract
     </label>
-    <input type="text" name="{{ name }}__extract_to" style="width:180px"
-           value="{{ entry.extract_to if entry and entry.extract_to else '' }}" placeholder="extract to (opt)">
+    <div>
+      <input type="text" name="{{ name }}__extract_to" style="width:180px"
+             value="{{ entry.extract_to if entry and entry.extract_to else '' }}" aria-label="Extract to">
+      <p class="field-tip">Optional. Where an archive unpacks; defaults to the destination.</p>
+    </div>
     <select name="{{ name }}__overwrite">
       {% for o in ['if_newer', 'always', 'if_absent'] %}
         <option value="{{ o }}" {{ 'selected' if entry and entry.overwrite == o }}>{{ o }}</option>
@@ -401,7 +412,8 @@
 {% macro _wifi_row(name, e) %}
   <div class="rs-row" style="flex-wrap:wrap; align-items:flex-end">
     <div><label>SSID</label>
-      <input type="text" name="{{ name }}__ssid" value="{{ e.ssid if e else '' }}" placeholder="Network name" style="min-width:180px"></div>
+      <input type="text" name="{{ name }}__ssid" value="{{ e.ssid if e else '' }}" style="min-width:180px">
+      <p class="field-tip">The network name.</p></div>
     <div><label>Security</label>
       <select name="{{ name }}__security">
         {% for v, lbl in [('open','Open'),('wep','WEP'),('wpa_psk','WPA/WPA2 PSK'),('wpa3_sae','WPA3 SAE')] %}
@@ -409,7 +421,8 @@
         {% endfor %}
       </select></div>
     <div><label>Password</label>
-      <input type="password" name="{{ name }}__password" value="{{ e.password if e and e.password else '' }}" placeholder="min 8" style="width:130px"></div>
+      <input type="password" name="{{ name }}__password" value="{{ e.password if e and e.password else '' }}" style="width:130px">
+      <p class="field-tip">At least 8 characters.</p></div>
     <div><label>Hidden</label>{{ _yesno(name ~ '__hidden', (e.hidden if e else false)) }}</div>
     <button type="button" class="ghost" data-remove-row>Remove</button>
   </div>
@@ -442,7 +455,7 @@
     </select>
     <span class="muted">exceeds</span>
     <input type="number" name="{{ name }}__threshold_mb" min="1"
-           value="{{ e.threshold_mb if e else '' }}" placeholder="0" style="width:110px">
+           value="{{ e.threshold_mb if e else '' }}" style="width:110px">
     <span class="muted">MB</span>
     <button type="button" class="ghost" data-remove-row>Remove</button>
   </div>
@@ -538,8 +551,10 @@
   <div class="banner" data-prefs-status>Reading the app's settings…</div>
   <div data-prefs-table hidden>
     <div class="prefs-toolbar">
-      <input type="search" data-prefs-filter placeholder="Filter by name or key"
-             aria-label="Filter settings">
+      <div>
+        <input type="search" data-prefs-filter aria-label="Filter settings">
+        <p class="field-tip">Filter by name or key.</p>
+      </div>
       <span class="muted" data-prefs-count></span>
     </div>
     <table class="prefs-table">
@@ -663,8 +678,10 @@
             Delivered once per device, then never re-sent.
           </div>
         </div>
-        <input name="{{ name }}__title" value="{{ entry.title or '' }}"
-               placeholder="Name shown in the console" style="max-width:260px">
+        <div style="max-width:260px">
+          <input name="{{ name }}__title" value="{{ entry.title or '' }}" aria-label="Name">
+          <p class="field-tip">Optional. Shown in the console.</p>
+        </div>
         <button type="button" class="ghost" data-remove-row>Remove</button>
       </div>
     {% endfor %}
@@ -691,7 +708,10 @@
             Delivered once per device, then never re-sent.
           </div>
         </div>
-        <input name="{{ name }}__title" placeholder="Name shown in the console" style="max-width:260px">
+        <div style="max-width:260px">
+          <input name="{{ name }}__title" aria-label="Name">
+          <p class="field-tip">Optional. Shown in the console.</p>
+        </div>
         <button type="button" class="ghost" data-remove-row>Remove</button>
       </div>
     </template>
@@ -767,8 +787,8 @@
     <div class="modal">
       <h3>Create data package</h3>
       <label for="ppkg-name">Package name</label>
-      <input id="ppkg-name" data-ppkg-name class="field-full"
-             placeholder="Ops overlay — north">
+      <input id="ppkg-name" data-ppkg-name class="field-full">
+      <p class="field-tip">Written into the package’s manifest, e.g. “Ops overlay — north”.</p>
       <label for="ppkg-desc">Description (optional)</label>
       <input id="ppkg-desc" data-ppkg-desc class="field-full">
 

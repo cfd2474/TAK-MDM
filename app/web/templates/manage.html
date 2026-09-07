@@ -22,7 +22,10 @@
     </p>
   {% else %}
   <div class="toolbar">
-    <input type="search" data-filter="#fleet-table" placeholder="Filter by name, serial, model, policy…">
+    <div>
+      <input type="search" data-filter="#fleet-table" aria-label="Filter devices">
+      <p class="field-tip">Filter by name, serial, model or policy.</p>
+    </div>
     <span class="muted" data-filter-count="#fleet-table">{{ rows|length }} devices</span>
   </div>
   <table id="fleet-table" data-sortable>
@@ -51,8 +54,8 @@
           <form method="post" action="/devices/{{ d.id }}/rename" class="inline-rename">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="next" value="/">
-            <input type="text" name="name" value="{{ d.name or '' }}"
-                   placeholder="name this device" maxlength="128" aria-label="rename {{ d.serial_number }}">
+            <input type="text" name="name" value="{{ d.name or '' }}" aria-label="Device name"
+                   maxlength="128" aria-label="rename {{ d.serial_number }}">
             <button type="submit" class="ghost" title="Save name">Save</button>
           </form>
         </td>

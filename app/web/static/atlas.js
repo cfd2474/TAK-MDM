@@ -311,8 +311,11 @@
             var search = document.createElement("input");
             search.type = "search";
             search.className = "field-full";
-            search.placeholder = "Filter " + schema.keys.length + " keys…";
-            search.style.marginBottom = "12px";
+            search.setAttribute("aria-label", "Filter keys");
+            var searchTip = document.createElement("p");
+            searchTip.className = "field-tip";
+            searchTip.style.marginBottom = "12px";
+            searchTip.textContent = "Filter " + schema.keys.length + " keys.";
             search.addEventListener("input", function () {
               var q = search.value.trim().toLowerCase();
               fields.querySelectorAll("[data-config-field]").forEach(function (row) {
@@ -321,6 +324,7 @@
               });
             });
             fields.appendChild(search);
+            fields.appendChild(searchTip);
           }
 
           schema.keys.forEach(function (k) {
@@ -392,6 +396,10 @@
               var input = document.createElement("input");
               input.type = k.control === "int" ? "number" : "text";
               input.className = "field-full";
+              // ⚠️ Kept as a placeholder, unlike the rest (W92). This is the
+              // field's *state* — what the app uses if nothing is set — not a
+              // hint about what to type, so it cannot be mistaken for a value
+              // the operator meant to save.
               input.placeholder = k.default || "not set";
               input.setAttribute("data-config-key", k.key);
               wrap.appendChild(input);
@@ -1411,7 +1419,8 @@
       control = document.createElement("input");
       control.type = field.control === "int" ? "number" : "text";
       control.value = current || "";
-      control.placeholder = field.default ? "default: " + field.default : "";
+      // State, not a hint: what ATAK uses when this is left unmanaged (W92).
+    control.placeholder = field.default ? "default: " + field.default : "";
     }
     return control;
   }
@@ -1660,7 +1669,8 @@
         '<div class="banner" data-prefs-status>Reading the plugin’s settings…</div>' +
         '<div data-prefs-table hidden>' +
         '<div class="prefs-toolbar">' +
-        '<input type="search" data-prefs-filter placeholder="Filter by name or key">' +
+        '<input type="search" data-prefs-filter aria-label="Filter settings">' +
+        '<p class="field-tip">Filter by name or key.</p>' +
         '<span class="muted" data-prefs-count></span></div>' +
         '<table class="prefs-table"><thead><tr>' +
         '<th class="prefs-setting">Setting</th><th class="prefs-value">Value</th>' +

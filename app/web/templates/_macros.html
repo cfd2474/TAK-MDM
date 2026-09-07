@@ -80,3 +80,18 @@
 {%- endif %}
 </span>
 {%- endmacro %}
+
+{#
+  Guidance for one field (W92).
+
+  ⚠️ Never a placeholder. Grey text inside the box reads as a value the field
+  already holds, so an operator leaves it and saves — and a required field then
+  rejects the entry the hint existed to help them fill. It also disappears the
+  moment they type.
+
+  `above` for guidance that must be read before typing; the default sits below,
+  where it stays legible while the field is being checked.
+#}
+{% macro tip(text, above=false) %}
+  <p class="field-tip{{ ' above' if above }}">{{ text }}</p>
+{% endmacro %}

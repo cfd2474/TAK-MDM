@@ -315,11 +315,13 @@
       </p>
       <form method="post" action="/admin/attributes" class="toolbar">
         {{ csrf_field(csrf_token) }}
-        <input type="text" name="name" required placeholder="Attribute name">
+        <input type="text" name="name" required aria-label="Attribute name">
+        <p class="field-tip">The attribute's name, e.g. “asset tag”.</p>
         <select name="attr_type">
           {% for t in ['string', 'number', 'boolean', 'date'] %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
         </select>
-        <input type="text" name="description" placeholder="Description (optional)">
+        <input type="text" name="description" aria-label="Description">
+        <p class="field-tip">Optional.</p>
         <button type="submit">Add</button>
       </form>
       {% if attributes %}

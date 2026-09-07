@@ -11,8 +11,14 @@
   <form method="post" action="/content/upload" enctype="multipart/form-data" class="toolbar">
     {{ csrf_field(csrf_token) }}
     <input type="file" name="file" required>
-    <input type="text" name="name" placeholder="Name (defaults to filename)">
-    <input type="text" name="description" placeholder="Description (optional)">
+    <div>
+      <input type="text" name="name" aria-label="Name">
+      <p class="field-tip">Defaults to the filename.</p>
+    </div>
+    <div>
+      <input type="text" name="description" aria-label="Description">
+      <p class="field-tip">Optional.</p>
+    </div>
     <button type="submit">Upload</button>
   </form>
   <p class="muted" style="font-size:12px">
@@ -38,7 +44,8 @@
             enctype="multipart/form-data" class="toolbar">
         {{ csrf_field(csrf_token) }}
         <input type="file" name="file" accept=".zip,application/zip" required>
-        <input type="text" name="name" placeholder="Name (defaults to the manifest's)">
+        <input type="text" name="name" aria-label="Name">
+        <p class="field-tip">Defaults to the name inside the package's manifest.</p>
         <button type="submit">Upload package</button>
       </form>
       <p class="muted" style="font-size:12px">
@@ -64,8 +71,8 @@
     <form method="post" action="/content/data-package/create" enctype="multipart/form-data">
       {{ csrf_field(csrf_token) }}
       <label for="pkg-name">Package name</label>
-      <input id="pkg-name" name="name" class="field-full" required
-             placeholder="Ops overlay — north">
+      <p class="field-tip">Shown in the console and written into the package's manifest, e.g. “Ops overlay — north”.</p>
+      <input id="pkg-name" name="name" class="field-full" required>
       <label for="pkg-desc">Description (optional)</label>
       <input id="pkg-desc" name="description" class="field-full">
 
@@ -163,7 +170,7 @@
         </div>
         <div>
           <label>Default destination</label>
-          <input name="default_dest_path" value="{{ f.default_dest_path or '' }}" class="field-full" placeholder="/sdcard/atak/imagery">
+          <input name="default_dest_path" value="{{ f.default_dest_path or '' }}" class="field-full">
           <label>Default persist</label>
           <select name="default_persist" class="field-full">
             <option value="inherit" {{ 'selected' if f.default_persist == none }}>inherit from tier</option>

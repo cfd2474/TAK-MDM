@@ -34,7 +34,8 @@
   <form method="post" action="/policies/clone" class="toolbar">
     {{ csrf_field(csrf_token) }}
     <input type="hidden" name="source_id" value="{{ policy.id }}">
-    <input type="text" name="name" required placeholder="New policy name" style="min-width:280px">
+    <input type="text" name="name" required style="min-width:280px" aria-label="New policy name">
+    <p class="field-tip">A name for the new policy.</p>
     <button type="submit">Create policy</button>
   </form>
 </div>

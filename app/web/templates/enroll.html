@@ -37,7 +37,8 @@
     <div class="row">
       <div>
         <label for="name">Name</label>
-        <input id="name" name="name" required class="field-full" placeholder="Fleet enrollment">
+        <input id="name" name="name" required class="field-full">
+        <p class="field-tip">What this token is for, e.g. “Fleet enrollment”.</p>
       </div>
       {{ scope_pickers(groups, tags) }}
     </div>
@@ -70,15 +71,16 @@
     <div class="row">
       <div>
         <label for="wifi_ssid">Wi-Fi network (SSID) — optional</label>
-        <input id="wifi_ssid" name="wifi_ssid" class="field-full" placeholder="Enter Network Name">
+        <input id="wifi_ssid" name="wifi_ssid" class="field-full">
+        <p class="field-tip">The network a device joins during provisioning.</p>
       </div>
       <div>
         <label for="wifi_password">Wi-Fi password</label>
         <div class="input-group">
-          <input id="wifi_password" name="wifi_password" type="password" class="field-full"
-                 placeholder="leave blank for an open network">
+          <input id="wifi_password" name="wifi_password" type="password" class="field-full">
           <button type="button" class="btn ghost" data-toggle-password="wifi_password">Show</button>
         </div>
+        <p class="field-tip">Leave blank for an open network.</p>
       </div>
       <div>
         <label for="wifi_security">Wi-Fi security</label>
@@ -107,7 +109,8 @@
       <div class="row">
         <div>
           <label for="new_name">New name</label>
-          <input id="new_name" name="name" required class="field-full" placeholder="Fleet enrollment">
+          <input id="new_name" name="name" required class="field-full">
+          <p class="field-tip">What this token is for, e.g. “Fleet enrollment”.</p>
         </div>
         {{ scope_pickers(groups, tags) }}
       </div>

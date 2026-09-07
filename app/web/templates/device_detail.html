@@ -15,7 +15,7 @@
   <form method="post" action="/devices/{{ device.id }}/rename" class="toolbar" style="margin:0">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="text" name="name" value="{{ device.name or '' }}"
-           placeholder="Friendly name (blank to clear)" maxlength="128" style="min-width:280px">
+           maxlength="128" style="min-width:280px">
     <button type="submit" class="ghost">Save name</button>
   </form>
   <form method="post" action="/devices/{{ device.id }}/checkin" style="margin:0">

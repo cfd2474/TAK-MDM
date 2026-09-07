@@ -826,3 +826,24 @@ dl.kv dd { margin: 0; font-size: 13px; }
 .prefs-empty { color: var(--muted); padding: 14px 10px; }
 /* The plugin picker holds the same table, so it needs the same room. */
 .modal.modal-wide { max-width: 900px; }
+
+/* --- Field tips (W92) -------------------------------------------------------
+   Guidance sits beside a field, not inside it.
+
+   ⚠️ A placeholder renders as grey text *within* the box, which reads as a value
+   the field already holds — an operator leaves it and saves, and for a required
+   field the form then rejects the entry the hint was meant to help them fill. It
+   also vanishes the moment anyone types, which is when a format hint is most
+   wanted. A tip does neither. */
+.field-tip {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+  margin: 3px 0 0;
+}
+/* Above the field rather than below, for the few where the guidance has to be
+   read before typing rather than while checking. */
+.field-tip.above { margin: 0 0 4px; }
+/* Inside a wrapping .rs-row the tip belongs to one control, not the row, so it
+   takes the full width and drops below rather than squeezing between fields. */
+.rs-row .field-tip { flex-basis: 100%; }

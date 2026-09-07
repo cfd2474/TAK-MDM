@@ -23,7 +23,10 @@
             data-upload-form>
         {{ csrf_field(csrf_token) }}
         <input type="file" name="file" accept=".apk,.xapk,.apks,.apkm" required>
-        <input type="text" name="label" placeholder="Label (optional)">
+        <div>
+          <input type="text" name="label" aria-label="Label">
+          <p class="field-tip">Optional. Overrides the label read from the APK.</p>
+        </div>
         <input type="hidden" name="publish" value="auto">
         <button type="submit">Upload</button>
       </form>
@@ -340,8 +343,9 @@
           </p>
         {% elif tpc.plugins %}
         <div class="toolbar" style="margin-bottom:10px">
+          <p class="field-tip">Filter by name, package or description.</p>
           <input type="search" id="tpc-filter" data-plugin-filter
-                 placeholder="Filter by name, package or description"
+                
                  style="min-width:340px" autocomplete="off">
           {# Filters what is already on the page. The catalog is fetched once and
              every row is present, so there is nothing to ask the server for and
@@ -414,7 +418,8 @@
         <div class="row">
           <div>
             <label for="group_name">Name</label>
-            <input id="group_name" name="name" required class="field-full" placeholder="ATAK bundle">
+            <input id="group_name" name="name" required class="field-full">
+            <p class="field-tip">What this set of apps is called, e.g. “ATAK bundle”.</p>
             <label for="group_desc">Description</label>
             <input id="group_desc" name="description" class="field-full">
           </div>

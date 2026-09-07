@@ -17,7 +17,10 @@
     {{ empty_state('No data for this report yet.') }}
   {% else %}
   <div class="toolbar">
-    <input type="search" data-filter="#report-table" placeholder="Filter rows…">
+    <div>
+      <input type="search" data-filter="#report-table" aria-label="Filter rows">
+      <p class="field-tip">Filter the rows below.</p>
+    </div>
     <span class="muted" data-filter-count="#report-table">{{ rows | length }} rows</span>
   </div>
   <div style="overflow-x:auto">

@@ -25,14 +25,15 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label for="wifi_ssid">Network name (SSID)</label>
         <input id="wifi_ssid" name="wifi_ssid" style="width:100%"
-               value="{{ wifi_ssid or '' }}" placeholder="Enter Network Name">
+               value="{{ wifi_ssid or '' }}">
+        <p class="field-tip">The network a device joins during provisioning.</p>
 
         <label for="wifi_password">Password</label>
         <div class="input-group">
-          <input id="wifi_password" name="wifi_password" type="password"
-                 placeholder="leave blank for an open network">
+          <input id="wifi_password" name="wifi_password" type="password">
           <button type="button" class="btn ghost" data-toggle-password="wifi_password">Show</button>
         </div>
+        <p class="field-tip">Leave blank for an open network.</p>
 
         <label for="wifi_security">Security</label>
         <select id="wifi_security" name="wifi_security" style="width:100%">
