@@ -2025,3 +2025,71 @@
       });
   });
 })();
+
+/* --- General Files: upload from inside the policy (W91 B6) -------------------
+   The same shape as the data-package upload, minus the manifest check: this path
+   carries a .pref, a certificate, a map source, a zip to extract. Posts by
+   script and reports inline, because the editor holds an unsaved policy. */
+
+(function () {
+  var set = document.querySelector("[data-general-files]");
+  if (!set) return;
+
+  var open = set.querySelector("[data-file-upload-open]");
+  var input = set.querySelector("[data-file-upload]");
+  var status = set.querySelector("[data-file-upload-status]");
+  var template = set.querySelector("[data-row-template]");
+  var addRow = set.querySelector("[data-add-row]");
+  if (!open || !input || !template || !addRow) return;
+
+  function say(message, bad) {
+    status.textContent = message || "";
+    status.style.color = bad ? "var(--bad)" : "";
+  }
+
+  open.addEventListener("click", function () { input.click(); });
+
+  input.addEventListener("change", function () {
+    var file = input.files && input.files[0];
+    if (!file) return;
+    say("Uploading " + file.name + "…");
+
+    var body = new FormData();
+    var token = document.querySelector('input[name="csrf_token"]');
+    if (token) body.append("csrf_token", token.value);
+    body.append("file", file);
+
+    fetch("/policies/file/upload", { method: "POST", body: body })
+      .then(function (r) {
+        return r.json().then(function (j) { return { ok: r.ok, body: j }; });
+      })
+      .then(function (res) {
+        input.value = "";
+        if (!res.ok || !res.body.id) {
+          say(res.body.error || "upload failed", true);
+          return;
+        }
+
+        /* A new row for the file, with the destination left empty on purpose:
+           where a file belongs is the operator's decision and there is no
+           sensible default. The spec refuses an entry with no destination, so a
+           forgotten one is caught at save rather than on a device. */
+        var row = template.content.firstElementChild.cloneNode(true);
+        var picker = row.querySelector("select");
+        if (picker) {
+          var option = document.createElement("option");
+          option.value = res.body.id;
+          option.textContent = res.body.name;
+          option.selected = true;
+          picker.appendChild(option);
+        }
+        addRow.parentNode.insertAdjacentElement("beforebegin", row);
+        set.dispatchEvent(new Event("input", { bubbles: true }));
+        say(res.body.name + " added — set its destination");
+      })
+      .catch(function () {
+        input.value = "";
+        say("upload failed", true);
+      });
+  });
+})();

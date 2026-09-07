@@ -2132,6 +2132,63 @@ def upload_content_form(
     return _redirect("/content")
 
 
+@router.post("/policies/file/upload")
+def upload_policy_file(
+    file: UploadFile = File(...),
+    name: str = Form(default=""),
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+    settings: Settings = Depends(get_settings),
+    identity: AdminIdentity = Depends(admin_required),
+) -> JSONResponse:
+    """Take a file chosen inside a policy editor and hand back its id (W91 B6).
+
+    The General Files counterpart of the data-package upload: an id rather than a
+    redirect, because the policy is unsaved and a redirect would take every other
+    category's changes with it.
+
+    ⚠️ **Ingested into the library**, unlike the wallpaper upload (W46). That one
+    is `in_library=False` because picking an image for one policy is not
+    publishing a fleet asset; a file deployed to devices is exactly that, and the
+    operator asked for these to reach Content.
+
+    ⚠️ **No manifest check here, deliberately.** This is the general path — a
+    `.pref`, a certificate, a map source, a zip to extract. A data package
+    uploaded through it would be an ordinary file with a hand-typed destination,
+    which is why the sub-page says to use ATAK Data Packages instead. Nothing
+    stops it; the check that matters is on the delivery settings, not the bytes.
+    """
+    data = file.file.read()
+    if not data:
+        return JSONResponse({"error": "the uploaded file is empty"}, status_code=422)
+    if len(data) > settings.max_upload_bytes:
+        return JSONResponse(
+            {"error": f"upload exceeds {settings.max_upload_bytes} bytes"}, status_code=413
+        )
+    try:
+        managed = file_service.ingest_file(
+            session,
+            storage,
+            data,
+            name=(name or "").strip() or (file.filename or "unnamed"),
+            original_filename=file.filename or "unnamed",
+            media_type=file.content_type or "application/octet-stream",
+        )
+        session.commit()
+    except file_service.FileError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+
+    return JSONResponse(
+        {
+            "id": str(managed.id),
+            "name": managed.name,
+            # So the console can say "that looks like a data package" without
+            # refusing it — the operator may have a reason.
+            "is_archive": bool(managed.is_archive),
+        }
+    )
+
+
 @router.post("/policies/data-package/upload")
 def upload_policy_data_package(
     file: UploadFile = File(...),

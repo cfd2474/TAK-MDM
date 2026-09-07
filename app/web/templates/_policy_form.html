@@ -305,10 +305,27 @@
 {% endmacro %}
 
 {% macro _file_list(f, items, name, managed_files) %}
-  <div class="rowset" data-rowset>
+  <div class="rowset" data-rowset data-general-files>
     {% for entry in items or [] %}{{ _file_row(name, managed_files, entry) }}{% endfor %}
     <template data-row-template>{{ _file_row(name, managed_files, none) }}</template>
-    <button type="button" class="ghost" data-add-row>Add file</button>
+    <div class="prefs-toolbar" style="margin-top:10px">
+      <button type="button" class="ghost" data-add-row>Add file</button>
+      <button type="button" class="ghost" data-file-upload-open>Upload a file</button>
+      <input type="file" data-file-upload hidden>
+      <span class="muted" data-file-upload-status style="font-size:12px"></span>
+    </div>
+    <p class="muted" style="font-size:12px; margin-top:8px">
+      An uploaded file lands in the Content section and is added here with an
+      empty destination — fill that in before saving.
+    </p>
+    <p class="muted" style="font-size:12px">
+      ⚠️ <strong>ATAK data packages do not belong here.</strong> Upload them under
+      <strong>ATAK Data Packages</strong>, which checks the manifest, fixes the
+      directory ATAK watches, and delivers each package exactly once. Placed
+      through this section they would carry a hand-typed destination and a
+      persist setting, and either one wrong is a package ATAK re-imports on every
+      sync.
+    </p>
   </div>
 {% endmacro %}
 
@@ -316,8 +333,21 @@
   <div class="rs-row" style="flex-wrap:wrap">
     <select name="{{ name }}__file_id">
       <option value="">— pick an uploaded file —</option>
+      {#
+        ⚠️ Data packages are deliberately absent. They are placed by the ATAK
+        Data Packages sub-topic, which fixes the destination ATAK watches and
+        delivers exactly once; offered here they would get a free-text
+        destination and a `persist` control, and either one set wrongly is a
+        package ATAK re-imports on every sync.
+
+        A package already on this policy still renders — `selected` below — so an
+        older policy that placed one through General Files stays visible and
+        editable rather than silently losing its file.
+      #}
       {% for mf in managed_files %}
-        <option value="{{ mf.id }}" {{ 'selected' if entry and (entry.file_id | string) == (mf.id | string) }}>{{ mf.name }}</option>
+        {% if not mf.is_data_package or (entry and (entry.file_id | string) == (mf.id | string)) %}
+          <option value="{{ mf.id }}" {{ 'selected' if entry and (entry.file_id | string) == (mf.id | string) }}>{{ mf.name }}</option>
+        {% endif %}
       {% endfor %}
     </select>
     <input type="text" name="{{ name }}__dest_path" style="min-width:220px"

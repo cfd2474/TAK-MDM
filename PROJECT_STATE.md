@@ -48,7 +48,7 @@ PASSWORD policy, hardware-proven; W21 unified every policy into the composite
 kind with a values-in-fields editor; W22 added quick archive from the list with
 an impact modal; W23 hardened live push and added a "Check in now" button; W24
 made the DPC show policy names and added console inline rename.**
-1026 server tests + 206 agent tests.
+1034 server tests + 206 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -613,6 +613,40 @@ already has. One list, one source, nothing to keep in step.
 this zip lacks" warning first landed **inside** the *Deployed by* table's `else`
 branch, so it only rendered for packages a policy already used — the least likely
 case to be looked at.
+
+##### ✅ B6 (2026-09-07) — General Files: upload in place, packages kept out
+
+Operator, 2026-09-07. Three changes, one of them a deliberate omission.
+
+**Upload from the section**, the same shape as the data-package one: posts by
+script, reports inline, returns an id the unsaved form holds. `in_library` is
+**true** — a file deployed to devices is fleet content, unlike W46's wallpaper.
+The new row lands with an **empty destination** on purpose: where a file belongs
+is the operator's decision, there is no sensible default, and the spec refuses an
+entry without one, so a forgotten destination fails at save rather than on a
+device.
+
+⚠️ **Data packages are filtered out of the General Files picker.** Placed through
+this section a package would carry a hand-typed destination and a `persist`
+control, and either one set wrongly is a package ATAK re-imports on every sync.
+The ATAK Data Packages sub-topic fixes both, which is the entire reason it is a
+separate field.
+
+⚠️ **A package a policy *already* places still renders**, matched by
+`entry.file_id`. Filtering a picker must not silently drop a selection: an older
+policy that placed a package through General Files stays visible and editable
+instead of losing its file on the next save.
+
+⚠️ **The omission is explained where it happens.** A picker that quietly leaves
+something out teaches nothing — the section says data packages belong in their
+own sub-topic, and why.
+
+⚠️ **No manifest check on this route, deliberately.** It carries a `.pref`, a
+certificate, a map source, a zip to extract. Nothing stops a package going
+through it; what makes a package work is the delivery settings, not the bytes,
+and those are what the other sub-topic fixes.
+
+**1034 server tests.**
 
 ##### ✅ B5 (2026-09-07) — the upload reads as an action, and the check has a surface
 
