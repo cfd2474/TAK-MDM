@@ -1283,6 +1283,21 @@ launcher has to go — and **uninstall, not hide**: a hidden package still exist
 but reads as missing to `getPackageInfo`, so the DPC's own installer decides it
 needs installing again on the next kiosk.
 
+### ❌ An `animation-list` is not a notification small icon (W84) ✅ observed
+
+`setSmallIcon` pointing at an `<animation-list>` does not animate and does not
+show the first frame. On `SM-X520` (One UI) the platform **substituted the app's
+launcher icon** — a full-colour logo *with its wordmark*, which at 24dp is a
+smudge that says nothing about a download.
+
+⚠️ The failure is silent and looks like a design choice, not a fault: there is no
+log line, and the status bar simply shows a different picture. The only clue is
+that the icon is the app's own.
+
+AOSP's `StatusBarIconView` does start an `AnimationDrawable` it is handed, which
+is how the platform's *own* `stat_sys_download` moves — but that path is not
+reachable for a third-party notification here. Ship a **static** silhouette.
+
 ### ✅ A Device Owner *can* turn Wi-Fi on and off (W72) — verified on `SM-X520`
 
 `WifiManager.setWifiEnabled()` has returned false for ordinary apps since

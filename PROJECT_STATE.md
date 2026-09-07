@@ -364,7 +364,22 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
-### ✅ W83 — the download icon falls, Play Store style
+### ⚠️ W84 — the animated icon became the app icon; now a static arrow
+
+The animation attempt failed exactly where I said it was unverified. On the
+device the download notification showed **the ATLAS launcher icon, wordmark and
+all** — Android substituted the app icon rather than rendering the
+`animation-list`, silently and with no log line.
+
+Replaced with the operator's `downloadicon.png` as a static silhouette at all five
+buckets, built like `ic_stat_atlas`. The frames and the animation-list are gone;
+leaving them would leave a resource whose only effect is to summon the app icon.
+
+⚠️ Recorded in the platform reference: an `animation-list` is not a usable
+notification small icon, and the fallback is *worse* than a still image because
+the app icon is a full-colour logo with text that means nothing at 24dp.
+
+### ✅ W83 — the download icon falls, Play Store style (superseded by W84)
 
 ⚠️ **Our own frames, not `android.R.drawable.stat_sys_download`.** That is a hidden
 system resource whose artwork differs by OEM — on a Samsung it is not the glyph
