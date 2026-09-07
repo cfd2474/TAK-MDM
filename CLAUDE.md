@@ -48,3 +48,14 @@
 - Python source changes require `docker compose up -d --build`. Plain `up -d`
   silently keeps the old image.
 - Changes under `docker/nginx/` or `pki/` require `docker compose restart proxy`.
+
+## 8. Remote Server
+- `docs/REMOTE_SERVER.md` is how to reach the dev host `209.182.235.108`:
+  credentials, the `plink`/`pscp` invocations that work here, and the deploy,
+  APK-publish and migration procedures.
+- **Read it before running anything against the host.** Every command in it has
+  been run successfully; several have a non-obvious flag (`-batch`, `-hostkey`,
+  `-T`, `PYTHONPATH=/app`) whose absence hangs the call or fails it misleadingly.
+- The operator has given a standing OK to push server updates and agent APKs to
+  that host without asking. It does not extend to destroying data, or to any other
+  host.

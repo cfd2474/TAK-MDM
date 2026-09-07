@@ -249,6 +249,48 @@ Knox is strictly additive.
 
 ## Operational notes — read before debugging anything "impossible"
 
+### ⚠️ The local stack is not the one devices check into (2026-09-07)
+
+**Two ATLAS servers exist and it is easy to diagnose the wrong one.**
+
+| | |
+|---|---|
+| **The real deployment** — where `SM-X520` checks in | `209.182.235.108:8443`, cert `CN=209.182.235.108` |
+| **The local dev stack** — `docker compose` on this machine | `127.0.0.1:8000` console, cert `CN=192.168.68.89` |
+
+⚠️ **The local database is therefore not the fleet's.** Reading
+`http://127.0.0.1:8000/api/v1/devices` shows `SM-X520` with a `last_checkin_at`
+of 2026-09-04 and looks exactly like a device that has stopped reporting. It has
+not: it reports to the remote host, and this row simply has not moved since the
+last time it talked to *this* machine. **A stale `last_checkin_at` here is not
+evidence of anything.** Check the remote server before concluding a device is
+dark.
+
+⚠️ **This machine's local `.env` is stale in two ways**, which matters only if
+someone enrols a device against the dev stack:
+
+* `TAKMDM_SERVER_URL=https://192.168.68.89:8443`, but this machine's Ethernet
+  address is now **`192.168.68.104`** — the DHCP lease moved.
+* `192.168.68.89` is now **a Google Chromecast**
+  (`O=Google Inc, OU=Cast, CN=AP3YREI FA8FCA710CC2`). It answers on 8443, so the
+  address is not merely dead — something replies with a certificate that is not
+  ours, which fails differently and later than a refused connection.
+
+The local server certificate still carries `CN=192.168.68.89` / SAN
+`IP:192.168.68.89` only, so the dev stack cannot serve a device at its own
+current address either. Both would need answering together before enrolling
+anything locally — see W35 for what that involves.
+
+**Identify which server you are looking at in one command:**
+
+```
+openssl s_client -connect <host>:8443 </dev/null 2>/dev/null \
+  | openssl x509 -noout -subject
+```
+
+`CN=209.182.235.108` is the real deployment; `CN=192.168.68.89` is this laptop's
+dev stack; anything else has taken the address.
+
 ### ⚠️ Provisioning fails opaquely when `.env` describes another deployment (W76)
 
 `SM-X828U` reached *"Something went wrong"* after downloading the DPC. Nothing
