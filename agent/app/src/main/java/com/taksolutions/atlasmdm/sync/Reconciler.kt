@@ -44,6 +44,7 @@ import com.taksolutions.atlasmdm.permissions.PermissionRequirement
 import com.taksolutions.atlasmdm.policy.AllowlistPlan
 import com.taksolutions.atlasmdm.policy.AppUpdatePlan
 import com.taksolutions.atlasmdm.policy.DataUsageTracker
+import com.taksolutions.atlasmdm.policy.InstallerCachePlan
 import com.taksolutions.atlasmdm.policy.LauncherConfigPlan
 import com.taksolutions.atlasmdm.policy.PolicyApplier
 import com.taksolutions.atlasmdm.ui.InstallNotifier
@@ -315,6 +316,9 @@ class Reconciler(private val context: Context) {
         }
 
     private fun syncInner(): SyncOutcome {
+        // The one installer file nothing else can clean up: see below.
+        discardFinishedSelfUpdate()
+
         // Before enrolment, because enrolment reads the device serial and
         // READ_PHONE_STATE is one of the permissions this grants. Every sync, not
         // just the first, because a permission added in a later agent build is
@@ -461,6 +465,11 @@ class Reconciler(private val context: Context) {
         // starts and its own reconcile clears it - leaving it up is the honest
         // state, because the install really is still happening.
         InstallNotifier.installing(context, label)
+
+        // Written before the install for the same reason (W88): this process is
+        // about to be killed, so the only chance to say which file to throw away
+        // is now. The build that starts next reads it in [discardFinishedSelfUpdate].
+        config.recordPendingSelfUpdate(sha, wanted)
 
         // The last line this process will ever write. If a device goes quiet after
         // an update, this is the entry that says it was deliberate.
@@ -831,6 +840,9 @@ class Reconciler(private val context: Context) {
             InstallNotifier.installing(context, label)
             val result = installer.install(packageName, parts)
             InstallNotifier.clear(context)
+            if (InstallerCachePlan.discardAfterInstall(result.success)) {
+                discardInstallerFiles(packageName, parts)
+            }
             if (result.success) {
                 AgentLog.i(
                     TAG,
@@ -1269,7 +1281,72 @@ class Reconciler(private val context: Context) {
                 if (result.success) "installed versionCode ${installer.installedVersionCode(packageName)}"
                 else "failed — ${result.message}"
         )
+        if (InstallerCachePlan.discardAfterInstall(result.success)) {
+            discardInstallerFiles(packageName, parts)
+        }
         return if (result.success) StoreInstall.Done else StoreInstall.Failed(result.message)
+    }
+
+    /**
+     * Throw away the APK the *previous* build of the agent installed (W88).
+     *
+     * ⚠️ **This is the one install nobody can clean up after themselves.**
+     * `selfUpdate` hands the agent's own APK to `PackageInstaller` and the process
+     * is killed part-way through, so no line after that call ever runs. It is also
+     * the largest file the agent writes — about 21 MB, one per build shipped —
+     * which on a device that has taken a few updates is the bulk of the cache.
+     *
+     * The previous build recorded the sha before dying. Reaching here at or above
+     * the version it was fetching means the install landed, so the file is spent.
+     * Reaching here *below* it means the update did not take, and the download is
+     * kept for the retry.
+     */
+    private fun discardFinishedSelfUpdate() {
+        val sha = config.pendingSelfUpdateSha ?: return
+        val wanted = config.pendingSelfUpdateVersionCode
+        if (!InstallerCachePlan.selfUpdateFinished(BuildConfig.VERSION_CODE.toLong(), wanted)) {
+            AgentLog.d(
+                TAG,
+                "agent update to $wanted did not take (running ${BuildConfig.VERSION_CODE}); " +
+                    "keeping its download"
+            )
+            return
+        }
+        discardInstallerFiles(context.packageName, listOf(File(cacheDir, sha)))
+        config.clearPendingSelfUpdate()
+    }
+
+    /**
+     * Throw away the installer files for an app that is now installed (W88).
+     *
+     * `PackageInstaller` copies what it is given into the system's own store, so
+     * once the install succeeds our copy is dead weight — and an APK is the
+     * largest thing the agent ever writes. A fleet on a 32 GB tablet was
+     * accumulating one copy of every app it had ever been sent.
+     *
+     * ⚠️ **Only after a success, and never on a failure.** The cache is what a
+     * retry resumes from: a download that verified is byte-correct, so re-fetching
+     * it over a field connection would buy nothing. A failed install is retried
+     * next sync and finds its parts still there.
+     *
+     * ⚠️ **Only files this install owns.** Deleting by sweeping the cache would
+     * race [installFromStore], which downloads on the Apps screen while a sync
+     * runs — the parts would go between the download verifying and
+     * `PackageInstaller` opening them.
+     *
+     * Failure to delete is logged and otherwise ignored. The app is installed;
+     * the disk not being reclaimed is not worth failing a converged reconcile.
+     */
+    private fun discardInstallerFiles(packageName: String, parts: List<File>) {
+        var freed = 0L
+        for (part in parts) {
+            val size = part.length()
+            if (part.delete()) freed += size
+            else AgentLog.w(TAG, "$packageName: could not discard installer file ${part.name}")
+        }
+        if (freed > 0) {
+            AgentLog.d(TAG, "$packageName: discarded ${freed / 1024} KB of installer files")
+        }
     }
 
     private fun downloadArtifact(

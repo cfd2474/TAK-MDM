@@ -164,6 +164,40 @@ class AgentConfig(context: Context) {
         set(value) = prefs.edit { putLong(KEY_LAST_SYNC, value) }
 
     /**
+     * sha256 of the agent APK a self-update is part-way through installing (W88).
+     *
+     * ⚠️ **A message to the next process, not state this one uses.** Installing
+     * the agent kills the agent, so nothing after `PackageInstaller.install`
+     * runs — including any cleanup of the 21 MB APK it was handed. This is written
+     * before that call so the build that starts next knows which file to discard.
+     * Cleared by `Reconciler.discardFinishedSelfUpdate` once the update has landed.
+     */
+    val pendingSelfUpdateSha: String?
+        get() = prefs.getString(KEY_SELF_UPDATE_SHA, null)
+
+    /**
+     * The versionCode [pendingSelfUpdateSha] was fetching, or 0.
+     *
+     * Recorded alongside the sha so the next process can tell an update that
+     * landed from one that failed: below this number, the download is kept for the
+     * retry rather than thrown away.
+     */
+    val pendingSelfUpdateVersionCode: Long
+        get() = prefs.getLong(KEY_SELF_UPDATE_VERSION, 0L)
+
+    /** Written together — a sha without its version could not be judged. */
+    fun recordPendingSelfUpdate(sha: String, versionCode: Long) = prefs.edit {
+        putString(KEY_SELF_UPDATE_SHA, sha)
+        putLong(KEY_SELF_UPDATE_VERSION, versionCode)
+    }
+
+    /** Forget the pending update, once its APK has been discarded. */
+    fun clearPendingSelfUpdate() = prefs.edit {
+        remove(KEY_SELF_UPDATE_SHA)
+        remove(KEY_SELF_UPDATE_VERSION)
+    }
+
+    /**
      * Set when someone left kiosk with the exit passcode (W65).
      *
      * ⚠️ The one place the **device** overrides policy until told otherwise. The
@@ -399,6 +433,8 @@ class AgentConfig(context: Context) {
         private const val KEY_KIOSK_LAUNCHED = "kiosk_launched_component"
         private const val KEY_KIOSK_LAUNCHED_AT = "kiosk_launched_at_elapsed"
         private const val KEY_WALLPAPER_SHA = "applied_wallpaper_sha"
+        private const val KEY_SELF_UPDATE_SHA = "pending_self_update_sha"
+        private const val KEY_SELF_UPDATE_VERSION = "pending_self_update_version"
         private const val KEY_SAVED_SCREEN_TIMEOUT = "saved_screen_timeout_ms"
         private const val KEY_APPLY_ERRORS = "last_apply_errors"
         private const val KEY_APPLY_WARNINGS = "last_apply_warnings"

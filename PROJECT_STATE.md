@@ -364,6 +364,51 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W88 — installer APKs were kept forever after the app was installed
+
+Every APK the agent downloaded stayed in `cacheDir/artifacts/<sha>` for the life
+of the device. `PackageInstaller` copies what it is handed into the system's own
+store, so from the moment an install succeeds our copy is dead weight — and an
+APK is the largest thing the agent writes. A tablet accumulated one copy of every
+app it had ever been sent, plus one of every agent build it had ever taken.
+
+**Three install sites, all now covered.** Policy-driven installs
+(`reconcileApps`) and store installs (`installFromStore`) discard their parts as
+soon as the install reports success.
+
+⚠️ **Only on success.** The cache is what a retry resumes from: a download that
+passed its sha check is byte-correct, so re-fetching it would buy nothing and
+cost the whole transfer again over whatever connection a fielded device has. A
+failed install is retried next sync and finds its parts still there.
+
+⚠️ **Only files that install owns — never a sweep of the cache.** `installFromStore`
+runs from the Apps screen while a sync runs, so a sweep would delete a store
+install's parts between the download verifying and `PackageInstaller` opening
+them.
+
+**The self-update is the one install nothing can clean up after itself.** Handing
+the agent's own APK to `PackageInstaller` kills this process part-way through, so
+no line after that call ever runs — and at ~21 MB per build it is the bulk of the
+cache. `selfUpdate` now records the sha *and the versionCode it was fetching*
+before dying; the build that starts next reads the note and discards the file.
+The version is what separates an update that landed from one that did not: below
+it, the download is kept for the retry.
+
+`InstallerCachePlan` holds both decisions, because the self-update sequence
+cannot be observed on a device at all — the process that makes the decision is
+not the process that made the download. `selfUpdateFinished` is `>=`, not `==`:
+two updates landing between syncs would otherwise strand the first APK forever,
+with nothing that ever runs again able to match its version. Confirmed the
+boundary test fails when it is weakened to `>`.
+
+⚠️ **Leftovers already on the fielded devices are not swept.** This changes what
+happens from build 88 onward; the APKs those three devices accumulated before it
+stay until something removes them. A one-time sweep is possible but needs an age
+guard to avoid the store-install race above — not built, not asked for.
+
+Agent **88 / 0.43.3** published (fleet pointer 88).
+
+
 ### ✅ W87 — the download icon reverted to the app icon, and the artwork was never the problem
 
 Reported on build 86: *"it showed the new icon for a brief second, then reverted
