@@ -16,8 +16,7 @@ retiring the primary kills an already-issued, still-time-valid QR immediately.
 Agent **v41 (`0.10.1`)** running on `SM-X520` (compliant, serial `R5GL40MMHRN`),
 delivered over the air by the agent-update channel — the first build on this
 device that no one sideloaded.
-**No hardware verification is outstanding** — W17, W23 and W24 all cleared
-2026-09-02 (W25).
+**One hardware verification is outstanding (R16):** W90's ATAK Config has never run on a tablet — `SM-X520` has been dark since 2026-09-04. Everything before it was cleared: W17, W23 and W24 on 2026-09-02 (W25).
 **W14 Wi-Fi, W15 quick wins, W16 allowlist, W18's granular password path and
 W20's forced passcode all hardware-proven. W19 rebuilt the on-device UI as the
 branded ATLAS MDM console (five sections + manual sync), hardware-proven. W17
@@ -49,7 +48,7 @@ PASSWORD policy, hardware-proven; W21 unified every policy into the composite
 kind with a values-in-fields editor; W22 added quick archive from the list with
 an impact modal; W23 hardened live push and added a "Check in now" button; W24
 made the DPC show policy names and added console inline rename.**
-464 server tests + 52 agent tests.
+957 server tests + 52 agent tests.
 
 `adb` reaches the tablet over wireless debugging. **Ports rotate on every
 restart**, so reconnecting means reading the current `IP:port` off the device —
@@ -406,7 +405,7 @@ device's first sync after it takes the update; the reclaimed total is in the
 agent log as `cache sweep: reclaimed N KB`.
 
 
-### 🚧 W89 — ATAK Config category (the TAK pack's pref half, Chunk 8)
+### ✅ W90 — ATAK Config category (the TAK pack's pref half, Chunk 8)
 
 The long-planned Chunk 8 "TAK pack" row, narrowed to the part that pays now:
 **ATAK Config** in the policy creator, with three sub-topics —
@@ -484,44 +483,332 @@ inventory has no bytes here to read. Apps declaring `plugin-api` are flagged as
 plugins (`atak_compat` already reads it), but any app may be picked: plugins have
 no naming convention to filter on.
 
-##### Chunk A1 (6 steps) — scanner and generator, no UI
+##### ✅ Chunk A1 complete (2026-09-06) — scanner and generator, no UI
 
-1. `app/artifacts/pref_screens.py` — discover preference XML by content, resolve
-   titles/summaries/options through the ARSC table, keep `PreferenceCategory`
-   sections. Mirrors `app_restrictions.discover_in` and reuses its resource
-   reader; it does **not** re-implement one.
-2. Plugin preference-group detection: scan the dex for `x.y.z_preferences`,
-   default to `com.atakmap.app.civ_preferences` (the reference project's rule).
-3. `app/services/atak_pref.py` — `.pref` XML generator in ATAK's exact byte
-   format, and the 64 KB refusal.
-4. Tests: synthetic preference-screen APKs via `tests/apk_fixtures.py`, plus a
-   real-ATAK test skipped when `Test Files/` is absent.
-5. Record the ATAK contract in `docs/ANDROID_PLATFORM_REFERENCE.md` (CLAUDE.md §6).
-6. Update this file.
+All six steps done. **890 server tests pass** (35 new, in
+`tests/test_atak_prefs.py`); no existing test changed behaviour.
 
-##### Chunk A2 (6 steps) — policy type and desired state
+1. ✅ `app/artifacts/pref_screens.py` — discovery by content, ARSC-resolved
+   titles/summaries/options, `PreferenceCategory` sections. Mirrors
+   `app_restrictions.discover_in` and **reuses** its resource reader
+   (`app_icon.read_table`) rather than carrying a second one.
+2. ✅ Plugin preference-group detection from the dex, defaulting to
+   `com.atakmap.app.civ_preferences`.
+3. ✅ `app/services/atak_pref.py` — the `.pref` document, byte-for-byte against a
+   real EUD export, with per-class validation and the 64 KB refusal.
+4. ✅ `build_preference_axml` / `pref_field` / `pref_category` added to
+   `tests/apk_fixtures.py`; real-ATAK assertions skip when `Test Files/` is absent.
+5. ✅ Recorded as **§10** of `docs/ANDROID_PLATFORM_REFERENCE.md`, with sources.
+6. ✅ This file.
 
-1. `ATAK_CONFIG` spec (`core_prefs`, `plugin_prefs`) + registry entry.
-2. `creator_catalog` category, with D94's stub sub-page for Plugin behavior.
-3. Desired-state resolution: generate the `.pref`, merge it into
-   `com.atakmap.app.civ`'s `app_configs` entry (D92).
-4. Bounded LRU over scans keyed on artifact sha, as `_APP_CONFIG_SCANS` is.
-5. Tests: stacking/merge, the App-Management collision, `.pref` round-trip.
-6. Update this file.
+**Measured on ATAK 5.8.0.4** (112 MB APK, ~0.7 s): 65 `PreferenceScreen`
+documents, 48 of them carrying storable settings, **293 settings**, **292 of 293
+titles** resolved, **46 of 47 dropdowns** resolved to real label→value pairs.
 
-##### Chunk A3 (6 steps) — the console
+Three defects the real APK caught that a fixture never would have, each fixed and
+now regression-tested:
 
-1. Schema endpoints for the core prefs and for one picked plugin.
-2. `atak_core_prefs` control — sectioned, searchable, per-key "Not managed".
-3. `plugin_prefs` control — app picker → scan → fields → row, mirroring the
-   `app_configs` frame.
-4. Stub sub-page rendering for Plugin behavior.
-5. Rail completion checks for dict-valued fields.
-6. Tests + update this file.
+⚠️ **A case-insensitive group regex matched a platform constant.** Carried over
+from the reference project, `[a-z…]+_preferences/i` also matches
+`android.intent.category.NOTIFICATION_PREFERENCES` — which is what ATAK's own
+scan returned as its "plugin-specific preference group". Every plugin that posts
+a notification would have had its settings written into a store named after an
+intent category. A SharedPreferences name is a package name; the pattern is now
+case-sensitive.
 
-**Hardware verification will be needed** and is not covered by any of the three
-chunks: no real ATAK **plugin** APK is present in `Test Files/`, so the plugin
-path can be proven only against a synthetic fixture until one is supplied.
+⚠️ **`endswith("Preference")` swallowed the custom widgets that store values.**
+Every preference class ends in "Preference", so a suffix deny-list aimed at
+action rows also dropped ATAK's `SMSNumberPreference` and
+`CredentialsPreference`. Now matched on the final class-name segment against
+`{Preference, PanPreference}` exactly; an unrecognised widget is offered as free
+text, because one visible spare row beats a setting that silently cannot be
+configured.
+
+⚠️ **Checkbox defaults arrived as `1` / `0`.** Binary XML stores a boolean as an
+int, so all 160 of ATAK's checkboxes reported a default in a vocabulary the
+control does not speak. The same trap `app_restrictions` documents, met again in
+a different reader.
+
+**Deliberate divergence from `app_restrictions`:** that scanner stops at the
+**first** matching document, because an app has one restrictions schema. This one
+keeps **every** screen — ATAK has 48, and stopping at the first would surface a
+handful of keys out of 293 and read as an app with barely any settings.
+
+##### ✅ Chunk A2 complete (2026-09-06) — policy type and desired state
+
+All six steps done. **925 server tests pass** (27 new, in
+`tests/test_atak_config_policy.py`); no existing test changed behaviour.
+
+1. ✅ Scanner refinements the real plugin forced — see below.
+2. ✅ `ATAK_CONFIG` registered: `core_prefs` (MERGE_BY_KEY on `key`, so a network
+   baseline and a display baseline **compose setting by setting**) and
+   `plugin_prefs` (MERGE_BY_KEY on `package_name`, matching App Management's
+   "one configuration per app").
+3. ✅ `atak_config` category with D94's stub sub-page for *Plugin behavior*,
+   which now sits above the two working sub-topics.
+4. ✅ `app/services/atak_config.py` renders the document and folds it into
+   `APP_CATALOG.app_configs`; `desired_state.build` calls it **before**
+   `_with_declared_types`.
+5. ✅ Bounded LRU keyed on the base APK's sha — the result, never the bytes.
+6. ✅ `form_parse` handles both controls, so the policy round-trips.
+
+⚠️ **Ordering is load-bearing and is now asserted.** ATAK declares
+`enterpriseConfigurationPreferences` in its own schema, so merging *before* the
+type enrichment gives the generated document its declared type
+(`RestrictionEntry.TYPE_STRING`) with no second place that has to know it.
+Reversed, `types` comes back empty and the agent has to guess — and a guess here
+is a Bundle the app cannot read.
+
+⚠️ **Nothing in this path may raise into a check-in.** `render` runs inside the
+device's own request, so a policy it cannot express degrades to "no ATAK
+configuration" plus a warning. A value that cannot be its declared type, no ATAK
+build in the library, and two ATAK builds with nothing to choose between them are
+all warnings, never exceptions. The operator is told in the console; the tablet
+is not punished for a policy it did not write.
+
+**Ambiguity is refused, not guessed.** A device holds one ATAK but a library can
+hold CIV and MIL. The target is the ATAK build this policy *requires* if it names
+one, else the only one in the library, else nothing — with a warning naming both
+candidates.
+
+###### What the real UAS Tool plugin taught (2026-09-06)
+
+`Test Files/ATAK-Plugin-uastool-13.0.6-74628a10-5.8.0-civ-release.apk`, 395 MB:
+**23 screens, 158 settings, all 158 titled, 11 dropdowns**, scanned in 0.45 s. It
+writes into `com.atakmap.app.civ_preferences` — **ATAK's own store**, which is
+the assumption D92 rests on, now checked rather than reasoned about.
+
+⚠️ **Categories are not always the parent of their fields.** Android documents a
+`PreferenceCategory` as containing its fields and ATAK writes them that way. UAS
+Tool does not: its categories are **empty elements used as separators**, with the
+fields following them as *siblings at the same depth*. Read only as nesting, all
+158 of its settings landed under one heading and **all 30 real headings were
+thrown away** — "DJI v5 Settings", "Indago Settings", "Trillium/Orion Settings"
+all lost. Both idioms are now handled, decided per category by what the document
+has actually shown: once a field has appeared *inside* a category the document is
+nested and a same-depth field belongs to nobody; until then a same-depth field is
+the flat idiom.
+
+⚠️ **`PanPreferenceCategory` was being offered as a setting.** The category check
+was an exact name match, so ATAK's subclass fell through to the unknown-widget
+branch and became a **free-text field named after a heading** — UAS Tool's "AR
+OVERLAY" and "OBJECT DETECTION" rows, both of which carry a key. Categories are
+now matched on the suffix like every other widget. Two fewer settings, both of
+them fictional.
+
+⚠️ **A heuristic was removed for want of evidence.** A first pass derived a
+heading from the longest common key prefix (`uastool.mavlink.mirror`) for screens
+with no title and no categories. Once the flat-category idiom was handled, no
+screen in either real APK reached it — so it was deleted rather than kept as
+machinery that fires only in a case nobody has seen.
+
+###### Settled for chunk A3 (operator, 2026-09-06)
+
+**A paged table, 50 settings per page.** 293 core settings across 48 screens is
+past what a rail of sub-pages can carry.
+
+##### ✅ Chunk A3 complete (2026-09-06) — the console
+
+All six steps done. **946 server tests pass** (21 new, in
+`tests/test_atak_config_ui.py`); no existing test changed behaviour.
+
+1. ✅ `GET /policies/pref-schema` — **one** endpoint for both tables. No
+   `package` answers for the library's ATAK build; a `package` answers for that
+   plugin. They differ only in which APK is scanned, and two routes would mean
+   two copies of the same shaping code drifting apart.
+2. ✅ `atak_core_prefs` — a filtered, **paged table, 50 rows a page**.
+3. ✅ `plugin_prefs` — app picker → scan → the same table in a wide modal → one
+   row per plugin, carrying its values as JSON. Apps ATAK recognises as plugins
+   are marked, but any app may be picked: plugins have no naming convention.
+4. ✅ Stub sub-page panel for *Plugin behavior* (D94).
+5. ✅ Rail completion checks: the table's controls are ordinary named inputs, so
+   the existing generic check works — with one addition, an `input` event fired
+   after the async build, because the rail's first pass runs long before the
+   fetch resolves.
+6. ✅ Tests and this file.
+
+⚠️ **The saved settings are hidden inputs before the script runs, and are
+removed only once the table has been built from them.** The table is assembled in
+the browser, so if the schema fetch fails — the ATAK build deleted, the request
+500s — settings that lived only inside the table would submit nothing and saving
+would **wipe the whole category with no error anywhere**. Rendering them first
+means a failed fetch costs the operator the ability to *add* settings, never the
+ones they already had. Asserted in
+`test_a_saved_policys_settings_are_in_the_page_before_any_script_runs`.
+
+⚠️ **Rows off the current page are hidden, never removed or disabled.** A hidden
+input still submits; a removed one drops that page's values the moment the
+operator turns a page, and a disabled one drops them on save. `render()`
+therefore reclaims *every* row into an off-screen holder before repainting the
+window — clearing the tbody without that orphans the rows that were on screen,
+and with them everything typed into them.
+
+⚠️ **The plugin picker's table submits nothing.** It is rendered *inside* the
+policy form, so named inputs there would post a hundred-odd stray pairs on every
+save — and into `core_prefs`, the one field whose names they would match. Its
+values are read back through `collect()` instead.
+
+⚠️ **A setting the policy carries that the scanned build no longer declares is
+kept, marked, and still editable.** ATAK renames and retires keys between
+releases; discarding one quietly would change a live policy just because somebody
+opened it. They sort to the top, because they are the ones needing a decision.
+The same applies to a *value* the build no longer offers — it stays selectable,
+or opening the policy would silently set it to unmanaged.
+
+**Two states are answers, not errors.** "No ATAK build is uploaded" and "this app
+declares no settings" come back as `200` with a warning to render. A `404` would
+put the explanation in a console nobody has open. An unknown *package* is still a
+404 — the picker only ever offers apps that exist.
+
+###### Run against the live dev stack (2026-09-06)
+
+Rebuilt (`docker compose up -d --build api`) and driven through real HTTP, not
+only `TestClient`.
+
+**The core table, from the ATAK build already in the dev library:** 293 settings,
+83 sections, **6 pages** at 50 a page, no warnings. 160 checkboxes, 45 dropdowns,
+86 text, 1 multi-select, 1 slider.
+
+**Every real plugin in the library, scanned live:**
+
+| Plugin | Settings | Sections |
+|---|---|---|
+| UAS Tool | 158 | 30 |
+| AR Video Overlay | 2 | 1 |
+| ADSB Direct | 0 | — |
+| Air Overlays | 0 | — |
+| Oceus VPN | 0 | — |
+| Beartooth MKII | 0 | — |
+
+⚠️ **Most ATAK plugins declare no preference XML at all** — four of the six here.
+Checked rather than assumed: ADSB Direct has **654** `res/**/*.xml` files and not
+one `PreferenceScreen` among them; its settings, if any, are built in code. So
+"declares no settings" is the true answer far more often than not, and the
+console has to say it plainly or the scanner reads as broken. It does.
+
+⚠️ **The plugin marker in the picker never appeared, and nothing failed.**
+`plugin_api` lives on `AppPackageVersion`, not `AppPackage`; Jinja resolves a
+missing attribute to Undefined, which is falsy, so the marker was simply never
+true — on a library that is almost entirely plugins. Now read through a
+`plugin_api` filter off the deployed version: **7 of the 11 apps in the dev
+library mark correctly.** Regression-tested, because the failure mode is a
+template that renders perfectly while showing nothing.
+
+⚠️ The `plugin_api: None` this first looked like was a red herring — the
+packages API does not serialise that field, and the column was populated all
+along. The marker is still **best-effort** in the copy, because a build uploaded
+before the column existed does have it NULL until `backfill_plugin_api` runs, and
+an unmarked app must not read as "not a plugin".
+
+**The scan cache earns its place:** a cold core scan is **1.35 s**, a warm one
+**0.009 s** — the 112 MB APK is parsed once per artifact hash, and the settings
+sub-page is opened far more often than ATAK is re-uploaded. The core schema is
+75 KB on the wire, one plugin's 33 KB.
+
+###### A coupling test, on purpose
+
+`test_the_core_panel_carries_every_hook_the_script_looks_for` and its two
+siblings assert that the rendered markup carries every `data-` attribute
+`atlas.js` queries, and that the picker's script-built copy of the table markup
+matches the Jinja one. ⚠️ A renamed attribute breaks the table **silently** —
+the fetch succeeds, `querySelector` returns null, and the operator sees a panel
+that never finishes loading, with nothing in any log. Nothing else in the suite
+can see that, because nothing else runs the script.
+
+##### ✅ Chunk A4 complete (2026-09-07) — the wire, and a runbook for the tablet
+
+**957 server tests pass** (11 new — 8 in `tests/test_atak_config_wire.py`, 3 in
+`tests/test_atak_config_ui.py`). Steps 1–3 and 5 done; step 4 is the runbook
+below. **The tablet remains unverified and that is the one claim W90 cannot yet
+make (R16).**
+
+⚠️ **A promise the code had made and not kept.** `atak_config.render` produces
+warnings, and both the service and this file claimed "the operator is told in the
+console" — while nothing displayed them. They now render on the category's own
+panel in the policy editor. This matters more than an ordinary missing feature:
+the same checks run again at check-in, inside the device's own request, where
+they may only degrade to "no ATAK configuration" because a device must not fail
+to check in over a bad policy. A warning that does not reach the editor reaches
+**nobody**, and the policy quietly does nothing forever.
+
+⚠️ **Hardware verification is blocked, and not on this code.** `SM-X520` last
+checked in **2026-09-04 00:46 UTC** — three days before this chunk — and answers
+neither `adb devices` nor `adb mdns services`. It is also one state version
+behind (`acked 69` / `state 70`), so it already has a pending change it has never
+taken. Nothing about ATAK Config can be proven on it until it is switched on.
+
+⚠️ **No policy has been assigned to it, deliberately.** The tablet is offline;
+assigning an ATAK configuration now would mean it applies one nobody asked for
+the moment it wakes. Standing authorisation here covers deploying the server and
+the agent, not changing what the fleet is told to do.
+
+What *can* close without the tablet is the last untested seam: A2 proved
+`render` and `merge_into_policy` directly, but **nothing exercises the whole
+chain** — a real assignment resolved through `desired_state.build` into the
+signed bundle. That is the "does it actually reach the wire" question, and it is
+answerable here.
+
+1. End-to-end: real ATAK APK → library → an `ATAK_CONFIG` profile → assigned to a
+   device → `build_signed`, asserting the `.pref` arrives in the bundle.
+2. The agent's own contract: it lands in `APP_CATALOG.app_configs` with `types`
+   populated — the exact shape `PolicyApplier.applyAppConfigs` reads.
+3. Idempotence on the wire: the same policy builds byte-identical bytes, so
+   ATAK's MD5 dedupe makes a re-push a genuine no-op.
+4. A hardware runbook: precisely what to do and what to look for when the tablet
+   is back, so the verification is a checklist rather than a fresh investigation.
+5. Update this file and the risk table.
+
+###### Hardware runbook — ATAK Config on `SM-X520`
+
+Everything below is ready; only the tablet is missing. Written as a checklist so
+the verification is not a fresh investigation three weeks from now.
+
+**Preconditions.** The tablet on and checking in (its last check-in was
+2026-09-04 and it is one state version behind), and an ATAK build in the app
+library — `com.atakmap.app.civ` 5.8.0.4 already is.
+
+1. **Make the policy.** Policies → New → **ATAK Config → ATAK Core Pref Config**.
+   Pick two settings whose effect is visible in ATAK's own settings screen and
+   whose types differ, so the type path is exercised rather than assumed:
+   * `atakControlBluetooth` (Boolean) — Settings → Bluetooth → *Bluetooth Support*
+   * `chatPort` (String) — Settings → Chat → *Chat Port*
+2. **Assign it** to `R5GL40MMHRN`, then **Check in now** on the device page.
+3. **Server side.** The device page should show `acked_state_version` catching up
+   to `state_version` and compliance staying `compliant`. An `apply_error`
+   mentioning `com.atakmap.app.civ config` means the Bundle was refused — that is
+   the agent's own report and it names the key.
+4. **Agent side, without adb.** Send `COLLECT_LOGS` and read the agent log for
+   `applied N config keys to com.atakmap.app.civ`. ⚠️ That line proves
+   `setApplicationRestrictions` **succeeded**; it says nothing about ATAK having
+   read it. The two are separate claims and only the first is the MDM's.
+5. **ATAK side — the claim that actually needs the tablet.** Open ATAK and look
+   at the two settings. ATAK ingests on
+   `ACTION_APPLICATION_RESTRICTIONS_CHANGED`, so **no restart should be needed**;
+   if the values only appear after a restart, that is a finding worth recording.
+6. **Prove the no-op.** Check in again without changing the policy. ATAK
+   de-duplicates by MD5, so nothing should be re-read — and the document is
+   byte-stable by construction (asserted in `test_atak_config_wire.py`).
+7. **Prove a change lands.** Flip `atakControlBluetooth`, re-publish, check in.
+   The MD5 changes, so ATAK should ingest again.
+
+⚠️ **What to watch for, from ATAK's own source.** A value that cannot be its
+declared type makes `loadSettings` throw **part way through**, applying every
+entry before it and none after, and the MD5 is written *after* the parse — so it
+retries forever, silently. The server refuses such a value at publish, so this
+should be unreachable; if a setting ever half-applies on the tablet, that is the
+symptom and the server-side validation is where the gap is.
+
+⚠️ **`adb` is not required for steps 1–4** and was not available when this was
+written (`adb devices` and `adb mdns services` both empty). Step 5 needs eyes on
+the device either way.
+
+**Hardware verification is still outstanding** and is not covered by any of the
+three chunks: nothing here has yet been applied to `SM-X520`. The server side is
+proven against two shipping APKs, but no tablet has taken a generated `.pref`.
+
+~~No real ATAK plugin APK is present in `Test Files/`~~ — ✅ **closed
+2026-09-06.** UAS Tool 13.0.6 supplied by the operator; it corrected two
+scanner defects that no fixture would have caught (A2 below).
 
 ### ✅ W88 — installer APKs were kept forever after the app was installed
 
@@ -8769,6 +9056,7 @@ the `knox` flavour is build-it-yourself.
 | R3 | ~~Knox partner application pending — gates KME **and KPE**~~ | ⚠️ **Largely stale, corrected 2026-09-02 — see [docs/KNOX.md](docs/KNOX.md).** KPE is **not** gated on a partner agreement: **KPE Premium is free** and the *end customer* generates their own key self-service in the Knox Admin Portal. A Knox **developer** account is needed only to download the SDK, which is a build-time concern for whoever compiles the agent — and the jar is `compileOnly`, so no Samsung code ships in the APK. **What remains open:** (a) whether Samsung permits distributing a Knox-built APK to third parties (a licence-agreement question, in the express-approval conversation now); (b) **Knox Mobile Enrollment** for a self-hosted EMM — that part of R3 stands. AOSP path must still not depend on Knox. |
 | R4 | `INTERSECT` on app allowlists is correct but counter-intuitive | Make configurable per policy; show resulting set before publish |
 | R14 | ~~**Password scalars latch on the device and are never released.**~~ | ✅ **CLOSED 2026-09-02 by W26, hardware-verified.** `applyPassword` is now fully declarative — every field it manages is driven to a definite value on every reconcile, and absent means permissive (`0` / `UNSPECIFIED`). The stuck `SM-X520` recovered: `minimumPasswordLength` released 13 → 0, the operator's 4-digit passcode applied, device back to `compliant`. Latch-and-release proven both directions. ⚠️ **Deliberate behaviour change:** removing a PASSWORD policy now genuinely relaxes the device. The old behaviour looked fail-secure but was un-clearable state. Original text: the scalars were pushed when set and never cleared when dropped (W15's limitation, made acute by W20's `set_password`), which permanently DEGRADED a device with no console-side fix. |
+| R16 | **ATAK Config has never run on hardware.** The whole server chain is proven — scanner, generator, policy type, resolver, signed bundle — against two shipping APKs and the live console, but no tablet has ingested a generated `.pref`. The two claims are separate: the agent's `applied N config keys` line proves `setApplicationRestrictions` succeeded, **not** that ATAK read it. | **Open, blocked on the device, not on the code.** `SM-X520` last checked in 2026-09-04 and answers neither `adb devices` nor `adb mdns services`. A step-by-step runbook is in the W90 chunk A4 section; steps 1–4 need no `adb`. ⚠️ Deliberately **no policy has been assigned to the live device** — it is offline, and assigning one now would mean it applies an ATAK configuration nobody asked for the moment it wakes. |
 | R15 | **The agent signing key is a fleet-wide single point of failure.** Android refuses an update signed with a different key, so losing it means no device can ever be updated again without re-provisioning. | Open. Same class as `pki/ca.key` (R8) and belongs in the same KMS/HSM answer. Called out now that OTA self-update is proven and will become the update path. |
 | R5 | Mixed SoC vendors (Qualcomm XCover6 Pro / MediaTek Tab S10+) on One UI 8 | Test every firmware-level behavior on **both** models |
 | R6 | ~~Advanced Protection Mode blocks Device Owner install~~ | ✅ **Downgraded to low, 2026-08-31.** The operator runs commercial MDMs and Headwind in production on this exact hardware and One UI 8, installing apps successfully. Device Owner `PackageInstaller` holds system install privilege and does not go through the user-facing "install unknown apps" gate — as predicted, now corroborated by production use rather than documentation. Residual risk is only a user *opting into* Advanced Protection, which a Device Owner can largely prevent by restricting Settings anyway. No lab work needed. |

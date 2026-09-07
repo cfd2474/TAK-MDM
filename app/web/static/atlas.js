@@ -1354,3 +1354,421 @@
   });
 })();
 
+
+/* --- ATAK settings tables (W90) ---------------------------------------------
+   ATAK 5.8.0.4 declares 293 settings across 48 screens; one plugin declares 158.
+   That is a filtered, paged table — 50 rows a page — and not a form.
+
+   The rows are built from the scanned APK rather than rendered server-side: the
+   plugin's schema is not even known until the operator picks one, and the core
+   table would otherwise be 293 rows of Jinja on every policy page whether or not
+   anyone opens that sub-topic.
+
+   ⚠️ Rows off the current page are **hidden, never removed or disabled**. A
+   hidden input still submits; a removed one drops the operator's value the
+   moment they turn a page, and a disabled one drops it on save. */
+
+(function () {
+  var PAGE_SIZE = 50;
+
+  /* Values submit as two parallel lists — `<field>__key` and `<field>__value` —
+     paired **by index** on the server. Emitting both inputs together on every
+     row, in DOM order, is what keeps that pairing honest; a row that emitted
+     only one of them would shift every pair after it onto the wrong setting. */
+
+  function el(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  function valueControl(field, current) {
+    var control;
+    if (field.control === "bool" || (field.options && field.options.length)) {
+      control = document.createElement("select");
+      // "" is "not managed", and it is first so it is what an untouched row
+      // holds. Without it every setting in the table would be managed the
+      // moment it rendered, and saving would push all 293 at the fleet.
+      control.appendChild(new Option("— not managed —", ""));
+      if (field.control === "bool") {
+        control.appendChild(new Option("True", "true"));
+        control.appendChild(new Option("False", "false"));
+      } else {
+        field.options.forEach(function (option) {
+          control.appendChild(new Option(option.label, option.value));
+        });
+      }
+      // A saved value the current build no longer offers still has to be
+      // selectable, or opening the policy would silently change it to unmanaged.
+      if (current && !Array.prototype.some.call(control.options, function (o) {
+        return o.value === current;
+      })) {
+        control.appendChild(new Option(current + " (not in this build)", current));
+      }
+      control.value = current || "";
+    } else {
+      control = document.createElement("input");
+      control.type = field.control === "int" ? "number" : "text";
+      control.value = current || "";
+      control.placeholder = field.default ? "default: " + field.default : "";
+    }
+    return control;
+  }
+
+  /* Build the table into `host`, seeded from `values` ({key: value}).
+     Returns { collect() } so a caller can read it back without touching DOM. */
+  function buildTable(host, schema, values, fieldName) {
+    var status = host.querySelector("[data-prefs-status]");
+    var wrapper = host.querySelector("[data-prefs-table]");
+    var body = host.querySelector("[data-prefs-body]");
+    var filterBox = host.querySelector("[data-prefs-filter]");
+    var count = host.querySelector("[data-prefs-count]");
+    var pager = host.querySelector("[data-prefs-pager]");
+    var pageLabel = host.querySelector("[data-prefs-page]");
+    var prev = host.querySelector("[data-prefs-prev]");
+    var next = host.querySelector("[data-prefs-next]");
+
+    var rows = [];
+    var declared = {};
+
+    (schema.sections || []).forEach(function (section) {
+      (section.fields || []).forEach(function (field) {
+        declared[field.key] = true;
+        rows.push(makeRow(field, section.title, values[field.key], fieldName, false));
+      });
+    });
+
+    /* ⚠️ A setting the policy carries that this build no longer declares is kept,
+       marked, and still editable — never dropped. ATAK renames and retires keys
+       between releases, and quietly discarding one would change a live policy
+       just because somebody opened it, with nothing on screen to say so. They go
+       first, because they are the ones that need a decision. */
+    var orphans = Object.keys(values).filter(function (key) { return !declared[key]; });
+    orphans.sort().reverse().forEach(function (key) {
+      rows.unshift(
+        makeRow(
+          { key: key, label: key, control: "str", options: [] },
+          "Not in this build",
+          values[key],
+          fieldName,
+          true
+        )
+      );
+    });
+
+    var visible = rows;
+    var page = 0;
+
+    /* Rows that are not on the current page live here — still inside the form,
+       so their inputs still submit. Created before the first paint because
+       `render` puts every row back into it before choosing the new window.
+
+       A real (hidden) table, not a `div`: parking a `<tr>` inside a `<div>` is
+       legal enough when done through `appendChild` and the inputs still submit,
+       but it is invalid nesting to no purpose, and this is not the place to be
+       relying on how forgiving a browser feels. */
+    var holderTable = el("table");
+    holderTable.hidden = true;
+    var holder = el("tbody");
+    holderTable.appendChild(holder);
+    host.appendChild(holderTable);
+
+    function render() {
+      /* ⚠️ Reclaim first. Clearing the tbody without this orphans the rows that
+         were on screen — they leave the document entirely, and with them the
+         operator's unsaved values for that page. */
+      rows.forEach(function (row) { holder.appendChild(row.tr); });
+      body.textContent = "";
+      if (!visible.length) {
+        var empty = el("tr");
+        var cell = el("td", "prefs-empty", rows.length
+          ? "No setting matches that filter."
+          : "This build declares no settings.");
+        cell.colSpan = 3;
+        empty.appendChild(cell);
+        body.appendChild(empty);
+      }
+
+      var pages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+      if (page >= pages) page = pages - 1;
+      var start = page * PAGE_SIZE;
+
+      visible.slice(start, start + PAGE_SIZE).forEach(function (row) {
+        body.appendChild(row.tr);
+      });
+
+      count.textContent =
+        visible.length === rows.length
+          ? rows.length + " setting" + (rows.length === 1 ? "" : "s")
+          : visible.length + " of " + rows.length + " settings";
+      pager.hidden = pages < 2;
+      pageLabel.textContent = "Page " + (page + 1) + " of " + pages;
+      prev.disabled = page === 0;
+      next.disabled = page >= pages - 1;
+    }
+
+    function applyFilter() {
+      var term = (filterBox.value || "").trim().toLowerCase();
+      visible = term
+        ? rows.filter(function (row) { return row.haystack.indexOf(term) !== -1; })
+        : rows;
+      page = 0;
+      render();
+    }
+
+    filterBox.addEventListener("input", applyFilter);
+    prev.addEventListener("click", function () { page -= 1; render(); });
+    next.addEventListener("click", function () { page += 1; render(); });
+
+    if (status) status.hidden = true;
+    wrapper.hidden = false;
+    render();
+
+    return {
+      collect: function () {
+        var out = {};
+        rows.forEach(function (row) {
+          var value = (row.control.value || "").trim();
+          if (value !== "") out[row.key] = value;
+        });
+        return out;
+      },
+      warn: function (messages) {
+        if (!messages || !messages.length || !status) return;
+        status.hidden = false;
+        status.className = "banner warn";
+        status.textContent = messages.join(" ");
+      }
+    };
+  }
+
+  function makeRow(field, sectionTitle, current, fieldName, unknown) {
+    var tr = el("tr", unknown ? "prefs-row-unknown" : null);
+
+    var setting = el("td", "prefs-setting");
+    setting.appendChild(el("strong", null, field.label || field.key));
+    setting.appendChild(el("code", "prefs-key", field.key));
+    if (field.summary) setting.appendChild(el("div", "prefs-summary", field.summary));
+    if (unknown) {
+      setting.appendChild(
+        el("div", "prefs-summary",
+           "This policy sets it, but the build in the library no longer declares " +
+           "it. Kept as it is until you change or clear it.")
+      );
+    }
+
+    var valueCell = el("td", "prefs-value");
+    var control = valueControl(field, current);
+    // The pair. Both always present, in this order, on every row.
+    /* ⚠️ Nameless when there is no field to submit into. The plugin picker's
+       table is rendered *inside* the policy form, so named inputs there would
+       post a hundred-odd stray pairs on every save — and into the core
+       settings list, which is the one field whose names they would match. Its
+       values are read back through `collect()` instead. */
+    if (fieldName) {
+      var keyInput = document.createElement("input");
+      keyInput.type = "hidden";
+      keyInput.name = fieldName + "__key";
+      keyInput.value = field.key;
+      control.name = fieldName + "__value";
+      valueCell.appendChild(keyInput);
+    }
+    valueCell.appendChild(control);
+    if (field.default != null && field.default !== "" && !(field.options || []).length) {
+      valueCell.appendChild(el("div", "prefs-default", "ATAK default: " + field.default));
+    }
+
+    tr.appendChild(setting);
+    tr.appendChild(valueCell);
+    tr.appendChild(el("td", "prefs-group", sectionTitle || ""));
+
+    return {
+      tr: tr,
+      key: field.key,
+      control: control,
+      haystack: ((field.label || "") + " " + field.key + " " + (sectionTitle || "")).toLowerCase()
+    };
+  }
+
+  function fetchSchema(packageName) {
+    var url = "/policies/pref-schema";
+    if (packageName) url += "?package=" + encodeURIComponent(packageName);
+    return fetch(url).then(function (r) { return r.json(); });
+  }
+
+  /* --- ATAK core settings --------------------------------------------------- */
+
+  (function () {
+    var host = document.querySelector("[data-atak-prefs]");
+    if (!host) return;
+
+    var fieldName = host.getAttribute("data-prefs-field");
+    var fallback = host.querySelector("[data-prefs-fallback]");
+    var status = host.querySelector("[data-prefs-status]");
+
+    // Seeded from the hidden inputs the server rendered, so the table starts
+    // from what the policy actually holds rather than from a second copy of it.
+    var values = {};
+    var keys = fallback.querySelectorAll('input[name="' + fieldName + '__key"]');
+    var vals = fallback.querySelectorAll('input[name="' + fieldName + '__value"]');
+    for (var i = 0; i < keys.length; i++) {
+      values[keys[i].value] = vals[i] ? vals[i].value : "";
+    }
+
+    fetchSchema(null)
+      .then(function (schema) {
+        // ⚠️ Only now. Until the table exists, the fallback inputs are the only
+        // thing carrying this policy's settings, and removing them earlier would
+        // turn a failed fetch into a save that wipes the category.
+        var table = buildTable(host, schema, values, fieldName);
+        fallback.parentNode.removeChild(fallback);
+        table.warn(schema.warnings);
+        // The rail's completion checks ran long before this resolved, against
+        // the fallback inputs that have just been replaced.
+        host.dispatchEvent(new Event("input", { bubbles: true }));
+      })
+      .catch(function () {
+        if (!status) return;
+        status.className = "banner bad";
+        status.textContent =
+          "Could not read ATAK's settings. The settings this policy already " +
+          "carries are kept — saving now will not lose them — but nothing can " +
+          "be added until this loads.";
+      });
+  })();
+
+  /* --- Plugin settings ------------------------------------------------------ */
+
+  (function () {
+    var set = document.querySelector("[data-plugin-prefs]");
+    if (!set) return;
+    var frame = document.getElementById("plugin-prefs-frame");
+    if (!frame) return;
+
+    var picker = frame.querySelector("[data-plugin-prefs-package]");
+    var mount = frame.querySelector("[data-plugin-prefs-host]");
+    var save = frame.querySelector("[data-plugin-prefs-save]");
+    var addBtn = set.querySelector("[data-plugin-prefs-add]");
+    var table = null;
+    var editing = null;
+
+    function shell() {
+      // The same markup the server renders for the core table, so both go
+      // through one builder rather than two that can drift.
+      mount.innerHTML =
+        '<div class="banner" data-prefs-status>Reading the plugin’s settings…</div>' +
+        '<div data-prefs-table hidden>' +
+        '<div class="prefs-toolbar">' +
+        '<input type="search" data-prefs-filter placeholder="Filter by name or key">' +
+        '<span class="muted" data-prefs-count></span></div>' +
+        '<table class="prefs-table"><thead><tr>' +
+        '<th class="prefs-setting">Setting</th><th class="prefs-value">Value</th>' +
+        '<th class="prefs-group">Section</th></tr></thead>' +
+        '<tbody data-prefs-body></tbody></table>' +
+        '<div class="prefs-pager" data-prefs-pager hidden>' +
+        '<button type="button" class="ghost" data-prefs-prev>← Previous</button>' +
+        '<span class="muted" data-prefs-page></span>' +
+        '<button type="button" class="ghost" data-prefs-next>Next →</button>' +
+        "</div></div>";
+    }
+
+    function load(packageName, values) {
+      table = null;
+      save.disabled = true;
+      if (!packageName) {
+        mount.textContent = "";
+        return;
+      }
+      shell();
+      fetchSchema(packageName)
+        .then(function (schema) {
+          // No field name: these values never submit from inside the modal, they
+          // are collected into the row's JSON on save.
+          table = buildTable(mount, schema, values || {}, null);
+          table.warn(schema.warnings || (schema.error ? [schema.error] : []));
+          save.disabled = false;
+        })
+        .catch(function () {
+          mount.textContent = "Could not read that plugin's settings.";
+        });
+    }
+
+    addBtn.addEventListener("click", function () {
+      editing = null;
+      picker.value = "";
+      picker.disabled = false;
+      mount.textContent = "";
+      save.disabled = true;
+      frame.hidden = false;
+    });
+
+    set.addEventListener("click", function (event) {
+      var button = event.target.closest("[data-plugin-prefs-edit]");
+      if (!button) return;
+      var row = button.closest(".rs-row");
+      if (!row) return;
+      editing = row;
+      var pkg = row.querySelector('[name="plugin_prefs__package_name"]').value;
+      var raw = row.querySelector('[name="plugin_prefs__values"]').value;
+      var values = {};
+      try { values = JSON.parse(raw) || {}; } catch (e) { values = {}; }
+      picker.value = pkg;
+      // The package is the row's identity — changing it here would silently
+      // move a configuration from one plugin to another.
+      picker.disabled = true;
+      frame.hidden = false;
+      load(pkg, values);
+    });
+
+    picker.addEventListener("change", function () { load(picker.value, {}); });
+
+    save.addEventListener("click", function () {
+      if (!table) return;
+      var pkg = picker.value;
+      if (!pkg) return;
+      var values = table.collect();
+      if (!Object.keys(values).length) {
+        // A plugin with nothing chosen is refused rather than saved empty: an
+        // empty entry still occupies the merge slot for that package, so it
+        // would suppress a lower-ranked policy's real configuration.
+        window.alert(
+          "Choose at least one setting, or cancel — a plugin with no settings " +
+          "cannot be saved."
+        );
+        return;
+      }
+
+      var row = editing;
+      if (!row) {
+        row = document.createElement("div");
+        row.className = "rs-row";
+        row.innerHTML =
+          '<input type="hidden" name="plugin_prefs__package_name">' +
+          '<input type="hidden" name="plugin_prefs__values">' +
+          '<div style="flex:1"><strong></strong>' +
+          '<span class="muted" style="font-size:12px"></span>' +
+          '<div class="muted" style="font-size:12px" data-plugin-prefs-summary></div></div>' +
+          '<button type="button" class="ghost" data-plugin-prefs-edit>Edit</button>' +
+          '<button type="button" class="ghost" data-remove-row>Remove</button>';
+        addBtn.insertAdjacentElement("beforebegin", row);
+      }
+
+      var count = Object.keys(values).length;
+      row.querySelector('[name="plugin_prefs__package_name"]').value = pkg;
+      row.querySelector('[name="plugin_prefs__values"]').value = JSON.stringify(values);
+      row.querySelector("strong").textContent = pkg;
+      row.querySelector(".muted").textContent =
+        " · " + count + (count === 1 ? " setting" : " settings");
+      var summary = row.querySelector("[data-plugin-prefs-summary]");
+      if (summary) {
+        summary.textContent = Object.keys(values)
+          .map(function (k) { return k + "=" + values[k]; })
+          .join(", ");
+      }
+
+      frame.hidden = true;
+      editing = null;
+    });
+  })();
+})();

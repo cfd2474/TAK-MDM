@@ -1521,6 +1521,143 @@ AndroidDownloadManager/16 (Linux; U; Android 16; SM-X520 Build/BP4A.251205.006)
 
 ---
 
+## 10. ATAK's own enterprise-configuration contract
+
+⚠️ **This is an *app* contract, not a platform one**, and it is here because the
+rest of the file's discipline applies to it: it fails vaguely, it is invisible
+from the device, and reasoning from the symptom costs a factory reset's worth of
+time for nothing. Traceable to ATAK's own shipped APK and to `atak-civ` source,
+not to recollection.
+
+Established 2026-09-06 against
+`Test Files/ATAK-5.8.0.4-174b425-civSmall-release.apk` and
+[`PreferenceControl.java`](https://github.com/TAK-Product-Center/atak-civ/blob/main/atak/ATAK/app/src/main/java/com/atakmap/app/preferences/PreferenceControl.java).
+
+### 10a. The six keys ATAK declares
+
+✅ **Verified here** — read out of the shipping APK with this project's own
+`app_restrictions` scanner:
+
+| Key | Type | What it takes |
+|---|---|---|
+| `enterpriseConfigurationPreferences` | String | A `.pref` XML document, **plain text** |
+| `enterpriseConfigurationDataPackage` … `…DataPackage5` | String | A data package, **base64** |
+
+⚠️ **Two adjacent keys, two encodings.** The data-package slots are
+`Base64.decode`d; the preferences key is written to a file verbatim. Getting this
+backwards produces no error anywhere — just a configuration that never applies.
+
+📖 ATAK's own description of the data-package slots states the **64 KB** ceiling
+outright, and gives five slots as the workaround for it. That ceiling is
+Android's Binder transaction limit, so it governs the preferences key equally.
+
+### 10b. How ATAK ingests it
+
+`PreferenceControl.processEnterpriseConfigurationPreferences()`:
+
+1. reads the key from `RestrictionsManager.getApplicationRestrictions()` —
+   precisely what a Device Owner's `setApplicationRestrictions` writes, so **no
+   managed Google Play is involved**;
+2. compares an MD5 of the content against
+   `enterpriseConfigurationPreferencesMd5` in its own prefs, and **does nothing
+   if unchanged** — re-pushing identical bytes is a genuine no-op;
+3. writes it to `filesDir/defaults`, calls `loadSettings(f)`, deletes the file;
+4. records the new MD5.
+
+It is driven by a receiver on `ACTION_APPLICATION_RESTRICTIONS_CHANGED`, so a
+change applies **without restarting ATAK**.
+
+This route needs **no `MANAGE_EXTERNAL_STORAGE`, no file push into
+`/sdcard/atak/`, and no Knox** — which is why it sidesteps R1 rather than
+depending on it.
+
+### 10c. ⚠️ One bad value discards every setting after it
+
+`loadSettings` switches on the `class` attribute verbatim and calls
+`Integer.parseInt` / `Float.parseFloat` **unguarded**. There is no per-entry
+`try`, so a `NumberFormatException` unwinds the entire document. Three
+consequences, all invisible from outside:
+
+* every entry **before** the bad one has already been `editor.apply()`d;
+* step 4 above never runs, so the document is **not** marked ingested and the
+  same half-application is retried on every restrictions-changed broadcast;
+* the only trace is a line in ATAK's own log.
+
+Every value must therefore be validated against its declared class **on the
+server**, where the operator can be told. `app/services/atak_pref.py` does this.
+
+⚠️ **A boolean is worse than a crash.** `Boolean.parseBoolean` reads anything
+that is not `"true"` as **false**, so `"yes"` applies as false with no error at
+all.
+
+### 10d. The class names, verbatim
+
+| `class` attribute | Stored as |
+|---|---|
+| `class java.lang.String` | `putString` |
+| `class java.lang.Boolean` | `putBoolean` |
+| `class java.lang.Integer` | `putInt` |
+| `class java.lang.Float` | `putFloat` |
+| `class java.lang.Long` | `putLong` |
+| a `Set` class | `putStringSet`, from nested `<element>` children |
+
+Anything else is skipped in silence.
+
+⚠️ **An `EditTextPreference` is a String even when it holds a port.** ATAK's
+`chatPort` defaults to `17012` and is stored as `class java.lang.String` — that
+is what a real EUD export contains and what `getString` on the device expects.
+Typing it as an Integer because it looks numeric throws inside ATAK. The **widget
+class** decides the type; the value never does.
+
+### 10e. Value escaping is ATAK's, not XML's
+
+`PreferenceControl.decode` reverses exactly five sequences — `"` `'`
+`<` `>` `&` — in element **text**. Writing `&amp;` instead leaves
+the app holding those five literal characters. Attribute values are read by a
+real XML parser and do take genuine entities.
+
+### 10f. Preference group names
+
+`<preference name="X">` writes into `getSharedPreferences(X)`. ATAK maps three
+legacy names — `com.atakmap.app_preferences`, `com.atakmap.civ_preferences`,
+`com.atakmap.fvey_preferences` — onto `<packageName>_preferences`, which for
+ATAK-CIV is `com.atakmap.app.civ_preferences`.
+
+⚠️ **`cot_inputs` / `cot_outputs` / `cot_streams` are handled by a different code
+path** (`loadConnectionHolder`), not as ordinary preferences. ATLAS omits those
+blocks entirely rather than writing them empty: a `<preference>` element ATAK
+does not see is one it cannot act on, and what it might act on is the operator's
+TAK server connection.
+
+### 10g. ✅ Reading settings out of an ATAK build
+
+Measured on 5.8.0.4 with this project's `axml` + `arsc` readers:
+
+| | |
+|---|---|
+| `res/**/*.xml` entries | 1006 |
+| `PreferenceScreen` documents | 65 (48 with storable settings) |
+| Storable settings | 293 |
+| Titles resolved through `resources.arsc` | 292 of 293 |
+| Dropdowns resolved to real label→value pairs | 46 of 47 |
+| Scan time, whole APK (112 MB) | ~0.7 s |
+
+⚠️ **Resource names are shrunk** — `res/-v.xml`, `res/0P.xml`, `res/1z.xml`. No
+lookup for `res/xml/*pref*.xml` finds anything at all, which is the same
+conclusion the managed-configuration scanner reached for `res/Kt.xml` (W49).
+Discovery must be by **content**: parse every `res/` XML and decide on the root
+element.
+
+⚠️ **Every widget class is subclassed.** 155 of ATAK's rows are
+`com.atakmap.android.gui.PanCheckBoxPreference`. Classification must match the
+class-name **suffix**, not the exact name.
+
+⚠️ **Only what is declared in `res/` is visible.** Settings written from code, and
+custom stores such as `NWSharedPreferences`, cannot be discovered by any amount
+of scanning. Say so rather than presenting the list as complete.
+
+---
+
 ## Sources
 
 * [Provision for device management — AOSP](https://source.android.com/docs/devices/admin/provision)
@@ -1533,6 +1670,8 @@ AndroidDownloadManager/16 (Linux; U; Android 16; SM-X520 Build/BP4A.251205.006)
 * [DevicePolicyManager.setAlwaysOnVpnPackage](https://developer.android.com/reference/android/app/admin/DevicePolicyManager#setAlwaysOnVpnPackage(android.content.ComponentName,%20java.lang.String,%20boolean))
 * [Android minimum targetSdk matrix — Jason Bayton](https://bayton.org/android/android-minimum-targetsdk-matrix/)
 * [Advanced Protection Mode](https://developer.android.com/privacy-and-security/advanced-protection-mode)
+* [`PreferenceControl.java` — ATAK-CIV](https://github.com/TAK-Product-Center/atak-civ/blob/main/atak/ATAK/app/src/main/java/com/atakmap/app/preferences/PreferenceControl.java) — the `.pref` format, the enterprise-configuration keys, and the unguarded number parsing behind §10
+* [RestrictionsManager.getApplicationRestrictions](https://developer.android.com/reference/android/content/RestrictionsManager#getApplicationRestrictions()) and [ACTION_APPLICATION_RESTRICTIONS_CHANGED](https://developer.android.com/reference/android/content/Intent#ACTION_APPLICATION_RESTRICTIONS_CHANGED) — the channel §10 travels in
 * [Knox SDK deprecation policy](https://docs.samsungknox.com/dev/knox-sdk/faq/general/)
 * [Log info disclosure](https://developer.android.com/privacy-and-security/risks/log-info-disclosure) — `READ_LOGS` restriction, and the "manage your own logs" recommendation
 * [Security — Android Enterprise](https://developer.android.com/work/dpc/security) — security logging for device owners

@@ -31,6 +31,8 @@ from app.security.admin_auth import AuthMode
 ADMIN_PATHS = [
     "/",
     "/policies",
+    # Reads the app library to answer what an ATAK build declares (W90).
+    "/policies/pref-schema",
     "/enrollment",
     "/api/v1/devices",
     "/api/v1/policies",

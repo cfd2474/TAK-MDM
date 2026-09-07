@@ -490,6 +490,122 @@
   </div>
 {% endmacro %}
 
+{% macro _prefs_table() %}
+  {#
+    The shell the table is built into. Rows come from the scanned APK, which is
+    fetched rather than rendered here: 293 settings for ATAK and 158 for one
+    plugin is not something to put through Jinja twice per page, and the plugin's
+    schema is not even known until the operator picks one.
+  #}
+  <div class="banner" data-prefs-status>Reading the app's settings…</div>
+  <div data-prefs-table hidden>
+    <div class="prefs-toolbar">
+      <input type="search" data-prefs-filter placeholder="Filter by name or key"
+             aria-label="Filter settings">
+      <span class="muted" data-prefs-count></span>
+    </div>
+    <table class="prefs-table">
+      <thead>
+        <tr>
+          <th class="prefs-setting">Setting</th>
+          <th class="prefs-value">Value</th>
+          <th class="prefs-group">Section</th>
+        </tr>
+      </thead>
+      <tbody data-prefs-body></tbody>
+    </table>
+    <div class="prefs-pager" data-prefs-pager hidden>
+      <button type="button" class="ghost" data-prefs-prev>← Previous</button>
+      <span class="muted" data-prefs-page></span>
+      <button type="button" class="ghost" data-prefs-next>Next →</button>
+    </div>
+  </div>
+{% endmacro %}
+
+{% macro _atak_core_prefs(f, items, name) %}
+  {#
+    ATAK's own settings, read from the build in the app library (D91).
+
+    ⚠️ The saved entries are rendered as hidden inputs **first**, and the script
+    only removes them once it has built the table from them. If the schema cannot
+    be fetched — the ATAK build was deleted, the request failed — the operator
+    still sees the category as managed and a save preserves every setting it
+    already carried. Building the table first and seeding it afterwards would
+    make a failed fetch look like an empty policy, and saving would then wipe the
+    whole category in silence.
+  #}
+  <div data-atak-prefs data-prefs-field="{{ name }}">
+    <div data-prefs-fallback>
+      {% for entry in items or [] %}
+        <input type="hidden" name="{{ name }}__key" value="{{ entry.key }}">
+        <input type="hidden" name="{{ name }}__value" value="{{ entry.value }}">
+      {% endfor %}
+    </div>
+    {{ _prefs_table() }}
+  </div>
+{% endmacro %}
+
+{% macro _plugin_prefs(f, items, name, app_packages) %}
+  {#
+    One row per configured plugin, carrying its values as JSON — the same shape
+    as `_app_configs`, and for the same reason: the keys belong to the plugin.
+  #}
+  <div class="rowset" data-rowset="{{ name }}" data-plugin-prefs>
+    {% for entry in items or [] %}
+      {% set plugin_values = entry['values'] or {} %}
+      <div class="rs-row">
+        <input type="hidden" name="{{ name }}__package_name" value="{{ entry.package_name }}">
+        {# ⚠️ Single quotes. `tojson` escapes `'` but not `"`, and JSON is made of
+           double quotes — in a double-quoted attribute the value would end at the
+           first key. See the same note on `_app_configs`, where that bug wiped an
+           app's whole configuration on re-save. #}
+        <input type="hidden" name="{{ name }}__values" value='{{ plugin_values | tojson }}'>
+        <div style="flex:1">
+          <strong>{{ entry.package_name }}</strong>
+          <span class="muted" style="font-size:12px">
+            · {{ plugin_values | length }} setting{{ '' if (plugin_values | length) == 1 else 's' }}
+          </span>
+          <div class="muted" style="font-size:12px">
+            {% for k, v in plugin_values.items() %}{{ k }}={{ v | truncate(40) }}{{ ', ' if not loop.last }}{% endfor %}
+          </div>
+        </div>
+        <button type="button" class="ghost" data-plugin-prefs-edit>Edit</button>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    {% endfor %}
+    <button type="button" class="ghost" data-plugin-prefs-add>Add plugin</button>
+  </div>
+
+  <div class="modal-backdrop" id="plugin-prefs-frame" hidden>
+    <div class="modal modal-wide">
+      <h3>Plugin settings</h3>
+      <label>Plugin</label>
+      <select data-plugin-prefs-package class="field-full">
+        <option value="">— pick an uploaded app —</option>
+        {% for p in app_packages %}
+          {% set api = p | plugin_api %}
+          <option value="{{ p.package_name }}" {% if api %}data-plugin="1"{% endif %}>
+            {{ p.label or p.package_name }} ({{ p.package_name }}){% if api %} · plugin for ATAK {{ api | atak_target }}{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+      <p class="muted" style="font-size:12px">
+        Plugins have no naming convention, so pick from the apps you have
+        uploaded. Any app can be picked; the ones whose build declares a
+        <code>plugin-api</code> are marked, but an older upload may not have
+        recorded one — an unmarked app is not necessarily not a plugin. Only
+        settings a plugin declares in its resources can be read; ones it writes
+        from code are invisible here, and most plugins have none at all.
+      </p>
+      <div data-plugin-prefs-host style="margin-top:12px"></div>
+      <div class="toolbar" style="margin-top:16px; justify-content:flex-end">
+        <button type="button" class="ghost" data-modal-close>Cancel</button>
+        <button type="button" data-plugin-prefs-save disabled>Save settings</button>
+      </div>
+    </div>
+  </div>
+{% endmacro %}
+
 {% macro _control(f, spec, name, app_packages, managed_files) %}
   {% set value = spec.get(f.name) %}
   {% if f.requires %}
@@ -530,6 +646,8 @@
   {% elif f.control == 'usage_rules' %}{{ _usage_rules(f, value, name, none) }}
   {% elif f.control == 'app_usage_rules' %}{{ _usage_rules(f, value, name, app_packages) }}
   {% elif f.control == 'app_configs' %}{{ _app_configs(f, value, name, app_packages) }}
+  {% elif f.control == 'atak_core_prefs' %}{{ _atak_core_prefs(f, value, name) }}
+  {% elif f.control == 'plugin_prefs' %}{{ _plugin_prefs(f, value, name, app_packages) }}
   {% endif %}
 {% endmacro %}
 

@@ -41,6 +41,7 @@ from sqlalchemy import select
 
 from app.artifacts.storage import ArtifactStorage
 from app.db.models import AppPackage, Device
+from app.services import atak_config
 from app.services import packages as package_service
 from app.security.bundle import BundleSigner
 from app.services import effective_policy as eff
@@ -96,6 +97,12 @@ def build(
     payload = eff.get_effective(session, device)
     policy = payload.get("values", {})
     if storage is not None:
+        # ⚠️ Order matters. ATAK_CONFIG resolves into APP_CATALOG.app_configs
+        # (D92), so it has to land *before* the types are attached — ATAK declares
+        # `enterpriseConfigurationPreferences` itself, and running the enrichment
+        # afterwards is what gives the generated document its declared type
+        # without a second place that has to know what that type is.
+        policy = atak_config.merge_into_policy(session, storage, policy)
         policy = _with_declared_types(session, storage, policy)
 
     return {

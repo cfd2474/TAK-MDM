@@ -29,6 +29,7 @@ from pydantic import ValidationError
 
 from app.policies.specs import (
     AppCatalogSpec,
+    AtakConfigSpec,
     CustomizationsSpec,
     FilesSpec,
     KioskSpec,
@@ -173,6 +174,12 @@ registry.register(
     "NETWORK_DATA_USE",
     NetworkDataUseSpec,
     "Data usage tracking, thresholds, and (with Knox) network restrictions.",
+)
+registry.register(
+    "ATAK_CONFIG",
+    AtakConfigSpec,
+    "ATAK's own settings and its plugins', delivered through ATAK's enterprise "
+    "configuration key.",
 )
 registry.register(
     "CUSTOMIZATIONS",

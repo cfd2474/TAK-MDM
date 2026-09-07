@@ -781,3 +781,48 @@ dl.kv dd { margin: 0; font-size: 13px; }
   padding-top: 10px;
   border-top: 1px dashed #2a3646;
 }
+
+/* --- ATAK settings table (W90) ---------------------------------------------
+   293 settings for ATAK 5.8.0.4, 158 for one plugin. A rail of sub-pages cannot
+   carry that, so it is a filtered, paged table: 50 rows a page.
+
+   ⚠️ Rows off the current page are hidden, never removed or disabled — a hidden
+   input still submits, and a removed one would drop the operator's value the
+   moment they turned a page. */
+.prefs-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.prefs-toolbar input[type="search"] { width: 260px; margin: 0; }
+.prefs-table { table-layout: fixed; }
+.prefs-table th, .prefs-table td { vertical-align: top; padding: 7px 10px; }
+.prefs-table .prefs-setting { width: 46%; }
+.prefs-table .prefs-value { width: 34%; }
+.prefs-table .prefs-group { width: 20%; color: var(--muted); font-size: 12px; }
+.prefs-table td input, .prefs-table td select { width: 100%; margin: 0; }
+.prefs-key {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  word-break: break-all;
+}
+.prefs-summary { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.prefs-default { font-size: 11px; color: var(--muted); }
+.prefs-pager {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.prefs-pager .muted { font-size: 12px; }
+/* A setting the policy carries that the scanned build no longer declares. Kept
+   editable and marked, never dropped — see the note in atlas.js. */
+.prefs-row-unknown td { background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.prefs-empty { color: var(--muted); padding: 14px 10px; }
+/* The plugin picker holds the same table, so it needs the same room. */
+.modal.modal-wide { max-width: 900px; }

@@ -102,6 +102,7 @@ from app.policies.registry import PolicyTypeError, registry
 from app.services import agent_update as agent_update_service
 from app.services import device_health
 from app.services import atak_compat
+from app.services import atak_config
 from app.services import import_jobs
 from app.services import tak_gov
 from app.services import tak_gov_link
@@ -188,6 +189,31 @@ _TEMPLATES.env.filters["atak_target"] = atak_compat.plugin_target
 _TEMPLATES.env.filters["category_label"] = lambda key: (
     creator_catalog.get(key).label if creator_catalog.get(key) else key
 )
+
+
+def _declared_plugin_api(package) -> str | None:
+    """The `plugin-api` an uploaded app's deployed build declares, if any (W90).
+
+    ⚠️ **It lives on the *version*, not the package.** Reading `package.plugin_api`
+    in a template is not an error — Jinja resolves a missing attribute to
+    Undefined, which is falsy — so the plugin marker in the settings picker simply
+    never appeared, on a library made almost entirely of plugins.
+
+    Best-effort by design: a build uploaded before `plugin_api` was recorded has
+    it NULL until `backfill_plugin_api` runs, and the picker must not imply the
+    unmarked apps are the non-plugins.
+    """
+    # ⚠️ Not `package_service.latest_published`, which takes a session it does
+    # not currently use. A filter has none to give, and passing None would work
+    # only until that function grows a query — at which point it would fail
+    # inside a template render, which is the worst place to find out.
+    published = [v for v in package.versions if v.published]
+    if not published:
+        return None
+    return max(published, key=lambda v: v.version_code).plugin_api
+
+
+_TEMPLATES.env.filters["plugin_api"] = _declared_plugin_api
 
 
 def _render(
@@ -483,11 +509,52 @@ def list_policies(
     )
 
 
-def _catalog_view(profile=None) -> list[dict[str, Any]]:
+def _sections_of(profile) -> dict:
+    """`{category key: section}` for a profile, or empty for the creator."""
+    if profile is None:
+        return {}
+    return {section.profile_section: section for section in profile.sections}
+
+
+def _category_warnings(
+    session: Session | None,
+    storage: ArtifactStorage | None,
+    category,
+    spec: dict,
+    whole_spec: dict,
+) -> list[str]:
+    """Anything about this category the operator should know *before* publishing.
+
+    ⚠️ **This is where an ATAK Config problem is allowed to be loud.** The same
+    checks run again at check-in, inside the device's own request, where they can
+    only degrade to "no ATAK configuration" — a device must not fail to check in
+    because a policy is wrong. That makes the console the only place the operator
+    ever finds out, so the warning has to actually appear here.
+    """
+    if category.policy_type != "ATAK_CONFIG" or not spec:
+        return []
+    if session is None or storage is None:
+        return []
+    return atak_config.render(session, storage, whole_spec).warnings
+
+
+def _catalog_view(
+    profile=None,
+    session: Session | None = None,
+    storage: ArtifactStorage | None = None,
+) -> list[dict[str, Any]]:
     """The creator/editor category rail (W12): each wired category with its
     sub-pages (one per ui_group), a per-sub-page 'has data' flag, and the
     section's current spec."""
     view: list[dict[str, Any]] = []
+    # ⚠️ Every section, not just this one. Which ATAK build the settings are for
+    # is settled by the policy's *own* required apps, so the ATAK Config category
+    # cannot be judged without seeing App Management beside it.
+    whole_spec = {
+        creator_catalog.get(key).policy_type: section.latest_version.spec
+        for key, section in _sections_of(profile).items()
+        if creator_catalog.get(key) and section.latest_version
+    }
     for category in creator_catalog.CATALOG:
         section = (
             profile_service.section_for(profile, category.key) if profile else None
@@ -508,8 +575,20 @@ def _catalog_view(profile=None) -> list[dict[str, Any]]:
         view.append(
             {
                 "category": category,
+                "warnings": _category_warnings(
+                    session, storage, category, spec, whole_spec
+                ),
+                # Stub sub-topics first, then the working ones (D94). Order is
+                # the category's own declaration — "Plugin behavior" is listed
+                # above ATAK Config's two configurable sub-topics because that is
+                # how the operator asked for it, not because stubs sort first.
                 "pages": [
-                    {"page": p, "has_data": p.slug in managed} for p in pages
+                    {"page": stub, "has_data": False, "stub": True}
+                    for stub in category.stub_pages
+                ]
+                + [
+                    {"page": p, "has_data": p.slug in managed, "stub": False}
+                    for p in pages
                 ],
                 "section": section,
                 "spec": spec,
@@ -596,6 +675,7 @@ def _app_group_hints(session: Session) -> list[dict[str, Any]]:
 def new_policy_page(
     request: Request,
     session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
     identity: AdminIdentity = Depends(admin_required),
 ) -> HTMLResponse:
     """The guided profile creator: pick categories, fill the wired ones (DW5)."""
@@ -605,7 +685,7 @@ def new_policy_page(
         identity=identity,
         mode="new",
         profile=None,
-        catalog=_catalog_view(),
+        catalog=_catalog_view(session=session, storage=storage),
         app_groups=_app_group_hints(session),
         **_form_catalogs(session),
     )
@@ -635,6 +715,106 @@ def app_activities(
         _APP_CONFIG_SCANS.move_to_end(key)
 
     return JSONResponse({"package_name": package, "activities": cached})
+
+
+def _pref_schema_payload(schema, package_name: str, warnings: list[str]) -> dict:
+    """One scanned APK's settings, in the shape the editor's table reads."""
+    return {
+        "package_name": package_name,
+        "preference_group": schema.preference_group if schema else None,
+        "sections": [
+            {
+                "title": section.title,
+                "fields": [
+                    {
+                        "key": f.key,
+                        "label": f.label,
+                        "summary": f.summary,
+                        "control": f.control,
+                        "default": f.default,
+                        # The app's own option list, when it resolved. Empty means
+                        # free text — an empty dropdown offers nothing at all.
+                        "options": [{"label": o.label, "value": o.value} for o in f.options],
+                    }
+                    for f in section.fields
+                ],
+            }
+            for screen in (schema.screens if schema else ())
+            for section in screen.sections
+        ],
+        "warnings": warnings,
+    }
+
+
+@router.get("/policies/pref-schema")
+def pref_schema(
+    package: str | None = None,
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+    identity: AdminIdentity = Depends(admin_required),
+) -> JSONResponse:
+    """The settings an ATAK build — or one of its plugins — declares (W90).
+
+    One endpoint for both tables. With no `package` it answers for the ATAK build
+    in the library, which is the core-settings case; with one it answers for that
+    plugin. The two differ only in which APK is scanned, and giving them separate
+    routes would mean two copies of the same shaping code drifting apart.
+
+    ⚠️ **Warnings are part of the answer, not an error.** "No ATAK build is
+    uploaded" and "this plugin declares nothing" are both ordinary states an
+    operator needs to read on the page — returning 404 for them would put the
+    explanation in a console nobody has open.
+    """
+    if package is None:
+        candidates = atak_config.atak_packages(session)
+        if not candidates:
+            return JSONResponse(
+                _pref_schema_payload(
+                    None,
+                    "",
+                    [
+                        "No ATAK build is in the app library, so there are no "
+                        "settings to show. Upload one from the Apps section."
+                    ],
+                )
+            )
+        if len(candidates) > 1:
+            names = ", ".join(p.package_name for p in candidates)
+            return JSONResponse(
+                _pref_schema_payload(
+                    None,
+                    "",
+                    [
+                        f"The library holds more than one ATAK build ({names}). "
+                        f"Add the one this policy targets to its required apps, "
+                        f"so its settings can be read."
+                    ],
+                )
+            )
+        found = candidates[0]
+    else:
+        found = session.scalar(
+            select(AppPackage).where(AppPackage.package_name == package)
+        )
+        if found is None:
+            return JSONResponse(
+                {"error": f"{package} is not an uploaded app"}, status_code=404
+            )
+
+    schema = atak_config.schema_for(session, storage, found)
+    warnings: list[str] = []
+    if schema is None:
+        warnings.append(
+            f"{found.package_name} has no published build to read settings from."
+        )
+    elif not schema.declares_any:
+        warnings.append(
+            f"{found.package_name} declares no settings in its resources. Only "
+            f"what an app puts in res/xml can be read — settings it writes from "
+            f"code, or keeps in its own store, are invisible here."
+        )
+
+    return JSONResponse(_pref_schema_payload(schema, found.package_name, warnings))
 
 
 @router.get("/policies/app-config-schema")
@@ -748,6 +928,7 @@ def profile_detail(
     profile_id: uuid.UUID,
     request: Request,
     session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
     identity: AdminIdentity = Depends(admin_required),
 ) -> HTMLResponse:
     profile = profile_service.get_profile(session, profile_id)
@@ -770,7 +951,7 @@ def profile_detail(
         identity=identity,
         mode="edit",
         profile=profile,
-        catalog=_catalog_view(profile),
+        catalog=_catalog_view(profile, session=session, storage=storage),
         app_groups=_app_group_hints(session),
         **_form_catalogs(session),
         devices=list(session.scalars(select(Device).order_by(Device.serial_number))),

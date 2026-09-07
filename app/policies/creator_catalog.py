@@ -19,14 +19,33 @@ registry or flagged a placeholder. The profile creator and editor render this
 directly, so adding a category (or lighting one up when its backend lands) is a
 one-line change here and nothing else (OCP).
 
-`subtopics` are display-only for now — they tell the operator what a category will
-eventually cover. A wired category's whole spec is still edited as one JSON
-document (D64), so the subtopics do not yet split into separate forms.
+`subtopics` are display-only — they tell the operator what an *unwired* category
+will eventually cover. A wired category's sub-pages come from its spec's
+`ui_group` labels instead (W12), so they cannot drift from the form.
+
+`stub_pages` bridges the two (D94): a wired category may still carry a sub-topic
+that has no backend yet, rendered as a "coming soon" panel beside its working
+ones. Declared here and nowhere else — the editor reads this list, so lighting
+one up later means deleting a line rather than editing a template.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class StubPage:
+    """A sub-topic of a wired category that has no backend yet (D94).
+
+    Rendered before the category's real sub-pages, in declaration order — which
+    is how "Plugin behavior" sits at the top of ATAK Config while the two
+    configurable sub-topics below it work.
+    """
+
+    slug: str
+    label: str
+    blurb: str = ""
 
 
 @dataclass(frozen=True)
@@ -36,6 +55,8 @@ class Category:
     #: Registry policy type, or None for a placeholder.
     policy_type: str | None = None
     subtopics: tuple[str, ...] = field(default_factory=tuple)
+    #: Sub-topics of a *wired* category that are not built yet (D94).
+    stub_pages: tuple[StubPage, ...] = field(default_factory=tuple)
     blurb: str = ""
 
     @property
@@ -71,6 +92,20 @@ CATALOG: tuple[Category, ...] = (
         ),
         blurb="Lock a device to one app and decide what the user can still reach. "
               "Multi app, launcher, website and screensaver need an ATLAS launcher.",
+    ),
+    Category(
+        "atak_config", "ATAK Config", "ATAK_CONFIG",
+        stub_pages=(
+            StubPage(
+                "plugin-behavior", "Plugin behavior",
+                "Which plugins ATAK loads, and how it behaves when one is missing "
+                "or built for a different ATAK. Reading a plugin's *settings* "
+                "already works — that is the sub-topic below.",
+            ),
+        ),
+        blurb="ATAK's own settings and its plugins', read from the builds in the "
+              "app library and delivered through ATAK's enterprise configuration "
+              "key — no file push, no Knox.",
     ),
     Category(
         "networks", "Networks", "NETWORKS",

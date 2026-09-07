@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Read the settings an ATAK build — or one of its plugins — exposes (W89).
+"""Read the settings an ATAK build — or one of its plugins — exposes (W90).
 
 Android declares a settings screen as XML under `res/`::
 
@@ -63,11 +63,25 @@ from app.artifacts import arsc
 from app.artifacts.app_icon import read_table
 from app.artifacts.axml import parse_elements
 
-#: The root element of a settings document. Both the platform and every ATAK
-#: widget subclass keep it, because Android's inflater requires it.
+#: The root element of a settings document.
+#:
+#: ⚠️ **Matched exactly here, unlike every other element, and that asymmetry is
+#: deliberate.** Discovery decides whether a `res/` file is a settings document
+#: at all, so a false positive costs a whole fictional screen; classification
+#: decides what one row is, so a false negative costs one real setting. Strict
+#: where a wrong yes is expensive, lenient where a wrong no is. Both real APKs
+#: measured here — ATAK 5.8.0.4 and UAS Tool 13.0.6 — use the plain class at the
+#: root while subclassing every widget beneath it.
 _ROOT = "PreferenceScreen"
 
-#: Groups the fields below them under a heading. Carries no value of its own.
+#: Groups fields under a heading. Carries no value of its own.
+#:
+#: ⚠️ **Matched on the suffix, like every other widget.** UAS Tool ships
+#: `com.atakmap.android.gui.PanPreferenceCategory`; compared by exact name that
+#: falls through to the unknown-widget branch and becomes a **free-text setting**.
+#: It survived only because that one happens to declare no key — a category that
+#: does declare one would have appeared as a configurable field named after a
+#: heading.
 _CATEGORY = "PreferenceCategory"
 
 #: Java classes `PreferenceControl.loadSettings` switches on, verbatim. An entry
@@ -320,12 +334,17 @@ def _options(element, table: "arsc.ResourceTable | None") -> tuple[PrefOption, .
     )
 
 
+def is_category(widget: str) -> bool:
+    """True for a heading — `PreferenceCategory` or any app's subclass of it."""
+    return widget == _CATEGORY or widget.endswith(_CATEGORY)
+
+
 def _classify(widget: str) -> tuple[str, str] | None:
     """(control, java class) for a widget class name, or None if it stores nothing."""
     for suffix, control, java_class in _WIDGETS:
         if widget == suffix or widget.endswith(suffix):
             return control, java_class
-    if widget in (_CATEGORY, _ROOT):
+    if is_category(widget) or widget == _ROOT or widget.endswith(_ROOT):
         return None
     if widget.rsplit(".", 1)[-1] in _ACTION_ONLY:
         return None
@@ -338,6 +357,36 @@ def _classify(widget: str) -> tuple[str, str] | None:
 # --------------------------------------------------------------------------- #
 # Document parsing
 # --------------------------------------------------------------------------- #
+
+
+@dataclass
+class _Section:
+    """A category being filled, and how this document expresses membership.
+
+    ⚠️ **Both idioms are real, and they disagree about the same shape.** Android
+    documents a category as the *parent* of its fields, and ATAK's own screens are
+    written that way. UAS Tool's are not: its categories are **empty elements used
+    as separators**, with the fields that follow them as *siblings* at the same
+    depth. Reading only the nested form put all 160 of its settings under one
+    heading and threw every real heading away; reading only the flat form files a
+    trailing top-level field under a category it has already left.
+
+    Decided per category, by what the document has shown so far: once a field has
+    appeared *inside* it, this is a nested document and a same-depth field belongs
+    to nobody. Until then a same-depth field is the flat idiom — which is the
+    better reading, because an empty category means nothing on its own.
+    """
+
+    title: str
+    depth: int
+    fields: list[PrefField] = field(default_factory=list)
+    _nested: bool = False
+
+    def claims(self, field_depth: int) -> bool:
+        if field_depth > self.depth:
+            self._nested = True
+            return True
+        return field_depth == self.depth and not self._nested
 
 
 def parse_preference_xml(
@@ -359,12 +408,12 @@ def parse_preference_xml(
     # Fields declared before any category, and fields under each one. ATAK has
     # both — 98 categories, and a handful of screens that are a flat list.
     loose: list[PrefField] = []
-    sections: list[tuple[str, list[PrefField]]] = []
+    sections: list[_Section] = []
 
     for element in elements[1:]:
-        if element.name == _CATEGORY:
+        if is_category(element.name):
             title = _text(element, "title", table) or _text(element, "key", table) or "General"
-            sections.append((title, []))
+            sections.append(_Section(title=title, depth=element.depth))
             continue
 
         key = _text(element, "key", table)
@@ -402,23 +451,21 @@ def parse_preference_xml(
             options=options,
         )
 
-        # ⚠️ Nesting is what says which category a field belongs to, and a field
-        # that has left its category — back at the screen's own depth — belongs to
-        # none of them. Appending to "the last category seen" regardless would
-        # file every trailing field under a heading it is not part of.
-        if sections and element.depth > 1:
-            sections[-1][1].append(field_)
+        if sections and sections[-1].claims(element.depth):
+            sections[-1].fields.append(field_)
         else:
             loose.append(field_)
 
-    if not loose and not any(fields for _, fields in sections):
+    if not loose and not any(section.fields for section in sections):
         return None
 
     built: list[PrefSection] = []
     if loose:
         built.append(PrefSection(title=screen_title or "General", fields=tuple(loose)))
     built.extend(
-        PrefSection(title=title, fields=tuple(fields)) for title, fields in sections if fields
+        PrefSection(title=section.title, fields=tuple(section.fields))
+        for section in sections
+        if section.fields
     )
     return PrefScreen(source=source, title=screen_title, sections=tuple(built))
 

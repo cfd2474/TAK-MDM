@@ -96,7 +96,30 @@
       {% else %}
         {% for pg in row.pages %}
         <section class="tab-panel" data-page-panel="{{ row.category.key }}:{{ pg.page.slug }}" hidden>
+          {% if pg.stub %}
+            {#
+              A sub-topic of a working category that has no backend yet (D94).
+              Shown rather than hidden, for the same reason an unwired category
+              is: an operator looking for it should find out it is coming, not
+              conclude it was forgotten.
+            #}
+            <h2>{{ row.category.label }} <span class="muted">· {{ pg.page.label }}</span></h2>
+            <div class="panel stub">
+              <div class="big">Not available yet.</div>
+              <div>{{ pg.page.blurb }}</div>
+            </div>
+          {% else %}
           <div class="panel">
+            {#
+              What this category would do — or fail to do — if published now.
+              Shown here because the same checks run again at check-in, where
+              they can only degrade quietly: a device must not fail to check in
+              because a policy is wrong, so this page is the only place the
+              operator ever finds out.
+            #}
+            {% for warning in row.warnings or [] %}
+              <div class="banner warn">{{ warning }}</div>
+            {% endfor %}
             <p class="sub">Leave controls at <em>Not managed</em> to skip them. Every category is here — fill in what this policy should manage.</p>
             {{ page_body(row, pg) }}
             {% if mode == 'edit' and row.section and row.section.latest_version %}
@@ -106,6 +129,7 @@
               </p>
             {% endif %}
           </div>
+          {% endif %}
         </section>
         {% endfor %}
       {% endif %}

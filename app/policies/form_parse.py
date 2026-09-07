@@ -216,6 +216,62 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
             if rows:
                 spec[name] = rows
 
+        elif field.control == "atak_core_prefs":
+            # ⚠️ An empty box means "not managed", exactly as it does for every
+            # other text control here — never "set this setting to the empty
+            # string". ATAK stores what it is given, so a blank submitted as a
+            # value would wipe a callsign or a server address rather than leave
+            # it alone, and the console would show it as configured.
+            keys = form.getlist(f"{name}__key")
+            values = form.getlist(f"{name}__value")
+            rows: list[dict[str, Any]] = []
+            seen_keys: set[str] = set()
+            for i, key in enumerate(keys):
+                key = (key or "").strip()
+                value = (values[i] if i < len(values) else "").strip()
+                # ⚠️ The de-dupe is a real safety net, not tidiness. If the
+                # table's script fails part way through building, the hidden
+                # fallback inputs the server rendered are still in the form
+                # alongside the rows it did manage — the same key twice. First
+                # one wins, which is the server-rendered value, which is what the
+                # policy already held.
+                if not key or not value or key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                rows.append({"key": key, "value": value})
+            if rows:
+                spec[name] = rows
+
+        elif field.control == "plugin_prefs":
+            # Same shape as `app_configs`, and for the same reason: the keys
+            # belong to the plugin, so they travel as JSON in a hidden input
+            # rather than as form field names this server would have to know.
+            packages = form.getlist(f"{name}__package_name")
+            raw_values = form.getlist(f"{name}__values")
+            rows = []
+            for i, package in enumerate(packages):
+                package = (package or "").strip()
+                if not package:
+                    continue
+                try:
+                    values = json.loads(raw_values[i] if i < len(raw_values) else "{}")
+                except (ValueError, IndexError):
+                    continue
+                if not isinstance(values, dict) or not values:
+                    # A plugin with nothing selected is dropped rather than sent:
+                    # an empty entry still occupies the merge slot for that
+                    # package, so it would suppress a lower-ranked policy's real
+                    # configuration with nothing on screen to explain it.
+                    continue
+                rows.append(
+                    {
+                        "package_name": package,
+                        "values": {str(k): str(v) for k, v in values.items()},
+                    }
+                )
+            if rows:
+                spec[name] = rows
+
         elif field.control in ("usage_rules", "app_usage_rules"):
             # A disabled fieldset submits nothing, so a Knox-gated control simply
             # produces no rows here — and the spec refuses one anyway if a request

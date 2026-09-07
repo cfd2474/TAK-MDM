@@ -36,6 +36,7 @@ ANDROID_NS = "http://schemas.android.com/apk/res/android"
 
 _TYPE_STRING = 0x03
 _TYPE_INT_DEC = 0x10
+_TYPE_INT_BOOLEAN = 0x12
 
 _APK_SIG_BLOCK_MAGIC = b"APK Sig Block 42"
 _SIG_SCHEME_V2_ID = 0x7109871A
@@ -353,3 +354,97 @@ def build_xapk(
             archive.writestr(f"Android/obb/{package_name}/main.1.{package_name}.obb", b"OBB" * 100)
 
     return buffer.getvalue()
+
+
+# --------------------------------------------------------------------------- #
+# Preference screens (W89)
+# --------------------------------------------------------------------------- #
+
+
+def build_resource_axml(
+    root: str, children: list, attributes: dict | None = None
+) -> bytes:
+    """Compile a `res/` XML document to binary XML, root element named by `root`.
+
+    Both documents an APK carries for this project's scanners — a
+    `<PreferenceScreen>` and a `<restrictions>` — are the same shape, so they
+    share one encoder rather than two that can drift.
+    """
+    attributes = attributes or {}
+
+    strings: list[str] = [ANDROID_NS]
+    index_of: dict[str, int] = {ANDROID_NS: 0}
+
+    def intern(value: str) -> int:
+        if value not in index_of:
+            index_of[value] = len(strings)
+            strings.append(value)
+        return index_of[value]
+
+    def collect(name: str, attrs: dict, kids: list) -> None:
+        intern(name)
+        for key, value in attrs.items():
+            intern(key)
+            if isinstance(value, str):
+                intern(value)
+        for kid in kids:
+            collect(*kid)
+
+    collect(root, attributes, children)
+
+    def encode(name: str, attrs: dict, kids: list) -> bytes:
+        encoded_attributes = []
+        for key, value in attrs.items():
+            if isinstance(value, bool):
+                data_type, raw = _TYPE_INT_BOOLEAN, (1 if value else 0)
+            elif isinstance(value, int):
+                data_type, raw = _TYPE_INT_DEC, value
+            else:
+                data_type, raw = _TYPE_STRING, index_of[value]
+            encoded_attributes.append((0, index_of[key], data_type, raw))
+
+        body = _encode_start_element(index_of[name], encoded_attributes)
+        for kid in kids:
+            body += encode(*kid)
+        return body + _encode_end_element(index_of[name])
+
+    body = _encode_string_pool(strings, utf8=True)
+    body += encode(root, attributes, children)
+    return struct.pack("<HHI", 0x0003, 8, 8 + len(body)) + body
+
+
+def build_restrictions_axml(keys: list[tuple[str, int]]) -> bytes:
+    """A managed-configuration schema declaring `(key, restrictionType)` pairs."""
+    return build_resource_axml(
+        "restrictions",
+        [("restriction", {"key": key, "restrictionType": kind}, []) for key, kind in keys],
+    )
+
+
+def build_preference_axml(children: list, attributes: dict | None = None) -> bytes:
+    """Compile a `<PreferenceScreen>` document to binary XML.
+
+    `children` is a nested list of ``(element_name, attributes, children)``, so a
+    `PreferenceCategory` holding fields is expressed the way the XML does — which
+    is what makes the depth-sensitive section rule testable at all.
+
+    Attribute values are literals: a string becomes a pooled string, an int an
+    integer, a bool an `INT_BOOLEAN` (which is how a compiled `defaultValue` on a
+    checkbox really arrives). Resource **references** are deliberately not
+    offered — resolving one needs a `resources.arsc` this builder does not write,
+    and that path is covered against the real ATAK APK instead.
+    """
+    return build_resource_axml("PreferenceScreen", children, attributes)
+
+
+def pref_field(widget: str, key: str, **attrs) -> tuple:
+    """One preference row: `pref_field("CheckBoxPreference", "x", title="X")`."""
+    return widget, {"key": key, **attrs}, []
+
+
+def pref_category(title: str, *fields, key: str | None = None) -> tuple:
+    """A `PreferenceCategory` and the fields nested under it."""
+    attrs: dict = {"title": title}
+    if key:
+        attrs["key"] = key
+    return "PreferenceCategory", attrs, list(fields)
