@@ -364,6 +364,26 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W83 — the download icon falls, Play Store style
+
+⚠️ **Our own frames, not `android.R.drawable.stat_sys_download`.** That is a hidden
+system resource whose artwork differs by OEM — on a Samsung it is not the glyph
+this was designed against — so referencing it ships whatever the vendor drew.
+
+Four frames on a 24dp grid at all five densities: an arrow falling toward a fixed
+tray, then a frame with **no arrow at all**. The gap is what makes it read as
+something falling repeatedly rather than a shuttle going up and down, and the
+fixed tray gives the eye something still to measure the movement against.
+
+⚠️ **Nothing in the app starts the animation.** `StatusBarIconView` starts an
+`AnimationDrawable` it is handed — that is how the platform's own download glyph
+moves — and no app can reach that view to call `start()` itself. So this depends
+on the OEM's SystemUI doing what AOSP does; **unverified on One UI**.
+
+The notification *shade* shows a single static frame regardless. The progress bar
+there is what carries the detail.
+
+
 ### ✅ W82 — "Single app" was ticked on every new policy
 
 Reported as *kiosk › single app showing active with no app selected*.

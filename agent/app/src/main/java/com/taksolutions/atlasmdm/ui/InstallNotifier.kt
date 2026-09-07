@@ -109,7 +109,11 @@ object InstallNotifier {
         val notifications = context.getSystemService(NotificationManager::class.java) ?: return
         val builder = Notification.Builder(context, SyncScheduler.NOTIFICATION_CHANNEL)
             .setContentTitle(title)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
+            // ⚠️ Ours, not `android.R.drawable.stat_sys_download`. That is a
+            // hidden system resource whose artwork differs by OEM, so the icon
+            // an operator sees would be whichever glyph the vendor drew. This
+            // one is an animation-list the status bar drives itself.
+            .setSmallIcon(R.drawable.ic_stat_download)
             .setProgress(100, progress, indeterminate)
             // Ongoing while it runs: this is work in progress, not an alert, and
             // a user swiping it away mid-install would be told nothing when it

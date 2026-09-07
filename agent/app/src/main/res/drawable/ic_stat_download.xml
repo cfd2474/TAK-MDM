@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The download status icon, animated (W83).
+
+  ⚠️ `oneshot="false"`, and the animation is started by the status bar rather than
+  by us. `StatusBarIconView` starts an `AnimationDrawable` it is handed, which is
+  how the platform's own download glyph moves; nothing in this app can reach that
+  view to call start() on it.
+
+  ⚠️ Our own frames rather than `android.R.drawable.stat_sys_download`. That is a
+  hidden system resource whose artwork differs by OEM - on a Samsung it is not the
+  glyph this was designed against - and referencing it means shipping whatever the
+  vendor drew.
+
+  The last frame has no arrow at all. It is the gap that makes the motion read as
+  something falling repeatedly rather than a shuttle going up and down.
+
+  200ms a frame: slow enough to be a movement rather than a flicker, quick enough
+  that a whole cycle happens while someone glances at the bar.
+-->
+<animation-list xmlns:android="http://schemas.android.com/apk/res/android"
+    android:oneshot="false">
+    <item android:drawable="@drawable/ic_stat_download_0" android:duration="200" />
+    <item android:drawable="@drawable/ic_stat_download_1" android:duration="200" />
+    <item android:drawable="@drawable/ic_stat_download_2" android:duration="200" />
+    <item android:drawable="@drawable/ic_stat_download_3" android:duration="200" />
+</animation-list>
