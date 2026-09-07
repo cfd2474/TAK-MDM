@@ -123,6 +123,25 @@
         </service>
 
         <!--
+          The Power tile on the kiosk home screen (W74).
+
+          Transparent and with no animation: its whole job is to raise the power
+          menu and get out of the way, and a window that appeared behind the menu
+          would still be there when the user dismissed it.
+
+          Exported so the launcher can start it; it checks the policy itself, so
+          being exported does not make it a way round one.
+        -->
+        <activity
+            android:name=".ui.PowerTileActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:icon="@drawable/ic_power_tile"
+            android:label="@string/power_tile_title"
+            android:theme="@style/Theme.Atlas.Invisible" />
+
+        <!--
           The Wi-Fi picker, opened from Device Settings (W72).
 
           Not exported: only this app opens it, and it refuses to draw unless the

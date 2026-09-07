@@ -314,4 +314,44 @@ class LauncherConfigPlanTest {
             .withDeviceSettings(AGENT, SETTINGS_ACTIVITY)
         assertEquals(1, shown.apps.size)
     }
+
+    // ----------------------------------------------------------------------- #
+    // The Power tile (W74)
+    // ----------------------------------------------------------------------- #
+
+    private val POWER_ACTIVITY = "com.taksolutions.atlasmdm.ui.PowerTileActivity"
+
+    @Test
+    fun `settings and power are two tiles of the same package`() {
+        val shown = plan("""{"multi_app_packages": ["com.a"]}""")
+            .withAgent(AGENT)
+            .withDeviceSettings(AGENT, SETTINGS_ACTIVITY)
+            .withPowerTile(AGENT, POWER_ACTIVITY)
+        assertEquals(4, shown.apps.size)
+        assertEquals(
+            listOf(null, null, SETTINGS_ACTIVITY, POWER_ACTIVITY),
+            shown.apps.map { it.activity },
+        )
+    }
+
+    /**
+     * ⚠️ Three tiles of one package is exactly what the old package-level
+     * de-duplication would have collapsed to one, silently.
+     */
+    @Test
+    fun `the agent can hold three tiles at once`() {
+        val shown = plan("{}")
+            .withAgent(AGENT)
+            .withDeviceSettings(AGENT, SETTINGS_ACTIVITY)
+            .withPowerTile(AGENT, POWER_ACTIVITY)
+        assertEquals(3, shown.apps.count { it.packageName == AGENT })
+    }
+
+    @Test
+    fun `the power tile is added at most once`() {
+        val shown = plan("{}")
+            .withPowerTile(AGENT, POWER_ACTIVITY)
+            .withPowerTile(AGENT, POWER_ACTIVITY)
+        assertEquals(1, shown.apps.size)
+    }
 }

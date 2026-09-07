@@ -57,8 +57,8 @@ android {
         targetSdk = 36
         // Bump on every build you intend to upload: the server refuses a duplicate
         // versionCode, and Android refuses to install a downgrade.
-        versionCode = 80
-        versionName = "0.39.1"
+        versionCode = 81
+        versionName = "0.40.0"
     }
 
     signingConfigs {

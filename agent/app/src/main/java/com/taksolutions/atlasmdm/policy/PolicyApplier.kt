@@ -823,6 +823,12 @@ class PolicyApplier(private val context: Context) {
         if (DeviceSettingsPlan.offersAnything(spec)) {
             shown = shown.withDeviceSettings(context.packageName, DEVICE_SETTINGS_ACTIVITY)
         }
+        // ⚠️ A tile of its own when the power menu is offered (W74). Powering a
+        // device off should not need three taps and a scroll through a screen the
+        // user may never have opened.
+        if (DeviceSettingsPlan.offers(spec, DeviceSettingsPlan.OFFER_POWER)) {
+            shown = shown.withPowerTile(context.packageName, POWER_TILE_ACTIVITY)
+        }
 
         // Before locking, so the launcher has its apps the first time it is drawn
         // rather than showing "no apps assigned" until the next reconcile.
@@ -1468,6 +1474,10 @@ class PolicyApplier(private val context: Context) {
          */
         const val DEVICE_SETTINGS_ACTIVITY =
             "com.taksolutions.atlasmdm.ui.DeviceSettingsActivity"
+
+        /** The Power tile (W74). Fully qualified, for the same reason. */
+        const val POWER_TILE_ACTIVITY =
+            "com.taksolutions.atlasmdm.ui.PowerTileActivity"
         private const val PERMISSION_MANAGE_EXTERNAL_STORAGE =
             "android.permission.MANAGE_EXTERNAL_STORAGE"
         private val LEGACY_STORAGE_PERMISSIONS = setOf(

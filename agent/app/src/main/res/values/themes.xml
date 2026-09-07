@@ -69,4 +69,18 @@
         <item name="android:textColor">@color/atlas_steel</item>
         <item name="android:textIsSelectable">true</item>
     </style>
+
+    <!--
+      For an activity that exists only to do something and finish (W74).
+
+      windowIsTranslucent with a null background and no animation: anything else
+      shows an empty window for a frame between the tap and the power menu.
+    -->
+    <style name="Theme.Atlas.Invisible" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
 </resources>

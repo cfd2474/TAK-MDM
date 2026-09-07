@@ -140,6 +140,7 @@
     <string name="network">Network</string>
     <string name="power_menu_service_label">ATLAS power menu</string>
     <string name="power_menu_service_description">Lets ATLAS show the power menu on a locked device, where the side key cannot. It reads nothing from the screen.</string>
+    <string name="power_tile_title">Power</string>
     <string name="power">Power</string>
     <string name="power_off">Power off</string>
     <string name="power_off_summary">Shows the power menu</string>

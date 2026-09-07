@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The IEC power symbol, on the 108dp adaptive-icon canvas (W74).
+
+  ⚠️ Stroked, not filled. A ring with a gap in it cannot be drawn as a fill
+  without describing both its edges, and the two would then have to be kept in
+  step by hand at every size. `strokeWidth` keeps it one path.
+
+  Drawn inside the centre 72dp safe zone, so a circular launcher mask does not
+  clip the arc - which on this symbol would read as a different glyph rather than
+  a cropped one.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <group android:translateX="18" android:translateY="18">
+        <!-- The broken ring: from -60 degrees, the long way round, to -120. -->
+        <path
+            android:strokeColor="#FF4FA3E3"
+            android:strokeWidth="6"
+            android:strokeLineCap="round"
+            android:fillColor="@android:color/transparent"
+            android:pathData="M46,18.68 A20,20 0 1 1 26,18.68" />
+        <!-- The bar through the gap. -->
+        <path
+            android:strokeColor="#FFE7EDF4"
+            android:strokeWidth="6"
+            android:strokeLineCap="round"
+            android:fillColor="@android:color/transparent"
+            android:pathData="M36,10 L36,34" />
+    </group>
+</vector>

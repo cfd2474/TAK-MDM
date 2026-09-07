@@ -111,6 +111,26 @@ def _peripheral(title: str, description: str = ""):
     )
 
 
+def _power_setting(title: str, description: str):
+    """The power menu, whose two states read as Active and Hidden.
+
+    ⚠️ Separate from `_user_setting` only for its labels. "User can change" is
+    wrong here: the user is not changing a setting, they are being given a way to
+    turn the device off. Same tri-state underneath — unset still means the field
+    takes no part in a merge.
+    """
+    return Field(
+        default=None,
+        title=title,
+        description=description,
+        json_schema_extra={
+            "ui_group": _DEVICE_SETTINGS,
+            "ui_true": "Active",
+            "ui_false": "Hidden",
+        },
+    )
+
+
 def _user_setting(title: str, description: str):
     """A control the **user** may change from the kiosk's Device Settings screen.
 
@@ -410,7 +430,7 @@ class KioskSpec(PolicySpec):
     )
     device_setting_power: Annotated[
         bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
-    ] = _user_setting(
+    ] = _power_setting(
         "Power off",
         "⚠️ Show a Power off row that raises Android's power menu. Needs the ATLAS "
         "power menu switched on in the device's accessibility settings — which "

@@ -75,6 +75,17 @@ object LauncherConfigPlan {
         }
 
         /**
+         * A Power tile, when the policy offers the power menu (W74).
+         *
+         * ⚠️ Its own tile rather than only a row inside Device Settings, because
+         * powering a device off should not need three taps and a scroll on a
+         * screen the user may never have opened. Both routes reach the same
+         * accessibility action.
+         */
+        fun withPowerTile(agentPackage: String, activity: String): Plan =
+            withDeviceSettings(agentPackage, activity)
+
+        /**
          * A Device Settings tile, when the policy offers the user anything to
          * change (W71).
          *
