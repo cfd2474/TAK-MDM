@@ -239,7 +239,10 @@ These are real failures from previous sessions, not hypotheticals.
   for the poll, or make the change through the HTTP API so it happens inside the
   serving process.
 
-- **`docker compose up -d --build` wipes the container's `/tmp`.** Scripts copied
+- **`docker compose up -d --build` wipes the container's `/tmp`** — and it bit
+  twice in one session, the second time silently: a watch loop kept polling a
+  script that no longer existed and simply never reported, which looks exactly
+  like a device that has stopped checking in. Scripts copied
   in with `docker compose cp` disappear with the old container, so a deploy in the
   middle of a session silently removes the tooling you staged before it. Re-copy
   after every rebuild.
