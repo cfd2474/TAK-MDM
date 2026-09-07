@@ -1590,6 +1590,25 @@ server**, where the operator can be told. `app/services/atak_pref.py` does this.
 that is not `"true"` as **false**, so `"yes"` applies as false with no error at
 all.
 
+### 10c-ii. ⚠️ Removing the configuration does not undo it
+
+`loadRestrictions` returns **null** when the key is absent *or empty*, and
+`processEnterpriseConfigurationPreferences` guards on `if (ecp != null)`. So
+clearing `enterpriseConfigurationPreferences` — which is exactly what the agent
+does when a policy stops naming the app — is a **no-op inside ATAK**. Every
+setting the document already wrote stays written, because they went into ATAK's
+own `SharedPreferences` and nothing reads them back out.
+
+⚠️ **This is the opposite of every other policy type here.** A password policy
+relaxes when removed (R14), managed configuration is cleared when an app is
+dropped, kiosk releases. ATAK Config is **write-only from ATAK's side**: it can
+change a setting and it can change it again, but "stop managing" is not "restore".
+The same asymmetry the FILES policy has — the MDM never deletes what it placed.
+
+**To genuinely revert, push the old values first and only then remove the
+policy.** Removing it on its own leaves the device exactly as the last document
+left it, with nothing in the console to suggest otherwise.
+
 ### 10d. The class names, verbatim
 
 | `class` attribute | Stored as |

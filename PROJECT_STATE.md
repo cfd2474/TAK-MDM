@@ -800,7 +800,7 @@ answerable here.
    is back, so the verification is a checklist rather than a fresh investigation.
 5. Update this file and the risk table.
 
-###### ✅ On hardware — `SM-X520`, 2026-09-07
+###### ✅ On hardware — `SM-X520` **and `SM-X828U`**, 2026-09-07
 
 Run against the real deployment at `209.182.235.108`, not the workstation's dev
 stack. ⚠️ **They are different servers with different databases** — see the
@@ -878,6 +878,21 @@ Both directions of ATAK's MD5 dedupe are therefore observed on hardware: an
 unchanged document re-applies without ATAK re-reading it, and a changed one
 produces a new hash and is ingested again.
 
+✅ **Verified on the MediaTek device too, which R5 requires rather than allows to
+be extrapolated.** `SM-X828U` (Dimensity 9300+, `R5GL80RJYHK`) was assigned the
+same policy and took it — `state 4 → acked 4`, compliant:
+
+```
+11:33:46 I/PolicyApplier: applied 1 config keys to com.atakmap.app.civ
+11:33:46 I/SyncService:   sync: state=4 applied=4 errors=0
+11:35:47 I/PolicyApplier: applied 1 config keys to com.atakmap.app.civ
+```
+
+and the operator confirmed ATAK on that tablet showing the pushed values. **Two
+of the three SoC vendors in the matrix are therefore covered** — Exynos 1580 and
+Dimensity 9300+. `SM-G736U1` (Snapdragon) has **no ATAK installed**, so it has
+nothing to configure and is not a gap this feature can close.
+
 The 502s are worth keeping: they are the api container restarting mid-deploy, and
 the agent retried and recovered on its own rather than reporting a policy failure.
 
@@ -895,6 +910,41 @@ been given its own applier, every tablet would have needed an agent update first
 holds `17012` and is a **String**; typed as an Integer because it looks numeric,
 `loadSettings` would throw inside ATAK part way through the document. The scan of
 the deployed APK is what prevents that, on the exact build the tablet is running.
+
+###### ✅ The revert, run the same way (2026-09-07)
+
+Done in the two phases §10c-ii requires, not by archiving and hoping:
+
+1. **Published ATAK's own declared defaults** — `atakControlBluetooth=false`,
+   `chatPort=17012` — read out of the APK by the scanner at revert time rather
+   than remembered from the start of the session, so they cannot be a stale
+   guess at what ATAK considers default. Both devices took it.
+2. **Then archived the policy**, at which point the agent clears the managed
+   configuration and ATAK, correctly, does nothing with the cleared key.
+
+⚠️ **Archiving first would have looked identical in the console and left both
+tablets on the test values.** That is the whole reason this order is written
+down.
+
+###### ⚠️ Reverting an ATAK Config policy takes two steps, not one
+
+Confirmed from `PreferenceControl` source, 2026-09-07. `loadRestrictions`
+returns **null** for a key that is absent *or empty*, and the consumer guards on
+`if (ecp != null)` — so clearing `enterpriseConfigurationPreferences`, which is
+what the agent does when a policy stops naming the app, does **nothing inside
+ATAK**. Every setting the last document wrote stays written; they live in ATAK's
+own `SharedPreferences` and nothing reads them back.
+
+⚠️ **This is the opposite of every other policy type in this project.** PASSWORD
+relaxes when removed (R14), managed configuration is cleared, kiosk releases.
+ATAK Config is **write-only from ATAK's side** — the same asymmetry FILES has,
+where the MDM never deletes what it placed.
+
+**To actually revert: publish the old values as a document, let the devices take
+it, and only then archive the policy.** Archiving alone leaves both tablets
+exactly as the last push left them, with nothing in the console to say so. The
+defaults for this are read from the APK by the scanner rather than remembered, so
+they cannot drift from what ATAK itself considers default.
 
 ###### Hardware runbook — ATAK Config on `SM-X520`
 
@@ -9196,7 +9246,7 @@ the `knox` flavour is build-it-yourself.
 | R14 | ~~**Password scalars latch on the device and are never released.**~~ | ✅ **CLOSED 2026-09-02 by W26, hardware-verified.** `applyPassword` is now fully declarative — every field it manages is driven to a definite value on every reconcile, and absent means permissive (`0` / `UNSPECIFIED`). The stuck `SM-X520` recovered: `minimumPasswordLength` released 13 → 0, the operator's 4-digit passcode applied, device back to `compliant`. Latch-and-release proven both directions. ⚠️ **Deliberate behaviour change:** removing a PASSWORD policy now genuinely relaxes the device. The old behaviour looked fail-secure but was un-clearable state. Original text: the scalars were pushed when set and never cleared when dropped (W15's limitation, made acute by W20's `set_password`), which permanently DEGRADED a device with no console-side fix. |
 | R16 | ~~**ATAK Config has never run on hardware.**~~ | ✅ **CLOSED 2026-09-07, hardware-verified on `SM-X520`.** Deployed to `209.182.235.108`, policy assigned, device took it (`state 54 → acked 54`, `errors=0`), agent logged `applied 1 config keys to com.atakmap.app.civ`, and **ATAK itself shows the change** — Bluetooth Support on, which is not its default, with **no ATAK restart**. ⚠️ **No agent release was required**: the fleet already ran 0.44.0 and ATAK Config resolves into `app_configs` (D92), so a server-only deploy reached live devices. Had it been given its own applier every tablet would have needed updating first. Original text: the whole server chain was proven against two shipping APKs and the live console, but no tablet had ingested a generated `.pref`. |
 | R15 | **The agent signing key is a fleet-wide single point of failure.** Android refuses an update signed with a different key, so losing it means no device can ever be updated again without re-provisioning. | Open. Same class as `pki/ca.key` (R8) and belongs in the same KMS/HSM answer. Called out now that OTA self-update is proven and will become the update path. |
-| R5 | Mixed SoC vendors (Qualcomm XCover6 Pro / MediaTek Tab S10+) on One UI 8 | Test every firmware-level behavior on **both** models |
+| R5 | Mixed SoC vendors (Qualcomm XCover6 Pro / MediaTek Tab S10+) on One UI 8 | Test every firmware-level behavior on **both** models. ✅ **W90's ATAK Config cleared on two of the three, 2026-09-07** — Exynos 1580 (`SM-X520`) and Dimensity 9300+ (`SM-X828U`), each verified independently rather than extrapolated. `SM-G736U1` (Snapdragon) carries no ATAK, so there is nothing for this feature to configure on it. |
 | R6 | ~~Advanced Protection Mode blocks Device Owner install~~ | ✅ **Downgraded to low, 2026-08-31.** The operator runs commercial MDMs and Headwind in production on this exact hardware and One UI 8, installing apps successfully. Device Owner `PackageInstaller` holds system install privilege and does not go through the user-facing "install unknown apps" gate — as predicted, now corroborated by production use rather than documentation. Residual risk is only a user *opting into* Advanced Protection, which a Device Owner can largely prevent by restricting Settings anyway. No lab work needed. |
 | R7 | mTLS header trust: nothing in code stops the app being exposed directly, where a copied certificate in `x-ssl-client-cert` would authenticate without the private key | **Partly mitigated.** A reference nginx config now ships in [docker/nginx/nginx.conf](docker/nginx/nginx.conf) — it always overwrites the header, so a forged one is stripped, and rejects uncertified requests to `/api/v1/device/` at the edge. `scripts/dev_enroll.py` verifies both behaviours on every run, and demonstrates the direct port accepting the forged header. **Still open in code:** the app does not refuse to start when no trusted proxy is configured. |
 | R10 | ~~The admin console has no authentication~~ | ✅ **Closed (Chunk 8).** Authentik forward auth with group-based authorization, failing closed, applied at router registration. `disabled` remains the local-development default and says so loudly at startup and in the UI. |
