@@ -1498,16 +1498,32 @@ class PolicyApplier(private val context: Context) {
          * kiosk. Absent means kiosk-only, and clearing it on exit is correct.
          */
         private val RESTRICTIONS_EQUIVALENT = mapOf(
-            "kiosk_allow_bluetooth" to "allow_bluetooth",
+            "device_setting_bluetooth" to "allow_bluetooth",
             "kiosk_allow_camera" to "allow_camera",
             "kiosk_allow_screen_capture" to "allow_screen_capture",
         )
 
+        /**
+         * ⚠️ Keyed on `device_setting_*` since W79 merged the two console pages.
+         *
+         * The console asked the same question twice - once as "may the device do
+         * this", once as "does a control appear" - so one field now means both:
+         * **true** clears the restriction *and* shows the control, **false**
+         * applies the restriction *and* hides it, and absent leaves the
+         * restriction alone.
+         *
+         * ⚠️ That makes `false` stronger than it was. It is not "hide the row";
+         * it is "the device may not change this by any route, including the
+         * hardware keys" - which is why the console labels it Blocked.
+         *
+         * Airplane mode keeps its own name: no app can toggle it, so there is no
+         * control for it to have merged with.
+         */
         private val KIOSK_PERIPHERALS = linkedMapOf(
-            "kiosk_allow_bluetooth" to UserManager.DISALLOW_BLUETOOTH,
-            "kiosk_allow_wifi_config" to UserManager.DISALLOW_CONFIG_WIFI,
-            "kiosk_allow_volume_change" to UserManager.DISALLOW_ADJUST_VOLUME,
-            "kiosk_allow_brightness_change" to UserManager.DISALLOW_CONFIG_BRIGHTNESS,
+            "device_setting_bluetooth" to UserManager.DISALLOW_BLUETOOTH,
+            "device_setting_wifi" to UserManager.DISALLOW_CONFIG_WIFI,
+            "device_setting_volume" to UserManager.DISALLOW_ADJUST_VOLUME,
+            "device_setting_brightness" to UserManager.DISALLOW_CONFIG_BRIGHTNESS,
             "kiosk_allow_airplane_mode" to UserManager.DISALLOW_AIRPLANE_MODE,
         )
     }

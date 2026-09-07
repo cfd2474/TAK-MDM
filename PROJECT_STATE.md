@@ -364,6 +364,47 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W79 — Peripheral restrictions merged into Peripheral Settings
+
+The operator read the two sub-pages as duplicates. Four of the seven restrictions
+were: Bluetooth, Wi-Fi, volume and brightness each asked the same question twice —
+once as *may the device do this*, once as *does a control appear* — and an
+operator had to set both, in agreement, on two pages. W71 created that split; this
+undoes it.
+
+**One field per peripheral, three meanings:**
+
+| | restriction | control |
+|---|---|---|
+| not managed | left alone | absent |
+| user can change | cleared | shown |
+| blocked | applied | absent |
+
+⚠️ **"Blocked", not "Hidden", on the four with a restriction behind them.** Their
+false case forbids the device to change the thing *by any route, including the
+hardware keys* — an operator reading "Hidden" would be surprised by a volume
+rocker that stopped working.
+
+✅ **Brought across, because they have no control to merge into:** camera, screen
+capture and airplane mode. No app can toggle airplane mode at all, and camera or
+screen capture on a kiosk is a lockdown decision rather than a user preference.
+
+⚠️ **A regression the merge nearly shipped.** `_device_settings_need_a_launcher`
+refused any `device_setting_*` without a multi-app kiosk — which after the merge
+would have removed a **single-app** kiosk's ability to block Bluetooth, Wi-Fi,
+volume or brightness at all. Only *showing* a control needs a home screen;
+blocking one is enforcement the OS applies everywhere. Caught by an existing test
+failing, not by review.
+
+⚠️ **Lost on purpose, and narrow:** explicitly *allowing* one of the four on a
+single-app kiosk. Not setting the field leaves the restriction alone, which is
+the same outcome unless a Restrictions policy blocked it and kiosk was expected to
+override that.
+
+Two validators deleted rather than updated — the contradiction they caught (a
+control shown while the restriction forbids it) is now unrepresentable.
+
+
 ### ✅ W75 — notification icons, and progress while apps install
 
 Operator: the permanent notice used the platform download glyph, which reads as a

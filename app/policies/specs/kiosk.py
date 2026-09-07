@@ -68,10 +68,6 @@ _BACKGROUND = "Background apps"
 _LAUNCHER = "Launcher"
 _NIGHT = "Night mode"
 _DEVICE_SETTINGS = "Peripheral Settings"
-#: What the **device** is allowed to do. Renamed in W71: the operator asked for
-#: a "Peripheral Settings" page holding what the *user* may change, and two
-#: sub-pages of the same name would be a coin toss every time.
-_PERIPHERAL = "Peripheral restrictions"
 _PERMITTED = "Permitted features"
 _EXIT = "Kiosk exit settings"
 _WEBSITE = "Website kiosk settings"
@@ -98,13 +94,21 @@ def _keeps(title: str, description: str = ""):
 
 
 def _peripheral(title: str, description: str = ""):
+    """A restriction with **no** control the user could be shown.
+
+    ⚠️ What is left after W79 merged the rest into `_user_setting`. Camera,
+    screen capture and airplane mode cannot be offered as controls at all - no
+    app can toggle airplane mode, and a camera or screen-capture switch on a
+    kiosk is a lockdown decision rather than a user preference - so these stay
+    Allowed/Blocked and simply have no row on the device.
+    """
     """A peripheral the kiosk allows or blocks *while locked*."""
     return Field(
         default=None,
         title=title,
         description=description,
         json_schema_extra={
-            "ui_group": _PERIPHERAL,
+            "ui_group": _DEVICE_SETTINGS,
             "ui_true": "Allowed",
             "ui_false": "Blocked",
         },
@@ -131,7 +135,7 @@ def _power_setting(title: str, description: str):
     )
 
 
-def _user_setting(title: str, description: str):
+def _user_setting(title: str, description: str, restriction: str | None = None):
     """A control the **user** may change from the kiosk's Device Settings screen.
 
     ⚠️ Different in kind from `_peripheral` above, which says what the device is
@@ -141,15 +145,23 @@ def _user_setting(title: str, description: str):
 
     Default off: a kiosk shows nothing the operator did not ask for.
     """
+    extra: dict[str, object] = {
+        "ui_group": _DEVICE_SETTINGS,
+        "ui_true": "User can change",
+        # ⚠️ "Blocked", not "Hidden", where a `UserManager` restriction backs the
+        # control. There the false case does not merely omit a row - it forbids
+        # the device to change the thing at all, including by hardware key, and
+        # an operator who read "Hidden" would be surprised by a volume rocker
+        # that stopped working.
+        "ui_false": "Blocked" if restriction else "Hidden",
+    }
+    if restriction:
+        extra["enforced_by"] = restriction
     return Field(
         default=None,
         title=title,
         description=description,
-        json_schema_extra={
-            "ui_group": _DEVICE_SETTINGS,
-            "ui_true": "User can change",
-            "ui_false": "Hidden",
-        },
+        json_schema_extra=extra,
     )
 
 
@@ -367,22 +379,6 @@ class KioskSpec(PolicySpec):
     kiosk_allow_camera: Annotated[bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)] = _peripheral(
         "Camera", _PERIPHERAL_NOTE
     )
-    kiosk_allow_bluetooth: Annotated[
-        bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
-    ] = _peripheral("Bluetooth", _PERIPHERAL_NOTE)
-    kiosk_allow_wifi_config: Annotated[
-        bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
-    ] = _peripheral(
-        "Change Wi-Fi settings",
-        "Whether the user may join or edit networks. The device stays connected "
-        "either way. " + _PERIPHERAL_NOTE,
-    )
-    kiosk_allow_volume_change: Annotated[
-        bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
-    ] = _peripheral("Change volume", _PERIPHERAL_NOTE)
-    kiosk_allow_brightness_change: Annotated[
-        bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
-    ] = _peripheral("Change screen brightness", _PERIPHERAL_NOTE)
     kiosk_allow_screen_capture: Annotated[
         bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
     ] = _peripheral("Screen capture", _PERIPHERAL_NOTE)
@@ -409,6 +405,7 @@ class KioskSpec(PolicySpec):
     ] = _user_setting(
         "Screen brightness",
         "Let the user set screen brightness, and turn automatic brightness on or off.",
+        restriction="allow_brightness_change",
     )
     device_setting_screen_timeout: Annotated[
         bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
@@ -421,6 +418,7 @@ class KioskSpec(PolicySpec):
     ] = _user_setting(
         "Volume",
         "Let the user set media and notification volume.",
+        restriction="allow_volume_change",
     )
     device_setting_flashlight: Annotated[
         bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
@@ -443,6 +441,7 @@ class KioskSpec(PolicySpec):
     ] = _user_setting(
         "Bluetooth",
         "Let the user turn Bluetooth on and off.",
+        restriction="allow_bluetooth",
     )
     device_setting_radios_off: Annotated[
         bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)
@@ -460,6 +459,7 @@ class KioskSpec(PolicySpec):
         "⚠️ Let the user turn Wi-Fi on and off. Android blocks this for ordinary "
         "apps and permits it for a Device Owner; if the device refuses, the control "
         "says so rather than failing quietly.",
+        restriction="allow_wifi_config",
     )
 
     # ----------------------------------------------------------------------- #
@@ -627,37 +627,6 @@ class KioskSpec(PolicySpec):
             )
         return self
 
-    #: Device Settings control → the peripheral restriction that would stop it
-    #: working. Only the overlaps; night mode, timeout and flashlight have none.
-    _CONTROL_NEEDS_PERMISSION: ClassVar[dict[str, str]] = {
-        "device_setting_volume": "kiosk_allow_volume_change",
-        "device_setting_brightness": "kiosk_allow_brightness_change",
-        "device_setting_wifi": "kiosk_allow_wifi_config",
-        "device_setting_bluetooth": "kiosk_allow_bluetooth",
-    }
-
-    @model_validator(mode="after")
-    def _a_control_must_be_able_to_move(self) -> "KioskSpec":
-        """Refuse a Device Settings control the peripheral restrictions forbid.
-
-        ⚠️ The contradiction is invisible on the device: the slider is drawn, the
-        user drags it, and Android silently refuses because the restriction is in
-        force. That reads as a broken tablet, and the operator has two screens
-        that each look correct on their own.
-        """
-        conflicts = [
-            f"{control} needs {permission} allowed"
-            for control, permission in self._CONTROL_NEEDS_PERMISSION.items()
-            if getattr(self, control) and getattr(self, permission) is False
-        ]
-        if conflicts:
-            raise ValueError(
-                f"{'; '.join(conflicts)}. A control the device is forbidden to "
-                f"change is drawn, dragged, and silently ignored — which reads as a "
-                f"broken device rather than a policy that disagrees with itself"
-            )
-        return self
-
     @model_validator(mode="after")
     def _the_power_menu_needs_global_actions(self) -> "KioskSpec":
         """Refuse a Power off row on a kiosk that suppresses the power menu.
@@ -677,30 +646,6 @@ class KioskSpec(PolicySpec):
         return self
 
     @model_validator(mode="after")
-    def _radios_off_needs_both_radios(self) -> "KioskSpec":
-        """Refuse a Radios off switch the device is forbidden to act on.
-
-        ⚠️ Its own rule because it is the one control that touches **two**
-        restrictions, which `_CONTROL_NEEDS_PERMISSION` cannot express. Half-working
-        is the worst outcome here: the user taps once expecting to go quiet, one
-        radio stays up, and nothing on the device says which.
-        """
-        if not self.device_setting_radios_off:
-            return self
-        blocked = [
-            name
-            for name in ("kiosk_allow_wifi_config", "kiosk_allow_bluetooth")
-            if getattr(self, name) is False
-        ]
-        if blocked:
-            raise ValueError(
-                f"device_setting_radios_off needs {' and '.join(blocked)} allowed. "
-                f"It turns both radios off at once, and one that the device is "
-                f"forbidden to change would stay up with nothing saying which"
-            )
-        return self
-
-    @model_validator(mode="after")
     def _device_settings_need_a_launcher(self) -> "KioskSpec":
         """The way to these is a tile on the kiosk home screen.
 
@@ -709,16 +654,22 @@ class KioskSpec(PolicySpec):
         """
         if self.multi_app_packages:
             return self
+        # ⚠️ Only **showing** a control needs a launcher (W79). Turning one off is
+        # either a restriction the OS enforces everywhere or simply no row, and
+        # neither wants a home screen — refusing those would have taken away a
+        # single-app kiosk's ability to block Bluetooth, Wi-Fi, volume or
+        # brightness at all, which it could do before the two pages merged.
         shown = sorted(
             name
             for name in type(self).model_fields
-            if name.startswith("device_setting_") and getattr(self, name) is not None
+            if name.startswith("device_setting_") and getattr(self, name) is True
         )
         if shown:
             raise ValueError(
-                f"{', '.join(shown)} needs a multi-app kiosk. The way to these is a "
-                f"Device Settings tile on the ATLAS launcher's home screen, and a "
-                f"single-app kiosk has no home screen to put it on"
+                f"{', '.join(shown)} needs a multi-app kiosk. Showing a control means "
+                f"a Device Settings tile on the ATLAS launcher's home screen, and a "
+                f"single-app kiosk has no home screen to put it on. Setting them to "
+                f"blocked or hidden needs no launcher"
             )
         return self
 

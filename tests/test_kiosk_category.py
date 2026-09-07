@@ -73,14 +73,13 @@ def test_the_creator_offers_every_sub_topic_the_operator_asked_for():
     #     applies to a single-app kiosk too and cannot live under "launcher"
     #     (W68);
     #   * "peripheral settings" — W71 added the operator's list of what the *user*
-    #     may change from the device, and the existing page (what the *device* is
-    #     allowed to do) had to be renamed "peripheral restrictions", because two
-    #     sub-pages of the same name are a coin toss every time.
+    #     may change, briefly alongside a "peripheral restrictions" page. W79
+    #     merged them: the two were asking the same question twice, once as "may
+    #     the device do this" and once as "does a control appear".
     assert kiosk.subtopics == (
         "single app", "multi app", "background apps", "launcher",
-        "permitted features", "peripheral restrictions", "peripheral settings",
-        "kiosk exit settings", "night mode", "website kiosk settings",
-        "kiosk screensaver",
+        "permitted features", "peripheral settings", "kiosk exit settings",
+        "night mode", "website kiosk settings", "kiosk screensaver",
     )
 
 
@@ -96,13 +95,16 @@ def test_the_enforceable_sections_are_accepted():
         keep_recents_button=False,
         keep_power_menu=True,
         kiosk_allow_camera=False,
-        kiosk_allow_bluetooth=True,
+        # Blocked rather than allowed: on a single-app kiosk there is no screen to
+        # put a control on, so the enforceable half is the one that applies (W79).
+        device_setting_bluetooth=False,
     )
 
     assert spec.kiosk_package == ATAK
     assert spec.background_packages == ["com.google.android.inputmethod.latin"]
     assert spec.keep_recents_button is False
     assert spec.kiosk_allow_camera is False
+    assert spec.device_setting_bluetooth is False
 
 
 # --------------------------------------------------------------------------- #
@@ -494,21 +496,6 @@ def test_nothing_is_offered_to_the_user_by_default():
     assert offered == []
 
 
-def test_a_control_the_device_is_forbidden_to_change_is_refused():
-    """⚠️ The contradiction is invisible on the device: the slider is drawn, the
-    user drags it, and Android silently refuses because the restriction is in
-    force. That reads as a broken tablet, and each console page looks correct on
-    its own."""
-    with pytest.raises(ValueError, match="needs kiosk_allow_volume_change"):
-        _multi(device_setting_volume=True, kiosk_allow_volume_change=False)
-
-
-def test_a_control_whose_permission_is_allowed_is_fine():
-    """The other half — the validator must not refuse the normal case."""
-    spec = _multi(device_setting_volume=True, kiosk_allow_volume_change=True)
-    assert spec.device_setting_volume is True
-
-
 def test_a_control_with_no_matching_restriction_is_unconstrained():
     """Night mode, screen timeout and the flashlight have no peripheral
     restriction to contradict, so nothing gates them."""
@@ -527,43 +514,6 @@ def test_device_settings_need_a_multi_app_kiosk():
 # --------------------------------------------------------------------------- #
 # Bluetooth and Radios off (W72)
 # --------------------------------------------------------------------------- #
-
-
-def test_bluetooth_control_needs_bluetooth_allowed():
-    """Same rule as volume and brightness: a control the device is forbidden to
-    act on is drawn, tapped, and silently ignored."""
-    with pytest.raises(ValueError, match="needs kiosk_allow_bluetooth"):
-        _multi(device_setting_bluetooth=True, kiosk_allow_bluetooth=False)
-
-
-def test_radios_off_needs_both_radios_allowed():
-    """⚠️ The one control that touches two restrictions, which the single-permission
-    map cannot express. Half-working is the worst outcome: the user taps once
-    expecting to go quiet, one radio stays up, and nothing says which."""
-    with pytest.raises(ValueError, match="kiosk_allow_wifi_config"):
-        _multi(device_setting_radios_off=True, kiosk_allow_wifi_config=False)
-    with pytest.raises(ValueError, match="kiosk_allow_bluetooth"):
-        _multi(device_setting_radios_off=True, kiosk_allow_bluetooth=False)
-
-
-def test_radios_off_names_both_when_both_are_blocked():
-    """The message has to name both, or the operator fixes one and hits the same
-    refusal again."""
-    with pytest.raises(ValueError, match="wifi_config and kiosk_allow_bluetooth"):
-        _multi(
-            device_setting_radios_off=True,
-            kiosk_allow_wifi_config=False,
-            kiosk_allow_bluetooth=False,
-        )
-
-
-def test_radios_off_is_accepted_when_both_radios_are_allowed():
-    spec = _multi(
-        device_setting_radios_off=True,
-        kiosk_allow_wifi_config=True,
-        kiosk_allow_bluetooth=True,
-    )
-    assert spec.device_setting_radios_off is True
 
 
 def test_radios_off_is_not_airplane_mode_and_says_so():
@@ -608,3 +558,100 @@ def test_the_power_field_says_the_grant_cannot_be_given_from_a_kiosk():
     granting it after the device is locked means taking it out of kiosk first."""
     description = KioskSpec.model_fields["device_setting_power"].description.lower()
     assert "cannot be done from a locked device" in description
+
+
+# --------------------------------------------------------------------------- #
+# One page, one question per peripheral (W79)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_peripheral_is_asked_about_once():
+    """⚠️ The duplication this merge removed. Bluetooth, Wi-Fi, volume and
+    brightness each had two fields - one asking whether the device may do it, one
+    asking whether a control appears - and an operator had to set both, in
+    agreement, on two different pages."""
+    titles = [
+        f.title
+        for f in KioskSpec.model_fields.values()
+        if (f.json_schema_extra or {}).get("ui_group") == "Peripheral Settings"
+    ]
+    assert len(titles) == len(set(titles)), f"a peripheral is asked about twice: {titles}"
+
+
+def test_the_merged_controls_still_enforce_their_restriction():
+    """A control backed by a UserManager restriction has to say so, or the agent
+    has no way to know that turning it off means more than hiding a row."""
+    backed = {
+        name: (f.json_schema_extra or {}).get("enforced_by")
+        for name, f in KioskSpec.model_fields.items()
+        if (f.json_schema_extra or {}).get("enforced_by")
+    }
+    assert backed == {
+        "device_setting_brightness": "allow_brightness_change",
+        "device_setting_volume": "allow_volume_change",
+        "device_setting_wifi": "allow_wifi_config",
+        "device_setting_bluetooth": "allow_bluetooth",
+    }
+
+
+def test_a_backed_control_reads_blocked_rather_than_hidden():
+    """⚠️ Its false case forbids the device to change the thing at all, including
+    by hardware key. An operator who read "Hidden" would be surprised by a volume
+    rocker that stopped working."""
+    for name in ("device_setting_volume", "device_setting_wifi"):
+        assert KioskSpec.model_fields[name].json_schema_extra["ui_false"] == "Blocked"
+    # And one with nothing behind it still only hides its row.
+    assert KioskSpec.model_fields["device_setting_flashlight"].json_schema_extra[
+        "ui_false"
+    ] == "Hidden"
+
+
+def test_the_restrictions_with_no_control_survived_the_merge():
+    """Camera, screen capture and airplane mode have no control they could have
+    merged into - no app can toggle airplane mode at all - so they stay as
+    Allowed/Blocked and simply have no row on the device."""
+    kept = {
+        name
+        for name, f in KioskSpec.model_fields.items()
+        if name.startswith("kiosk_allow_")
+    }
+    assert kept == {
+        "kiosk_allow_camera",
+        "kiosk_allow_screen_capture",
+        "kiosk_allow_airplane_mode",
+    }
+    for name in kept:
+        extra = KioskSpec.model_fields[name].json_schema_extra
+        assert extra["ui_group"] == "Peripheral Settings"
+        assert extra["ui_false"] == "Blocked"
+
+
+def test_the_three_states_are_all_expressible():
+    """Not managed, user can change, blocked - the whole point of the merge."""
+    unmanaged = _multi()
+    assert unmanaged.device_setting_volume is None
+
+    allowed = _multi(device_setting_volume=True)
+    assert allowed.device_setting_volume is True
+
+    blocked = _multi(device_setting_volume=False)
+    assert blocked.device_setting_volume is False
+
+
+def test_a_single_app_kiosk_can_still_block_a_peripheral():
+    """⚠️ The regression the merge nearly shipped.
+
+    Before the two pages merged, blocking Bluetooth on a single-app kiosk was a
+    plain restriction and needed no launcher. Afterwards the field also means
+    "show a control", and refusing the whole field on a single-app kiosk would
+    have taken that ability away entirely.
+
+    Only *showing* a control needs a home screen; blocking one is enforcement the
+    OS applies everywhere.
+    """
+    spec = _spec(device_setting_bluetooth=False, device_setting_volume=False)
+    assert spec.kiosk_package == ATAK
+    assert spec.device_setting_bluetooth is False
+
+    with pytest.raises(ValueError, match="needs a multi-app kiosk"):
+        _spec(device_setting_bluetooth=True)
