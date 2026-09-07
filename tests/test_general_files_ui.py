@@ -168,3 +168,26 @@ def test_the_section_offers_an_upload(client: TestClient):
 
     assert "data-file-upload-open" in panel
     assert "data-file-upload" in panel
+
+
+def test_the_destination_field_has_no_placeholder(client: TestClient):
+    """⚠️ A placeholder reads as a value the field already holds.
+
+    An operator leaves it and saves; the spec then refuses the entry for having
+    no destination. The guidance belongs in a tooltip, where it cannot be
+    mistaken for content.
+    """
+    panel = _general_files_panel(client)
+
+    assert 'placeholder="/sdcard/atak/imagery"' not in panel
+    assert "Directory on the device" in panel
+
+
+def test_the_destination_tooltip_carries_the_absolute_path_trap(client: TestClient):
+    """`/atak/imagery` is how ATAK's own docs write it, and it resolves from the
+    filesystem root where nothing is writable — the spec rejects it, so the hint
+    should say why before someone types it."""
+    panel = _general_files_panel(client)
+
+    assert "/sdcard" in panel
+    assert "filesystem root" in panel

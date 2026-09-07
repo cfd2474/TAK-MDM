@@ -350,8 +350,16 @@
         {% endif %}
       {% endfor %}
     </select>
+    {#
+      ⚠️ A tooltip rather than a placeholder. A placeholder reads as a *value*
+      the field already has — operators leave it and save, and the spec then
+      rejects the entry for having no destination. The hint carries the real
+      trap too: `/atak/imagery` is how ATAK paths are conventionally written and
+      it resolves from the filesystem root, where nothing is writable.
+    #}
     <input type="text" name="{{ name }}__dest_path" style="min-width:220px"
-           value="{{ entry.dest_path if entry else '' }}" placeholder="/sdcard/atak/imagery">
+           value="{{ entry.dest_path if entry else '' }}"
+           title="Directory on the device, e.g. /sdcard/atak/imagery&#10;&#10;Must be under /sdcard (or /storage/emulated/0). Writing it the way ATAK docs do — /atak/imagery — resolves from the filesystem root instead, where nothing can be written, so the policy refuses it.">
     <select name="{{ name }}__availability">
       <option value="required" {{ 'selected' if not entry or entry.availability != 'optional' }}>required</option>
       <option value="optional" {{ 'selected' if entry and entry.availability == 'optional' }}>optional (marketplace)</option>
