@@ -22,6 +22,7 @@ import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
 import com.taksolutions.atlasmdm.BuildConfig
+import com.taksolutions.atlasmdm.R
 import com.taksolutions.atlasmdm.command.ClearAppDataCommandHandler
 import com.taksolutions.atlasmdm.command.CollectLogsCommandHandler
 import com.taksolutions.atlasmdm.command.CommandDispatcher
@@ -45,6 +46,7 @@ import com.taksolutions.atlasmdm.policy.AppUpdatePlan
 import com.taksolutions.atlasmdm.policy.DataUsageTracker
 import com.taksolutions.atlasmdm.policy.LauncherConfigPlan
 import com.taksolutions.atlasmdm.policy.PolicyApplier
+import com.taksolutions.atlasmdm.ui.InstallNotifier
 import com.taksolutions.atlasmdm.policy.WallpaperPlan
 
 /** Outcome of one reconciliation pass. */
@@ -424,10 +426,23 @@ class Reconciler(private val context: Context) {
 
         val sha = offer.optString("sha256").takeIf { it.isNotBlank() } ?: return
         val target = File(cacheDir, sha)
-        if (!downloadArtifact(sha, target)) {
+        // The agent is ~20 MB, and a device that goes quiet mid-download with
+        // nothing on screen is indistinguishable from one that has hung (W75).
+        val label = context.getString(R.string.app_name)
+        val totalBytes = offer.optLong("size_bytes", 0L)
+        if (!downloadArtifact(sha, target) { read, _ ->
+                InstallNotifier.downloading(context, label, read, totalBytes)
+            }
+        ) {
+            InstallNotifier.clear(context)
             AgentLog.w(TAG, "agent update $wanted: download failed verification")
             return
         }
+        // ⚠️ Not cleared afterwards, deliberately: `install` replaces this process
+        // and nothing here runs again. The notification goes when the new build
+        // starts and its own reconcile clears it - leaving it up is the honest
+        // state, because the install really is still happening.
+        InstallNotifier.installing(context, label)
 
         // The last line this process will ever write. If a device goes quiet after
         // an update, this is the entry that says it was deliberate.
@@ -760,21 +775,44 @@ class Reconciler(private val context: Context) {
                     "build that does not use one."
             }
 
+            // Whoever is holding the device sees what is happening to it (W75).
+            // The label rather than the package: "Downloading ATAK" is what a user
+            // can act on, and com.atakmap.app.civ is not.
+            val label = app.str("label") ?: packageName
+            // ⚠️ Progress is aggregated across parts, not per part. A split app
+            // downloading three parts would otherwise show the bar fill and reset
+            // three times, which reads as three failed attempts.
+            val totalBytes = (0 until ordered.size).sumOf { i ->
+                ordered[i].optLong("size_bytes", 0L)
+            }
+            var completedBytes = 0L
+
             for (part in ordered) {
                 if (part.optString("role") == "obb") continue
                 val sha = part.optString("sha256")
                 val target = File(cacheDir, sha)
-                if (!downloadArtifact(sha, target)) {
+                val partBytes = part.optLong("size_bytes", 0L)
+                val startedAt = completedBytes
+                if (!downloadArtifact(sha, target) { read, _ ->
+                        InstallNotifier.downloading(context, label, startedAt + read, totalBytes)
+                    }
+                ) {
                     errors += "$packageName: download of $sha failed verification"
                     downloadFailed = true
                     break
                 }
+                completedBytes = startedAt + partBytes
                 parts += target
                 AgentLog.d(TAG, "$packageName: ${part.optString("role")} part verified (${target.length()} bytes)")
             }
-            if (downloadFailed) continue
+            if (downloadFailed) {
+                InstallNotifier.clear(context)
+                continue
+            }
 
+            InstallNotifier.installing(context, label)
             val result = installer.install(packageName, parts)
+            InstallNotifier.clear(context)
             if (result.success) {
                 AgentLog.i(
                     TAG,
@@ -1216,9 +1254,19 @@ class Reconciler(private val context: Context) {
         return if (result.success) StoreInstall.Done else StoreInstall.Failed(result.message)
     }
 
-    private fun downloadArtifact(sha256: String, target: File): Boolean {
-        if (target.exists() && ApiClient.sha256Of(target) == sha256.lowercase()) return true
-        return runCatching { api.downloadArtifact(sha256, target) }.getOrElse {
+    private fun downloadArtifact(
+        sha256: String,
+        target: File,
+        onProgress: ((Long, Long) -> Unit)? = null,
+    ): Boolean {
+        // ⚠️ The cache hit reports completion before returning. Without it an app
+        // already in the cache shows no notification at all, and the device looks
+        // idle through the part where it is about to install something.
+        if (target.exists() && ApiClient.sha256Of(target) == sha256.lowercase()) {
+            onProgress?.invoke(target.length(), target.length())
+            return true
+        }
+        return runCatching { api.downloadArtifact(sha256, target, onProgress) }.getOrElse {
             AgentLog.e(TAG, "download of $sha256 failed", it)
             false
         }

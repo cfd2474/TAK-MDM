@@ -333,6 +333,49 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W75 — notification icons, and progress while apps install
+
+Operator: the permanent notice used the platform download glyph, which reads as a
+transfer that never finishes; and a device downloading apps said nothing.
+
+⚠️ **A notification small icon is an alpha mask.** Android discards the colours
+and tints what is left, so the full-colour logo would be a white blob.
+`atlasicon-cutout.png` is pure white on transparent, which is what makes it
+usable — and the reason the answer was not "point it at the app icon".
+
+Generated at all five buckets (24/36/48/72/96 px for 24dp), inset to 22/24 so it
+does not crowd the status bar, and **rebuilt as pure white with the source's
+alpha** rather than merely resized: a scaled edge pixel can carry a fractional
+colour, and since Android tints by alpha a stray dark pixel shows as a notch.
+Verified by content that every bucket survived into the APK — resource names are
+obfuscated in release, so matching on the alpha channel is the only way to know.
+
+**The download symbol now means only what it says**, on a new `InstallNotifier`
+that shows *Downloading <app> 42%* then *Installing <app>* and clears.
+
+⚠️ **Progress is aggregated across parts.** A split app downloading three parts
+would otherwise fill and reset the bar three times, which reads as three failed
+attempts.
+
+⚠️ **Updates are throttled to ~4/s.** Android drops notification posts faster than
+that, and a fast local download calls back far quicker — the bar would jump and
+stall rather than move. The final 100% is always allowed through, so a download
+does not finish showing 97% and vanish.
+
+⚠️ **A cache hit reports completion before returning**, or an app already cached
+shows nothing at all and the device looks idle through the part where it is about
+to install something.
+
+⚠️ **Installing is indeterminate on purpose.** `PackageInstaller`'s session
+progress jumps to near-complete immediately and sits there, so a bar driven by it
+looks stuck at 90% for the part that actually takes time.
+
+⚠️ **The agent's own update posts "Installing" and never clears it** — `install`
+replaces the process and nothing after it runs. The new build's first reconcile
+clears it, and until then the notice is true: the install really is still
+happening.
+
+
 ### ⚠️ W73 — an optional permission must never report itself as a failure
 
 Found while answering "assign the accessibility on provisioning". W72 chunk 3

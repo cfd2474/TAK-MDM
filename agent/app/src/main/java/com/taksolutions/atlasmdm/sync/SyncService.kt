@@ -113,7 +113,11 @@ class SyncService : Service() {
         return Notification.Builder(this, SyncScheduler.NOTIFICATION_CHANNEL)
             .setContentTitle(getString(R.string.sync_notification_title))
             .setContentText(getString(R.string.sync_notification_text))
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            // ⚠️ The ATLAS mark, not a download arrow. This notice is permanent,
+            // and the platform's download glyph on a permanent notification reads
+            // as a transfer that never finishes - which is what the operator saw.
+            // The download symbol now means only what it says: see InstallNotifier.
+            .setSmallIcon(R.drawable.ic_stat_atlas)
             .setContentIntent(open)
             .setOngoing(true)
             .build()
