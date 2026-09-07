@@ -325,12 +325,12 @@
       empty destination — fill that in before saving.
     </p>
     <p class="muted" style="font-size:12px">
-      ⚠️ <strong>ATAK data packages do not belong here.</strong> Upload them under
+      ⚠️ <strong>ATAK data packages do not belong here</strong> and a zip carrying
+      a manifest is <strong>refused</strong>. Upload them under
       <strong>ATAK Data Packages</strong>, which checks the manifest, fixes the
       directory ATAK watches, and delivers each package exactly once. Placed
-      through this section they would carry a hand-typed destination and a
-      persist setting, and either one wrong is a package ATAK re-imports on every
-      sync.
+      through this section a package would go wherever the destination said —
+      where ATAK is not watching, so nothing would happen at all.
     </p>
   </div>
 {% endmacro %}

@@ -311,3 +311,38 @@ def test_a_built_package_gets_a_tidy_filename():
     assert _slug("ATLAS test overlay (W91)") == "atlas-test-overlay-w91"
     assert _slug("Recon  ///  north") == "recon-north"
     assert _slug("   ") == "data-package"
+
+
+# --------------------------------------------------------------------------- #
+# ATAK's own "is this a data package" test
+# --------------------------------------------------------------------------- #
+
+
+def test_has_manifest_matches_atak_s_own_suffix_test():
+    """`MissionPackageExtractorFactory.HasManifest` is `endsWith(...)` and nothing
+    more — it never opens the manifest."""
+    assert mp.has_manifest(mp.build("Ops", [("a.kml", b"x")])) is True
+    assert mp.has_manifest(_zip({"overlay.kml": b"<kml/>"})) is False
+
+
+def test_has_manifest_finds_a_nested_one():
+    assert mp.has_manifest(_zip({f"mydata/{mp.MANIFEST_NAME}": _manifest()})) is True
+
+
+def test_has_manifest_is_laxer_than_inspect_on_purpose():
+    """⚠️ A broken manifest still makes it a data package.
+
+    `inspect` asks "is this a good package"; `has_manifest` asks "was this meant
+    to be one". The second is the right question when deciding whether an upload
+    belongs in the general file path — a zip somebody built as a package does
+    not become an ordinary file by being malformed.
+    """
+    broken = _zip({mp.MANIFEST_NAME: "<not even xml"})
+
+    assert mp.has_manifest(broken) is True
+    with pytest.raises(mp.DataPackageError):
+        mp.inspect(broken)
+
+
+def test_has_manifest_says_no_to_something_that_is_not_a_zip():
+    assert mp.has_manifest(b"not a zip") is False

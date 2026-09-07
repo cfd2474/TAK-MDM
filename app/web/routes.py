@@ -2152,11 +2152,12 @@ def upload_policy_file(
     publishing a fleet asset; a file deployed to devices is exactly that, and the
     operator asked for these to reach Content.
 
-    ⚠️ **No manifest check here, deliberately.** This is the general path — a
-    `.pref`, a certificate, a map source, a zip to extract. A data package
-    uploaded through it would be an ordinary file with a hand-typed destination,
-    which is why the sub-page says to use ATAK Data Packages instead. Nothing
-    stops it; the check that matters is on the delivery settings, not the bytes.
+    ⚠️ **A zip carrying a manifest is refused here** and sent to the ATAK Data
+    Packages sub-topic. Accepted as an ordinary file it would go wherever a
+    hand-typed destination said — where ATAK is not watching, so **nothing would
+    happen at all**: no import, no error, no trace. The steering note beside the
+    control was not enough on its own, because the operator who needs it is the
+    one who did not read it.
     """
     data = file.file.read()
     if not data:
@@ -2165,6 +2166,24 @@ def upload_policy_file(
         return JSONResponse(
             {"error": f"upload exceeds {settings.max_upload_bytes} bytes"}, status_code=413
         )
+    if mission_package.has_manifest(data):
+        # ATAK's own test — `HasManifest` is a suffix match and nothing more — so
+        # a package with a *broken* manifest is refused here too. It was still
+        # built as a package, and the data-package tool will say exactly what is
+        # wrong with it, which this route cannot.
+        return JSONResponse(
+            {
+                "error": (
+                    "this zip is an ATAK data package — it carries "
+                    "MANIFEST/manifest.xml. Upload it under ATAK Data Packages "
+                    "instead, which checks the manifest and delivers it to the "
+                    "directory ATAK watches. Placed as a general file it would "
+                    "go wherever the destination said, where ATAK is not looking."
+                )
+            },
+            status_code=422,
+        )
+
     try:
         managed = file_service.ingest_file(
             session,

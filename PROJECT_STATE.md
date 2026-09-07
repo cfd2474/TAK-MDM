@@ -691,6 +691,34 @@ this zip lacks" warning first landed **inside** the *Deployed by* table's `else`
 branch, so it only rendered for packages a policy already used — the least likely
 case to be looked at.
 
+##### ✅ B7 (2026-09-07) — General Files refuses a data package outright
+
+Operator, 2026-09-07: the steering note is not enough — refuse it and point at
+the tool.
+
+⚠️ **The failure it prevents is total silence.** Accepted as an ordinary file a
+package goes wherever the destination says, which is not a directory ATAK
+watches: no import, no error, nothing in any log, and a policy that looks
+perfectly healthy. The note beside the control only helps an operator who reads
+it, and the one who needs it is the one who did not.
+
+**The test is ATAK's own.** `mission_package.has_manifest` mirrors
+`MissionPackageExtractorFactory.HasManifest` — `endsWith("MANIFEST/manifest.xml")`
+and nothing more.
+
+⚠️ **Deliberately laxer than `inspect`.** A zip with a *broken* manifest is
+refused here too. `inspect` asks "is this a good package"; `has_manifest` asks
+"was this meant to be one", and the second is the right question when deciding
+which path an upload belongs in — a zip somebody built as a package does not
+become an ordinary file by being malformed. Refusing it sends them to the tool
+that can say what is actually wrong with it, which this route cannot.
+
+⚠️ **An ordinary zip is still accepted**, because the refusal keys on the
+manifest rather than on being an archive — a DTED archive or a bundle of imagery
+is exactly what this section is for.
+
+**1049 server tests.**
+
 ##### ✅ B6 (2026-09-07) — General Files: upload in place, packages kept out
 
 Operator, 2026-09-07. Three changes, one of them a deliberate omission.

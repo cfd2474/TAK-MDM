@@ -148,6 +148,30 @@ def _parameters(configuration: ET.Element) -> dict[str, str]:
     return found
 
 
+def has_manifest(data: bytes) -> bool:
+    """Is this zip a data package *as ATAK decides it*, valid or not?
+
+    Mirrors `MissionPackageExtractorFactory.HasManifest`, which is a suffix test
+    and nothing more — the manifest is not parsed, so a malformed one still makes
+    the archive a data package in ATAK's eyes.
+
+    ⚠️ **Deliberately laxer than `inspect`.** The question here is *"was this
+    meant to be a data package?"*, not *"is it a good one"*. A zip carrying a
+    broken manifest is still one somebody built as a package, and quietly
+    accepting it as an ordinary file would place it wherever a hand-typed
+    destination said — where ATAK is not watching, so nothing would happen at
+    all.
+    """
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        return False
+    with archive:
+        return any(
+            name.replace("\\", "/").endswith(MANIFEST_NAME) for name in archive.namelist()
+        )
+
+
 def inspect(data: bytes) -> DataPackage:
     """Read a zip as a data package, refusing anything ATAK would not accept.
 

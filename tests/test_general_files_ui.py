@@ -191,3 +191,80 @@ def test_the_destination_tooltip_carries_the_absolute_path_trap(client: TestClie
 
     assert "/sdcard" in panel
     assert "filesystem root" in panel
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ A data package is refused, not merely discouraged
+# --------------------------------------------------------------------------- #
+
+
+def test_a_data_package_is_refused_by_the_general_upload(client: TestClient, db):
+    """⚠️ The failure this prevents is total silence.
+
+    Accepted as an ordinary file, a package goes wherever the destination says —
+    where ATAK is not watching. No import, no error, nothing in any log. The
+    steering note was not enough on its own: the operator who needs it is the one
+    who did not read it.
+    """
+    response = client.post(
+        "/policies/file/upload",
+        files={"file": ("pkg.zip", mp.build("Ops", [("a.kml", b"<kml/>")]), "application/zip")},
+        headers=ADMIN_HEADERS,
+    )
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert "MANIFEST/manifest.xml" in error
+    assert "ATAK Data Packages" in error
+    assert db.scalar(select(ManagedFile)) is None
+
+
+def test_a_package_with_a_broken_manifest_is_refused_here_too(client: TestClient, db):
+    """⚠️ ATAK's own test is a suffix match — `HasManifest` never parses the file.
+
+    So a zip with a malformed manifest is still a data package in ATAK's eyes,
+    and it was still built as one. Refusing it here sends the operator to the
+    tool that can say what is actually wrong with it; this route could only say
+    "accepted".
+    """
+    import io as _io
+    import zipfile as _zipfile
+
+    buffer = _io.BytesIO()
+    with _zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("mydata/" + mp.MANIFEST_NAME, "<not even xml")
+
+    response = client.post(
+        "/policies/file/upload",
+        files={"file": ("broken.zip", buffer.getvalue(), "application/zip")},
+        headers=ADMIN_HEADERS,
+    )
+
+    assert response.status_code == 422
+    assert db.scalar(select(ManagedFile)) is None
+
+
+def test_an_ordinary_zip_is_still_accepted(client: TestClient, db):
+    """The refusal keys on the manifest, not on being a zip. A DTED archive or a
+    bundle of imagery is exactly what this section is for."""
+    import io as _io
+    import zipfile as _zipfile
+
+    buffer = _io.BytesIO()
+    with _zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("w125/n32.dt2", b"terrain")
+
+    response = client.post(
+        "/policies/file/upload",
+        data={"name": "DTED w125"},
+        files={"file": ("dted.zip", buffer.getvalue(), "application/zip")},
+        headers=ADMIN_HEADERS,
+    )
+
+    assert response.status_code == 200, response.text
+    assert db.scalar(select(ManagedFile)).name == "DTED w125"
+
+
+def test_the_section_says_a_package_will_be_refused(client: TestClient):
+    panel = _general_files_panel(client)
+    assert "refused" in panel
