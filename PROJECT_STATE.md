@@ -658,9 +658,17 @@ re-derived.
 may be used in a GPL-3.0 project; the reverse is not true. Two of the five were
 unusable before a line was read.
 
-⚠️ **Cloudflare has settled this category.** APKPure, APKMirror and APKCombo all
-answer 403 to a server. This is not a gap to engineer around — it is the mirrors
-deciding they do not serve robots.
+⚠️ **Cloudflare has settled this category — for the *websites*.** APKPure,
+APKMirror and APKCombo all answer 403 to a server. This is not a gap to engineer
+around; it is the mirrors deciding they do not serve robots.
+
+⚠️ **Refined 2026-09-08, and the distinction matters.** APKPure also runs a
+**mobile app API** at `api.pureapk.com`, which is a different endpoint from the
+site that was measured. It answers **200 with no challenge** — it is protobuf,
+Cloudflare-fronted but not gated. A hand-rolled request was rejected with
+`INVALID_COMMAND`, which says the request was wrong, not that the door is shut.
+`EFForg/apkeep` targets exactly this endpoint. So the earlier conclusion holds for
+scraping the website and does **not** extend to the app API, which is untested.
 
 **What was learned that has value:**
 
@@ -676,6 +684,31 @@ deciding they do not serve robots.
   **GitHub/GitLab/Codeberg releases**: the vendor's own repository over TLS, an
   API rather than a scrape, and where ATAK plugins actually live. Play is not the
   channel of record for ATAK; tak.gov is, and the TPC tab already reaches it.
+
+###### 🔎 `EFForg/apkeep` — the best-engineered candidate found (2026-09-08)
+
+MIT, Rust, **2049 stars**, maintained by the EFF, **1.0.0 released 2026-04-30**
+after 0.17 (2024) and 0.18 (2025). Ships **18 prebuilt release binaries**, so it
+integrates as a **subprocess, not a library** — no dependency conflict with this
+project's Python stack at all, which every other candidate would have caused.
+
+Read from its source rather than its README:
+
+| | |
+|---|---|
+| Sources | APKPure (`api.pureapk.com`), F-Droid, Google Play, Huawei AppGallery |
+| Integrity | `sha256` ×39, `verify` ×19 across the Rust sources |
+| Re-signing | **none** — no `apksigner`, no keystore, no merge |
+
+⚠️ **Its unique value is the APKPure app API**, because everything else it offers
+is already covered: F-Droid is built (W97), and its Play path carries the same
+Google-account exposure as `gplaydl`. If that path works it is the only licit-ish
+route to the proprietary apps; if it does not, apkeep adds nothing this console
+lacks.
+
+**Untested and the obvious next step:** run the published binary and see whether an
+APKPure fetch still succeeds. That means executing a third-party binary, so it is
+left for the operator to authorise rather than done unasked.
 
 ###### 💡 Deferred: filling in app details (operator, 2026-09-07)
 
