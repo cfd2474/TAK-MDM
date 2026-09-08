@@ -1090,9 +1090,22 @@ design never moves compliance (W50):
 > installs. The newer build satisfies the requirement and was kept.*
 
 So the loop stopped because the 32-bit build left the selection, not because a
-working build replaced it. **The digest-keyed skip in `InstallRetryPlan` is
-therefore still unproven on hardware** — no install was attempted at all. It was
-claimed as exercised in the moment and it was not.
+working build replaced it. At the time this was written the digest-keyed skip in
+`InstallRetryPlan` was **unproven on hardware** — no install had been attempted,
+and it had been claimed as exercised in the moment when it was not.
+
+###### ✅ Both confirmed on hardware by the operator (2026-09-08)
+
+* **The multi-app kiosk dock** — four icons, spread across the base, rows at 56dp.
+  Closes the last row of the W95 build table.
+* **The digest-keyed install skip** — `InstallRetryPlan` exercised on the device,
+  closing the gap named directly above.
+
+⚠️ **Recorded as an operator observation, not a captured artefact.** No agent log
+line or `apply_errors` payload was collected for either, so the evidence here is
+the operator's own confirmation rather than something a later session can re-read.
+That is enough to call both verified; it is not enough to reconstruct *what* was
+seen, which is why the distinction is written down rather than smoothed over.
 
 ⚠️ **The device settled the ABI question itself.** On agent 0.46.0 it reports
 `supported_abis = 'arm64-v8a'` — no 32-bit support at all — and `sdk_int = 36`. The
