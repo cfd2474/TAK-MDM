@@ -216,7 +216,7 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
             if rows:
                 spec[name] = rows
 
-        elif field.control == "data_package_list":
+        elif field.control in ("data_package_list", "dted_list"):
             # ⚠️ No destination, no persist, no overwrite — a data package has
             # none of those by design (see DataPackageEntry). The row carries the
             # managed file and a title, and nothing that could express "put it

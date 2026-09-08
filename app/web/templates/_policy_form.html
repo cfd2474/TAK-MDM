@@ -325,12 +325,12 @@
       empty destination — fill that in before saving.
     </p>
     <p class="muted" style="font-size:12px">
-      ⚠️ <strong>ATAK data packages do not belong here</strong> and a zip carrying
-      a manifest is <strong>refused</strong>. Upload them under
-      <strong>ATAK Data Packages</strong>, which checks the manifest, fixes the
-      directory ATAK watches, and delivers each package exactly once. Placed
-      through this section a package would go wherever the destination said —
-      where ATAK is not watching, so nothing would happen at all.
+      ⚠️ <strong>ATAK data packages and DTED archives do not belong here</strong>,
+      and both are <strong>refused</strong>. Use <strong>ATAK Data Packages</strong>
+      or <strong>ATAK DTED</strong>: each checks its own layout and delivers to
+      the one directory ATAK reads. Placed through this section either would go
+      wherever the destination said — where ATAK is not looking, so nothing would
+      happen at all.
     </p>
   </div>
 {% endmacro %}
@@ -740,6 +740,48 @@
   </div>
 {% endmacro %}
 
+{% macro _dted_list(f, items, name, managed_files) %}
+  {#
+    Terrain archives on this policy. Same shape as the data-package list, and
+    for the same reason: ATAK reads DTED from one directory, so there is no
+    destination to offer and nothing an operator could usefully set.
+  #}
+  <div class="rowset" data-rowset="{{ name }}" data-dted-list>
+    {% for entry in items or [] %}
+      <div class="rs-row">
+        <input type="hidden" name="{{ name }}__file_id" value="{{ entry.file_id }}">
+        <div style="flex:1">
+          <strong>{{ entry.title or (managed_files | selectattr('id', 'equalto', entry.file_id) | map(attribute='name') | first) or entry.file_id }}</strong>
+          <div class="field-tip">Unpacked into <code>/sdcard/atak/DTED</code>.</div>
+        </div>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    {% endfor %}
+    <template data-row-template>
+      <div class="rs-row">
+        <input type="hidden" name="{{ name }}__file_id">
+        <div style="flex:1"><strong data-dted-label></strong>
+          <div class="field-tip">Unpacked into <code>/sdcard/atak/DTED</code>.</div>
+        </div>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    </template>
+
+    <div class="prefs-toolbar" style="margin-top:12px">
+      <button type="button" class="ghost" data-dted-upload-open>Upload DTED archive</button>
+      <input type="file" accept=".zip,application/zip" data-dted-upload hidden>
+      <span class="muted" data-dted-status style="font-size:12px"></span>
+    </div>
+    <p class="field-tip">
+      ⚠️ The longitude folders — <code>w115</code>, <code>e007</code> — must sit at
+      the <strong>top</strong> of the zip, not inside a folder. ATAK unpacks
+      terrain flat into its DTED directory, so a wrapped archive extracts
+      perfectly and shows no terrain at all. The layout is checked before the
+      file is accepted.
+    </p>
+  </div>
+{% endmacro %}
+
 {% macro data_package_check_modal() %}
   {#
     What happened to an uploaded zip, while it happens (W91 B5).
@@ -855,6 +897,7 @@
   {% elif f.control == 'atak_core_prefs' %}{{ _atak_core_prefs(f, value, name) }}
   {% elif f.control == 'plugin_prefs' %}{{ _plugin_prefs(f, value, name, app_packages) }}
   {% elif f.control == 'data_package_list' %}{{ _data_package_list(f, value, name, managed_files) }}
+  {% elif f.control == 'dted_list' %}{{ _dted_list(f, value, name, managed_files) }}
   {% endif %}
 {% endmacro %}
 

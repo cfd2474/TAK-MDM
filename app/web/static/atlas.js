@@ -2103,3 +2103,99 @@
       });
   });
 })();
+
+/* --- ATAK DTED uploads (W93) -------------------------------------------------
+   The same shape as the data-package upload, checking a different layout.
+
+   ⚠️ Why it is checked at all: a wrapped archive extracts perfectly on the
+   device, puts every file on disk, and shows no terrain — ATAK unpacks DTED flat
+   into one directory and looks nowhere else. There is nothing in a log
+   afterwards, so the layout has to be caught while the operator still has the
+   file in front of them. */
+
+(function () {
+  var set = document.querySelector("[data-dted-list]");
+  if (!set) return;
+
+  var open = set.querySelector("[data-dted-upload-open]");
+  var input = set.querySelector("[data-dted-upload]");
+  var status = set.querySelector("[data-dted-status]");
+  var template = set.querySelector("[data-row-template]");
+  var check = document.getElementById("package-check");
+  if (!open || !input || !template) return;
+
+  function say(message, bad) {
+    status.textContent = message || "";
+    status.style.color = bad ? "var(--bad)" : "";
+  }
+
+  open.addEventListener("click", function () { input.click(); });
+
+  input.addEventListener("change", function () {
+    var file = input.files && input.files[0];
+    if (!file) return;
+
+    // Reuse the package check modal: same job, and a second dialog that looked
+    // almost the same would be one more thing to keep in step.
+    var title, progress, error, note, close;
+    if (check) {
+      title = check.querySelector("[data-check-title]");
+      progress = check.querySelector("[data-check-progress]");
+      error = check.querySelector("[data-check-error]");
+      note = check.querySelector("[data-check-note]");
+      close = check.querySelector("[data-check-close]");
+      title.textContent = "Checking terrain archive";
+      check.querySelector("[data-check-file]").textContent = file.name;
+      progress.hidden = false;
+      progress.innerHTML = "<p>Reading the archive and checking the cell folders sit at the top of the zip…</p>";
+      error.hidden = true;
+      note.hidden = true;
+      close.hidden = true;
+      check.hidden = false;
+    }
+    say("Checking " + file.name + "…");
+
+    var body = new FormData();
+    var token = document.querySelector('input[name="csrf_token"]');
+    if (token) body.append("csrf_token", token.value);
+    body.append("file", file);
+
+    fetch("/policies/dted/upload", { method: "POST", body: body })
+      .then(function (r) {
+        return r.json().then(function (j) { return { ok: r.ok, body: j }; });
+      })
+      .then(function (res) {
+        input.value = "";
+        if (!res.ok || !res.body.id) {
+          if (check) {
+            title.textContent = "Archive refused";
+            progress.hidden = true;
+            error.hidden = false;
+            error.textContent = res.body.error || "the upload failed";
+            close.hidden = false;
+          }
+          say(res.body.error || "upload failed", true);
+          return;
+        }
+        if (check) check.hidden = true;
+
+        var existing = set.querySelectorAll('input[name="dted_archives__file_id"]');
+        for (var i = 0; i < existing.length; i++) {
+          if (existing[i].value === res.body.id) { say(res.body.name + " is already on this policy"); return; }
+        }
+        var row = template.content.firstElementChild.cloneNode(true);
+        row.querySelector('[name="dted_archives__file_id"]').value = res.body.id;
+        var label = row.querySelector("[data-dted-label]");
+        if (label) label.textContent = res.body.name;
+        template.parentNode.insertBefore(row, template);
+        set.dispatchEvent(new Event("input", { bubbles: true }));
+        // The summary is the point: 11 cells is a different thing from 1, and
+        // that is how someone notices they grabbed the wrong archive.
+        say(res.body.name + " added — " + res.body.summary);
+      })
+      .catch(function () {
+        input.value = "";
+        say("upload failed", true);
+      });
+  });
+})();

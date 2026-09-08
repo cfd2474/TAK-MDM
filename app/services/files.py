@@ -32,6 +32,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.artifacts.storage import ArtifactStorage
+from app.artifacts import dted
 from app.db.models import Artifact, Device, DeviceFileSelection, ManagedFile
 
 
@@ -143,7 +144,8 @@ def resolve_files(session: Session, values: Mapping[str, Any]) -> dict[str, Any]
     spec = values.get("FILES") or {}
     entries = list(spec.get("entries") or [])
     packages = list(spec.get("data_packages") or [])
-    if not entries and not packages:
+    terrain = list(spec.get("dted_archives") or [])
+    if not entries and not packages and not terrain:
         return {"required": [], "available": []}
 
     # ⚠️ A data package is an ordinary file entry with the settings that make it
@@ -166,6 +168,25 @@ def resolve_files(session: Session, values: Mapping[str, Any]) -> dict[str, Any]
             "data_package": True,
         }
         for package in packages
+    ]
+
+    # ⚠️ `persist: True`, unlike a data package. ATAK reads terrain off the disk
+    # for as long as it is there, and nothing re-imports it — so a cell the user
+    # deleted should come back, and there is no repeated-import loop to avoid.
+    # The two ATAK file types look alike and behave oppositely here.
+    entries = entries + [
+        {
+            "file_id": archive.get("file_id"),
+            "title": archive.get("title"),
+            "dest_path": dted.DTED_DEST,
+            "extract": True,
+            "extract_to": dted.DTED_DEST,
+            "persist": True,
+            "overwrite": "if_newer",
+            "availability": "required",
+            "dted": True,
+        }
+        for archive in (spec.get("dted_archives") or [])
     ]
 
     file_ids = []
@@ -227,6 +248,7 @@ def resolve_files(session: Session, values: Mapping[str, Any]) -> dict[str, Any]
                 else entry.get("availability", "required") != "optional"
             ),
             "data_package": bool(entry.get("data_package")),
+            "dted": bool(entry.get("dted")),
             "sha256": managed.artifact_sha256,
             "size_bytes": managed.artifact.size_bytes if managed.artifact else None,
             "url": f"/api/v1/device/artifacts/{managed.artifact_sha256}",

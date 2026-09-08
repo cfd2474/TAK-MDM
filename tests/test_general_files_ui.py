@@ -159,8 +159,9 @@ def test_the_section_says_where_data_packages_belong(client: TestClient):
     to come with the reason and the place to go instead."""
     panel = _general_files_panel(client)
 
-    assert "ATAK data packages do not belong here" in panel
+    assert "do not belong here" in panel
     assert "ATAK Data Packages" in panel
+    assert "ATAK DTED" in panel
 
 
 def test_the_section_offers_an_upload(client: TestClient):
@@ -245,24 +246,28 @@ def test_a_package_with_a_broken_manifest_is_refused_here_too(client: TestClient
 
 
 def test_an_ordinary_zip_is_still_accepted(client: TestClient, db):
-    """The refusal keys on the manifest, not on being a zip. A DTED archive or a
-    bundle of imagery is exactly what this section is for."""
+    """⚠️ The refusal keys on *what the zip is*, not on its being a zip.
+
+    This test used to upload `w125/n32.dt2` under the name "DTED w125" — which
+    W93 then correctly began refusing, because it really was terrain. A bundle of
+    imagery is the honest example of what General Files is still for.
+    """
     import io as _io
     import zipfile as _zipfile
 
     buffer = _io.BytesIO()
     with _zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr("w125/n32.dt2", b"terrain")
+        archive.writestr("imagery/tiles/0/0/0.png", b"tile")
 
     response = client.post(
         "/policies/file/upload",
-        data={"name": "DTED w125"},
-        files={"file": ("dted.zip", buffer.getvalue(), "application/zip")},
+        data={"name": "Imagery tiles"},
+        files={"file": ("imagery.zip", buffer.getvalue(), "application/zip")},
         headers=ADMIN_HEADERS,
     )
 
     assert response.status_code == 200, response.text
-    assert db.scalar(select(ManagedFile)).name == "DTED w125"
+    assert db.scalar(select(ManagedFile)).name == "Imagery tiles"
 
 
 def test_the_section_says_a_package_will_be_refused(client: TestClient):

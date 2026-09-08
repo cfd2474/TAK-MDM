@@ -103,6 +103,7 @@ from app.services import agent_update as agent_update_service
 from app.services import device_health
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from app.artifacts import dted
 from app.artifacts import mission_package
 from app.services import atak_compat
 from app.services import atak_config
@@ -2166,6 +2167,23 @@ def upload_policy_file(
         return JSONResponse(
             {"error": f"upload exceeds {settings.max_upload_bytes} bytes"}, status_code=413
         )
+    if dted.looks_like_dted(data):
+        # Same reasoning as the package refusal: accepted here it would unpack
+        # wherever the destination said, and ATAK reads terrain from one
+        # directory only. It would extract successfully and show no terrain.
+        return JSONResponse(
+            {
+                "error": (
+                    "this zip is ATAK terrain data — it holds DTED cell folders "
+                    "like 'w115'. Upload it under ATAK DTED instead, which checks "
+                    "the layout and unpacks it into ATAK's DTED directory. Placed "
+                    "as a general file it would extract wherever the destination "
+                    "said, where ATAK does not read terrain."
+                )
+            },
+            status_code=422,
+        )
+
     if mission_package.has_manifest(data):
         # ATAK's own test — `HasManifest` is a suffix match and nothing more — so
         # a package with a *broken* manifest is refused here too. It was still
@@ -2205,6 +2223,53 @@ def upload_policy_file(
             # refusing it — the operator may have a reason.
             "is_archive": bool(managed.is_archive),
         }
+    )
+
+
+@router.post("/policies/dted/upload")
+def upload_policy_dted(
+    file: UploadFile = File(...),
+    name: str = Form(default=""),
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+    settings: Settings = Depends(get_settings),
+    identity: AdminIdentity = Depends(admin_required),
+) -> JSONResponse:
+    """Take a DTED archive chosen inside a policy editor and hand back its id (W93).
+
+    ⚠️ **Checked here because the failure is silent on the device.** A wrapped
+    archive extracts perfectly, puts every file on disk, and shows no terrain —
+    ATAK unpacks DTED flat into one directory and looks nowhere else. There is
+    nothing to see in a log afterwards, so the layout has to be caught while the
+    operator is still holding the file.
+    """
+    data = file.file.read()
+    if not data:
+        return JSONResponse({"error": "the uploaded file is empty"}, status_code=422)
+    if len(data) > settings.max_upload_bytes:
+        return JSONResponse(
+            {"error": f"upload exceeds {settings.max_upload_bytes} bytes"}, status_code=413
+        )
+    try:
+        archive = dted.inspect(data)
+    except dted.DtedError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+
+    try:
+        managed = file_service.ingest_file(
+            session,
+            storage,
+            data,
+            name=(name or "").strip() or (file.filename or "DTED"),
+            original_filename=file.filename or "dted.zip",
+            media_type="application/zip",
+        )
+        session.commit()
+    except file_service.FileError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+
+    return JSONResponse(
+        {"id": str(managed.id), "name": managed.name, "summary": archive.summary}
     )
 
 

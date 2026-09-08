@@ -170,6 +170,22 @@ class DataPackageEntry(BaseModel):
     title: str | None = Field(default=None, max_length=255)
 
 
+class DtedEntry(BaseModel):
+    """One DTED archive, unpacked into ATAK's terrain directory.
+
+    ⚠️ **No destination and no extract controls**, for the same reason a data
+    package has none: ATAK reads terrain from one directory and the archive must
+    unpack flat into it. Offering the choice would only offer the chance to get
+    it wrong, and wrong here is silent — the files land somewhere ATAK never
+    looks and no terrain appears.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    file_id: uuid.UUID
+    title: str | None = Field(default=None, max_length=255)
+
+
 class FilesSpec(PolicySpec):
     entries: Annotated[
         list[FileEntry] | None,
@@ -206,4 +222,22 @@ class FilesSpec(PolicySpec):
             "ui_group": "ATAK Data Packages",
             "ui_control": "data_package_list",
         },
+    )
+
+    dted_archives: Annotated[
+        list[DtedEntry] | None,
+        Merge(
+            MergeStrategy.MERGE_BY_KEY,
+            key="file_id",
+            note="Stacked policies union by archive; terrain from several "
+            "policies accumulates rather than replacing.",
+        ),
+    ] = Field(
+        default=None,
+        title="ATAK DTED",
+        description=(
+            "Terrain elevation archives, unpacked into ATAK's DTED directory. "
+            "The longitude cells must sit at the top of the zip."
+        ),
+        json_schema_extra={"ui_group": "ATAK DTED", "ui_control": "dted_list"},
     )

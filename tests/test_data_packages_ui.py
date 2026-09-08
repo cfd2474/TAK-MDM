@@ -264,13 +264,15 @@ def test_the_data_package_subtopic_exists_beside_general_files(client: TestClien
     assert 'data-page="file_management:atak-dted"' in body
 
 
-def test_dted_says_it_is_coming_rather_than_offering_a_form(client: TestClient):
+def test_the_dted_subtopic_is_no_longer_a_stub(client: TestClient):
+    """W93 built it. The old assertion — that the panel said "Not available yet."
+    — was true until the sub-topic existed; keeping it would now be asserting the
+    absence of the feature."""
     body = client.get("/policies/new").text
     panel = body[body.index('data-page-panel="file_management:atak-dted"'):]
     panel = panel[: panel.index("</section>")]
 
-    assert "Not available yet." in panel
-    assert "data_packages__file_id" not in panel
+    assert "Not available yet." not in panel
 
 
 # --------------------------------------------------------------------------- #

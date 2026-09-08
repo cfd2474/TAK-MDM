@@ -405,6 +405,104 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W93 — ATAK DTED
+
+The last File-management sub-topic. Terrain elevation, shipped as a zip of
+longitude-cell folders that must land **directly** in `atak/DTED/`.
+
+#### Ground truth
+
+From `atak-civ` and from the operator's own sample,
+`Test Files/DTED.zip` (693 MB, 226 entries):
+
+| | |
+|---|---|
+| Root of the archive | `w115/` … `w125/` — eleven longitude cells, **no wrapping folder** |
+| Inside a cell | `n32.dt2`, `n33.dt2`, … |
+| Extensions ATAK knows | `.dt0` `.dt1` `.dt2` `.dt3` — `Dt2ElevationData`, at 1000 m / 100 m / 30 m / 10 m |
+| Destination | `atak/DTED/` — `ElevationDownloader` writes `FileSystemUtils.getItem("DTED/" + file)` |
+| How ATAK unpacks its own | `FileSystemUtils.unzip(zip, DTED_dir, true)` — **flat into DTED**, then deletes the zip |
+
+⚠️ **I did not find a single "is this a DTED archive" function in ATAK to
+mirror**, unlike `HasManifest` for data packages. The detection here is built
+from the layout ATAK's own hemisphere archives use, its extension list, and the
+sample — stated plainly because it is a weaker provenance than §11's.
+
+⚠️ **The sample is full of macOS pollution**: `__MACOSX/`, and `._n33.dt2`
+*inside* the real cell folders. `FileDeployer.isArchiverJunk` already drops
+these, proven by the existing extraction path — so detection must ignore them
+too, or a cell that holds only AppleDouble files would look real.
+
+#### Decisions
+
+⚠️ **A wrapped archive is refused, not silently fixed.** If the cells sit under a
+folder — `DTED/w115/…`, which is what right-clicking a DTED directory in Windows
+produces — a flat extract into `atak/DTED` yields `atak/DTED/DTED/w115` and ATAK
+finds nothing. The agent's `extract` writes entries at their own names and cannot
+strip a prefix, so supporting it would cost an agent release. **The operator's
+own sample has no wrapper**, so the cheap, honest move is to refuse with a
+message saying exactly what to re-zip. Stripping can be added if a real archive
+turns up needing it.
+
+⚠️ **Size is the real risk, and it is not solved here.** The sample is 693 MB and
+the upload path reads the whole file into memory — the same shape that carries a
+130 MB APK today, five times bigger. Worth watching on the first real upload;
+the fix, if needed, is streaming ingest, which is its own piece of work.
+
+##### Chunk C1 (6 steps)
+
+1. `app/artifacts/dted.py` — recognise a DTED archive and describe it: cells,
+   file counts, the levels present. Junk-aware; refuses a wrapped one with the
+   reason.
+2. `dted_archives` on the FILES spec, and the sub-page replacing the D94 stub.
+3. Resolution: destination `/sdcard/atak/DTED`, `extract: true`. ⚠️ **`persist`
+   stays true**, unlike a data package — ATAK reads DTED from disk forever, so a
+   deleted cell should come back. Nothing re-imports, so there is no loop to
+   avoid.
+4. **General Files refuses a DTED archive** and names this sub-topic, exactly as
+   it now does for data packages.
+5. Upload with a validation modal on the sub-page, reusing the package pattern.
+6. Tests against the real sample, then deploy.
+
+Hardware verification is separate, and cheap: R1 already proved a zip extracting
+into `/sdcard/atak/DTED` on `SM-X520` — that was literally the DTED case.
+
+###### ✅ Chunk C1 complete (2026-09-07)
+
+**1066 server tests** (17 new in `tests/test_dted.py`). File management now has
+three real sub-topics and no stub.
+
+**Against the operator's own 693 MB sample:** 11 cells `w115`–`w125`, **68
+terrain files out of 226 zip entries** — the other 158 are macOS metadata.
+Inspection is instant because it reads the zip's central directory only; the size
+never has to be decompressed to answer the question.
+
+⚠️ **`persist: True` for terrain, the opposite of a data package.** The two ATAK
+file types look alike — both zips, both ATAK-specific, both with a fixed
+destination — and behave oppositely. A package must never be re-sent, because
+re-writing it makes ATAK import again; terrain is read off the disk forever and
+nothing re-imports it, so a cell someone deleted should come back.
+
+⚠️ **A test caught the design contradicting itself.**
+`test_an_ordinary_zip_is_still_accepted`, written during B7, uploaded
+`w125/n32.dt2` under the name "DTED w125" as its example of a harmless archive.
+W93 correctly began refusing it — it really was terrain. The fixture became a
+bundle of imagery, which is the honest example of what General Files is still
+for.
+
+**Three tests changed rather than being deleted**, each because its guarantee
+moved: the DTED stub assertion (the stub is gone by design), the General Files
+note (it now names both ATAK types), and the one above.
+
+⚠️ **A fourth "change" was an accident, caught before the deploy.** Rewriting the
+tail of `test_data_packages_ui.py` to replace the stub assertion truncated the
+file, taking the whole B4 section with it — 13 tests covering
+`/policies/data-package/upload` and `/create`, which were then not covered by
+anything. The suite still passed, at 1052, because deleted tests do not fail.
+A green run says nothing about tests that are no longer there; the diff stat is
+what showed it (`5 insertions, 177 deletions` for a one-test edit). Restored, and
+the real total is 1066.
+
 ### ✅ W92 — Field tips instead of placeholders, sitewide
 
 Operator, 2026-09-07: remove placeholders from text fields and use a visible tip
