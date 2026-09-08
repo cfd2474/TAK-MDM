@@ -405,6 +405,85 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W95 — Multi-app kiosk: the dock, activities, and where the section sits
+
+Operator, 2026-09-07: *"The multi-app kiosk mode is not allowing more than 1
+application into the dock… i expect to be able to put up to 4 icons in the dock.
+when adding an app to the multi-app kiosk, i expect a dropdown for the specific
+activity to populate based on the selected app. lets also move the subcategory
+order so multi app is below single app."*
+
+#### ⚠️ The dock bug is in a layout file, and every layer above it was innocent
+
+Traced before touching anything, because four layers could each have dropped a
+favourite and only one had:
+
+| Layer | Four dock apps survive? |
+|---|---|
+| `form_parse` → spec | ✅ all four, matched by package |
+| Save → DB → re-render | ✅ all four checkboxes come back `checked` |
+| `LauncherConfigPlan` → `bundle_array` | ✅ one bundle per tile |
+| Launcher `LauncherConfig.favorites` | ✅ filters the app list |
+| **`item_app_tile.xml`** | ❌ **`layout_width="match_parent"`** |
+
+The dock and the grid share one adapter and therefore one item layout.
+`match_parent` is *correct* in the grid — a `GridLayoutManager` reads it as one
+column's width. The dock is a **horizontal** `LinearLayoutManager`, where the same
+value means the full width of the RecyclerView: tile one fills the dock and tiles
+two, three and four are laid out off-screen to the right.
+
+⚠️ **Nothing was lost, so nothing could report a fault.** All four favourites were
+in the bundle and on the device the whole time. This is why no test caught it and
+no log said anything: the data was right and only the pixels were wrong.
+
+#### Chunk C1
+
+1. `item_dock_tile.xml` at `wrap_content`, and `AppAdapter` takes the layout it
+   should inflate. The grid keeps the layout it has — its `match_parent` is right.
+2. A test that could actually have caught this: the launcher's JVM tests read the
+   two layout files and assert the widths, since a layout bug is invisible to
+   every test that only exercises Kotlin.
+3. Per-row activity dropdown in the multi-app control, fed by the existing
+   `/policies/app-activities` the single-app kiosk already uses. Saved values are
+   preserved before the fetch lands, the same way `_activity_choice` does it.
+4. Move `multi_app_packages` so **Multi app** follows **Single app**. Group order
+   is field declaration order (`grouped_fields`, first-seen), and the two kiosk
+   modes currently have four unrelated sub-topics between them.
+5. Server tests for the dropdown and the ordering; agent tests run.
+6. Deploy the server; build and publish the launcher APK (`versionCode` bumped —
+   Android refuses a downgrade).
+
+⚠️ **The dock fix needs a new launcher APK, not just a deploy.** Unlike W92–W94
+this one cannot reach a device from the server alone: the layout is compiled into
+`com.taksolutions.atlaslauncher`, which ships as its own APK.
+
+**Not doing without being asked:** capping the dock at four. "Up to 4" reads as
+the capacity expected, not a limit wanted, and a new refusal would reject policies
+that save today.
+
+###### ✅ Chunk C1 complete (2026-09-07)
+
+**1082 server tests** (5 new) and **209 agent tests** (3 new). Deployed, and
+**launcher `0.5.0` (versionCode 5) published** — policies now resolve to it.
+
+⚠️ **This one needed an APK, unlike W92–W94.** The width is compiled into the
+launcher, so no server deploy could have fixed it. Devices pick it up as they
+reconcile, because the kiosk policy already requires the launcher package.
+
+**The layout guard is the unusual part.** `TileLayoutTest` reads the two layout
+files off disk and asserts their root widths — the dock's `wrap_content`, the
+grid's `match_parent`. Reading XML in a unit test is not how this project tests
+anything else, and it is here because the alternative for one attribute is
+Robolectric or an instrumented device. Every Kotlin-level test passed while the
+dock was broken, and always would have.
+
+**Verified live:** sub-pages now read `Single app, Multi app, Background apps`,
+and `resolve_for_policy` returns launcher 5.
+
+**Still unverified on hardware**: that four dock icons now render. The fix is a
+layout width, so it cannot be confirmed from the server — it needs a device with
+a multi-app kiosk policy. No device was attached when this shipped.
+
 ### ✅ W93 — ATAK DTED
 
 The last File-management sub-topic. Terrain elevation, shipped as a zip of

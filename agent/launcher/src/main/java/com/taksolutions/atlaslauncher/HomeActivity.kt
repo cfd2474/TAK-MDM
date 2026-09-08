@@ -104,7 +104,10 @@ class HomeActivity : AppCompatActivity() {
         search = findViewById(R.id.search)
 
         gridAdapter = AppAdapter(emptyList(), ::open)
-        dockAdapter = AppAdapter(emptyList(), ::open)
+        // ⚠️ The dock tile, not the grid tile (W95). See AppAdapter: the grid's
+        // match_parent width means "one column" under a GridLayoutManager and
+        // "the entire dock" under this horizontal one.
+        dockAdapter = AppAdapter(emptyList(), ::open, R.layout.item_dock_tile)
         grid.adapter = gridAdapter
         dock.adapter = dockAdapter
         dock.layoutManager = LinearLayoutManager(this, RecyclerView.HORIZONTAL, false)

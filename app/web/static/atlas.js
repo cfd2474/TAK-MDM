@@ -757,6 +757,66 @@
     });
   }
 
+  /* Each row's activity list is a fact about the app that row names, so it is
+     fetched rather than typed — the same source the single-app kiosk uses. The
+     saved value is kept as an option until the fetch lands, so a policy that is
+     opened and saved without touching this row does not lose its activity. */
+  function loadRowActivities(row, keepValue) {
+    var select = row.querySelector("select[name$='__package_name']");
+    var activity = row.querySelector("[data-kiosk-activity]");
+    var note = row.querySelector("[data-kiosk-activity-note]");
+    if (!select || !activity) return;
+
+    var wanted = keepValue === undefined ? activity.value : keepValue;
+    var pkg = select.value;
+
+    function reset(label) {
+      activity.innerHTML = "";
+      var blank = document.createElement("option");
+      blank.value = "";
+      blank.textContent = "Default — open the app normally";
+      activity.appendChild(blank);
+      if (note) note.textContent = label;
+    }
+
+    if (!pkg) {
+      reset("Pick an app first.");
+      return;
+    }
+    if (note) note.textContent = "Reading the app…";
+
+    fetch("/policies/app-activities?package=" + encodeURIComponent(pkg))
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var list = data.activities || [];
+        reset("");
+        list.forEach(function (a) {
+          var opt = document.createElement("option");
+          opt.value = a.name;
+          opt.textContent = a.name + (a.launcher ? "   (launcher)" : "");
+          if (a.name === wanted) opt.selected = true;
+          activity.appendChild(opt);
+        });
+        // A saved activity this build no longer declares is kept rather than
+        // dropped: silently clearing it would change the policy on the next save.
+        if (wanted && !list.some(function (a) { return a.name === wanted; })) {
+          var kept = document.createElement("option");
+          kept.value = wanted;
+          kept.textContent = wanted + "   (not in this build)";
+          kept.selected = true;
+          activity.appendChild(kept);
+        }
+        if (note) {
+          note.textContent = list.length
+            ? list.length + " activities declared by this build"
+            : "This build declares no activities.";
+        }
+      })
+      .catch(function () {
+        if (note) note.textContent = "Could not read this app's activities.";
+      });
+  }
+
   function renderKioskPreview(set) {
     var preview = set.querySelector("[data-kiosk-preview]");
     if (!preview) return;
@@ -821,6 +881,12 @@
     if (set) {
       syncFavouriteValues(set);
       renderKioskPreview(set);
+      // A new app means the old activity list belongs to a different build, so
+      // it is refilled from scratch rather than kept.
+      if (e.target.matches("select[name$='__package_name']")) {
+        var row = e.target.closest("[data-kiosk-app-row]");
+        if (row) loadRowActivities(row, null);
+      }
       return;
     }
     // The column count lives in its own field, and the preview is the only place
@@ -847,6 +913,12 @@
   document.querySelectorAll("[data-kiosk-apps]").forEach(function (set) {
     syncFavouriteValues(set);
     renderKioskPreview(set);
+    // Saved rows arrive holding only their own activity as an option; this fills
+    // in the rest of the build's so the operator can change it.
+    set.querySelectorAll("[data-kiosk-app-row]").forEach(function (row) {
+      var select = row.querySelector("select[name$='__package_name']");
+      if (select && select.value) loadRowActivities(row, undefined);
+    });
   });
 
   /* --- Insert an app group's packages into a required_apps JSON textarea -------

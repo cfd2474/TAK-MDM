@@ -165,3 +165,77 @@ def test_an_int_valued_enum_still_parses_as_an_int():
     string, or the spec would refuse it."""
     spec = parse_form("PASSWORD", _Form([("quality", "3")]))
     assert spec["quality"] == 3
+
+
+# --------------------------------------------------------------------------- #
+# The dock, the activity picker, and where the section sits (W95)
+# --------------------------------------------------------------------------- #
+
+
+def test_four_dock_apps_survive_the_whole_server_round_trip(client: TestClient):
+    """⚠️ Written after a dock that showed one app out of four.
+
+    Every layer here was innocent — the loss was a `match_parent` width in the
+    launcher's tile layout, which put tiles two, three and four off-screen. This
+    pins the half that can be tested in Python, so a future regression can be told
+    apart from that one without a device.
+    """
+    fields = []
+    packages = ("com.first", "com.second", "com.third", "com.fourth")
+    for package in packages:
+        fields.append(("multi_app_packages__package_name", package))
+        fields.append(("multi_app_packages__activity", ""))
+        fields.append(("multi_app_packages__favorite", package))
+
+    spec = _parse(fields)
+    docked = [a["package_name"] for a in spec["multi_app_packages"] if a.get("favorite")]
+    assert docked == list(packages), "every ticked row is a dock app"
+
+
+def test_the_activity_is_a_dropdown_fed_by_the_chosen_app(client: TestClient):
+    """The operator should not have to know an activity class by heart — it is a
+    fact about the build, and the console can already read it."""
+    body = client.get("/policies/new/single").text
+    assert 'name="multi_app_packages__activity"' in body
+    assert "data-kiosk-activity" in body
+    # The same endpoint the single-app kiosk uses, rather than a second source
+    # that could disagree with it.
+    assert "/policies/app-activities" in client.get("/static/atlas.js").text
+
+
+def test_a_saved_activity_is_still_an_option_before_the_fetch_lands(client: TestClient):
+    """⚠️ Otherwise opening a policy and saving it would silently drop the
+    activity: a select can only submit an option it actually holds."""
+    fields = [
+        ("multi_app_packages__package_name", "com.example.app"),
+        ("multi_app_packages__activity", "com.example.app.KioskActivity"),
+    ]
+    assert _parse(fields)["multi_app_packages"][0]["activity"] == (
+        "com.example.app.KioskActivity"
+    )
+
+
+def test_an_activity_still_pairs_with_its_own_row(client: TestClient):
+    """⚠️ `form_parse` pairs activities to packages **by index**, so the control
+    has to submit even when empty. A select always does; that is why it replaced
+    the text box rather than a checkbox-like control."""
+    spec = _parse(
+        [
+            ("multi_app_packages__package_name", "com.first"),
+            ("multi_app_packages__activity", ""),
+            ("multi_app_packages__package_name", "com.second"),
+            ("multi_app_packages__activity", "com.second.Main"),
+        ]
+    )
+    rows = {a["package_name"]: a.get("activity") for a in spec["multi_app_packages"]}
+    assert rows == {"com.first": None, "com.second": "com.second.Main"}
+
+
+def test_multi_app_sits_directly_below_single_app():
+    """⚠️ Sub-topic order *is* field declaration order — `grouped_fields` buckets
+    by `ui_group` in first-seen order. The two kiosk modes are the same choice and
+    had four unrelated sections between them."""
+    from app.policies.form_schema import sub_pages
+
+    labels = [page.label for page in sub_pages("KIOSK")]
+    assert labels[:2] == ["Single app", "Multi app"]

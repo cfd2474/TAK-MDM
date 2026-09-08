@@ -110,9 +110,19 @@
           {% endfor %}
         </select>
         <div>
-          <input type="text" name="{{ name }}__activity"
-                 value="{{ item.activity or '' }}" aria-label="Activity">
-          <p class="field-tip">Optional. A specific activity to launch.</p>
+          {#
+            ⚠️ A select, and it must always submit something — `form_parse` pairs
+            activities to packages **by index**. A control that can be absent from
+            the submission (an unchecked checkbox) would shift every activity
+            after it onto the wrong app; a select never is.
+          #}
+          <select name="{{ name }}__activity" data-kiosk-activity aria-label="Activity">
+            <option value="">Default — open the app normally</option>
+            {% if item.activity %}
+              <option value="{{ item.activity }}" selected>{{ item.activity }}</option>
+            {% endif %}
+          </select>
+          <p class="field-tip" data-kiosk-activity-note>Optional. A specific activity to launch.</p>
         </div>
         <label style="display:flex; align-items:center; gap:6px; margin:0; white-space:nowrap">
           <input type="checkbox" name="{{ name }}__favorite"
@@ -137,8 +147,10 @@
           {% endfor %}
         </select>
         <div>
-          <input type="text" name="{{ name }}__activity" aria-label="Activity">
-          <p class="field-tip">Optional. A specific activity to launch.</p>
+          <select name="{{ name }}__activity" data-kiosk-activity aria-label="Activity">
+            <option value="">Default — open the app normally</option>
+          </select>
+          <p class="field-tip" data-kiosk-activity-note>Optional. A specific activity to launch.</p>
         </div>
         <label style="display:flex; align-items:center; gap:6px; margin:0; white-space:nowrap">
           <input type="checkbox" name="{{ name }}__favorite" value="" data-favorite>

@@ -240,6 +240,31 @@ class KioskSpec(PolicySpec):
     )
 
     # ----------------------------------------------------------------------- #
+    # Multi app — the ATLAS launcher (W68)
+    #
+    # ⚠️ Declared here because **field order is sub-topic order** (W95).
+    # `grouped_fields` buckets by `ui_group` in first-seen order, so where a field
+    # sits in this class is where its section sits in the console. Multi app used
+    # to be four unrelated sub-topics below Single app; the two kiosk modes are the
+    # same choice and belong next to each other.
+    # ----------------------------------------------------------------------- #
+
+    multi_app_packages: Annotated[
+        list[KioskApp] | None, Merge(MergeStrategy.MERGE_BY_KEY, key="package_name")
+    ] = Field(
+        default=None,
+        title="Kiosk apps",
+        description="The apps on the kiosk home screen, in the order they appear. "
+        "The ATLAS launcher is installed automatically and the device is locked to "
+        "it; only these apps can be opened. The ATLAS console is always added as a "
+        "tile — in a multi-app kiosk the launcher is the only way to anything, and "
+        "the person standing at a misbehaving tablet needs a route to sync, "
+        "permissions and the device's own state. Add it yourself to choose where it "
+        "sits or pin it to the dock.",
+        json_schema_extra={"ui_group": _MULTI, "ui_control": "kiosk_apps"},
+    )
+
+    # ----------------------------------------------------------------------- #
     # Background apps
     # ----------------------------------------------------------------------- #
 
@@ -460,25 +485,6 @@ class KioskSpec(PolicySpec):
         "apps and permits it for a Device Owner; if the device refuses, the control "
         "says so rather than failing quietly.",
         restriction="allow_wifi_config",
-    )
-
-    # ----------------------------------------------------------------------- #
-    # Multi app — the ATLAS launcher (W68)
-    # ----------------------------------------------------------------------- #
-
-    multi_app_packages: Annotated[
-        list[KioskApp] | None, Merge(MergeStrategy.MERGE_BY_KEY, key="package_name")
-    ] = Field(
-        default=None,
-        title="Kiosk apps",
-        description="The apps on the kiosk home screen, in the order they appear. "
-        "The ATLAS launcher is installed automatically and the device is locked to "
-        "it; only these apps can be opened. The ATLAS console is always added as a "
-        "tile — in a multi-app kiosk the launcher is the only way to anything, and "
-        "the person standing at a misbehaving tablet needs a route to sync, "
-        "permissions and the device's own state. Add it yourself to choose where it "
-        "sits or pin it to the dock.",
-        json_schema_extra={"ui_group": _MULTI, "ui_control": "kiosk_apps"},
     )
 
     launcher_columns: Annotated[int | None, Merge(MergeStrategy.MIN)] = Field(
