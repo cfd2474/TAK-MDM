@@ -795,6 +795,12 @@ class AppPackageVersion(Base):
     version_name: Mapped[str | None] = mapped_column(String(128), default=None)
     min_sdk: Mapped[int | None] = mapped_column(Integer, default=None)
     target_sdk: Mapped[int | None] = mapped_column(Integer, default=None)
+    #: Where this build came from (W97): a source name like "fdroid", or NULL for
+    #: the honest answer about everything uploaded by hand. An APK fetched from a
+    #: remote repository and one an operator carried in are different things to
+    #: trust, and only the record can say which afterwards.
+    source: Mapped[str | None] = mapped_column(String(32), default=None)
+    source_url: Mapped[str | None] = mapped_column(String(1024), default=None)
     #: CPU architectures this build carries native code for, comma-separated
     #: (W96). ⚠️ **NULL and empty mean different things.** NULL is "uploaded
     #: before anything looked"; empty is "looked, and it carries none" — which is

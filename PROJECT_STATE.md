@@ -405,6 +405,147 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### 🚧 W97 — 3rd Party App Repo
+
+Operator, 2026-09-07: *"i want to add a '3rd Party App Repo' to the apps section
+… a place to lookup apps and download apk/xapk files into the mdm library"*, with
+`github.com/anishomsy/apkpure` offered as prior art.
+
+#### On the prior art: take the technique, not the dependency
+
+Apache 2.0 (compatible), Python, `requests` + `beautifulsoup4`, 12 stars, 38
+commits. It scrapes APKPure HTML — `div.first`, `p.p1`, `p.p2`, `div.detail_banner`
+— and downloads from `https://d.apkpure.com/b/APK/{pkg}?versionCode={code}`.
+
+Most of it is CSS selectors that break when APKPure restyles a page. The two
+durable parts — that download URL pattern and the shape of the version list — are
+a page of code. **A dependency this small and this brittle is a maintenance
+obligation, not a saving.** It also performs no signature or checksum check of any
+kind, which is the one thing that matters most when the output is installed on a
+managed fleet.
+
+⚠️ **Operator decisions, both recorded here because they were deliberate.**
+*Source*: F-Droid first, APKPure second. *Anti-bot*: use `cloudscraper` to work
+around APKPure's 403s, as the prior art does. I flagged that this circumvents an
+access control the site put there on purpose and that APKPure's ToS restricts
+automated processes; the operator chose it knowingly, and it applies to the
+APKPure source only — F-Droid needs nothing of the kind.
+
+#### What already exists, and must not be rebuilt
+
+`tak_gov_link.import_plugin` is the same shape as this feature: browse a remote
+catalogue, download, ingest. Its docstring states the rule to follow —
+*"deliberately thin … identity is read from the file itself rather than believed
+from the catalog"*. So a mislabelled catalogue row cannot smuggle a package in
+under the wrong name.
+
+⚠️ **`packages.ingest` already refuses a signing-certificate change** on an
+existing package. Every third-party import inherits that guard for free; it does
+not need reinventing, and it must not be bypassed.
+
+The console's **TPC Plugins** tab is the UI precedent: search, pick a version,
+`POST /apps/tpc/import` returning a job, then poll — because a large download held
+open in a request tells the operator nothing.
+
+#### ⚠️ F-Droid publishes exactly what W96 taught us to want
+
+Verified against the live index (58.9 MB, 4335 packages, fetched in 2.8s):
+`entry.json` carries the index's own `sha256` and **it matched**, so the chain
+*entry → index → per-APK hash* is verifiable end to end. One version entry holds:
+
+    file.sha256                    -> verify the download
+    manifest.nativecode            -> ['arm64-v8a','armeabi-v7a','x86','x86_64']
+    manifest.usesSdk.minSdkVersion -> 24
+    manifest.signer.sha256         -> the signing certificate
+
+So for F-Droid the console can answer *"will this run on my devices"* **before**
+importing, by comparing upstream `nativecode` against the `supported_abis` those
+devices now report (W96 C2). R19 cannot repeat through this path.
+
+APKPure offers none of that: no upstream hash, no declared ABIs. Its imports are
+therefore verifiable only *after* download, by reading the file — which is what
+`inspect_apk` already does. That difference is a property of the source and the UI
+must show it rather than flatten it.
+
+#### ✅ Chunk C1 complete (2026-09-07) — F-Droid only
+
+**1119 server tests** (14 new). The APKPure half is **not built**, for the measured
+reason above; the source interface stays, because it is what makes a second source
+cheap if one ever becomes reachable.
+
+⚠️ **No test touches the network.** The index is served from a stub transport —
+which is not only for determinism: it is the only way to *arrange* the failures
+worth testing. A tampered index, a download that does not match its published
+digest, and a listing that names the wrong package cannot be produced by asking
+the real repository nicely.
+
+**Found while testing, and it is the deferred resolution argument in miniature:**
+OsmAnd publishes `531003` as `arm64-v8a` and `531002` as `x86, x86_64` — adjacent
+version codes for different architectures. `max(version_code)` picks correctly
+here by luck of ordering. Reverse them and it picks x86 for an arm64 fleet, which
+is R19 exactly.
+
+**Preflight answers "should I fetch this" while it is still free to say no**:
+a signer that differs from the one pinned on the package blocks the import (Android
+would refuse the update anyway), as does a versionCode already held. Devices that
+cannot run the build are a *warning*, not a refusal — it is the operator's fleet —
+and devices that have never reported their architecture are **counted in the
+message**, because silence must not read as approval.
+
+#### Chunk C1 — the sources and the import
+
+1. `app_sources/base.py`: `SourceApp`, `SourceVersion`, and the `AppSource`
+   protocol. Pure value types, so search results are testable without a network.
+2. `app_sources/fdroid.py`: `entry.json` → verify index hash → cache → search and
+   versions; download verified against `file.sha256`.
+3. `app_sources/apkpure.py`: search and versions by scraping, download from
+   `d.apkpure.com`, `cloudscraper` on 403. Reports **no** upstream hash — flagged,
+   never faked.
+4. `repo_import.py`: download to a temp file, verify where a hash is offered, then
+   hand to `packages.ingest` with **`publish=False`**. ⚠️ A fetched build must
+   never auto-publish: publishing is fleet-wide and is an operator's act.
+   Provenance (`source`, `source_url`) on `AppPackageVersion`, with a migration.
+5. Tests against recorded fixtures — no network in the suite — including a
+   mislabelled catalogue row and a hash mismatch.
+6. Deploy.
+
+#### Chunk C2 — the console
+
+7. A fourth tab on `/apps`, following the TPC pattern: search, versions, import
+   job, polling modal.
+8. Before import, show what is known: ABIs, minSdk, signer, and whether the source
+   offers a hash at all — plus, for F-Droid, which enrolled devices could not run
+   it.
+9. Tests, deploy.
+
+#### ⚠️ APKPure is not reachable programmatically (measured 2026-09-07)
+
+Tested before building, and it settles the question:
+
+| Endpoint | plain `httpx` | `cloudscraper` |
+|---|---|---|
+| `apkpure.com/search?q=` | 403 | **403** — Cloudflare "Just a moment…" |
+| `apkpure.com/…/versions` | 403 | **403** |
+| `d.apkpure.com/b/XAPK/…` | 403 | 200 once, **403 on every retry** |
+
+⚠️ **The one success was a clearance that had lapsed within the minute.** Re-run
+immediately afterwards, all four endpoints — including the download that had just
+returned 25.9 MB — answered 403.
+
+`cloudscraper` no longer defeats what APKPure runs. The prior art dates from an
+older Cloudflare; the current one serves a managed challenge that a requests-level
+shim cannot pass. **The operator's choice to use it was made on the premise that
+it works, and that premise is false**, so the APKPure source is not built rather
+than built broken. A source that succeeds occasionally and fails opaquely is worse
+than no source: it teaches an operator to retry instead of to act.
+
+Manual upload already covers this case — `/apps/upload` takes an APK or XAPK, and
+the operator's own test files are APKPure downloads made by hand. What ATLAS adds
+on top of that is the part it is good at: reading the file and saying what it is.
+
+**Dependencies added:** `httpx` only, already present. `beautifulsoup4` and
+`cloudscraper` are **not** added — nothing left to scrape.
+
 ### ✅ W96 — Will this build even run here? (R19)
 
 Operator, 2026-09-07, after R19 left the SM-X520 permanently DEGRADED: *"how can
