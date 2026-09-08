@@ -1791,15 +1791,21 @@ def upload_policy_image_form(
 # --------------------------------------------------------------------------- #
 
 
-def _repo_source(name: str, settings: Settings):
+def _repo_source(name: str, settings: Settings, session=None, vault=None):
     """The source by name, built against the on-disk cache.
 
-    Constructed per request rather than held globally: it is cheap, and the index
-    it caches lives on disk, so nothing of value is thrown away between calls.
+    `session` and `vault` are needed only by Google Play, which cannot exist
+    without a linked account; every other source ignores them.
     """
     from app.services.app_sources import repos
 
-    return repos.build(name or "fdroid", Path(str(settings.cache_dir)))
+    play = None
+    if session is not None and vault is not None:
+        from app.services import google_play_link
+
+        play = google_play_link.credentials(session, vault)
+
+    return repos.build(name or "fdroid", Path(str(settings.cache_dir)), play=play)
 
 
 def _version_row(session: Session, version, preflight) -> dict:
@@ -1831,6 +1837,7 @@ def repo_search(
     q: str = "",
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
+    vault: TokenVault = Depends(get_token_vault),
     identity: AdminIdentity = Depends(admin_required),
 ) -> JSONResponse:
     """Search every source at once (W98).
@@ -1851,7 +1858,7 @@ def repo_search(
     problems: list[dict] = []
 
     for spec in app_repos.KNOWN:
-        client = _repo_source(spec.name, settings)
+        client = _repo_source(spec.name, settings, session, vault)
         if client is None:
             continue
         try:
@@ -1892,12 +1899,13 @@ def repo_versions(
     source: str = "fdroid",
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
+    vault: TokenVault = Depends(get_token_vault),
     identity: AdminIdentity = Depends(admin_required),
 ) -> JSONResponse:
     from app.services import repo_import
     from app.services.app_sources.base import SourceError
 
-    client = _repo_source(source, settings)
+    client = _repo_source(source, settings, session, vault)
     if client is None:
         return JSONResponse({"error": f"unknown source {source!r}"}, status_code=404)
 
@@ -1928,6 +1936,7 @@ def repo_import_form(
     session_factory=Depends(get_session_factory),
     storage: ArtifactStorage = Depends(get_storage),
     settings: Settings = Depends(get_settings),
+    vault: TokenVault = Depends(get_token_vault),
     identity: AdminIdentity = Depends(admin_required),
 ) -> JSONResponse:
     """Start an import and hand back a job to watch.
@@ -1940,7 +1949,7 @@ def repo_import_form(
     from app.services import import_jobs, repo_import
     from app.services.app_sources.base import SourceError
 
-    client = _repo_source(source, settings)
+    client = _repo_source(source, settings, session, vault)
     if client is None:
         return JSONResponse({"error": f"unknown source {source!r}"}, status_code=404)
 
@@ -2876,8 +2885,64 @@ def admin_page(
         env_settings=env_settings,
         agent=_agent_update_panel(session, settings),
         takgov=_takgov_panel(session),
+        googleplay=_googleplay_panel(session),
         attributes=attribute_service.list_attributes(session),
     )
+
+
+def _googleplay_panel(session: Session) -> dict:
+    from app.services import google_play_link
+
+    link = google_play_link.get(session)
+    session.commit()  # the row is created lazily on first view
+    # ⚠️ The token itself is never part of this. The console shows *that* one is
+    # held, never its value — there is no reason to render a durable credential
+    # back into a page.
+    return {"link": link}
+
+
+@router.post("/admin/google-play/link")
+def google_play_link_form(
+    email: str = Form(...),
+    oauth_token: str = Form(...),
+    device_profile: str = Form(default=""),
+    session: Session = Depends(get_db),
+    vault: TokenVault = Depends(get_token_vault),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Spend the one-time token for a durable one and seal it (W99)."""
+    from app.services import google_play_link
+
+    try:
+        google_play_link.link_account(
+            session,
+            vault,
+            email=email,
+            oauth_token=oauth_token,
+            device_profile=device_profile or google_play_link.DEFAULT_DEVICE,
+            linked_by=getattr(identity, "subject", None),
+        )
+        session.commit()
+    except google_play_link.GooglePlayLinkError as exc:
+        # Committed even on failure: `last_error` is the useful part, and the
+        # oauth token is spent either way, so losing the explanation would leave
+        # the operator retrying a value that cannot work.
+        session.commit()
+        return _redirect(f"/admin?tab=googleplay&play_error={_quote(str(exc))}")
+
+    return _redirect("/admin?tab=googleplay&play_linked=1")
+
+
+@router.post("/admin/google-play/unlink")
+def google_play_unlink_form(
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    from app.services import google_play_link
+
+    google_play_link.unlink(session)
+    session.commit()
+    return _redirect("/admin?tab=googleplay&play_unlinked=1")
 
 
 def _takgov_panel(session: Session) -> dict:

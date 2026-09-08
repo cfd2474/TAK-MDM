@@ -10,6 +10,7 @@
 {% for grp in setting_groups %}{% set _ = tab_items.append((grp.group.key, grp.group.title)) %}{% endfor %}
 {% set _ = tab_items.append(('agent', 'Agent updates')) %}
 {% set _ = tab_items.append(('takgov', 'TAK.gov')) %}
+{% set _ = tab_items.append(('googleplay', 'Google Play')) %}
 {% set _ = tab_items.append(('attributes', 'Custom attributes')) %}
 {% set _ = tab_items.append(('integrations', 'Integrations')) %}
 {% set _ = tab_items.append(('environment', 'Environment')) %}
@@ -100,6 +101,108 @@
     </div>
   </div>
   {% endfor %}
+
+  <div class="tab-panel" data-tab-panel="googleplay" hidden>
+    <div class="panel">
+      <h2>Google Play account</h2>
+      <p class="sub">
+        Lets the <a href="/apps?tab=repo">3rd party repo</a> search fetch apps from
+        Google Play as one nominated account. Downloads arrive
+        <strong>held</strong>, like every other source.
+      </p>
+
+      {% if request.query_params.get('play_linked') %}
+        <div class="banner good">Linked. Google Play now appears in app search.</div>
+      {% endif %}
+      {% if request.query_params.get('play_unlinked') %}
+        <div class="banner good">
+          Unlinked, and the stored token has been destroyed.
+          {#
+            ⚠️ Said explicitly: forgetting a token here does not revoke it at
+            Google. Implying otherwise would leave an operator believing they had
+            closed something they had not.
+          #}
+          This does <strong>not</strong> revoke it at Google — remove this
+          server's access from that account's security settings as well.
+        </div>
+      {% endif %}
+      {% if request.query_params.get('play_error') %}
+        <div class="banner bad">{{ request.query_params.get('play_error') }}</div>
+      {% endif %}
+
+      <div class="banner bad">
+        ⚠️ <strong>Using this violates Google Play's Terms of Service §3.3</strong>,
+        and Google may lock the account. Use an account kept for this purpose —
+        never one carrying Workspace mail, where a lock takes the mailbox with it.
+        Linking also accepts Play's terms on that account's behalf.
+      </div>
+
+      {% if googleplay.link.status.value == 'linked' %}
+        <p>
+          <span class="pill good">linked</span>
+          as <span class="mono">{{ googleplay.link.email }}</span>
+          &middot; device profile <span class="mono">{{ googleplay.link.device_profile }}</span>
+          {% if googleplay.link.linked_at %}
+            <span class="muted">since {{ googleplay.link.linked_at.strftime('%Y-%m-%d %H:%M') }}</span>
+          {% endif %}
+        </p>
+        <p class="field-tip">
+          ⚠️ The device profile decides which build Play serves, including its CPU
+          architecture. <code>px_9a</code> is arm64. Re-link to change it.
+        </p>
+        <form method="post" action="/admin/google-play/unlink"
+              data-confirm="Unlink and destroy the stored token?">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit" class="danger">Unlink</button>
+        </form>
+      {% else %}
+        {% if googleplay.link.last_error %}
+          <div class="banner bad">{{ googleplay.link.last_error }}</div>
+        {% endif %}
+
+        <h3>How to get a token</h3>
+        <ol class="sub">
+          <li>Open <a href="https://accounts.google.com/EmbeddedSetup" target="_blank"
+                      rel="noopener noreferrer">accounts.google.com/EmbeddedSetup</a>
+              with your browser's developer console on the <strong>Network</strong> tab.</li>
+          <li>Sign in with the account you want ATLAS to download as. Accept the
+              Google terms if prompted — there may be a pause afterwards.</li>
+          <li>Select the last request to <span class="mono">accounts.google.com</span>,
+              open its <strong>Cookies</strong> tab, and find the response cookie
+              named <span class="mono">oauth_token</span>.</li>
+          <li>Copy its <strong>value</strong> — it begins
+              <span class="mono">oauth2_4/</span> — and paste it below.</li>
+        </ol>
+        <p class="field-tip">
+          ⚠️ That value works <strong>once</strong>. ATLAS exchanges it for a
+          long-lived token, stores that encrypted, and never shows it again. If the
+          exchange fails you will need a fresh one — the old is spent either way.
+        </p>
+
+        <form method="post" action="/admin/google-play/link">
+          {{ csrf_field(csrf_token) }}
+          <label for="gp-email">Google account email</label>
+          <input type="email" id="gp-email" name="email" class="field-full" required>
+
+          <label for="gp-token">One-time oauth token</label>
+          <input type="password" id="gp-token" name="oauth_token" class="field-full"
+                 autocomplete="off" required>
+          <p class="field-tip">Starts with <span class="mono">oauth2_4/</span>.</p>
+
+          <label for="gp-device">Device profile</label>
+          <input type="text" id="gp-device" name="device_profile" class="field-full"
+                 value="px_9a">
+          <p class="field-tip">
+            Decides which build Play serves. <span class="mono">px_9a</span> is a
+            Pixel 9a — arm64, which suits this fleet. Other profiles are listed in
+            apkeep's <span class="mono">device.properties</span>.
+          </p>
+
+          <button type="submit">Link account</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
 
   <div class="tab-panel" data-tab-panel="takgov" hidden>
     <div class="panel">

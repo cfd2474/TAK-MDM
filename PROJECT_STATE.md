@@ -405,6 +405,91 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W99 — Google Play as a source, via an operator-supplied token
+
+Operator, 2026-09-08: *"continue with apkeep Google play using the token method…
+add a token entry field in the admin section, along with instructions."*
+
+#### The flow, from apkeep's own documentation
+
+The operator signs in at Google's embedded setup page with devtools open and
+copies a **one-time** `oauth_token` (it starts `oauth2_4/`). That is spent once to
+mint a **long-lived AAS token**, which every later download uses. apkeep performs
+the exchange itself, so ATLAS can take the one-time value, mint the durable one
+server-side, seal it, and never show it again.
+
+#### Why this fits without inventing anything
+
+`TakGovLink` is the precedent almost exactly — its docstring already says why such
+a credential *"must not sit in `app_setting`, which is plaintext"*. `TokenVault`
+(Fernet, key at `pki/token_vault.key`) is the seal. The Admin → TAK.gov tab is the
+interaction. A `GooglePlayLink` is the same object with fewer fields: no
+device-authorization dance, because the operator pastes the code themselves.
+
+#### ⚠️ Decisions that are about safety, not preference
+
+* **Credentials go in a `0600` `apkeep.ini`, never on the command line.** An AAS
+  token passed as `-t …` is visible in the process list to anything that can read
+  `/proc` on that host. apkeep documents the ini file; this uses it.
+* **The device profile is pinned and recorded.** Play serves *device-matched*
+  builds, so the profile decides the architecture that arrives. Default `px_9a` is
+  arm64 and suits this fleet — but leaving it implicit would be R19 through a
+  different door.
+* **`--accept-tos` accepts Google's terms on the account's behalf.** ATLAS would
+  be clicking "I agree" for the operator, so the tab says so plainly.
+* **The token is sealed and never rendered back**, and Unlink destroys it.
+* `split_apk=true`, so what arrives is the base + splits shape `inspect_bundle`
+  already handles.
+
+⚠️ **Untestable from here.** There is no Google account on this side, and the
+token must never travel through a chat. The operator enters it in the admin field;
+what can then be verified is that the exchange succeeded, a download completed,
+and the architecture that arrived is the one asked for.
+
+#### Chunk C1
+
+1. `GooglePlayLink` (singleton, sealed token, pinned profile) + migration.
+2. `google_play_link.py` — exchange, seal, status, unlink.
+3. `GooglePlaySource` — apkeep with the ini file, joining the unified search.
+   Play takes an exact package id, like APKPure, so the bar's existing rule holds.
+4. Admin → Google Play tab: instructions, email + one-time token, unlink.
+5. Tests with apkeep stubbed — including that the token never reaches argv.
+6. Deploy; the operator links; a real download is then verified.
+
+###### ✅ Built (2026-09-08) — 1154 server tests, awaiting a linked account
+
+Migration `d0f2h4j6l8n0`. **No row is created**: absent means unlinked, so the
+feature costs every existing deployment nothing until someone chooses it, and an
+unlinked instance reports no failure on searches for a source it does not have.
+
+⚠️ **The AAS token never touches a command line.** apkeep documents an
+`apkeep.ini`, and it is written with `os.open(..., 0o600)` — the mode requested at
+*creation*, not applied by a later `chmod`, because between the two the file is
+world-readable. A test captures the mode argument, which holds on any platform;
+the mode assertion itself is POSIX-only and skipped on Windows, where the server
+does not run.
+
+⚠️ **The one-time oauth token *does* go on the command line, deliberately.** It is
+spent by that single call and worthless afterwards; the durable secret is the one
+worth keeping out of `/proc`.
+
+⚠️ **A failed exchange says the token is spent.** Google issues it for one use, so
+an operator retrying the same value would conclude the feature is broken rather
+than that they need a fresh one.
+
+⚠️ **Unlink destroys the stored token and says it does not revoke anything at
+Google.** Implying otherwise would leave someone believing they had closed a door
+that is still open.
+
+**The device profile is stored on the link, not defaulted at call time**, because
+Play serves device-matched builds — the profile *is* the architecture, and a build
+must be explicable after the fact. `px_9a` is arm64, which suits this fleet.
+
+**Not yet verified:** there is no Google account on this side and a token must
+never travel through a chat. The operator links in the admin tab; what can then be
+checked is that the exchange succeeded, a download completed, and the architecture
+that arrived is the one asked for.
+
 ### ✅ W98 — One search bar, and APKPure as a fourth source
 
 Operator, 2026-09-08: *"include as a source. find a way to integrate into single

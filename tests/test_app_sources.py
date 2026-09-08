@@ -365,7 +365,7 @@ def test_one_search_covers_every_source(client, monkeypatch):
         def search(self, query, limit=25):
             return [SourceApp(package_name="org.example.app", name=f"App from {self.name}")]
 
-    monkeypatch.setattr(routes, "_repo_source", lambda name, settings: Stub(name))
+    monkeypatch.setattr(routes, "_repo_source", lambda name, settings, *_a, **_k:Stub(name))
 
     body = client.get("/apps/repo/search?q=example", headers=ADMIN_HEADERS).json()
 
@@ -395,7 +395,7 @@ def test_a_failing_source_does_not_empty_the_page(client, monkeypatch):
                 raise SourceError("apkeep is not installed on this server")
             return [SourceApp(package_name="org.example.app", name="Example")]
 
-    monkeypatch.setattr(routes, "_repo_source", lambda name, settings: Stub(name))
+    monkeypatch.setattr(routes, "_repo_source", lambda name, settings, *_a, **_k:Stub(name))
 
     body = client.get("/apps/repo/search?q=example", headers=ADMIN_HEADERS).json()
 
@@ -432,7 +432,7 @@ def test_a_blocked_build_is_refused_before_anything_is_downloaded(
     fetched: list[str] = []
     original = source.download
     source.download = lambda v: (fetched.append(v.download_url), original(v))[1]
-    monkeypatch.setattr(routes, "_repo_source", lambda name, settings: source)
+    monkeypatch.setattr(routes, "_repo_source", lambda name, settings, *_a, **_k:source)
 
     response = client.post(
         "/apps/repo/import",
@@ -457,7 +457,7 @@ def test_the_version_is_re_read_at_import_not_taken_from_the_form(
 
     apk = build_apk("org.example.app", 42)
     source = _source(tmp_path, _index(apk), apk)
-    monkeypatch.setattr(routes, "_repo_source", lambda name, settings: source)
+    monkeypatch.setattr(routes, "_repo_source", lambda name, settings, *_a, **_k:source)
 
     response = client.post(
         "/apps/repo/import",
@@ -479,7 +479,7 @@ def test_an_import_runs_as_a_job_and_lands_held(
 
     apk = build_apk("org.example.app", 42)
     source = _source(tmp_path, _index(apk), apk)
-    monkeypatch.setattr(routes, "_repo_source", lambda name, settings: source)
+    monkeypatch.setattr(routes, "_repo_source", lambda name, settings, *_a, **_k:source)
     monkeypatch.setattr(import_jobs, "_thread", lambda work: work())
 
     started = client.post(

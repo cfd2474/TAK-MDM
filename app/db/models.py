@@ -1020,6 +1020,58 @@ class DeviceAttributeValue(Base):
     attribute: Mapped[CustomAttribute] = relationship(lazy="selectin")
 
 
+class GooglePlayLinkStatus(str, enum.Enum):
+    UNLINKED = "unlinked"
+    LINKED = "linked"
+    #: The stored token stopped working. Google can revoke an AAS token, and an
+    #: account can be locked — both need a human to mint a new one.
+    BROKEN = "broken"
+
+
+class GooglePlayLink(Base):
+    """The single Google account this ATLAS instance downloads Play apps as (W99).
+
+    One row, id 1, for the same reason `TakGovLink` is a singleton: ATLAS is one
+    instance per operator.
+
+    ⚠️ **The AAS token is a durable bearer credential to a real Google account.**
+    Anyone holding it can act as that account against Play. It is sealed with the
+    same `TokenVault` as every other stored secret, is never rendered back to the
+    console once saved, and `unlink` destroys it.
+
+    ⚠️ **`device_profile` is part of the credential's meaning, not decoration.**
+    Play serves *device-matched* builds, so the profile decides which
+    architecture arrives. It is stored rather than defaulted at call time, so what
+    a device was handed can be explained afterwards — the lesson R19 cost a week
+    to learn.
+
+    ⚠️ **Using this violates Play's Terms of Service §3.3** and the account may be
+    locked. That is the operator's decision, made knowingly; the console says so
+    where the token is entered rather than burying it.
+    """
+
+    __tablename__ = "google_play_link"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    status: Mapped[GooglePlayLinkStatus] = mapped_column(
+        Enum(GooglePlayLinkStatus, native_enum=False, length=16),
+        default=GooglePlayLinkStatus.UNLINKED,
+    )
+
+    #: The account downloads are made as. Shown in the console; not a secret.
+    email: Mapped[str | None] = mapped_column(String(256), default=None)
+    #: Fernet-sealed AAS token. Never leaves the server unsealed.
+    aas_token_sealed: Mapped[str | None] = mapped_column(Text, default=None)
+    #: apkeep's device profile, e.g. "px_9a". See the class note.
+    device_profile: Mapped[str] = mapped_column(String(64), default="px_9a")
+
+    linked_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+    linked_by: Mapped[str | None] = mapped_column(String(128), default=None)
+    #: Why the last attempt failed, shown verbatim — these name the actual
+    #: problem, and paraphrasing them into "link failed" throws that away.
+    last_error: Mapped[str | None] = mapped_column(Text, default=None)
+
+
 class TakGovLinkStatus(str, enum.Enum):
     UNLINKED = "unlinked"
     #: A device-authorization code has been issued and the operator has not yet

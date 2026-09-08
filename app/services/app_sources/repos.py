@@ -100,6 +100,24 @@ KNOWN = KNOWN + (
     ),
 )
 
+#: ⚠️ Offered only when an account is linked (W99). Unlike every other source it
+#: needs a credential, so `build` returns None without one and the unified search
+#: simply skips it — an unlinked instance should not report a failure on every
+#: query for a feature nobody has turned on.
+KNOWN = KNOWN + (
+    RepoSpec(
+        name="google-play",
+        label="Google Play",
+        url="https://play.google.com",
+        note="⚠️ Requires a linked Google account, and using it violates Play's "
+        "Terms of Service §3.3 — the account may be locked, so use one kept for "
+        "the purpose. Serves device-matched builds, so the linked device profile "
+        "decides the architecture. Publishes no checksum. Reached through apkeep.",
+        kind="google-play",
+        searchable=False,
+    ),
+)
+
 _BY_NAME = {spec.name: spec for spec in KNOWN}
 
 
@@ -116,8 +134,12 @@ _INSTANCES: dict[str, object] = {}
 _LOCK = threading.Lock()
 
 
-def build(name: str, cache_dir: Path):
-    """The source for a named repository, or None if it is not one we offer."""
+def build(name: str, cache_dir: Path, *, play: tuple[str, str, str] | None = None):
+    """The source for a named repository, or None if it is not one we offer.
+
+    `play` carries `(email, aas_token, device_profile)` for Google Play, which is
+    the one source that cannot exist without a credential.
+    """
     found = spec(name)
     if found is None:
         return None
@@ -130,6 +152,17 @@ def build(name: str, cache_dir: Path):
         if existing is not None:
             return existing
 
+        if found.kind == "google-play":
+            if play is None:
+                # Not linked. Not an error — just not on offer.
+                return None
+            from app.services.app_sources.googleplay import GooglePlaySource
+
+            email, token, device = play
+            # ⚠️ Never cached: the credential can be unlinked or rotated between
+            # requests, and a cached source would go on using a token the
+            # operator believes they have removed.
+            return GooglePlaySource(email, token, device_profile=device)
         if found.kind == "apkpure":
             source = ApkPureSource()
         else:
