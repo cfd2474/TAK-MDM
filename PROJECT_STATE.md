@@ -480,9 +480,61 @@ dock was broken, and always would have.
 **Verified live:** sub-pages now read `Single app, Multi app, Background apps`,
 and `resolve_for_policy` returns launcher 5.
 
-**Still unverified on hardware**: that four dock icons now render. The fix is a
-layout width, so it cannot be confirmed from the server — it needs a device with
-a multi-app kiosk policy. No device was attached when this shipped.
+###### ✅ Verified on hardware, and it took three launcher builds (2026-09-07)
+
+`R5GL40MMHRN` · SM-X520, profile **W95 dock check**: ATAK, Chrome, uasready,
+Handtevy docked; ATAK2M3T on the grid only. Operator confirmed each step by eye,
+which is the only instrument that could see any of these.
+
+| Build | What the operator saw | What was actually wrong |
+|---|---|---|
+| `0.5.0` | four icons, but **bunched in the bottom-left** | a horizontal `LinearLayoutManager` lays tiles from the start and stops |
+| `0.6.0` | dock spread evenly across the base ✅ | — |
+| `0.7.0` | rows still **stacked close** (12dp added) | the gap was a guess, not a measurement |
+| `0.8.0` | ✅ accepted | — |
+
+⚠️ **The first fix was right and insufficient, which is its own lesson.**
+`wrap_content` tiles made all four *visible* — that was a real bug and a real
+fix — but visible is not arranged. The dock is now a `GridLayoutManager` with one
+column per docked app (`DockLayout.spanFor`), so each tile owns an equal share of
+the width and centres its icon in it.
+
+That made the separate dock tile layout obsolete, so it was **deleted**:
+`match_parent` is correct again now that *both* RecyclerViews are grids, meaning
+"fill one cell" to each. The old bug returns the moment anything hands this
+adapter a linear manager again, and `TileLayoutTest` says so in as many words.
+
+⚠️ **`grid_row_gap` is the gap you would measure, not the number the decoration
+gets.** The tile's own padding is already part of what the eye sees, so
+`RowSpacing.extraFor` subtracts it and a test asserts the round trip
+(`extraFor(gap, padding) + 2 × padding == gap`). Without that the resource would
+be a figure matching nothing on screen, and the next person changing it would be
+guessing exactly as 0.7.0 did.
+
+⚠️ **Row spacing is a decoration on the grid, never padding on the tile.** The
+dock draws that same tile, so padding there would grow the bottom bar too. This
+is the whole reason the mechanism is worth a comment: the obvious fix has an
+invisible second effect.
+
+**9 launcher tests**, up from 3. Every one of them reads a layout or a pure
+function, because nothing in Kotlin could see any of these faults — no data was
+lost and nothing was logged in any of the three rounds.
+
+#### ⚠️ R19 — Chrome cannot install on the SM-X520 (found by this test)
+
+`com.android.chrome` `152.0.7977.82` (code `797708200`) fails with
+`INSTALL_FAILED_NO_MATCHING_ABIS … res=-113` — the APK in the library carries no
+native libraries for this device's ABI. It leaves the device **DEGRADED** on every
+reconcile.
+
+**Not caused by the kiosk, and not fixed here.** The device was compliant only
+because nothing had asked it to install that APK; any policy requiring Chrome hits
+this. The kiosk's Chrome *tile works*, because Chrome is present as a system app
+and the tile opens that one — so the fault is invisible from the home screen and
+shows only in compliance.
+
+Fix is the operator's call: upload an arm64-v8a build, or drop Chrome from
+required apps and rely on the preinstalled one.
 
 ### ✅ W93 — ATAK DTED
 

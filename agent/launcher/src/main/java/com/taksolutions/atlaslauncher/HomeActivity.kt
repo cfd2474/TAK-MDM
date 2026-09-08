@@ -35,7 +35,6 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.GridLayoutManager
-import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import java.time.Instant
 import java.time.ZoneId
@@ -104,13 +103,22 @@ class HomeActivity : AppCompatActivity() {
         search = findViewById(R.id.search)
 
         gridAdapter = AppAdapter(emptyList(), ::open)
-        // ⚠️ The dock tile, not the grid tile (W95). See AppAdapter: the grid's
-        // match_parent width means "one column" under a GridLayoutManager and
-        // "the entire dock" under this horizontal one.
-        dockAdapter = AppAdapter(emptyList(), ::open, R.layout.item_dock_tile)
+        dockAdapter = AppAdapter(emptyList(), ::open)
         grid.adapter = gridAdapter
         dock.adapter = dockAdapter
-        dock.layoutManager = LinearLayoutManager(this, RecyclerView.HORIZONTAL, false)
+        // ⚠️ The grid only. The dock draws the same tile, so this deliberately is
+        // not padding on the tile itself — that would grow the bottom bar too.
+        grid.addItemDecoration(
+            RowSpacing(
+                RowSpacing.extraFor(
+                    resources.getDimensionPixelSize(R.dimen.grid_row_gap),
+                    resources.getDimensionPixelSize(R.dimen.tile_padding),
+                )
+            )
+        )
+        // ⚠️ The dock's layout manager is set in `reload`, not here: its span
+        // count is one column per docked app, which is not known until the config
+        // has been read. See DockLayout.
 
         search.addTextChangedListener(object : TextWatcher {
             override fun afterTextChanged(s: Editable?) = showMatching()
@@ -162,8 +170,17 @@ class HomeActivity : AppCompatActivity() {
         applyOrientation(config.orientation)
 
         grid.layoutManager = GridLayoutManager(this, config.columns)
-        dockAdapter.submit(catalog.resolve(config.favorites))
-        dock.visibility = if (config.favorites.isEmpty()) View.GONE else View.VISIBLE
+
+        // ⚠️ One column per docked app, so they spread evenly across the base
+        // rather than bunching at one end (W95). The span has to be recomputed on
+        // every reload, because the policy decides how many tiles there are.
+        val docked = catalog.resolve(config.favorites)
+        dock.layoutManager = GridLayoutManager(this, DockLayout.spanFor(docked.size))
+        dockAdapter.submit(docked)
+        // Judged on what actually resolved, not on what the policy asked for: a
+        // favourite naming an app this device does not have would otherwise leave
+        // an empty bar across the bottom of the screen.
+        dock.visibility = if (docked.isEmpty()) View.GONE else View.VISIBLE
 
         // Hidden when there is nothing to search *or* nothing worth searching: a
         // filter box above four tiles is furniture.

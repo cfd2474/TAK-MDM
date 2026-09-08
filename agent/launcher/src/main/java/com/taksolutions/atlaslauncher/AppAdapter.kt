@@ -21,26 +21,24 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
-import androidx.annotation.LayoutRes
 import androidx.recyclerview.widget.RecyclerView
 
 /**
  * The app tiles, for both the grid and the dock.
  *
- * ⚠️ **The two need different item layouts, and only the width differs** (W95).
- * A `GridLayoutManager` reads `match_parent` as one column, so the grid tile is
- * right to use it. The dock is a horizontal `LinearLayoutManager`, where
- * `match_parent` means the whole RecyclerView — which put the first favourite
- * across the entire dock and laid every other one off-screen. Nothing was lost
- * and nothing was logged; the apps were all there and only one was visible.
+ * ⚠️ **One layout serves both, and that depends on both using a grid** (W95).
+ * `match_parent` here means "fill one cell", which is what a `GridLayoutManager`
+ * hands it. Under the horizontal `LinearLayoutManager` the dock used to use, the
+ * same value meant the whole RecyclerView — so the first favourite filled the
+ * dock and every other one was laid out off-screen. Nothing was lost and nothing
+ * was logged; the apps were all there and only one could be seen.
  *
- * The layout is a constructor argument rather than a branch inside
- * `onCreateViewHolder`, so a caller cannot forget which one it wanted.
+ * The dock is a grid of one column per app now, so the width is right for it too.
+ * If anything ever gives this adapter a linear manager again, that bug comes back.
  */
 class AppAdapter(
     private var entries: List<AppEntry>,
     private val onOpen: (AppEntry) -> Unit,
-    @LayoutRes private val itemLayout: Int = R.layout.item_app_tile,
 ) : RecyclerView.Adapter<AppAdapter.Tile>() {
 
     class Tile(view: View) : RecyclerView.ViewHolder(view) {
@@ -59,7 +57,7 @@ class AppAdapter(
     override fun getItemCount(): Int = entries.size
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Tile =
-        Tile(LayoutInflater.from(parent.context).inflate(itemLayout, parent, false))
+        Tile(LayoutInflater.from(parent.context).inflate(R.layout.item_app_tile, parent, false))
 
     override fun onBindViewHolder(holder: Tile, position: Int) {
         val entry = entries[position]

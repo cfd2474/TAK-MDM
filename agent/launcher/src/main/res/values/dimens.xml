@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Launcher dimensions.
+-->
+<resources>
+
+    <!--
+      The space between two rows of app tiles, as seen on the screen (W95).
+
+      ⚠️ **This is the gap you would measure, not the number handed to the
+      decoration.** Each tile already carries `tile_padding` above and below it, so
+      the decoration adds `grid_row_gap - 2 × tile_padding` and the two together
+      come to exactly this. `RowSpacing.extraFor` does that arithmetic, so changing
+      either value here keeps the visible gap honest.
+
+      ⚠️ **Applied as an item decoration on the grid, not as padding on the tile.**
+      The grid and the dock share `item_app_tile.xml`, so padding added there would
+      also make every dock tile taller and grow the bar across the bottom of the
+      screen. A decoration belongs to one RecyclerView, which is the scope wanted.
+    -->
+    <dimen name="grid_row_gap">56dp</dimen>
+
+    <!--
+      The tile's own padding, named here because two things depend on it: the tile
+      layout itself and the row-gap arithmetic above.
+    -->
+    <dimen name="tile_padding">8dp</dimen>
+
+</resources>

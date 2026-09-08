@@ -10,7 +10,7 @@
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:gravity="center"
-    android:padding="8dp"
+    android:padding="@dimen/tile_padding"
     android:minHeight="48dp"
     android:background="?android:attr/selectableItemBackgroundBorderless"
     android:clickable="true"
