@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import io
 import json
+import tempfile
 import uuid
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
@@ -2226,6 +2227,27 @@ def upload_policy_file(
     )
 
 
+def _dted_repack_note(layout: dted.DtedLayout) -> str:
+    """What to tell the operator about a rewrite they did not ask for.
+
+    Saying nothing would be worse than saying too much: the archive they get back
+    is not the one they uploaded, and the next person comparing checksums deserves
+    to know why.
+    """
+    if not layout.needs_repack:
+        return ""
+    wrappers = ", ".join(repr(w) for w in layout.wrappers) or "a sub-folder"
+    carried = (
+        f" {layout.carried} other file{'' if layout.carried == 1 else 's'} kept as they were."
+        if layout.carried
+        else ""
+    )
+    return (
+        f"The cells were inside {wrappers}, where ATAK would not have found them. "
+        f"They have been moved to the top of the archive.{carried}"
+    )
+
+
 @router.post("/policies/dted/upload")
 def upload_policy_dted(
     file: UploadFile = File(...),
@@ -2237,11 +2259,16 @@ def upload_policy_dted(
 ) -> JSONResponse:
     """Take a DTED archive chosen inside a policy editor and hand back its id (W93).
 
-    ⚠️ **Checked here because the failure is silent on the device.** A wrapped
-    archive extracts perfectly, puts every file on disk, and shows no terrain —
-    ATAK unpacks DTED flat into one directory and looks nowhere else. There is
-    nothing to see in a log afterwards, so the layout has to be caught while the
-    operator is still holding the file.
+    ⚠️ **Sorted out here because the failure is silent on the device.** ATAK
+    unpacks DTED flat into one directory and looks nowhere else, so terrain buried
+    a level down extracts perfectly, puts every file on disk, and shows nothing.
+    No log says so afterwards.
+
+    **W94 repacks rather than refuses.** A nested archive is what right-clicking a
+    DTED folder in Windows produces, so it is the normal case, not an error. The
+    cells are moved to the top here — at upload, on the server — which keeps the
+    stored archive identical to what has to land on disk and leaves every fielded
+    agent correct without an update.
     """
     data = file.file.read()
     if not data:
@@ -2251,25 +2278,47 @@ def upload_policy_dted(
             {"error": f"upload exceeds {settings.max_upload_bytes} bytes"}, status_code=413
         )
     try:
-        archive = dted.inspect(data)
+        layout = dted.plan(data)
     except dted.DtedError as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
 
+    chosen_name = (name or "").strip() or (file.filename or "DTED")
     try:
-        managed = file_service.ingest_file(
-            session,
-            storage,
-            data,
-            name=(name or "").strip() or (file.filename or "DTED"),
-            original_filename=file.filename or "dted.zip",
-            media_type="application/zip",
-        )
+        if layout.needs_repack:
+            # Streamed through a temp file: the sample inflates to 1.75 GB, and
+            # holding that as bytes to hand to `ingest_file` would double it.
+            with tempfile.TemporaryFile() as repacked:
+                dted.repack(io.BytesIO(data), repacked, layout)
+                repacked.seek(0)
+                managed = file_service.ingest_stream(
+                    session,
+                    storage,
+                    repacked,
+                    name=chosen_name,
+                    original_filename=file.filename or "dted.zip",
+                    media_type="application/zip",
+                )
+        else:
+            managed = file_service.ingest_file(
+                session,
+                storage,
+                data,
+                name=chosen_name,
+                original_filename=file.filename or "dted.zip",
+                media_type="application/zip",
+            )
         session.commit()
     except file_service.FileError as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
 
     return JSONResponse(
-        {"id": str(managed.id), "name": managed.name, "summary": archive.summary}
+        {
+            "id": str(managed.id),
+            "name": managed.name,
+            "summary": layout.archive.summary,
+            "repacked": layout.needs_repack,
+            "note": _dted_repack_note(layout),
+        }
     )
 
 

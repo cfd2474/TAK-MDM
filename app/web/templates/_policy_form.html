@@ -773,11 +773,12 @@
       <span class="muted" data-dted-status style="font-size:12px"></span>
     </div>
     <p class="field-tip">
-      ⚠️ The longitude folders — <code>w115</code>, <code>e007</code> — must sit at
-      the <strong>top</strong> of the zip, not inside a folder. ATAK unpacks
-      terrain flat into its DTED directory, so a wrapped archive extracts
-      perfectly and shows no terrain at all. The layout is checked before the
-      file is accepted.
+      The longitude folders — <code>w115</code>, <code>e007</code> — have to sit at
+      the <strong>top</strong> of the zip. ATAK unpacks terrain flat into its DTED
+      directory, so a nested archive extracts perfectly and shows no terrain at
+      all. <strong>Nested is fine to upload:</strong> the cells are found wherever
+      they are and moved to the top before the archive is stored, and you are told
+      when that happened. A zip holding no cells is refused.
     </p>
   </div>
 {% endmacro %}

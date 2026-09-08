@@ -572,6 +572,20 @@ against the destination root.
 extract alongside the data unless filtered. Most ATAK data packages are zipped on a
 Mac, so this is the normal case rather than the exception.
 
+⚠️ **The agent extracts entries at the paths the zip gives them**, so the archive's
+own layout decides where files land. For DTED this is decisive: ATAK reads terrain
+from `atak/DTED/<cell>/` and nowhere else — `FileSystemUtils.unzip(zip, dtedDir,
+true)` in `ElevationDownloader` — so cells nested one level down extract perfectly
+into `DTED/<folder>/<cell>/` and show no terrain, with nothing written to any log.
+
+ATLAS therefore normalises the archive **on the server at upload** rather than
+teaching the agent to flatten (W94). The trade was deliberate: an agent-side fix
+needs an APK, and until every device took it, one still on the old build would
+place terrain wrong and say nothing. Repacking at upload keeps the invariant that
+**what the server stores is what lands on disk**, which is also why no agent
+release was needed. Measured on a real 726 MB archive: 46.4s to repack, 68 of 68
+CRCs unchanged, 158 archiver-junk entries dropped.
+
 ### ❌ Verified: the agent cannot write another app's `Android/obb/` (R2)
 
 The [Manage all files](https://developer.android.com/training/data-storage/manage-all-files)

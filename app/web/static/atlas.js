@@ -2147,7 +2147,7 @@
       title.textContent = "Checking terrain archive";
       check.querySelector("[data-check-file]").textContent = file.name;
       progress.hidden = false;
-      progress.innerHTML = "<p>Reading the archive and checking the cell folders sit at the top of the zip…</p>";
+      progress.innerHTML = "<p>Reading the archive and finding the cell folders. If they are nested, the archive is repacked so ATAK can see them — that can take a minute for a large one.</p>";
       error.hidden = true;
       note.hidden = true;
       close.hidden = true;
@@ -2177,7 +2177,21 @@
           say(res.body.error || "upload failed", true);
           return;
         }
-        if (check) check.hidden = true;
+        // A repack changed the operator's file, so the modal stays up and says
+        // so. Silently handing back a different archive than the one uploaded is
+        // how checksums stop matching with nobody knowing why.
+        if (check) {
+          if (res.body.repacked) {
+            title.textContent = "Terrain repacked";
+            progress.hidden = true;
+            error.hidden = true;
+            note.hidden = false;
+            note.textContent = res.body.note;
+            close.hidden = false;
+          } else {
+            check.hidden = true;
+          }
+        }
 
         var existing = set.querySelectorAll('input[name="dted_archives__file_id"]');
         for (var i = 0; i < existing.length; i++) {
@@ -2191,7 +2205,7 @@
         set.dispatchEvent(new Event("input", { bubbles: true }));
         // The summary is the point: 11 cells is a different thing from 1, and
         // that is how someone notices they grabbed the wrong archive.
-        say(res.body.name + " added — " + res.body.summary);
+        say(res.body.name + " added — " + res.body.summary + (res.body.repacked ? " (repacked)" : ""));
       })
       .catch(function () {
         input.value = "";

@@ -26,7 +26,7 @@ import io
 import uuid
 import zipfile
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, BinaryIO
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -46,6 +46,63 @@ def is_archive(data: bytes) -> bool:
             return True
     except zipfile.BadZipFile:
         return False
+
+
+def _is_archive_stream(source: BinaryIO) -> bool:
+    """`is_archive` for something too big to hold in memory.
+
+    `ZipFile` leaves a file object it was handed open, so the stream survives to
+    be stored afterwards — it is rewound either way.
+    """
+    try:
+        source.seek(0)
+        with zipfile.ZipFile(source):
+            return True
+    except (zipfile.BadZipFile, OSError):
+        return False
+    finally:
+        source.seek(0)
+
+
+def ingest_stream(
+    session: Session,
+    storage: ArtifactStorage,
+    source: BinaryIO,
+    *,
+    name: str,
+    original_filename: str,
+    description: str | None = None,
+    media_type: str = "application/octet-stream",
+    in_library: bool = True,
+) -> ManagedFile:
+    """Store a seekable stream and catalogue it.
+
+    ⚠️ **The stream form exists for size.** W94 repacks a nested DTED archive
+    before storing it, and the operator's sample inflates to 1.75 GB; handing that
+    back as `bytes` would hold the whole thing in memory a second time for no
+    reason. `storage.put` already streams, so this only keeps it that way.
+    """
+    archive = _is_archive_stream(source)
+    digest, size = storage.put(source)
+    if size == 0:
+        raise FileError("uploaded file is empty")
+
+    if session.get(Artifact, digest) is None:
+        session.add(Artifact(sha256=digest, size_bytes=size, media_type=media_type))
+        session.flush()
+
+    managed = ManagedFile(
+        name=name,
+        description=description,
+        original_filename=original_filename,
+        media_type=media_type,
+        is_archive=archive,
+        artifact_sha256=digest,
+        in_library=in_library,
+    )
+    session.add(managed)
+    session.flush()
+    return managed
 
 
 def ingest_file(
@@ -68,23 +125,16 @@ def ingest_file(
     if not data:
         raise FileError("uploaded file is empty")
 
-    digest, size = storage.put(io.BytesIO(data))
-    if session.get(Artifact, digest) is None:
-        session.add(Artifact(sha256=digest, size_bytes=size, media_type=media_type))
-        session.flush()
-
-    managed = ManagedFile(
+    return ingest_stream(
+        session,
+        storage,
+        io.BytesIO(data),
         name=name,
-        description=description,
         original_filename=original_filename,
+        description=description,
         media_type=media_type,
-        is_archive=is_archive(data),
-        artifact_sha256=digest,
         in_library=in_library,
     )
-    session.add(managed)
-    session.flush()
-    return managed
 
 
 def delete_file(session: Session, storage: ArtifactStorage, managed: ManagedFile) -> None:

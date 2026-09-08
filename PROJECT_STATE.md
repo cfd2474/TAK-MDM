@@ -503,6 +503,84 @@ A green run says nothing about tests that are no longer there; the diff stat is
 what showed it (`5 insertions, 177 deletions` for a one-test edit). Restored, and
 the real total is 1066.
 
+---
+
+### ✅ W94 — DTED: unpack nested archives instead of refusing them
+
+Operator, 2026-09-07: *"i need the dted installer to recognize presence of dted
+folders and files and have the abilty to unpack appropriately, even if the
+uploaded zip has nested folders."*
+
+This **reverses W93's wrapped-archive refusal**. W93 was right that the layout
+matters and right that the device cannot report it; it was wrong to stop at
+saying no, because the archive an operator actually has — right-click a DTED
+folder in Windows — is the nested one, and re-zipping it by hand is work ATLAS
+can just do.
+
+#### Where the fix goes, and why not in the agent
+
+The agent could flatten at extraction time, and that reads as the natural home
+for it. It was rejected: it needs an APK, and until every device has taken it, a
+device on the old build handed a nested archive places the terrain wrong **and
+says nothing** — the exact silent failure this feature exists to prevent. There
+is no way to make an unknown key fail loudly on an old agent.
+
+Repacking at upload keeps the invariant that **what ATLAS stores is exactly what
+lands on disk**. The agent stays dumb, and every fielded device is correct the
+moment the server deploys — the same server-only reach that made D92 and the data
+packages cheap.
+
+**Measured before choosing**, on the operator's 726 MB sample: 226 entries,
+1.75 GB uncompressed, and a full repack costs ~56s — 34 MB/s recompressing,
+which is all of it; decompression runs at 423 MB/s. That fits the admin route's
+330s proxy timeout with room. It is also paid **only when the archive is
+nested**: a flat one is stored byte-for-byte as uploaded.
+
+#### Chunk C2
+
+1. `dted.plan_layout()` — pure: map every entry to where it must land, flatten
+   cells found at any depth, drop archiver junk, and refuse a genuine conflict
+   (two different files claiming one cell path) with both paths named.
+2. `dted.repack()` — stream entry by entry to a destination stream, so 1.75 GB
+   never lands in memory at once.
+3. `files.ingest_stream()` — store from a stream; `ingest_file` becomes a thin
+   wrapper, so the repacked temp file is not copied into memory a second time.
+4. `/policies/dted/upload` accepts nested, repacks when needed, and reports what
+   it did. Still refused: no cells at all, not a zip, conflicts.
+5. The check modal says the archive was re-packed and what moved. General Files
+   still refuses terrain and names the sub-topic — unchanged.
+6. Tests, including the real sample nested inside a folder, then deploy.
+
+⚠️ **W93's tests assert the old contract and will be changed deliberately** —
+`test_a_wrapped_archive_is_refused_with_the_reason` and its upload twin. They
+were correct for the design they were written against; the design moved. Editing
+them is not the same as the accidental truncation above, and the diff stat gets
+checked either way.
+
+###### ✅ Chunk C2 complete (2026-09-07)
+
+**1077 server tests** (28 in `tests/test_dted.py`, up from 17). Server-only
+deploy — no APK, no migration.
+
+**Verified at real scale, not just on toy zips.** The operator's 726 MB sample
+repacked in **46.4s**, with **68 of 68 CRCs unchanged**, every terrain path at
+depth 1, and the 158 archiver-junk entries dropped. Toy fixtures would not have
+exercised zip64 or the streaming path at all.
+
+**What still gets refused**, so the tool has not become permissive: a zip with no
+cells anywhere, something that is not a zip, and — the only new one — a genuine
+collision, where two entries would both become `w115/n32.dt2`. Picking a winner
+there would silently discard terrain.
+
+⚠️ **The repack is a change to the operator's file, so the modal says so** and
+stays open to say it. The stored archive is not the one they uploaded; someone
+comparing checksums later deserves the reason. A flat archive is stored
+byte-for-byte and pays none of this.
+
+**Planning is separate from repacking** (`plan_layout` takes names, nothing
+else). That is what lets the real sample be tested against the nested case
+without a minute of recompression per run.
+
 ### ✅ W92 — Field tips instead of placeholders, sitewide
 
 Operator, 2026-09-07: remove placeholders from text fields and use a visible tip
