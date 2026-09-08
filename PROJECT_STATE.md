@@ -578,6 +578,42 @@ Manual upload already covers this case — `/apps/upload` takes an APK or XAPK, 
 the operator's own test files are APKPure downloads made by hand. What ATLAS adds
 on top of that is the part it is good at: reading the file and saying what it is.
 
+#### ⚠️ APKMirror: the same wall, one level deeper (measured 2026-09-07)
+
+Evaluated next, via `github.com/tanishqmanuja/apkmirror-downloader` (TypeScript,
+MIT, 88 stars — so a port, never a dependency, from a Python server). Its own
+README warns that downloads *"can fail at random … due to rate limit protection by
+APKMirror using Cloudflare"*.
+
+| APKMirror | Result |
+|---|---|
+| home, search, app pages | **200** — open and parseable, 50 clean result rows |
+| release / variant / download pages | **403** — `server: cloudflare`, "Just a moment…" |
+
+⚠️ **Deterministic, not rate limiting.** Two rounds three seconds apart returned
+byte-identical responses: search 200 both times, the release page 403 both times
+at exactly 6032 bytes. The protection sits on precisely the pages that lead to a
+file.
+
+So APKMirror offers a searchable catalogue with no reachable download. **That is
+worse than no tab**: it teaches an operator to hunt and then hit a wall. Not built,
+for the same reason APKPure was not.
+
+#### ✅ What does work: any F-Droid-format repository
+
+`FDroidSource` already takes a `repo` argument, and the format is not F-Droid's
+alone. Both of these answered on first contact, in the same format, publishing the
+same digests:
+
+| Repository | Index | Packages |
+|---|---|---|
+| IzzyOnDroid | 13.9 MB | 1394 |
+| F-Droid archive | 111.3 MB | 5030 — older builds of F-Droid apps |
+
+No scraping, the same verification chain, and roughly double the catalogue —
+plus, via the archive, the ability to fetch a *specific older build*, which is
+exactly the situation R19 ended in (a 32-bit newest, a working older one).
+
 **Dependencies added:** `httpx` only, already present. `beautifulsoup4` and
 `cloudscraper` are **not** added — nothing left to scrape.
 
