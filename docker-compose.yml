@@ -90,12 +90,23 @@ services:
       # Admin console, Basic auth over TLS (W36). Separate from the device port:
       # 8443 authenticates devices by certificate, 9443 authenticates people.
       - "9443:9443"
+      # The console under its own hostname, with a real certificate (W100).
+      # 9443 stays exactly as it was, so nothing depending on it changes.
+      - "443:443"
     volumes:
       # ./pki is a bind mount rather than a named volume so the host can read the
       # CA and the dev TLS certificate directly — scripts/dev_enroll.py needs both.
       # On a Linux host you may need `sudo chown -R 1000:1000 ./pki` once.
       - ./pki:/pki:ro
       - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # The shared auth-boundary snippet both console listeners include (W100).
+      - ./docker/nginx/console-proxy.inc:/etc/nginx/console-proxy.inc:ro
+      # ACME challenge webroot (W100). certbot writes here, nginx only reads —
+      # hence :ro on this side.
+      - ./acme:/var/www/acme:ro
+      # Issued certificates. Read-only here for the same reason: the proxy serves
+      # them and has no business changing them.
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     depends_on:
       api:
         condition: service_started

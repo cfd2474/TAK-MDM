@@ -405,6 +405,70 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W100 — `mdm.tak-solutions.com` on 443, with a real certificate
+
+Operator, 2026-09-08: an A record for `mdm.tak-solutions.com` should reach the
+enrollment page.
+
+#### What was already true
+
+    mdm.tak-solutions.com → 209.182.235.108           ✓ A record live
+    https://…:9443/enrollment → 401 Basic "ATLAS console"  ✓ already answers
+    https://…/ (443)          → connection refused          ✗ nothing listening
+    http://…/ (80)            → 403 from nginx              ✓ reachable, APK-only
+
+The 9443 block is `server_name _`, so the hostname *already* reaches the console.
+Only the bare name on 443 was missing.
+
+⚠️ **`/enrollment` is an admin page, not a device-facing one.** It sits behind
+`admin_required` and mints 15-minute credentials that let a device join the fleet.
+So this publishes the **console** under a public name. The auth boundary does not
+change — HTTP Basic, as on 9443 — but **443 is vastly more discoverable** than
+9443, which scanners essentially never touch. Worth a strong Basic password; there
+is no rate limiting in front of it.
+
+#### Order is forced by the certificate
+
+nginx will not start with a server block naming a certificate that does not exist,
+so this cannot be done in one pass:
+
+1. Serve `/.well-known/acme-challenge/` from a webroot on the existing port 80
+   block, and mount it. Deploy — nginx is still happy, nothing else changes.
+2. Issue the certificate with certbot in webroot mode against that path.
+3. Add the 443 block for the hostname, publish 443, redirect `/` → `/enrollment`.
+   Deploy.
+4. Renewal on a timer, with a reload hook.
+5. Verify from outside: a real chain, and the redirect landing on the login.
+
+**9443 is left exactly as it is**, so nothing that works today depends on this
+succeeding.
+
+###### ✅ Complete (2026-09-08), verified from outside
+
+    GET https://mdm.tak-solutions.com/          -> 302 -> /enrollment
+    GET .../enrollment                          -> 401 Basic "ATLAS console"
+    9443                                        -> 401, unchanged
+    cert: mdm.tak-solutions.com, Let's Encrypt, to 2026-12-07
+
+Checked **with TLS verification on**, not bypassed — a self-signed certificate
+would have passed a `verify=False` test and failed every browser.
+
+⚠️ **The auth boundary was factored into `console-proxy.inc`, shared by both
+listeners.** Those `proxy_set_header X-Authentik-*` lines *are* the security
+model: the app trusts that header completely, so everything rests on only the
+proxy being able to set it. Two copies could drift, and the copy that got weakened
+would still look like a working console. One file cannot drift from itself.
+
+⚠️ **Renewal is a systemd timer, because this host has no cron** — `crontab` is
+not on the PATH, which also explains the note elsewhere that the SQL backups are
+all manual. `certbot renew --dry-run` was run: the whole path works, rather than
+merely being scheduled.
+
+⚠️ **Registered with no email contact**, so there are **no expiry warnings from
+Let's Encrypt** and the timer is the only safety net. The operator's address is
+for identifying them here, not for handing to a third party; `certbot
+update_account` adds one if wanted.
+
 ### ✅ W99 — Google Play as a source, via an operator-supplied token
 
 Operator, 2026-09-08: *"continue with apkeep Google play using the token method…

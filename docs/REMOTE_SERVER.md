@@ -190,6 +190,58 @@ Then deploy as in 3.2 and check `alembic current` before and after. Head as of
 
 ---
 
+## 3.5 The public hostname and its certificate (W100)
+
+`mdm.tak-solutions.com` is an A record for this host. The console answers on it:
+
+| URL | What |
+|---|---|
+| `https://mdm.tak-solutions.com/` | 302 to `/enrollment` |
+| `https://mdm.tak-solutions.com/enrollment` | the console, HTTP Basic |
+| `https://…:9443/…` | unchanged, still works, self-signed |
+
+⚠️ **443 is the console on a discoverable port.** The auth boundary is the same
+HTTP Basic as 9443 and nothing about who may enter changed — but 443 is scanned
+constantly and 9443 is not, so the strength of that one password now matters more.
+There is no rate limiting in front of it.
+
+⚠️ **The landing page mints credentials.** `/enrollment` is an operator page whose
+"Generate QR" issues a 15-minute token that lets a device join the fleet. What was
+added is convenience, not a public page.
+
+### The certificate
+
+Let's Encrypt, issued by webroot HTTP-01. nginx serves
+`/.well-known/acme-challenge/` from `/opt/atlas/acme` on port 80 — which is
+already published for the provisioning APK, and which Let's Encrypt requires in
+the clear, since it follows no redirect to TLS.
+
+⚠️ **Registered with no email contact**, deliberately: the operator's address is
+for identifying them here, not for handing to a third party. That means **no
+expiry warnings from Let's Encrypt** — the renewal timer is the only safety net.
+Add one later with:
+
+```bash
+docker run --rm -v /etc/letsencrypt:/etc/letsencrypt certbot/certbot   update_account --email you@example.com
+```
+
+### Renewal
+
+`atlas-certbot-renew.timer` runs twice daily (units in `docker/systemd/`, copied
+to `/etc/systemd/system/`). ⚠️ **A timer, because this host has no cron** —
+`crontab` is not on the PATH. Verify it works without waiting for expiry:
+
+```bash
+docker run --rm -v /etc/letsencrypt:/etc/letsencrypt   -v /var/lib/letsencrypt:/var/lib/letsencrypt -v /opt/atlas/acme:/var/www/acme   certbot/certbot renew --dry-run
+systemctl list-timers atlas-certbot-renew.timer
+```
+
+Issuing a *new* name needs the 443 block edited first — and nginx will not start
+naming a certificate that does not exist yet, so add the ACME path, issue, then
+add the listener.
+
+---
+
 ## 4. Endpoints
 
 Verified 2026-09-07. The codes are the *expected* ones — a `403` here is the
