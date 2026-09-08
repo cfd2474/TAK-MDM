@@ -82,6 +82,22 @@ class InspectedBundle:
     def base(self) -> BundlePart:
         return next(p for p in self.parts if p.role is PartRole.BASE)
 
+    @property
+    def abis(self) -> tuple[str, ...]:
+        """Every architecture any part of this bundle carries code for (W96).
+
+        ⚠️ **Across all parts, because that is where a bundle keeps it.** The base
+        of a split app often holds no native code at all — the operator's Chrome
+        XAPK is exactly that shape — so reading only `base.info` would report the
+        whole app as running anywhere while the split that actually carries the
+        code is `armeabi-v7a` only.
+        """
+        found: set[str] = set()
+        for part in self.parts:
+            if part.info is not None:
+                found |= set(part.info.abis)
+        return tuple(sorted(found))
+
 
 def is_container(data: bytes) -> bool:
     """True for a ZIP that holds APKs rather than being one."""

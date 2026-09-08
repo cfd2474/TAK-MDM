@@ -213,6 +213,9 @@ def ingest(
         min_sdk=bundle.min_sdk,
         target_sdk=bundle.target_sdk,
         plugin_api=bundle.plugin_api,
+        # "" is a real answer — no native code, so it runs anywhere. See the
+        # column's note on why that is not the same as NULL.
+        abis=",".join(bundle.abis),
         published=publish,
         # Scanned once, here, from the base part (W49). The device needs each key's
         # declared type to build a Bundle the app can actually read.

@@ -159,12 +159,27 @@
                 can still be pinned to exactly by a policy.
               </p>
               <table>
-                <thead><tr><th>versionCode</th><th>Version</th><th>Uploaded</th><th>State</th><th></th></tr></thead>
+                <thead><tr><th>versionCode</th><th>Version</th><th>Architecture</th><th>Uploaded</th><th>State</th><th></th></tr></thead>
                 <tbody>
                 {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
                   <tr>
                     <td class="mono">{{ v.version_code }}</td>
                     <td>{{ v.version_name or '—' }}</td>
+                    {#
+                      ⚠️ Three states, not two (W96). NULL is "uploaded before
+                      anything looked"; empty is "looked, carries no native code",
+                      which is the build that installs on anything. Showing both
+                      as "any" would be the claim that left an SM-X520 degraded.
+                    #}
+                    <td>
+                      {% if v.abis is none %}
+                        <span class="muted" title="Uploaded before builds were scanned for native code.">not scanned</span>
+                      {% elif v.abis == '' %}
+                        <span class="pill good" title="No native code, so it installs on any architecture.">any</span>
+                      {% else %}
+                        <span class="mono" title="Installs only on these architectures.">{{ v.abis.replace(',', ', ') }}</span>
+                      {% endif %}
+                    </td>
                     <td class="muted">{{ v.uploaded_at.strftime('%Y-%m-%d %H:%M') if v.uploaded_at else '—' }}</td>
                     <td>
                       {% if v.published %}<span class="pill good">published</span>

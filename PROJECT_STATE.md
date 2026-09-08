@@ -405,6 +405,116 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### 🚧 W96 — Will this build even run here? (R19)
+
+Operator, 2026-09-07, after R19 left the SM-X520 permanently DEGRADED: *"how can
+we address R19 for system sustainability when we may not know the architecture of
+the deployed device?"*
+
+#### What was actually true before starting
+
+| Fact | State |
+|---|---|
+| ABIs an APK carries | **never read** — `apk.py` does not look at `lib/` |
+| A device's supported ABIs | **never known** — no column, the agent never reports it |
+| `min_sdk` per build | **recorded at ingest, then ignored** |
+| Version choice | `max(version_code)` among published — **no device parameter** |
+
+⚠️ **This is not an ABI gap, it is a missing compatibility gate.** The identical
+bug sits unfired behind `min_sdk`: publish a build needing API 34, hand it to an
+API 33 tablet, and `INSTALL_FAILED_OLDER_SDK` loops exactly as Chrome does — with
+the data already in the database and nothing consulting it. So the fix is one
+predicate over "can this build run on this device", not an ABI special case.
+
+#### R19's root cause, found by probing the real files
+
+`com.android.chrome.apk` inside `Google+Chrome_152.0.7977.82_APKPure.xapk` carries
+**`armeabi-v7a` only** — a 32-bit build. The SM-X520 is 64-bit-only, so the native
+libraries genuinely cannot be extracted. That is `res=-113` exactly.
+
+⚠️ **Two traps a naive `lib/` scan falls into**, both found in the operator's own
+test files:
+
+* The Chrome `.xapk` has **no top-level `lib/` at all** — it is a bundle of four
+  split APKs, and a naive scan calls it *universal*, which is the opposite of
+  true.
+* `ATAK-Plugin-uastool` **does** hold inner APKs, at `assets/apks/DJI/ATAKGo.apk`
+  — payloads it ships, not splits it installs. Counting those would misreport the
+  ABIs of every ATAK plugin.
+
+So: splits at the archive root count; anything under `assets/` does not.
+
+Known-good answers to test against, all from `Test Files/`:
+
+| File | Expected |
+|---|---|
+| `ATAK-5.8.0.4` | `arm64-v8a` only |
+| `GoTAK-Launcher-1.2.0` | universal — no native libs at all |
+| `Microsoft Outlook` | four ABIs |
+| `ArcGIS Field Maps` | arm64-v8a + armeabi-v7a |
+| `Chrome .xapk` | `armeabi-v7a`, from the split — **not** universal |
+| `ATAK-Plugin-uastool` | its own two ABIs; the `assets/` APKs ignored |
+
+#### Chunk C1 — make it visible where it is cheap to fix
+
+Ordered so the payoff comes first: step 1 alone turns an invisible fault into a
+line the operator reads *while holding the file*, and touches no resolution.
+
+1. `apk.py` reports the ABIs a build carries — root splits unioned, `assets/`
+   ignored, no `lib/` meaning universal.
+2. `AppPackageVersion.abis` + a hand-written migration; ingest records it.
+3. The console says so on the app and version pages: "any architecture", or the
+   list, so `armeabi-v7a` on a 64-bit fleet is legible before it deploys.
+4. Tests against every real file above, plus the two traps as their own cases.
+5. Full suite, then deploy.
+
+#### Chunk C2 — the device's half, and stopping the pointless retry
+
+6. The agent reports `Build.SUPPORTED_ABIS` and `SDK_INT`; `Device` gains both,
+   with a migration.
+7. Structural install failures (`NO_MATCHING_ABIS`, `OLDER_SDK`) are reported once
+   and **not** retried — the same install cannot succeed, and re-attempting every
+   reconcile is noise that hides real failures. Transient ones keep retrying.
+8. Agent APK published.
+
+#### Deferred, deliberately
+
+Device-aware resolution (thread the device into `resolve_required_apps`, pick the
+newest *compatible* build) and publish-time warnings. Both need C1 and C2's facts
+to exist first, and the second changes what "the build this package deploys" means
+in the console — a modelling change, not plumbing, and worth its own chunk.
+
+**Chrome needs none of this today**: it is preinstalled as a system app, so
+dropping it from required apps and keeping the kiosk tile removes the failure now.
+That stays the operator's call.
+
+###### ✅ Chunk C1 complete (2026-09-07)
+
+**1099 server tests** (17 new), deployed, migration `x4z6b8d0f2h4` applied after a
+`pg_dump` backup. Every existing row is NULL — "nobody looked" — exactly as
+designed.
+
+⚠️ **Migrations do not run themselves on this host.** The `init` container only
+builds PKI; `docker compose up -d --build` left `alembic current` one revision
+behind head, silently. It took an explicit `alembic upgrade head`. Worth
+remembering: the deploy reports success either way.
+
+**All six real files read correctly**, including both traps — the Chrome bundle as
+`armeabi-v7a` rather than universal, and the ATAK plugin's `assets/apks/` payloads
+ignored.
+
+⚠️ **Two tests failed first, and both were the test being wrong, not the code.**
+`build_xapk`'s splits are named `config.arm64_v8a` but carry no `lib/` at all, so
+asserting against it would have passed against a base-only read and proved
+nothing — the bundle is now assembled with a split that really holds native code.
+And the console's version table renders only for the package named in
+`?versions=`, which is how a row expands.
+
+**Not done, and worth deciding before C2:** existing library rows stay "not
+scanned" until something re-reads them, so the operator's own 32-bit Chrome is
+*not* yet flagged in the console. A backfill over stored artifacts would fix that
+— `backfill_plugin_api` is the pattern — but it was not in this chunk's plan.
+
 ### ✅ W95 — Multi-app kiosk: the dock, activities, and where the section sits
 
 Operator, 2026-09-07: *"The multi-app kiosk mode is not allowing more than 1

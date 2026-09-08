@@ -789,6 +789,12 @@ class AppPackageVersion(Base):
     version_name: Mapped[str | None] = mapped_column(String(128), default=None)
     min_sdk: Mapped[int | None] = mapped_column(Integer, default=None)
     target_sdk: Mapped[int | None] = mapped_column(Integer, default=None)
+    #: CPU architectures this build carries native code for, comma-separated
+    #: (W96). ⚠️ **NULL and empty mean different things.** NULL is "uploaded
+    #: before anything looked"; empty is "looked, and it carries none" — which is
+    #: the build that runs on every device. Collapsing the two would let an
+    #: unscanned arm64-only APK pass for universal.
+    abis: Mapped[str | None] = mapped_column(String(128), default=None)
     # The ATAK build an ATAK plugin was compiled against, e.g.
     # "com.atakmap.app@5.5.0.CIV". A plugin only loads in that build, so this is a
     # **compatibility key, not a version** — two builds of one plugin targeting

@@ -77,6 +77,11 @@ class ApkInfo:
     # The app's display name, when the manifest states it literally. None when it
     # is a resource reference, which is the common case (W51).
     label: str | None = None
+    # CPU architectures this build carries native code for, e.g.
+    # ("arm64-v8a",). Empty means it carries none, and therefore runs anywhere
+    # (W96) — see `native_abis`, where empty and unknown are deliberately the
+    # same answer for opposite reasons.
+    abis: tuple[str, ...] = ()
     # The launcher icon, when one can be extracted. None for an app whose icon is
     # a vector drawable, which needs a renderer we do not have (W53).
     icon: AppIcon | None = None
@@ -382,6 +387,61 @@ def extract_signature(data: bytes, archive: zipfile.ZipFile) -> tuple[str | None
 
 
 # --------------------------------------------------------------------------- #
+# Native code
+# --------------------------------------------------------------------------- #
+
+
+def _abis_of(archive: zipfile.ZipFile) -> set[str]:
+    """The `lib/<abi>/` directories present in one archive."""
+    found: set[str] = set()
+    for name in archive.namelist():
+        parts = name.replace("\\", "/").split("/")
+        if len(parts) >= 3 and parts[0] == "lib" and parts[1] and parts[-1]:
+            found.add(parts[1])
+    return found
+
+
+def native_abis(data: bytes, archive: zipfile.ZipFile) -> tuple[str, ...]:
+    """CPU architectures this build carries native code for (W96).
+
+    ⚠️ **An empty result means "runs anywhere", so it must never be the answer
+    for "I could not tell".** A build with no `lib/` really does run on any
+    device — `GoTAK-Launcher` is one. Reporting an unreadable bundle the same way
+    would wave through the exact build that cannot install, which is the failure
+    this exists to prevent, so a split that will not open is skipped rather than
+    treated as universal.
+
+    ⚠️ **Bundles keep their native code in the splits, not at the root.** The
+    operator's `Google+Chrome_…xapk` has no top-level `lib/` at all, and a scan
+    that stopped there would call it universal — while the `com.android.chrome.apk`
+    inside carries `armeabi-v7a` only, which is precisely why it cannot install on
+    a 64-bit-only tablet (R19).
+
+    ⚠️ **Only splits at the root count.** `ATAK-Plugin-uastool` ships APKs at
+    `assets/apks/DJI/ATAKGo.apk` — payloads it hands to something else, not code
+    this install runs. Counting those would misreport the ABIs of every ATAK
+    plugin that bundles a drone SDK.
+    """
+    found = _abis_of(archive)
+
+    for name in archive.namelist():
+        normalised = name.replace("\\", "/")
+        # A split sits at the root. Anything nested is content, not code.
+        if not normalised.endswith(".apk") or "/" in normalised:
+            continue
+        try:
+            with archive.open(normalised) as handle:
+                with zipfile.ZipFile(io.BytesIO(handle.read())) as split:
+                    found |= _abis_of(split)
+        except (zipfile.BadZipFile, KeyError, OSError):
+            # Unreadable split: say nothing about it rather than claim it is
+            # universal. See the warning above.
+            continue
+
+    return tuple(sorted(found))
+
+
+# --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
 
@@ -400,6 +460,7 @@ def inspect_apk(data: bytes) -> ApkInfo:
             activities, launcher_activities,
         ) = _read_manifest(archive)
         signature_sha256, scheme = extract_signature(data, archive)
+        abis = native_abis(data, archive)
 
         # Inside the `with`: reading a closed archive raises, and the helpers below
         # turn any read failure into a silent None — the same trap that made
@@ -436,6 +497,7 @@ def inspect_apk(data: bytes) -> ApkInfo:
         launcher_activities=launcher_activities,
         plugin_api=plugin_api,
         label=label,
+        abis=abis,
         icon=icon,
         declared_config=declared_config,
     )
