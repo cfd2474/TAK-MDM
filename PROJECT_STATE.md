@@ -711,6 +711,73 @@ The order that makes sense, if this is ever picked up: use the index metadata th
 is already downloaded, then decide whether the proprietary apps justify the rights
 question.
 
+###### 🔎 Google Play routes surveyed — one kept open (2026-09-08)
+
+Unlike the mirrors, these speak Play's own protobuf API and pull from Google's
+servers: no Cloudflare, no scraping. The obstacles are licence, signing and terms.
+
+| Project | Licence | Last push | Verdict |
+|---|---|---|---|
+| `yeriomin/YalpStore` | **GPL-2.0** | 2022-09-27 | ✗ Java app; GPL-2.0 is *mutually* incompatible with Apache-2.0 |
+| `yeriomin/play-store-api` | GPL-3.0 | 2020-11-16 | ✗ the reusable half, six years stale |
+| `whyorean/AuroraStore` | GPL-3.0 | 2026-08-24 | ✗ maintained successor, same copyleft bar |
+| `alltechdev/gplay-apk-downloader` | GPL-3.0 | 2026-07-05 | ✗✗ **actively harmful** — see below |
+| **`rehmatworks/gplaydl`** | **MIT** | current (`main`) | 🔎 **possible — kept open** |
+
+⚠️ **`gplay-apk-downloader` is the one to refuse outright**, quite apart from its
+licence. Its `gplay-downloader.py` carries 177 references to `split`, 70 to
+`merge`, 12 to `APKEditor` and — decisively — `apksigner`, `keystore` and
+`debug.keystore`. It merges an app bundle and **re-signs the result with a debug
+key**. Everything this project has built then breaks by design: `ingest` refuses
+the changed certificate, Android refuses the update
+(`INSTALL_FAILED_UPDATE_INCOMPATIBLE`, permanently unretryable since W96), and any
+app that verifies its own signature fails — which includes ATAK plugins checking
+ATAK's. It also commits a 7 MB prebuilt `APKEditor.jar` into the repository.
+
+#### 🔎 `gplaydl` — the candidate, and what must be answered before adopting it
+
+Verified from the repository rather than the README: **MIT, © 2021 Rehmat Alam**,
+Python 3, and no signing calls in the package. It downloads base APKs, splits, OBB
+and asset packs, and **explicitly does not merge or re-sign** — so the vendor's
+signature survives, which is the property everything else here depends on.
+
+It also lands in a shape ATLAS already speaks: `inspect_bundle` handles base +
+splits + OBB as `PartRole`s today.
+
+**Open questions, to answer before it becomes a source rather than a bookmark:**
+
+* ⚠️ **The Google account risk is borne by every self-hosting operator.** Its own
+  README warns Google may flag, lock or restrict accounts used with it. Unlike
+  YalpStore's shared credentials this is an account the operator chooses — better,
+  but it is still ToS §3.3, and in a product it becomes a support burden and a
+  question at every customer's security review.
+* **Token lifecycle**: a companion Android app on a phone mints the token, which is
+  then cached on the server. Someone must keep that path alive to re-link.
+* ⚠️ **`cloudscraper==1.2.71` is among its `main` dependencies** — the library
+  measured on 2026-09-07 as failing against Cloudflare's current challenge on
+  three separate sites. Not proof it fails here, but understand what it is for
+  before depending on it.
+* **Install from `main`, never `master`.** The `master` line is the old 1.3.5
+  release pinning `cryptography==2.9` (2020) and `gpapidl`. `main` is small and
+  modern: `typer`, `rich`, `httpx`, `cloudscraper`.
+* **Pin conflict**: it wants `httpx==0.28.1`; this project pins `0.27.2`.
+
+**It pairs with deferred work, not with today's.** Play serves *device-matched*
+builds, which is elegant — and only pays off alongside device-aware resolution,
+since resolution currently picks one build per package for the whole fleet.
+
+#### The sanctioned alternative, if Play apps ever become a requirement
+
+**Managed Google Play**, via Google's EMM programme / Android Management API. It
+exists for exactly this, carries no terms risk, and is what commercial MDMs use.
+It is a project rather than a chunk: EMM registration with Google and an enrolment
+model beside the current AOSP Device Owner approach.
+
+⚠️ **Keep the need in proportion.** The apps this fleet depends on — ATAK and its
+plugins — come from tak.gov, already integrated. Play would add Chrome, which the
+tablets ship newer than anything fetchable, plus Handtevy and ArcGIS, which reach
+the library perfectly well by hand.
+
 **Dependencies added:** `httpx` only, already present. `beautifulsoup4` and
 `cloudscraper` are **not** added — nothing left to scrape.
 
