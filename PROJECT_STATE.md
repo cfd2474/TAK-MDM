@@ -683,7 +683,7 @@ invisible second effect.
 function, because nothing in Kotlin could see any of these faults — no data was
 lost and nothing was logged in any of the three rounds.
 
-#### ⚠️ R19 — Chrome cannot install on the SM-X520 (found by this test)
+#### ✅ R19 — resolved 2026-09-07 (Chrome could not install on the SM-X520)
 
 `com.android.chrome` `152.0.7977.82` (code `797708200`) fails with
 `INSTALL_FAILED_NO_MATCHING_ABIS … res=-113` — the APK in the library carries no
@@ -698,6 +698,33 @@ shows only in compliance.
 
 Fix is the operator's call: upload an arm64-v8a build, or drop Chrome from
 required apps and rely on the preinstalled one.
+
+##### How it actually ended, which is not what was predicted
+
+**Chrome `152.0.7977.82` is held.** Policies now resolve Chrome to
+`139.0.7258.158`, which carries `arm64-v8a`. `SM-X520` is **COMPLIANT**, no
+errors, stable across three minutes of sampling.
+
+⚠️ **The 139 install was never exercised, because the device did not need it.**
+The tablet already carries Chrome `733920733` — newer than *both* library builds —
+so the agent installed nothing, kept what was there, and filed a warning, which by
+design never moves compliance (W50):
+
+> *the device has versionCode 733920733, newer than the 725815833 this policy
+> installs. The newer build satisfies the requirement and was kept.*
+
+So the loop stopped because the 32-bit build left the selection, not because a
+working build replaced it. **The digest-keyed skip in `InstallRetryPlan` is
+therefore still unproven on hardware** — no install was attempted at all. It was
+claimed as exercised in the moment and it was not.
+
+⚠️ **The device settled the ABI question itself.** On agent 0.46.0 it reports
+`supported_abis = 'arm64-v8a'` — no 32-bit support at all — and `sdk_int = 36`. The
+whole diagnosis now rests on data the server holds rather than on inference.
+
+**The honest lesson for the library**: requiring Chrome by policy achieves nothing
+on this fleet, since the devices ship a newer one than anything uploaded. The
+warning says so on every check-in.
 
 ### ✅ W93 — ATAK DTED
 
