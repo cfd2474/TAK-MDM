@@ -641,6 +641,42 @@ third party shipping mostly developer-provided binaries. Both legitimate, not th
 same decision — and listing them side by side without a word would have implied
 otherwise.
 
+###### The prior art surveyed, and why only one route survived (2026-09-07)
+
+Four projects were scoped at the operator's request. Recorded so none of this is
+re-derived.
+
+| Project | Licence | Verdict |
+|---|---|---|
+| `anishomsy/apkpure` | Apache-2.0, Python | ✗ APKPure 403s everything; cloudscraper no longer passes the challenge |
+| `tanishqmanuja/apkmirror-downloader` | MIT, TypeScript | ✗ search open, **release/download pages 403** — deterministic, byte-identical across rounds |
+| `arghya339/apkdl` | **GPL-3.0**, Bash, archived 2026-09-04 | ✗ licence alone bars it: GPL-3.0 cannot enter an Apache-2.0 codebase |
+| `StefanescuCristian/Aptoide-Downloader` | **GPL-3.0**, shell | ✗ same licence bar |
+| `danieliu/play-scraper` | MIT, Python, archived 2026-03-11 | ✗ **metadata only — cannot download APKs** |
+
+⚠️ **Licence is a first-class filter here, not an afterthought.** Apache-2.0 code
+may be used in a GPL-3.0 project; the reverse is not true. Two of the five were
+unusable before a line was read.
+
+⚠️ **Cloudflare has settled this category.** APKPure, APKMirror and APKCombo all
+answer 403 to a server. This is not a gap to engineer around — it is the mirrors
+deciding they do not serve robots.
+
+**What was learned that has value:**
+
+* Aptoide *does* run a real API and publishes a malware rank and the true signing
+  certificate DN (Mozilla's, verified). It was judged more harshly than deserved
+  at first — the "decade-old build" was a bad search row, not the catalogue. It is
+  still declined: **MD5-only integrity** against ATLAS's SHA-256 design, a
+  SHA-1 certificate that cannot be compared with the stored `signature_sha256`,
+  `signature_validated: unknown`, and arbitrary user stores as publishers.
+* **Mirrors lag the vendor.** Play had Firefox at `155.0.1` while Aptoide offered
+  `153.0.4` — a small, concrete argument for vendor-published sources.
+* The route worth taking next, if more breadth is ever wanted, is
+  **GitHub/GitLab/Codeberg releases**: the vendor's own repository over TLS, an
+  API rather than a scrape, and where ATAK plugins actually live. Play is not the
+  channel of record for ATAK; tak.gov is, and the TPC tab already reaches it.
+
 **Dependencies added:** `httpx` only, already present. `beautifulsoup4` and
 `cloudscraper` are **not** added — nothing left to scrape.
 
