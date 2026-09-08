@@ -1812,6 +1812,10 @@ def _version_row(session: Session, version, preflight) -> dict:
     return {
         "version_code": version.version_code,
         "version_name": version.version_name,
+        # The handle the source needs to fetch this build. A versionCode for an
+        # index, a version name for APKPure — the console never has to know which.
+        "version_key": version.version_key,
+        "display_version": version.display_version,
         "size": version.size,
         "abis": list(version.abis) if version.abis is not None else None,
         "min_sdk": version.min_sdk,
@@ -1825,38 +1829,61 @@ def _version_row(session: Session, version, preflight) -> dict:
 @router.get("/apps/repo/search")
 def repo_search(
     q: str = "",
-    source: str = "fdroid",
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     identity: AdminIdentity = Depends(admin_required),
 ) -> JSONResponse:
+    """Search every source at once (W98).
+
+    ⚠️ **One failing source must not empty the page.** Each is caught on its own
+    and reported beside the results that did arrive — a search that returns
+    nothing because APKPure is unreachable, with no explanation, would send an
+    operator hunting for an app that F-Droid was holding all along.
+    """
+    from app.services.app_sources import repos as app_repos
     from app.services.app_sources.base import SourceError
 
-    client = _repo_source(source, settings)
-    if client is None:
-        return JSONResponse({"error": f"unknown source {source!r}"}, status_code=404)
+    query = (q or "").strip()
+    if not query:
+        return JSONResponse({"apps": [], "problems": []})
 
-    try:
-        apps = client.search(q)
-    except SourceError as exc:
-        # Verbatim: these name the repository and what it did, which is the only
-        # part an operator can act on.
-        return JSONResponse({"error": str(exc)}, status_code=502)
+    rows: list[dict] = []
+    problems: list[dict] = []
 
-    return JSONResponse(
-        {
-            "source": client.name,
-            "apps": [
+    for spec in app_repos.KNOWN:
+        client = _repo_source(spec.name, settings)
+        if client is None:
+            continue
+        try:
+            found = client.search(query)
+        except SourceError as exc:
+            problems.append({"source": spec.name, "label": spec.label, "error": str(exc)})
+            continue
+        for app in found:
+            rows.append(
                 {
-                    "package_name": a.package_name,
-                    "name": a.name,
-                    "summary": a.summary,
-                    "web_url": a.web_url,
+                    "package_name": app.package_name,
+                    "name": app.name,
+                    "summary": app.summary,
+                    "web_url": app.web_url,
+                    "source": spec.name,
+                    "source_label": spec.label,
+                    "verifiable": spec.kind != "apkpure",
                 }
-                for a in apps
-            ],
-        }
+            )
+
+    # ⚠️ Verifiable sources first — the same recommendation the catalogue's order
+    # encodes. Within that, an exact package match before anything else.
+    order = {spec.name: i for i, spec in enumerate(app_repos.KNOWN)}
+    rows.sort(
+        key=lambda r: (
+            0 if r["package_name"].lower() == query.lower() else 1,
+            order.get(r["source"], 99),
+            r["name"].lower(),
+        )
     )
+
+    return JSONResponse({"apps": rows, "problems": problems})
 
 
 @router.get("/apps/repo/versions")
@@ -1894,7 +1921,7 @@ def repo_versions(
 @router.post("/apps/repo/import")
 def repo_import_form(
     package: str = Form(...),
-    version_code: int = Form(...),
+    version_key: str = Form(...),
     source: str = Form(default="fdroid"),
     label: str = Form(default=""),
     session: Session = Depends(get_db),
@@ -1922,10 +1949,10 @@ def repo_import_form(
     except SourceError as exc:
         return JSONResponse({"error": str(exc)}, status_code=502)
 
-    chosen = next((v for v in versions if v.version_code == version_code), None)
+    chosen = next((v for v in versions if v.version_key == version_key), None)
     if chosen is None:
         return JSONResponse(
-            {"error": f"versionCode {version_code} is no longer offered for {package}"},
+            {"error": f"version {version_key} is no longer offered for {package}"},
             status_code=404,
         )
 

@@ -2296,30 +2296,9 @@
   if (!panel) return;
 
   var query = panel.querySelector("[data-repo-query]");
-  var picker = panel.querySelector("[data-repo-source]");
-  var note = panel.querySelector("[data-repo-note]");
-
-  // Which repository is being searched has to travel with every call: a version
-  // list or an import that guessed "fdroid" would fetch a different build than
-  // the one on screen.
-  function source() {
-    return picker ? picker.value : "fdroid";
-  }
-
-  function showNote() {
-    if (!picker || !note) return;
-    var chosen = picker.options[picker.selectedIndex];
-    note.textContent = chosen ? chosen.getAttribute("data-note") || "" : "";
-  }
-  if (picker) {
-    picker.addEventListener("change", function () {
-      showNote();
-      // The results on screen belong to the repository that produced them.
-      results.innerHTML = "";
-      say("");
-    });
-    showNote();
-  }
+  // ⚠️ There is no picker any more (W98). One bar searches everything, so the
+  // source travels on the *row* — a version list or an import that guessed
+  // would fetch a different build than the one the operator clicked.
   var status = panel.querySelector("#repo-status");
   var results = panel.querySelector("#repo-results");
   var modal = panel.querySelector("#repo-modal");
@@ -2354,17 +2333,34 @@
     say("Searching F-Droid…");
     results.innerHTML = "";
 
-    fetch("/apps/repo/search?source=" + encodeURIComponent(source()) +
-          "&q=" + encodeURIComponent(q))
+    fetch("/apps/repo/search?q=" + encodeURIComponent(q))
       .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
       .then(function (res) {
         if (!res.ok) { say(res.body.error || "search failed", true); return; }
         var apps = res.body.apps || [];
-        if (!apps.length) { say("Nothing matching " + q + "."); return; }
+        var problems = res.body.problems || [];
+
+        // ⚠️ A source that failed is named, always — even when others answered.
+        // Silence here would send someone hunting for an app that was found.
+        if (problems.length) {
+          var warn = document.createElement("p");
+          warn.className = "field-tip";
+          warn.style.color = "var(--bad)";
+          warn.textContent = "⚠️ " + problems.map(function (p) {
+            return p.label + ": " + p.error;
+          }).join("  ·  ");
+          results.appendChild(warn);
+        }
+
+        if (!apps.length) {
+          say(problems.length ? "No results from the sources that answered."
+                              : "Nothing matching " + q + ".");
+          return;
+        }
         say(apps.length + " result" + (apps.length === 1 ? "" : "s"));
 
         var table = document.createElement("table");
-        table.innerHTML = "<thead><tr><th>App</th><th>Package</th><th></th></tr></thead>";
+        table.innerHTML = "<thead><tr><th>App</th><th>Package</th><th>Source</th><th></th></tr></thead>";
         var body = document.createElement("tbody");
         apps.forEach(function (app) {
           var row = document.createElement("tr");
@@ -2375,6 +2371,17 @@
           var pkg = document.createElement("td");
           pkg.className = "mono";
           pkg.textContent = app.package_name;
+          // Where it came from, on the row itself — the sources differ in what
+          // they can promise, so a result without its origin is half a fact.
+          var src = document.createElement("td");
+          var badge = document.createElement("span");
+          badge.className = app.verifiable ? "pill good" : "pill";
+          badge.textContent = app.source_label || app.source;
+          badge.title = app.verifiable
+            ? "Publishes a digest this download is checked against."
+            : "Publishes no checksum; the file is checked after it arrives.";
+          src.appendChild(badge);
+
           var act = document.createElement("td");
           var button = document.createElement("button");
           button.type = "button";
@@ -2382,7 +2389,7 @@
           button.textContent = "Versions";
           button.addEventListener("click", function () { openVersions(app); });
           act.appendChild(button);
-          row.appendChild(name); row.appendChild(pkg); row.appendChild(act);
+          row.appendChild(name); row.appendChild(pkg); row.appendChild(src); row.appendChild(act);
           body.appendChild(row);
         });
         table.appendChild(body);
@@ -2407,11 +2414,11 @@
   }
 
   function openVersions(app) {
-    modalTitle.textContent = app.name;
+    modalTitle.textContent = app.name + " — " + (app.source_label || app.source);
     modalBody.innerHTML = "<p class='muted'>Reading versions…</p>";
     modal.hidden = false;
 
-    fetch("/apps/repo/versions?source=" + encodeURIComponent(source()) +
+    fetch("/apps/repo/versions?source=" + encodeURIComponent(app.source) +
           "&package=" + encodeURIComponent(app.package_name))
       .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
       .then(function (res) {
@@ -2443,7 +2450,7 @@
     versions.forEach(function (v) {
       var row = document.createElement("tr");
       row.innerHTML =
-        "<td class='mono'>" + v.version_code + "</td>" +
+        "<td class='mono'>" + (v.version_code === null ? "—" : v.version_code) + "</td>" +
         "<td>" + (v.version_name || "—") + "</td>" +
         "<td>" + architecture(v) + "</td>" +
         "<td class='muted'>" + (v.min_sdk ? "API " + v.min_sdk : "—") + "</td>";
@@ -2500,9 +2507,9 @@
 
     var body = new FormData();
     body.append("csrf_token", csrf());
-    body.append("source", source());
+    body.append("source", app.source);
     body.append("package", app.package_name);
-    body.append("version_code", version.version_code);
+    body.append("version_key", version.version_key);
     body.append("label", app.name);
 
     fetch("/apps/repo/import", { method: "POST", body: body })

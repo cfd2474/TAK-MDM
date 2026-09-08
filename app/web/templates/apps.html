@@ -299,37 +299,52 @@
       listing naming the wrong package cannot smuggle one in under it.
     #}
     <div class="card">
-      <h3 style="margin-top:0">Repositories</h3>
+      <h3 style="margin-top:0">Search every source</h3>
       <p class="muted" style="font-size:13px">
-        These publish a signed index: every build states its SHA-256, the CPU
-        architectures it carries, the Android version it needs and its signing
-        certificate. Downloads are checked against that digest, so a file that is
-        not what was published is refused rather than imported.
+        One search across every repository below. Each result says where it came
+        from, because they are not equally trustworthy — and nothing is published
+        to devices by importing it: a build arrives <strong>held</strong>.
       </p>
-      <p class="field-tip">
-        ⚠️ They carry open-source apps only. Chrome, ArcGIS and Handtevy are not
-        there — those still arrive through <a href="?#tab-local">Local apps</a>,
-        which reads the same facts out of the file you upload.
-      </p>
-
-      {#
-        ⚠️ The repositories are not equally trusted, and each says what it is
-        rather than being levelled by sitting in one dropdown (W97 C3).
-      #}
-      <label for="repo-source">Repository</label>
-      <select id="repo-source" class="field-full" data-repo-source>
-        {% for r in repo_sources %}
-          <option value="{{ r.name }}" data-note="{{ r.note }}">{{ r.label }}</option>
-        {% endfor %}
-      </select>
-      <p class="field-tip" data-repo-note></p>
 
       <div class="prefs-toolbar" style="margin-top:12px">
         <input type="search" id="repo-q" class="field-grow"
-               aria-label="Search the selected repository" data-repo-query>
+               aria-label="Search all app sources" data-repo-query>
         <button type="button" class="ghost" data-repo-search>Search</button>
       </div>
-      <p class="field-tip">Search by app name or exact package name.</p>
+      <p class="field-tip">
+        Search by app name, or paste an exact package id such as
+        <code>net.osmand</code>.
+        {#
+          ⚠️ Stated here rather than discovered. apkeep answers for an exact id
+          and nothing else, so a name search will never return an APKPure row —
+          an operator who does not know that reads it as an outage (W98).
+        #}
+        <strong>APKPure only answers to an exact package id</strong>, never a name.
+      </p>
+
+      <details style="margin-top:10px">
+        <summary class="muted" style="font-size:12px; cursor:pointer">
+          What each source is
+        </summary>
+        <table style="margin-top:8px">
+          <thead><tr><th>Source</th><th>Verified</th><th></th></tr></thead>
+          <tbody>
+          {% for r in repo_sources %}
+            <tr>
+              <td><strong>{{ r.label }}</strong></td>
+              <td>
+                {% if r.kind != 'apkpure' %}
+                  <span class="pill good" title="Publishes a digest each download is checked against.">digest</span>
+                {% else %}
+                  <span class="pill" title="Publishes no checksum; the file is checked after it arrives.">none</span>
+                {% endif %}
+              </td>
+              <td class="muted" style="font-size:12px">{{ r.note }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </details>
 
       <p class="muted" id="repo-status" style="font-size:12px"></p>
       <div id="repo-results"></div>

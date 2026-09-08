@@ -29,9 +29,11 @@ one they are making.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.services.app_sources.apkpure import ApkPureSource
 from app.services.app_sources.fdroid import FDroidSource
 
 
@@ -42,8 +44,14 @@ class RepoSpec:
     name: str
     label: str
     url: str
-    #: Shown beside the picker. States what the operator is trusting.
+    #: Shown beside the results. States what the operator is trusting.
     note: str
+    #: Which implementation answers for it. Not every source is an index.
+    kind: str = "fdroid"
+    #: ⚠️ False for a source that cannot be searched by name (W98). APKPure
+    #: answers only for an exact package id, and the console says so rather than
+    #: letting an empty result look like an outage.
+    searchable: bool = True
 
 
 #: ⚠️ Order is the order the console offers them, and it is a recommendation:
@@ -76,6 +84,22 @@ KNOWN: tuple[RepoSpec, ...] = (
     ),
 )
 
+#: ⚠️ Appended after the indexes, deliberately. Everything above publishes a
+#: digest that a download is checked against; APKPure publishes none, so it is
+#: offered last and labelled for what it is.
+KNOWN = KNOWN + (
+    RepoSpec(
+        name="apkpure",
+        label="APKPure",
+        url="https://apkpure.com",
+        note="⚠️ A mirror, not a publisher. It states no checksum, so a download "
+        "can only be checked by reading the file afterwards — and it is searched "
+        "by exact package id only, never by name. Reached through EFF's apkeep.",
+        kind="apkpure",
+        searchable=False,
+    ),
+)
+
 _BY_NAME = {spec.name: spec for spec in KNOWN}
 
 
@@ -83,11 +107,40 @@ def spec(name: str) -> RepoSpec | None:
     return _BY_NAME.get(name)
 
 
-def build(name: str, cache_dir: Path) -> FDroidSource | None:
+#: ⚠️ Sources are cached per process, and the reason is size (W98). A
+#: `FDroidSource` holds its parsed index in memory; building a fresh one per
+#: request would re-read and re-parse 59 MB for F-Droid, 111 MB for the archive
+#: and 14 MB for IzzyOnDroid **on every search**. The disk cache alone does not
+#: save that — parsing is the expensive half.
+_INSTANCES: dict[str, object] = {}
+_LOCK = threading.Lock()
+
+
+def build(name: str, cache_dir: Path):
     """The source for a named repository, or None if it is not one we offer."""
     found = spec(name)
     if found is None:
         return None
-    return FDroidSource(
-        Path(cache_dir), repo=found.url, name=found.name, label=found.label
-    )
+
+    key = f"{found.name}:{cache_dir}"
+    with _LOCK:
+        # Under a lock because sync routes run in a threadpool: two searches
+        # arriving together would otherwise each build and parse their own.
+        existing = _INSTANCES.get(key)
+        if existing is not None:
+            return existing
+
+        if found.kind == "apkpure":
+            source = ApkPureSource()
+        else:
+            source = FDroidSource(
+                Path(cache_dir), repo=found.url, name=found.name, label=found.label
+            )
+        _INSTANCES[key] = source
+        return source
+
+
+def reset_cache() -> None:
+    """Drop the cached sources. For tests, which must not share state."""
+    with _LOCK:
+        _INSTANCES.clear()

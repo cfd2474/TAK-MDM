@@ -405,6 +405,73 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W98 — One search bar, and APKPure as a fourth source
+
+Operator, 2026-09-08: *"include as a source. find a way to integrate into single
+tab of 3rd party that we already have. I want one search bar for all sources."*
+
+#### Two honest constraints, neither of which may be papered over
+
+⚠️ **apkeep cannot search by name.** It answers `-l -a <exact.package.id>` and
+nothing else. So one bar cannot query APKPure the way it queries F-Droid: APKPure
+can only contribute a row when the query *is* a package id. The UI must say so —
+an operator typing "osmand" and seeing no APKPure result deserves to know it is a
+property of the source, not an outage.
+
+⚠️ **APKPure states version *names*, not versionCodes** — `5.4.4`, not `5404`.
+`SourceVersion.version_code` is a required int today, used for preflight and for
+the import lookup. Inventing a code would be a lie in a field the library keys on,
+so the model changes instead: `version_code` becomes optional and a `version_key`
+carries whatever the *source* needs to fetch that build. The real versionCode is
+read from the downloaded file, where it was always authoritative.
+
+#### The unified search
+
+One bar, every source queried, results merged and each row labelled with where it
+came from. ⚠️ **A failing source must not empty the page** — each is caught
+separately and reported beside the results that did arrive.
+
+Ordering is a recommendation, as the repository picker's was: verifiable sources
+first (F-Droid and friends, which publish a digest), APKPure last (which does not).
+
+#### Chunk C1
+
+1. `SourceVersion.version_code` optional + `version_key`; F-Droid fills both, and
+   its behaviour is unchanged.
+2. `app_sources/apkpure.py` — an `AppSource` shelling out to apkeep. ⚠️ The arch
+   is **pinned explicitly** (`-o arch=…`), because the default returned a 32-bit
+   build for an arm64 fleet on the very first real fetch. Package ids validated
+   against a pattern; no shell.
+3. The binary in the image: fetched at build with a **pinned sha256**, and a clear
+   "not installed" error rather than a stack trace if it is absent.
+4. One search bar across all sources, per-source failures isolated and shown.
+5. Tests with apkeep stubbed — including the 32-bit trap: a fetched build whose
+   real ABI contradicts the fleet must still be caught by preflight.
+6. Deploy.
+
+###### ✅ Complete (2026-09-08) — 1144 server tests
+
+⚠️ **A performance trap found while wiring the fan-out.** Sources were built per
+request, so one unified search would have re-parsed **59 MB + 111 MB + 14 MB** of
+index JSON every time. The disk cache does not help — parsing is the expensive
+half. Instances are now cached per process behind a lock, since sync routes run in
+a threadpool and two searches arriving together would each build their own.
+
+⚠️ **`cache/` reached 176 MB locally and was one `git add` from being committed.**
+Now ignored.
+
+⚠️ **I truncated `tests/test_app_sources.py`, twice.** A generator script called
+`io.open(path, "w", newline="\n")`; Python truncates the file *before* rejecting
+the illegal newline value, so the write never happened and the file was left
+empty. Restored from git both times and the approach abandoned — the APKPure tests
+live in their own file, written directly. **A script that writes a file it has not
+finished computing can destroy it**; compute first, open last, or do not generate
+at all.
+
+**Two tests changed because their guarantee moved**, not because they broke: the
+tab's copy (the per-source picker is gone) and the search contract (one bar, all
+sources, per-source failures reported beside the results that arrived).
+
 ### ✅ W97 — 3rd Party App Repo
 
 Operator, 2026-09-07: *"i want to add a '3rd Party App Repo' to the apps section

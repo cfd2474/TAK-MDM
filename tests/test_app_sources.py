@@ -42,6 +42,18 @@ from tests.apk_fixtures import build_apk, make_signing_certificate
 REPO = "https://f-droid.example/repo"
 
 
+@pytest.fixture(autouse=True)
+def _no_shared_sources():
+    """⚠️ Sources are cached per process for speed (W98), which tests must not
+    inherit from one another — a cached index built against one stub would answer
+    the next test's search."""
+    from app.services.app_sources import repos
+
+    repos.reset_cache()
+    yield
+    repos.reset_cache()
+
+
 def _index(apk: bytes, *, package="org.example.app", code=42, native=None) -> dict:
     return {
         "repo": {"address": REPO},
@@ -322,42 +334,82 @@ def test_a_source_without_a_checksum_says_so(db):
 # --------------------------------------------------------------------------- #
 
 
-def test_the_repo_tab_exists_and_says_what_f_droid_is_not(client):
-    """⚠️ The limit is stated on the page, not learned by searching in vain.
+def test_the_repo_tab_states_each_source_s_limits(client):
+    """⚠️ The limits are stated on the page, not learned by searching in vain.
 
-    F-Droid carries open-source apps only, so the apps this fleet actually runs —
-    ATAK aside — are not there. An operator who does not know that reads an empty
-    result as a broken feature.
+    F-Droid carries open-source apps only; APKPure answers to an exact package id
+    and never to a name. An operator who knows neither reads an empty result as a
+    broken feature — so both are written where the searching happens.
     """
     body = client.get("/apps").text
 
     assert 'data-tab-panel="repo"' in body
     assert "3rd party repo" in body
-    assert "open-source apps only" in body
+    assert "open-source apps" in body
+    assert "only answers to an exact package id" in body
 
 
-def test_search_reaches_the_source_and_reports_its_failures_verbatim(client, monkeypatch):
-    """A repository that is unreachable says so in its own words: "search failed"
-    would throw away the only actionable part."""
-    from app.services.app_sources.base import SourceError
+def test_one_search_covers_every_source(client, monkeypatch):
+    """⚠️ One bar, every source, each row saying where it came from (W98).
+
+    The operator asked for a single search; what makes that safe is that a row
+    still carries its origin, because the sources are not equally trustworthy.
+    """
+    from app.services.app_sources.base import SourceApp
     from app.web import routes
 
-    class Broken:
-        name = "fdroid"
+    class Stub:
+        def __init__(self, name):
+            self.name = name
 
         def search(self, query, limit=25):
-            raise SourceError("F-Droid returned 503 for the index")
+            return [SourceApp(package_name="org.example.app", name=f"App from {self.name}")]
 
-    monkeypatch.setattr(routes, "_repo_source", lambda name, settings: Broken())
+    monkeypatch.setattr(routes, "_repo_source", lambda name, settings: Stub(name))
 
-    response = client.get("/apps/repo/search?q=osmand", headers=ADMIN_HEADERS)
+    body = client.get("/apps/repo/search?q=example", headers=ADMIN_HEADERS).json()
 
-    assert response.status_code == 502
-    assert "503" in response.json()["error"]
+    sources = [row["source"] for row in body["apps"]]
+    assert "fdroid" in sources and "apkpure" in sources
+    assert all(row["source_label"] for row in body["apps"])
+    # APKPure publishes no digest, and the row says so.
+    assert {row["source"]: row["verifiable"] for row in body["apps"]}["apkpure"] is False
 
 
-def test_an_unknown_source_is_a_404_not_a_crash(client):
-    response = client.get("/apps/repo/search?q=x&source=nowhere", headers=ADMIN_HEADERS)
+def test_a_failing_source_does_not_empty_the_page(client, monkeypatch):
+    """⚠️ The failure mode a unified search invites.
+
+    If one source raising meant an empty result, an operator would go hunting for
+    an app that F-Droid was holding all along. The others' results stand and the
+    broken one is named, in its own words.
+    """
+    from app.services.app_sources.base import SourceApp, SourceError
+    from app.web import routes
+
+    class Stub:
+        def __init__(self, name):
+            self.name = name
+
+        def search(self, query, limit=25):
+            if self.name == "apkpure":
+                raise SourceError("apkeep is not installed on this server")
+            return [SourceApp(package_name="org.example.app", name="Example")]
+
+    monkeypatch.setattr(routes, "_repo_source", lambda name, settings: Stub(name))
+
+    body = client.get("/apps/repo/search?q=example", headers=ADMIN_HEADERS).json()
+
+    assert body["apps"], "the working sources still answered"
+    assert [p["source"] for p in body["problems"]] == ["apkpure"]
+    assert "not installed" in body["problems"][0]["error"]
+
+
+def test_an_unknown_source_is_a_404_when_one_is_named(client):
+    """Search no longer takes a source — but the routes that must know which one
+    still refuse an unknown name rather than guessing."""
+    response = client.get(
+        "/apps/repo/versions?package=org.example.app&source=nowhere", headers=ADMIN_HEADERS
+    )
     assert response.status_code == 404
 
 
@@ -384,7 +436,7 @@ def test_a_blocked_build_is_refused_before_anything_is_downloaded(
 
     response = client.post(
         "/apps/repo/import",
-        data={"package": "org.example.app", "version_code": 42},
+        data={"package": "org.example.app", "version_key": "42"},
         headers=ADMIN_HEADERS,
     )
 
@@ -409,7 +461,7 @@ def test_the_version_is_re_read_at_import_not_taken_from_the_form(
 
     response = client.post(
         "/apps/repo/import",
-        data={"package": "org.example.app", "version_code": 999},
+        data={"package": "org.example.app", "version_key": "999"},
         headers=ADMIN_HEADERS,
     )
 
@@ -432,7 +484,7 @@ def test_an_import_runs_as_a_job_and_lands_held(
 
     started = client.post(
         "/apps/repo/import",
-        data={"package": "org.example.app", "version_code": 42, "label": "Example"},
+        data={"package": "org.example.app", "version_key": "42", "label": "Example"},
         headers=ADMIN_HEADERS,
     )
     assert started.status_code == 202, started.text
@@ -518,10 +570,20 @@ def test_an_unknown_repository_builds_nothing(tmp_path):
     assert repos.build("fdroid", tmp_path).name == "fdroid"
 
 
-def test_the_console_offers_every_repository_with_its_note(client):
+def test_the_console_offers_every_source_with_its_note(client):
+    """⚠️ The picker is gone — one bar searches everything (W98).
+
+    What must survive that is the *labelling*: every source still appears with
+    what it is, because merging them into one result list is only safe if a row
+    still says where it came from.
+    """
     body = client.get("/apps").text
 
-    assert "data-repo-source" in body
-    for label in ("F-Droid", "F-Droid archive", "IzzyOnDroid"):
+    assert "data-repo-source" not in body, "the per-source picker was removed"
+    assert body.count("data-repo-query") == 1, "exactly one search bar"
+
+    for label in ("F-Droid", "F-Droid archive", "IzzyOnDroid", "APKPure"):
         assert label in body
     assert "third-party repository" in body
+    # APKPure's limitation is stated on the page rather than discovered.
+    assert "only answers to an exact package id" in body

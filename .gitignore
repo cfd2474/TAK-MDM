@@ -40,3 +40,6 @@ scratch/
 # Vendored UI/UX Pro Max skill (github.com/nextlevelbuilder/ui-ux-pro-max-skill),
 # installed per-developer. Not part of this project's source.
 .claude/skills/
+
+# Downloaded repository indexes (W98). Re-fetchable, and F-Droid alone is 59 MB.
+cache/

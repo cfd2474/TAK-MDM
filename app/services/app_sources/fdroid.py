@@ -249,6 +249,8 @@ class FDroidSource:
                     package_name=package_name,
                     version_code=int(code),
                     version_name=manifest.get("versionName"),
+                    # The index keys builds by versionCode, so that is the handle.
+                    version_key=str(int(code)),
                     download_url=f"{self._repo}{name}",
                     size=file.get("size"),
                     sha256=file.get("sha256"),

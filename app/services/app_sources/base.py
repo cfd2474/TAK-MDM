@@ -62,9 +62,17 @@ class SourceVersion:
     """One downloadable build, as a catalogue describes it."""
 
     package_name: str
-    version_code: int
+    #: ⚠️ **Optional, because not every source knows it before downloading** (W98).
+    #: APKPure states version *names* only; the real versionCode is read from the
+    #: file at ingest, where it was always the authoritative answer. Inventing one
+    #: here would put a fabricated number in a field the library keys on.
+    version_code: int | None
     version_name: str | None
-    download_url: str
+    #: What the *source* needs in order to fetch this exact build — a versionCode
+    #: for F-Droid, a version name for APKPure. Opaque to everything else, and the
+    #: handle the import route uses so it never has to care which.
+    version_key: str = ""
+    download_url: str = ""
     #: Bytes, when stated. Used only to show progress and to sanity-check.
     size: int | None = None
     #: ⚠️ **None means the source publishes no hash**, not that nothing matched.
@@ -84,10 +92,23 @@ class SourceVersion:
     #: APK. `inspect_bundle` handles both; the console says which is coming.
     is_bundle: bool = False
 
+    def __post_init__(self) -> None:
+        if not self.version_key:
+            # Frozen dataclass: the default is derived once, here, so every source
+            # that only knows a versionCode keeps working untouched.
+            object.__setattr__(self, "version_key", str(self.version_code or ""))
+
     @property
     def verifiable(self) -> bool:
         """Can this download be checked against what the source promised?"""
         return bool(self.sha256)
+
+    @property
+    def display_version(self) -> str:
+        """What to show an operator, given a source may know one or the other."""
+        if self.version_name and self.version_code is not None:
+            return f"{self.version_name} ({self.version_code})"
+        return self.version_name or str(self.version_code or "unknown")
 
 
 @dataclass(frozen=True)
