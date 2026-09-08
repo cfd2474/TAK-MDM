@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import io
 import json
+from concurrent.futures import ThreadPoolExecutor
 import tempfile
 import uuid
 from collections import OrderedDict
@@ -1865,19 +1866,33 @@ def repo_search(
     rows: list[dict] = []
     problems: list[dict] = []
 
-    for spec in app_repos.KNOWN:
-        # Google Play has its own tab (W101): it needs a linked account, and a
-        # row costing a Google credential does not belong beside rows that cost
-        # nothing.
-        if not spec.unified:
-            continue
-        client = _repo_source(spec.name, settings, session, vault)
+    # Google Play has its own tab (W101): it needs a linked account, and a row
+    # costing a Google credential does not belong beside rows that cost nothing.
+    targets = [
+        (spec, _repo_source(spec.name, settings, session, vault))
+        for spec in app_repos.KNOWN
+        if spec.unified
+    ]
+
+    def ask(spec, client):
+        """One source's answer, or the reason it had none."""
         if client is None:
-            continue
+            return spec, [], None
         try:
-            found = client.search(query)
+            return spec, client.search(query), None
         except SourceError as exc:
-            problems.append({"source": spec.name, "label": spec.label, "error": str(exc)})
+            return spec, [], str(exc)
+
+    # ⚠️ Concurrently, because these wait on different things (W103). Serially,
+    # a cold search paid the *sum* of every index parse — 11 seconds, which reads
+    # as a hang. In parallel it costs the slowest one. Warm, this changes nothing;
+    # it is the cold path that was unusable.
+    with ThreadPoolExecutor(max_workers=max(1, len(targets))) as pool:
+        answers = list(pool.map(lambda pair: ask(*pair), targets))
+
+    for spec, found, problem in answers:
+        if problem is not None:
+            problems.append({"source": spec.name, "label": spec.label, "error": problem})
             continue
         for app in found:
             rows.append(

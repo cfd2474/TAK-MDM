@@ -5,7 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}ATLAS{% endblock %}</title>
   <link rel="icon" type="image/png" href="/static/favicon.png">
-  <link rel="stylesheet" href="/static/atlas.css">
+  {#
+    ⚠️ Versioned by the running build (W103). Without this a browser keeps a
+    cached `atlas.js` across deploys, and old script against new markup fails in
+    ways that look like the server hanging rather than like a stale file —
+    which is precisely the shape of the bug this was found alongside.
+  #}
+  <link rel="stylesheet" href="/static/atlas.css?v={{ build.revision }}">
 </head>
 <body>
 {% set sections = [
@@ -63,6 +69,6 @@
 <footer class="site-footer">
   <span class="mono" title="Source: {{ build.source }}">{{ build.label }}</span>
 </footer>
-<script src="/static/atlas.js" defer></script>
+<script src="/static/atlas.js?v={{ build.revision }}" defer></script>
 </body>
 </html>

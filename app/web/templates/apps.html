@@ -11,7 +11,7 @@
   ('store', 'ATLAS store'),
   ('tpc', 'TPC Plugins'),
   ('play', 'Google Play'),
-  ('repo', '3rd party repo'),
+  ('repo', '3rd Party Repos'),
   ('groups', 'App groups'),
 ], active=(request.query_params.get('tab') if request.query_params.get('tab') in ['local','store','tpc','play','repo','groups'] else 'local'), scope='apps-tabs') }}
 

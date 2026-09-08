@@ -344,7 +344,7 @@ def test_the_repo_tab_states_each_source_s_limits(client):
     body = client.get("/apps").text
 
     assert 'data-tab-panel="repo"' in body
-    assert "3rd party repo" in body
+    assert "3rd Party Repos" in body
     assert "open-source apps" in body
     assert "only answers to an exact package id" in body
 

@@ -42,6 +42,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -105,6 +107,11 @@ class FDroidSource:
         self.label = label
         self._index: dict[str, Any] | None = None
         self._checked_at = 0.0
+        # ⚠️ One loader at a time (W103). The warm-up thread and the concurrent
+        # search pool now call `index()` together, and without this each would
+        # download and parse the same 111 MB independently — competing for CPU,
+        # and writing the same `.part` file underneath one another.
+        self._lock = threading.Lock()
 
     # ----------------------------------------------------------------- #
     # The index
@@ -138,29 +145,50 @@ class FDroidSource:
         return self._cache_dir / f"{self.name}-index-v2.json"
 
     def index(self) -> dict[str, Any]:
-        """The parsed index, fetched only when its published digest changes."""
+        """The parsed index, fetched only when its published digest changes.
+
+        ⚠️ **Loaded under a lock, and re-checked inside it.** Several threads
+        arrive here at once now — the boot warm-up and every source in a
+        concurrent search — and the first version let all of them download and
+        parse the same file at the same time. The second search after a restart
+        was instant while the first took 36 seconds, because it was racing the
+        warm-up for the same work.
+
+        Waiting on the lock is the point: the loser gets the winner's result
+        rather than repeating it.
+        """
         now = time.time()
         if self._index is not None and (now - self._checked_at) < _ENTRY_TTL_SECONDS:
             return self._index
 
-        entry = self._entry()
-        self._checked_at = now
-        path = self._index_path()
+        with self._lock:
+            # Re-checked inside the lock: whoever held it may have just finished
+            # the exact work this thread was about to start.
+            now = time.time()
+            if self._index is not None and (now - self._checked_at) < _ENTRY_TTL_SECONDS:
+                return self._index
 
-        if path.exists() and _digest_of(path) == entry["sha256"]:
-            if self._index is None:
-                self._index = json.loads(path.read_text(encoding="utf-8"))
+            entry = self._entry()
+            self._checked_at = now
+            path = self._index_path()
+
+            if path.exists() and _digest_of(path) == entry["sha256"]:
+                if self._index is None:
+                    self._index = json.loads(path.read_text(encoding="utf-8"))
+                return self._index
+
+            self._download_index(entry)
+            self._index = json.loads(path.read_text(encoding="utf-8"))
             return self._index
-
-        self._download_index(entry)
-        self._index = json.loads(path.read_text(encoding="utf-8"))
-        return self._index
 
     def _download_index(self, entry: dict[str, Any]) -> None:
         """Fetch the index and refuse it unless it is what `entry.json` promised."""
         url = f"{self._repo}{entry['name']}"
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        temp = self._index_path().with_suffix(".part")
+        # Named per writer as well as per repository: the lock makes a collision
+        # unlikely, but a shared staging file is the kind of thing that only
+        # corrupts under load, which is when nobody is looking.
+        temp = self._index_path().with_suffix(f".{os.getpid()}.{threading.get_ident()}.part")
 
         digest = hashlib.sha256()
         client = self._client or httpx.Client(timeout=_TIMEOUT, follow_redirects=True)

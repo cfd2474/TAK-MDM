@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     # unreferenced blob to anything that tidies it up. Cached data that can be
     # re-fetched belongs somewhere losing it costs nothing.
     cache_dir: Path = Path("cache")
+    # ⚠️ Parsing the repository indexes at boot so the first search is not the
+    # one that pays for it (W103). Off in tests: a background thread that fetches
+    # 184 MB from F-Droid would make the suite depend on a third party being up,
+    # and would hammer them on every run.
+    warm_indexes: bool = True
 
     # --- Device identity PKI -------------------------------------------------
     pki_dir: Path = Path("pki")

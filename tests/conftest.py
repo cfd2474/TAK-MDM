@@ -118,6 +118,10 @@ def settings() -> Settings:
         _env_file=None,
         agent_signature_checksum="",
         server_url="https://mdm.test.invalid",
+        # ⚠️ No index warm-up. It runs on a background thread at startup and
+        # would fetch 184 MB from F-Droid on every test session — making the
+        # suite depend on a third party, and hammering them for nothing.
+        warm_indexes=False,
     )
 
 

@@ -59,7 +59,64 @@ async def lifespan(app: FastAPI):
     notifications.bus.bind_loop(asyncio.get_running_loop())
     admin_auth.warn_if_unprotected(get_settings())
     _start_catalog_backfill(app)
+    _start_index_warmup(app)
     yield
+
+
+def _start_index_warmup(app: FastAPI) -> threading.Thread | None:
+    """Parse the repository indexes before anyone searches (W103).
+
+    ⚠️ **The first search after a restart took 11.4 seconds; the second took
+    0.1.** The indexes are large — 59 MB for F-Droid, 111 MB for its archive,
+    14 MB for IzzyOnDroid — and parsing them is the cost, which the disk cache
+    does nothing for. An operator who searched moments after a deploy saw
+    "Searching…" sit there long enough to look broken, which is exactly what
+    happened.
+
+    So the cost is paid at boot, on a worker thread, where nobody is waiting for
+    it. A search arriving before this finishes is not broken, merely slow — the
+    same 11 seconds it used to be — because `index()` is guarded and simply loads
+    what is not yet loaded.
+
+    ⚠️ Failures are logged and swallowed. A repository being unreachable at boot
+    must not stop the server: the console has four other reasons to exist, and the
+    search will report the problem itself when someone actually uses it.
+    """
+
+    # ⚠️ Resolved through `dependency_overrides`, for the reason the catalog
+    # backfill gives above: a background task that reads the real settings is one
+    # that reaches the real network in the middle of a test run. Calling
+    # `get_settings()` here did exactly that — every test session spawned a thread
+    # fetching 184 MB from F-Droid, swallowed as a warning so nothing failed.
+    overrides = app.dependency_overrides
+    settings = overrides.get(get_settings, get_settings)()
+    if not settings.warm_indexes:
+        return None
+
+    def run() -> None:
+        from pathlib import Path
+
+        from app.services.app_sources import repos
+
+        cache = Path(str(settings.cache_dir))
+        for spec in repos.KNOWN:
+            if spec.kind != "fdroid":
+                continue
+            try:
+                source = repos.build(spec.name, cache)
+                if source is not None:
+                    count = len(source.index().get("packages") or {})
+                    log.info("index ready: %s (%d packages)", spec.label, count)
+            except Exception:
+                log.warning(
+                    "could not warm the %s index; search will load it on demand",
+                    spec.label,
+                    exc_info=True,
+                )
+
+    thread = threading.Thread(target=run, name="index-warmup", daemon=True)
+    thread.start()
+    return thread
 
 
 def _start_catalog_backfill(app: FastAPI) -> threading.Thread:

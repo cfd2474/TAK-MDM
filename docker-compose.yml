@@ -42,6 +42,7 @@ services:
       TAKMDM_DATABASE_URL: postgresql+psycopg://takmdm:takmdm@db:5432/takmdm
       TAKMDM_PKI_DIR: /pki
       TAKMDM_ARTIFACT_DIR: /artifacts
+      TAKMDM_CACHE_DIR: /cache
       # Baked into enrollment QR codes, so it must be an address the tablet can
       # reach — not localhost, which a device would resolve to itself.
       TAKMDM_SERVER_URL: ${TAKMDM_SERVER_URL:-https://localhost:8443}
@@ -63,6 +64,11 @@ services:
       - ./pki:/pki
       # Uploaded APKs live outside the image so a rebuild does not discard them.
       - ./artifacts:/artifacts
+      # ⚠️ The repository indexes, for exactly the same reason (W103). Inside the
+      # image they were destroyed by every `up -d --build`, so each deploy
+      # re-downloaded 184 MB from F-Droid and the first search afterwards took 35
+      # seconds. A cache wiped on every deploy is not a cache.
+      - ./cache:/cache
     ports:
       # Bound to loopback only. This port bypasses the proxy and therefore bypasses
       # mTLS — convenient for admin curl during development, and exactly the

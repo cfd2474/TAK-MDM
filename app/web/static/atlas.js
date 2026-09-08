@@ -2338,7 +2338,9 @@ function atlasWireAppSource(panelName, searchUrl) {
   function search() {
     var q = (query.value || "").trim();
     if (!q) { results.innerHTML = ""; say(""); return; }
-    say("Searching F-Droid…");
+    // Named for what it searches, not for one of the things it searches: this
+    // bar covers four repositories, and the Play tab reuses the same code.
+    say("Searching repos…");
     results.innerHTML = "";
 
     fetch(searchUrl + "?q=" + encodeURIComponent(q))
