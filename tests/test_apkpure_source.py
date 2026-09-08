@@ -191,7 +191,43 @@ def test_success_with_no_file_is_still_a_failure(installed):
     with pytest.raises(SourceError) as raised:
         ApkPureSource(runner=_Apkeep(writes={})).download(_version())
 
-    assert "produced no file" in str(raised.value)
+    assert "produced no APK" in str(raised.value)
+
+
+def test_every_part_of_a_split_app_is_kept(installed):
+    """⚠️ The bug an operator's Outlook test found (W99).
+
+    apkeep writes a bundle as separate files — base, the ABI split, language and
+    density splits. Keeping only the largest gave a base with **no native
+    libraries**: an app Android refuses as `INSTALL_FAILED_MISSING_SPLIT`, which
+    then reported `abis = ()` — "runs anywhere". That is worse than the missing
+    bytes, because it is a lie in the one field W96 exists to make true, and it
+    would pass the preflight built to catch exactly this.
+    """
+    import io
+    import zipfile
+
+    base = build_apk("com.example.app", 7)
+    split = build_apk("com.example.app", 7, split="config.arm64_v8a",
+                      extra_files={"lib/arm64-v8a/libx.so": b"native"})
+    runner = _Apkeep(writes={
+        "com.example.app.apk": base,
+        "com.example.app.config.arm64_v8a.apk": split,
+    })
+
+    got = ApkPureSource(runner=runner).download(_version())
+
+    with zipfile.ZipFile(io.BytesIO(got.data)) as bundle:
+        names = sorted(bundle.namelist())
+    assert names == ["com.example.app.apk", "com.example.app.config.arm64_v8a.apk"]
+
+
+def test_a_single_file_is_passed_through_untouched(installed):
+    """The common case must not be wrapped in a pointless container."""
+    apk = build_apk("com.example.app", 7)
+    runner = _Apkeep(writes={"com.example.app.xapk": apk})
+
+    assert ApkPureSource(runner=runner).download(_version()).data == apk
 
 
 # --------------------------------------------------------------------------- #

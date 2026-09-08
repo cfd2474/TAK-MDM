@@ -38,6 +38,7 @@ from the file, not from the listing.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol
 
 
@@ -121,6 +122,52 @@ class Downloaded:
     #: Whether that digest was compared against one the source published.
     verified: bool = False
     source_url: str = ""
+
+
+def collect_output(directory: "Path") -> bytes:
+    """Everything a fetch produced, as one artifact the library can ingest (W99).
+
+    ⚠️ **A split app arrives as several files, and keeping only the biggest is a
+    silent corruption.** apkeep writes a bundle as its parts::
+
+        com.microsoft.office.outlook.apk                 165.0 MB   base
+        com.microsoft.office.outlook.config.arm64_v8a.apk  17.2 MB   native code
+        com.microsoft.office.outlook.config.en.apk          2.0 MB
+        com.microsoft.office.outlook.config.xxhdpi.apk      1.4 MB
+
+    Taking the largest yields a base with **no native libraries**, which Android
+    refuses to install as `INSTALL_FAILED_MISSING_SPLIT` — and which then reports
+    `abis = ()`, meaning *"runs anywhere"*. That is worse than the missing files:
+    it is a lie in the one field W96 exists to make true, and it would sail
+    through the preflight built to catch exactly this.
+
+    So every part is kept, zipped into the container shape `inspect_bundle`
+    already understands from XAPK uploads. A single file is returned unchanged.
+
+    Stored rather than deflated: these are APKs, already compressed, and a second
+    pass costs minutes to save nothing. Written to disk rather than assembled in
+    memory, because a base APK alone can be 222 MB.
+    """
+    import tempfile
+    import zipfile
+
+    files = sorted(
+        p for p in directory.rglob("*") if p.is_file() and p.suffix in (".apk", ".xapk")
+    )
+    if not files:
+        raise SourceError("the download produced no APK")
+    if len(files) == 1:
+        return files[0].read_bytes()
+
+    with tempfile.TemporaryDirectory() as staging:
+        bundle = Path(staging) / "bundle.xapk"
+        with zipfile.ZipFile(bundle, "w", zipfile.ZIP_STORED) as archive:
+            for part in files:
+                # Basename only: a nested path would still be found, but the flat
+                # shape is what an XAPK upload looks like, and one shape is easier
+                # to reason about than two.
+                archive.write(part, arcname=part.name)
+        return bundle.read_bytes()
 
 
 class SourceError(RuntimeError):

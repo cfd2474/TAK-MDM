@@ -2286,24 +2286,32 @@
   });
 })();
 
-/* --- 3rd party app repo: search, inspect, import (W97) ----------------------
+/* --- App sources: search, inspect, import (W97, W101) -----------------------
    The compatibility facts are the point of this screen. R19 cost days because
    nobody could see, until it failed on a device, that a build was 32-bit only —
    so the version list says what each build carries before anything is fetched,
-   and the import button is disabled when the server has already said no. */
-(function () {
-  var panel = document.querySelector('[data-tab-panel="repo"]');
+   and the import button is disabled when the server has already said no.
+
+   Two panels share this: the 3rd party repositories, and Google Play on its own
+   tab. They differ only in which search endpoint they call — everything after
+   the results (versions, preflight, the import job) is identical, and the source
+   travels on each row, so it is wired once rather than copied. */
+function atlasWireAppSource(panelName, searchUrl) {
+  var panel = document.querySelector('[data-tab-panel="' + panelName + '"]');
   if (!panel) return;
 
   var query = panel.querySelector("[data-repo-query]");
   // ⚠️ There is no picker any more (W98). One bar searches everything, so the
   // source travels on the *row* — a version list or an import that guessed
   // would fetch a different build than the one the operator clicked.
-  var status = panel.querySelector("#repo-status");
-  var results = panel.querySelector("#repo-results");
-  var modal = panel.querySelector("#repo-modal");
-  var modalTitle = panel.querySelector("#repo-modal-title");
-  var modalBody = panel.querySelector("#repo-modal-body");
+  // ⚠️ Data attributes, not ids (W101). Two panels share this code, and two
+  // elements cannot carry the same id — nor could `getElementById` tell which
+  // panel's progress bar it had found once both existed.
+  var status = panel.querySelector("[data-repo-status]");
+  var results = panel.querySelector("[data-repo-results]");
+  var modal = panel.querySelector("[data-repo-modal]");
+  var modalTitle = panel.querySelector("[data-repo-modal-title]");
+  var modalBody = panel.querySelector("[data-repo-modal-body]");
   var poll = null;
 
   function say(message, bad) {
@@ -2333,7 +2341,7 @@
     say("Searching F-Droid…");
     results.innerHTML = "";
 
-    fetch("/apps/repo/search?q=" + encodeURIComponent(q))
+    fetch(searchUrl + "?q=" + encodeURIComponent(q))
       .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
       .then(function (res) {
         if (!res.ok) { say(res.body.error || "search failed", true); return; }
@@ -2502,8 +2510,8 @@
     modalBody.innerHTML = "<p>Importing " + app.name + " " + version.version_code + "…</p>" +
       // The stylesheet's .progress expects a <span> child; reused rather than
       // inventing a second bar style.
-      "<div class='progress'><span id='repo-bar'></span></div>" +
-      "<p class='muted' id='repo-progress'></p>";
+      "<div class='progress'><span data-repo-bar></span></div>" +
+      "<p class='muted' data-repo-progress></p>";
 
     var body = new FormData();
     body.append("csrf_token", csrf());
@@ -2533,8 +2541,9 @@
       fetch("/apps/repo/import/" + jobId)
         .then(function (r) { return r.json(); })
         .then(function (job) {
-          var bar = document.getElementById("repo-bar");
-          var text = document.getElementById("repo-progress");
+          // Scoped to this panel's modal, so two open tabs cannot cross wires.
+          var bar = modalBody.querySelector("[data-repo-bar]");
+          var text = modalBody.querySelector("[data-repo-progress]");
           if (bar && job.total) bar.style.width = job.percent + "%";
           if (text) {
             text.textContent = job.total
@@ -2556,4 +2565,7 @@
         .catch(function () { /* keep polling; a dropped poll is not a failure */ });
     }, 1000);
   }
-})();
+}
+
+atlasWireAppSource("repo", "/apps/repo/search");
+atlasWireAppSource("play", "/apps/play/search");

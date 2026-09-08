@@ -580,10 +580,37 @@ def test_the_console_offers_every_source_with_its_note(client):
     body = client.get("/apps").text
 
     assert "data-repo-source" not in body, "the per-source picker was removed"
-    assert body.count("data-repo-query") == 1, "exactly one search bar"
 
     for label in ("F-Droid", "F-Droid archive", "IzzyOnDroid", "APKPure"):
         assert label in body
     assert "third-party repository" in body
     # APKPure's limitation is stated on the page rather than discovered.
     assert "only answers to an exact package id" in body
+
+
+def test_google_play_has_its_own_tab_and_leaves_the_repository_search(client):
+    """⚠️ Play is not a repository row (W101).
+
+    A Play result costs a linked Google account and carries terms the others do
+    not; putting it behind a shared bar would hide that. It gets a tab, between
+    TPC Plugins and the 3rd party repositories, and drops out of the unified
+    search — so each panel has exactly one bar, and two exist in total.
+    """
+    body = client.get("/apps").text
+
+    assert 'data-tab-panel="play"' in body
+    assert body.count("data-repo-query") == 2, "one bar per panel, not one shared"
+
+    # Ordered between the TPC and repository tabs, as asked.
+    assert (
+        body.index('data-tab="tpc"')
+        < body.index('data-tab="play"')
+        < body.index('data-tab="repo"')
+    )
+
+    # The repository panel's own "what each source is" table no longer lists
+    # Play, which would promise a search that panel does not perform.
+    panel = body[body.index('data-tab-panel="repo"'):]
+    panel = panel[: panel.index('data-tab-panel=', 10)] if 'data-tab-panel=' in panel[10:] else panel
+    assert "IzzyOnDroid" in panel, "the repository table is in this slice"
+    assert "Google Play" not in panel

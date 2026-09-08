@@ -52,6 +52,11 @@ class RepoSpec:
     #: answers only for an exact package id, and the console says so rather than
     #: letting an empty result look like an outage.
     searchable: bool = True
+    #: ⚠️ False keeps a source out of the one-bar search on the 3rd party tab
+    #: (W101). Google Play has its own tab because it needs a linked account and
+    #: answers differently — mixing it into a repository search would put a row
+    #: that costs a Google credential beside rows that cost nothing.
+    unified: bool = True
 
 
 #: ⚠️ Order is the order the console offers them, and it is a recommendation:
@@ -114,7 +119,8 @@ KNOWN = KNOWN + (
         "the purpose. Serves device-matched builds, so the linked device profile "
         "decides the architecture. Publishes no checksum. Reached through apkeep.",
         kind="google-play",
-        searchable=False,
+        searchable=True,
+        unified=False,
     ),
 )
 

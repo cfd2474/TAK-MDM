@@ -405,6 +405,58 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W101 — Google Play on its own tab, searchable by name
+
+Operator, 2026-09-08: a Google Play tab between TPC Plugins and 3rd party repo,
+one bar taking an app name or a package id, and Play out of the repository search.
+
+⚠️ **Play gets a tab rather than a row because a result costs a credential.**
+Every other source is free to query; a Play row needs a linked Google account and
+carries terms the others do not. Behind a shared bar that difference disappears.
+
+#### ⚠️ Two bugs found by the operator's own test choices, not by mine
+
+**The split app, found by testing Outlook.** `download()` took `max(files,
+key=size)`. apkeep writes a bundle as separate parts, so that kept the base and
+discarded the ABI split — an app Android refuses as `INSTALL_FAILED_MISSING_SPLIT`
+which then reported `abis = ()`, *"runs anywhere"*. The missing bytes were the
+lesser harm: **it was a lie in the one field W96 exists to make true**, and it
+would have passed the preflight built to catch exactly that. Chrome had it too and
+looked fine, because its base happened to carry the arm64 code. Outlook, cleanly
+split by ABI, made it visible. Both apkeep sources now share `collect_output`,
+which keeps every part and wraps them in the container shape `inspect_bundle`
+already reads. The incomplete Chrome was deleted from the library.
+
+**The two layouts, found by searching "microsoft".** Play renders list rows whose
+anchor carries the app name, *and* a grid for broad or brand queries whose anchors
+carry no name at all. The first version matched only the former: `outlook` and
+`handtevy` worked, `microsoft` and `esri` returned **nothing** — which reads as
+"Play has no Microsoft apps" rather than as a parser missing. Both layouts are
+handled and both are tested.
+
+⚠️ **I had called the first version robust**, contrasting it with the class-based
+scrapers rejected in the survey. It was anchored on stable things and still only
+covered half the cases, because the queries tested happened to share a layout.
+
+**The package id is load-bearing, the name is not.** The id comes from a URL and is
+what a fetch needs; the title is taken from the anchor label, else the card's first
+visible text, else the id itself. A redesign that hides titles degrades a row to
+something plainer — never to something wrong, never to nothing.
+
+⚠️ **A test was reaching Google.** The first name search called `httpx.get`
+directly with no injectable client, so the suite silently depended on a third
+party being up. The client is injected now and search is tested against a stub,
+including a 503 — which must read as *unreachable*, not as *no results*.
+
+**One panel's worth of code, wired twice.** The repository and Play panels differ
+only in which search endpoint they call, so `atlasWireAppSource` is called for
+each. Element lookups moved from `#repo-*` ids to panel-scoped data attributes:
+two panels cannot share an id, and `getElementById` could not have said which
+panel's progress bar it had found.
+
+**1161 server tests.** Verified live: `microsoft` returns the Microsoft family,
+`esri` returns 14 ArcGIS apps, an exact id skips the lookup.
+
 ### ✅ W100 — `mdm.tak-solutions.com` on 443, with a real certificate
 
 Operator, 2026-09-08: an A record for `mdm.tak-solutions.com` should reach the

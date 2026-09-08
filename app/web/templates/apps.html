@@ -10,9 +10,10 @@
   ('local', 'Local apps'),
   ('store', 'ATLAS store'),
   ('tpc', 'TPC Plugins'),
+  ('play', 'Google Play'),
   ('repo', '3rd party repo'),
   ('groups', 'App groups'),
-], active=(request.query_params.get('tab') if request.query_params.get('tab') in ['local','store','tpc','repo','groups'] else 'local'), scope='apps-tabs') }}
+], active=(request.query_params.get('tab') if request.query_params.get('tab') in ['local','store','tpc','play','repo','groups'] else 'local'), scope='apps-tabs') }}
 
 <div id="apps-tabs">
   <div class="tab-panel" data-tab-panel="local">
@@ -289,6 +290,55 @@
     </div>
   </div>
 
+  <div class="tab-panel" data-tab-panel="play" hidden>
+    {#
+      Google Play, as the account linked under Admin → Google Play (W101).
+
+      ⚠️ Its own tab rather than a row in the repository search: a result here
+      costs a Google credential and carries terms the others do not, and mixing
+      it in would hide that behind a shared search bar.
+    #}
+    <div class="card">
+      <h3 style="margin-top:0">Google Play</h3>
+      <p class="muted" style="font-size:13px">
+        Fetches as the account linked under
+        <a href="/admin?tab=googleplay">Admin → Google Play</a>, using that link's
+        device profile — which decides the CPU architecture Play serves. Imports
+        arrive <strong>held</strong>, like every other source.
+      </p>
+      <p class="field-tip">
+        ⚠️ Play publishes no checksum here, so a download is checked by reading
+        the file after it arrives rather than against anything Google stated.
+        Using this path also carries the Terms of Service caveat shown on the
+        admin tab.
+      </p>
+
+      <div class="prefs-toolbar" style="margin-top:12px">
+        <input type="search" id="play-q" class="field-grow"
+               aria-label="Search Google Play" data-repo-query>
+        <button type="button" class="ghost" data-repo-search>Search</button>
+      </div>
+      <p class="field-tip">
+        Search by app name — <span class="mono">outlook</span> — or paste an exact
+        package id such as <span class="mono">com.oi.handtevy</span>. An exact id
+        is the way to reach something that does not surface in search.
+      </p>
+
+      <p class="muted" data-repo-status style="font-size:12px"></p>
+      <div data-repo-results></div>
+    </div>
+
+    <div class="modal-backdrop" data-repo-modal hidden>
+      <div class="modal modal-wide">
+        <h2 data-repo-modal-title>Versions</h2>
+        <div data-repo-modal-body></div>
+        <div style="margin-top:12px; text-align:right">
+          <button type="button" class="ghost" data-repo-close>Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="tab-panel" data-tab-panel="repo" hidden>
     {#
       Look an app up in a third-party repository and pull a build into the
@@ -346,8 +396,8 @@
         </table>
       </details>
 
-      <p class="muted" id="repo-status" style="font-size:12px"></p>
-      <div id="repo-results"></div>
+      <p class="muted" data-repo-status style="font-size:12px"></p>
+      <div data-repo-results></div>
     </div>
 
     {#
@@ -355,10 +405,10 @@
       download once it starts. A large APK takes minutes, so the request that
       begins it returns a job and this polls it.
     #}
-    <div class="modal-backdrop" id="repo-modal" hidden>
+    <div class="modal-backdrop" data-repo-modal hidden>
       <div class="modal modal-wide">
-        <h2 id="repo-modal-title">Versions</h2>
-        <div id="repo-modal-body"></div>
+        <h2 data-repo-modal-title>Versions</h2>
+        <div data-repo-modal-body></div>
         <div style="margin-top:12px; text-align:right">
           <button type="button" class="ghost" data-repo-close>Close</button>
         </div>

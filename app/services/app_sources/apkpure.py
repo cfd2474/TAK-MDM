@@ -51,6 +51,7 @@ from pathlib import Path
 
 from app.services.app_sources.base import (
     Downloaded,
+    collect_output,
     SourceApp,
     SourceError,
     SourceVersion,
@@ -193,13 +194,15 @@ class ApkPureSource:
                     f"({(result.stderr or '').strip()[:160] or 'no output'})"
                 )
 
-            files = [p for p in Path(tmp).iterdir() if p.suffix in (".apk", ".xapk")]
-            if not files:
+            try:
+                # ⚠️ Every part, not the largest one. See collect_output: a split
+                # app truncated to its base installs nowhere and claims to run
+                # everywhere.
+                data = collect_output(Path(tmp))
+            except SourceError as exc:
                 raise SourceError(
-                    f"apkeep reported success but produced no file for "
-                    f"{package_name}@{version.version_key}"
-                )
-            data = max(files, key=lambda p: p.stat().st_size).read_bytes()
+                    f"{exc} for {package_name}."
+                ) from exc
 
         return Downloaded(
             data=data,

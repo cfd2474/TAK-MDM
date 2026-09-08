@@ -1618,7 +1618,10 @@ def apps_page(
         store_packages=[p for p in packages if p.store_listed],
         groups=app_group_service.list_groups(session),
         tpc=_tpc_panel(request, session, vault),
-        repo_sources=app_repos.KNOWN,
+        # Only the sources the 3rd party bar actually searches. Google Play has
+        # its own tab (W101), and listing it here would promise a search this
+        # panel does not perform.
+        repo_sources=[r for r in app_repos.KNOWN if r.unified],
     )
 
 
@@ -1858,6 +1861,11 @@ def repo_search(
     problems: list[dict] = []
 
     for spec in app_repos.KNOWN:
+        # Google Play has its own tab (W101): it needs a linked account, and a
+        # row costing a Google credential does not belong beside rows that cost
+        # nothing.
+        if not spec.unified:
+            continue
         client = _repo_source(spec.name, settings, session, vault)
         if client is None:
             continue
@@ -1891,6 +1899,75 @@ def repo_search(
     )
 
     return JSONResponse({"apps": rows, "problems": problems})
+
+
+@router.get("/apps/play/search")
+def play_search(
+    q: str = "",
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    vault: TokenVault = Depends(get_token_vault),
+    identity: AdminIdentity = Depends(admin_required),
+) -> JSONResponse:
+    """Search Google Play by app name, or take an exact package id (W101).
+
+    Its own route rather than a member of the unified search: Play needs a linked
+    account, so "nothing found" and "nothing linked" are different answers and the
+    tab has to be able to tell them apart.
+    """
+    from app.services.app_sources.base import SourceError
+
+    query = (q or "").strip()
+    if not query:
+        return JSONResponse({"apps": [], "problems": []})
+
+    client = _repo_source("google-play", settings, session, vault)
+    if client is None:
+        return JSONResponse(
+            {
+                "apps": [],
+                "problems": [
+                    {
+                        "source": "google-play",
+                        "label": "Google Play",
+                        "error": "No Google account is linked. Link one under "
+                        "Admin → Google Play before searching.",
+                    }
+                ],
+            }
+        )
+
+    try:
+        apps = client.search(query)
+    except SourceError as exc:
+        return JSONResponse(
+            {
+                "apps": [],
+                "problems": [
+                    {"source": "google-play", "label": "Google Play", "error": str(exc)}
+                ],
+            }
+        )
+
+    return JSONResponse(
+        {
+            "apps": [
+                {
+                    "package_name": a.package_name,
+                    "name": a.name,
+                    "summary": a.summary,
+                    "web_url": a.web_url,
+                    "source": "google-play",
+                    "source_label": "Google Play",
+                    # Play publishes no digest through this path, so a download is
+                    # checked by reading the file rather than by comparison.
+                    "verifiable": False,
+                }
+                for a in apps
+            ],
+            "problems": [],
+        }
+    )
 
 
 @router.get("/apps/repo/versions")
