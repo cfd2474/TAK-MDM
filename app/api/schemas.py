@@ -607,6 +607,11 @@ class CheckinRequest(BaseModel):
     # overwrites what it is told (W32).
     atak_package: str | None = None
     atak_version: str | None = None
+    #: What this device can run, from `Build.SUPPORTED_ABIS`, most-preferred
+    #: first — and the API level it is on. Both optional, because an older agent
+    #: reports neither and must not have its record erased for staying quiet.
+    supported_abis: list[str] | None = None
+    sdk_int: int | None = None
     results: list[CommandResultReport] = Field(default_factory=list)
     # Escape hatch for an agent whose local cache is gone.
     force_full: bool = False

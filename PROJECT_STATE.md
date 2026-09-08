@@ -405,7 +405,7 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
-### 🚧 W96 — Will this build even run here? (R19)
+### ✅ W96 — Will this build even run here? (R19)
 
 Operator, 2026-09-07, after R19 left the SM-X520 permanently DEGRADED: *"how can
 we address R19 for system sustainability when we may not know the architecture of
@@ -470,6 +470,10 @@ line the operator reads *while holding the file*, and touches no resolution.
 
 #### Chunk C2 — the device's half, and stopping the pointless retry
 
+5b. **Backfill** `abis` over stored artifacts, so the existing library is
+   answerable too — without it C1 helps only future uploads, and the operator's
+   own 32-bit Chrome stays unflagged. ⚠️ Reads **every part**, and writes nothing
+   for a version whose blobs are all unreadable: "" would claim universal.
 6. The agent reports `Build.SUPPORTED_ABIS` and `SDK_INT`; `Device` gains both,
    with a migration.
 7. Structural install failures (`NO_MATCHING_ABIS`, `OLDER_SDK`) are reported once
@@ -514,6 +518,55 @@ And the console's version table renders only for the package named in
 scanned" until something re-reads them, so the operator's own 32-bit Chrome is
 *not* yet flagged in the console. A backfill over stored artifacts would fix that
 — `backfill_plugin_api` is the pattern — but it was not in this chunk's plan.
+
+###### ✅ Chunk C2 complete (2026-09-07)
+
+**1105 server tests** and **216 agent tests**. Migration `z6b8d0f2h4j6` applied
+after a backup; **agent 0.46.0 (versionCode 91) published**.
+
+#### ⚠️ The backfill answered R19 outright
+
+Run over the real library, it found the operator already holds a Chrome that
+works:
+
+| Build | versionCode | Installs on |
+|---|---|---|
+| Chrome 139.0.7258.158 | 725815833 | `arm64-v8a, armeabi-v7a` |
+| Chrome 152.0.7977.82 | 797708200 | **`armeabi-v7a` only** |
+
+`resolve_for_policy` takes `max(version_code)`, so it picks 152 — the one that
+cannot install on a 64-bit-only tablet. **Holding 152 makes 139 the answer and
+fixes the SM-X520 with no upload at all.** Left to the operator: holding a build
+is fleet-wide.
+
+This is also the clearest possible argument for the deferred device-aware
+resolution. The right build was in the library the whole time; nothing was capable
+of preferring it.
+
+#### What the device now says, and what it stops doing
+
+`Build.SUPPORTED_ABIS` is stored **in the platform's own order**, because that
+order is the device's answer to "which of these suits you best" — sorting it would
+throw that away. `sdk_int` is separate from `os_version`, which holds a marketing
+name ("14") that cannot be compared with an APK's `min_sdk`.
+
+⚠️ **Giving up on a build is not going quiet.** `InstallRetryPlan` stops the
+download and the install attempt for a failure that is a property of the build —
+ABI mismatch, older SDK, downgrade, signature clash — but the error is still
+reported every cycle and the device stays non-compliant. The app really is
+missing. A fault that stops being mentioned is a fault nobody fixes.
+
+⚠️ **Unknown failures are retried.** The strings come from `PackageManager` and
+are matched as text; treating an unfamiliar one as permanent would strand an app
+over a full disk or a truncated download, which is the worse mistake.
+
+⚠️ **The skip is keyed on package *and artifact digest*.** Keyed on the package
+alone, a device that rejected one APK would go on rejecting the good one that
+replaced it — making the operator's fix invisible, which is precisely the failure
+mode this whole work item is about.
+
+**Deferred, unchanged:** device-aware resolution and publish-time warnings. Both
+facts now exist to build them on.
 
 ### ✅ W95 — Multi-app kiosk: the dock, activities, and where the section sits
 

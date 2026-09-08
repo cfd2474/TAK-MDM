@@ -596,6 +596,51 @@ def backfill_plugin_api(session: Session, storage: ArtifactStorage) -> int:
     return filled
 
 
+def backfill_abis(session: Session, storage: ArtifactStorage) -> int:
+    """Fill `abis` on versions uploaded before anything read `lib/` (W96).
+
+    ⚠️ **Reads every part, not just the base.** A split app often keeps all its
+    native code in a split — the operator's Chrome bundle is exactly that — so a
+    base-only pass would write "" and claim the whole app runs anywhere, which is
+    the failure this column exists to prevent.
+
+    ⚠️ **A version whose blobs are all unreadable is left NULL.** Writing "" there
+    would turn "the file is gone" into "it installs on any device". Skipping a
+    row costs nothing; the console keeps saying *not scanned*, which is true.
+    """
+    import io as _io
+    import zipfile as _zipfile
+
+    from app.artifacts.apk import native_abis
+    from app.artifacts.storage import ArtifactNotFound
+
+    filled = 0
+    for version in session.scalars(
+        select(AppPackageVersion).where(AppPackageVersion.abis.is_(None))
+    ):
+        found: set[str] = set()
+        read_any = False
+        for part in version.files:
+            # An OBB is data, not code; it has no manifest and no lib/.
+            if part.role is PartRole.OBB:
+                continue
+            try:
+                with storage.open(part.artifact_sha256) as handle:
+                    data = handle.read()
+                with _zipfile.ZipFile(_io.BytesIO(data)) as archive:
+                    found |= set(native_abis(data, archive))
+                read_any = True
+            except (ArtifactNotFound, _zipfile.BadZipFile, OSError):
+                continue
+
+        if read_any:
+            version.abis = ",".join(sorted(found))
+            filled += 1
+
+    session.flush()
+    return filled
+
+
 def get_by_id(session: Session, package_id: uuid.UUID) -> AppPackage | None:
     return session.get(AppPackage, package_id)
 

@@ -156,6 +156,12 @@ class Device(Base):
     # or when no ATAK is installed.
     atak_package: Mapped[str | None] = mapped_column(String(128), default=None)
     atak_version: Mapped[str | None] = mapped_column(String(64), default=None)
+    #: What this device can actually run, most-preferred first, comma-separated
+    #: (W96). NULL means an agent too old to report it — never "runs nothing".
+    supported_abis: Mapped[str | None] = mapped_column(String(128), default=None)
+    #: `Build.VERSION.SDK_INT`. The API level, which `os_version` ("14") is not:
+    #: comparing a build's `min_sdk` needs the number, not the marketing name.
+    sdk_int: Mapped[int | None] = mapped_column(Integer, default=None)
     enrollment_state: Mapped[EnrollmentState] = mapped_column(
         Enum(EnrollmentState, native_enum=False, length=16), default=EnrollmentState.PENDING
     )

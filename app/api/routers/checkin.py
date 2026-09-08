@@ -117,6 +117,13 @@ def checkin(
     if payload.atak_version:
         device.atak_package = payload.atak_package
         device.atak_version = payload.atak_version
+    # Same rule, same reason: only overwrite what was actually reported. An empty
+    # list is still a report ("this device claims no ABIs") and is kept distinct
+    # from the older agent that says nothing at all.
+    if payload.supported_abis is not None:
+        device.supported_abis = ",".join(payload.supported_abis)
+    if payload.sdk_int is not None:
+        device.sdk_int = payload.sdk_int
 
     # "Settled" means this device has already checked in at least once on the
     # agent build it is running. Computed *before* the column is overwritten, so

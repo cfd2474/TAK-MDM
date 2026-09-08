@@ -319,6 +319,21 @@ class AgentConfig(context: Context) {
         set(value) = prefs.edit { putStringSet(KEY_HIDDEN_BY_POLICY, value) }
 
     /**
+     * Builds that failed to install for a reason retrying cannot change (W96).
+     *
+     * ⚠️ Keyed on package **and artifact digest**, so a policy that moves to a
+     * different build is tried afresh. Remembering "this package cannot install"
+     * would make the operator's fix invisible — they would upload a working APK
+     * and the device would go on refusing it.
+     *
+     * Kept small: this is a cache of a decision, and losing it costs one wasted
+     * install attempt, not correctness.
+     */
+    var unusableBuilds: Set<String>
+        get() = prefs.getStringSet(KEY_UNUSABLE_BUILDS, emptySet()) ?: emptySet()
+        set(value) = prefs.edit { putStringSet(KEY_UNUSABLE_BUILDS, value.take(50).toSet()) }
+
+    /**
      * SSIDs of Wi-Fi networks this agent configured from policy, so it can remove
      * them when the policy stops listing them. Same reasoning as [hiddenByPolicy]:
      * never touch a network the user or another app set up.
@@ -441,6 +456,7 @@ class AgentConfig(context: Context) {
         private const val KEY_APP_CONFIGURED = "app_configured"
         private const val KEY_COMMAND_RESULTS = "pending_command_results"
         private const val KEY_HIDDEN_BY_POLICY = "hidden_by_policy"
+        private const val KEY_UNUSABLE_BUILDS = "unusable_builds"
         private const val KEY_SUSPENDED_BY_POLICY = "suspended_by_policy"
         private const val KEY_WIFI_BY_POLICY = "wifi_by_policy"
         private const val KEY_WIFI_ID_PREFIX = "wifi_id:"

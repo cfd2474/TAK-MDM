@@ -46,6 +46,7 @@ import com.taksolutions.atlasmdm.policy.AppUpdatePlan
 import com.taksolutions.atlasmdm.policy.DataUsageTracker
 import com.taksolutions.atlasmdm.policy.ArtifactSweepPlan
 import com.taksolutions.atlasmdm.policy.InstallerCachePlan
+import com.taksolutions.atlasmdm.policy.InstallRetryPlan
 import com.taksolutions.atlasmdm.policy.LauncherConfigPlan
 import com.taksolutions.atlasmdm.policy.PolicyApplier
 import com.taksolutions.atlasmdm.ui.InstallNotifier
@@ -353,6 +354,12 @@ class Reconciler(private val context: Context) {
                 }
             }
             .put("os_version", Build.VERSION.RELEASE)
+            // What this device can actually run (W96). Reported in the platform's
+            // own preference order, because "which of these builds suits it best"
+            // is a question that order answers. RELEASE above is a marketing name
+            // ("14"); comparing an APK's minSdk needs the API level as a number.
+            .put("supported_abis", JSONArray(Build.SUPPORTED_ABIS.toList()))
+            .put("sdk_int", Build.VERSION.SDK_INT)
             .put("applied_optional_files", JSONArray(config.selectedOptionalFiles.toList()))
             // Without this the server cannot tell a healthy device from one that
             // is failing to apply anything: it reported "compliant" while the
@@ -793,6 +800,27 @@ class Reconciler(private val context: Context) {
                 .mapNotNull { files.optJSONObject(it) }
                 .sortedBy { if (it.optString("role") == "base") 0 else 1 }
 
+            // ⚠️ A build that cannot install on this device is not downloaded
+            // again (W96, R19). An ABI or minSdk mismatch fails identically
+            // forever, and re-attempting it cost one tablet a multi-megabyte
+            // download and a failed install on every single reconcile.
+            //
+            // Still reported, every cycle: the app really is missing and the
+            // device really is non-compliant. What stops is the work, not the
+            // telling — a fault that goes quiet is a fault nobody fixes.
+            val retryKey = InstallRetryPlan.keyFor(
+                packageName,
+                ordered.firstOrNull { it.optString("role") == "base" }
+                    ?.optString("sha256").orEmpty(),
+            )
+            if (retryKey in config.unusableBuilds) {
+                AgentLog.w(TAG, "$packageName: skipping, this build cannot install here")
+                errors += "$packageName: this build cannot install on this device, so it " +
+                    "is no longer being retried. Upload a build that supports this " +
+                    "device, or remove the app from the policy."
+                continue
+            }
+
             // R2: a normally-installed Device Owner cannot write another app's
             // Android/obb directory — verified EACCES on SM-X520, and it is a
             // deliberate scoped-storage restriction (not fixed by all-files
@@ -859,6 +887,13 @@ class Reconciler(private val context: Context) {
             } else {
                 AgentLog.e(TAG, "$packageName install failed: ${result.message}")
                 errors += "$packageName: ${result.message}"
+                // Unknown failures are retried; only the ones that are properties
+                // of the build itself are remembered. See InstallRetryPlan for why
+                // the default leans that way.
+                if (!InstallRetryPlan.shouldRetry(result.message)) {
+                    AgentLog.w(TAG, "$packageName: will not retry this build")
+                    config.unusableBuilds = config.unusableBuilds + retryKey
+                }
             }
         }
         return ApplyReport(errors, warnings)
