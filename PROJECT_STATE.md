@@ -706,9 +706,44 @@ Google-account exposure as `gplaydl`. If that path works it is the only licit-is
 route to the proprietary apps; if it does not, apkeep adds nothing this console
 lacks.
 
-**Untested and the obvious next step:** run the published binary and see whether an
-APKPure fetch still succeeds. That means executing a third-party binary, so it is
-left for the operator to authorise rather than done unasked.
+###### ✅ Tested end to end, with the operator's authorisation (2026-09-08)
+
+The published Windows binary was fetched and its SHA-256 matched the digest GitHub
+publishes. *(That proves the transfer, not the provenance — each asset also ships
+a `.sig`, which would need EFF's public key to check.)*
+
+**It works, and APKPure's app API is live.** `apkeep -l -a net.osmand` returned 34
+real versions including **5.4.3 and 5.4.4 — newer than F-Droid's 5.3.10**. One
+download: a **188 MB XAPK in 3.7 seconds**.
+
+**ATLAS ingests its output natively.** `inspect_bundle` parsed it in 1.7s:
+
+    package net.osmand  5.4.4 (code 5404)   label OsmAnd
+    minSdk 24  targetSdk 36   signer v3 d192f4ff…
+    base 134.6 MB + config.armeabi_v7a.apk 52.5 MB + config.xhdpi.apk 0.8 MB
+
+⚠️ **The very first file it fetched would have broken the fleet — and was caught.**
+`abis = ('armeabi-v7a',)` on an **arm64-only** fleet: R19's exact shape. The W96/W97
+machinery reads it and preflight would say *2 of 2 reporting devices cannot run
+this build*. The guard did its job against a real file from a real source on the
+first try.
+
+⚠️ **The architecture must be pinned explicitly — the default is not trustworthy.**
+`USAGE-apkpure.md` documents the default as `arch=arm64-v8a;armeabi-v7a;…`, arm64
+first. Listing with `-o 'arch=arm64-v8a'` shows 5.4.4 **is** available for arm64.
+The download without `-o` still returned armeabi-v7a. Any integration must pass
+`-o 'arch=…'` and then verify the result by reading the file, never trust the
+ordering. *(The arm64 variant was listed but not downloaded — one download was
+what had been authorised.)*
+
+⚠️ **APKPure publishes no hash**, unlike F-Droid, so verification is post-download
+by reading the file — which is what `inspect_apk` does anyway. Provenance is a
+mirror, not the vendor.
+
+**Verdict: viable.** The only surveyed route that reaches proprietary apps without
+a Google account, a copyleft licence, or re-signing. It integrates as a subprocess
+whose output goes through the existing ingest path, so identity and signature
+continuity are still read from the file.
 
 ###### 💡 Deferred: filling in app details (operator, 2026-09-07)
 
