@@ -299,22 +299,34 @@
       listing naming the wrong package cannot smuggle one in under it.
     #}
     <div class="card">
-      <h3 style="margin-top:0">F-Droid</h3>
+      <h3 style="margin-top:0">Repositories</h3>
       <p class="muted" style="font-size:13px">
-        F-Droid publishes a signed index: every build states its SHA-256, the CPU
+        These publish a signed index: every build states its SHA-256, the CPU
         architectures it carries, the Android version it needs and its signing
         certificate. Downloads are checked against that digest, so a file that is
         not what was published is refused rather than imported.
       </p>
       <p class="field-tip">
-        ⚠️ It carries open-source apps only. Chrome, ArcGIS and Handtevy are not
+        ⚠️ They carry open-source apps only. Chrome, ArcGIS and Handtevy are not
         there — those still arrive through <a href="?#tab-local">Local apps</a>,
         which reads the same facts out of the file you upload.
       </p>
 
+      {#
+        ⚠️ The repositories are not equally trusted, and each says what it is
+        rather than being levelled by sitting in one dropdown (W97 C3).
+      #}
+      <label for="repo-source">Repository</label>
+      <select id="repo-source" class="field-full" data-repo-source>
+        {% for r in repo_sources %}
+          <option value="{{ r.name }}" data-note="{{ r.note }}">{{ r.label }}</option>
+        {% endfor %}
+      </select>
+      <p class="field-tip" data-repo-note></p>
+
       <div class="prefs-toolbar" style="margin-top:12px">
         <input type="search" id="repo-q" class="field-grow"
-               aria-label="Search F-Droid" data-repo-query>
+               aria-label="Search the selected repository" data-repo-query>
         <button type="button" class="ghost" data-repo-search>Search</button>
       </div>
       <p class="field-tip">Search by app name or exact package name.</p>

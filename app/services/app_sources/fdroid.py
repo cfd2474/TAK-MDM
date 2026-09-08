@@ -85,19 +85,24 @@ def _text(value: Any) -> str | None:
 class FDroidSource:
     """Search and fetch from F-Droid's signed index."""
 
-    name = "fdroid"
-    label = "F-Droid"
-
     def __init__(
         self,
         cache_dir: Path,
         *,
         client: httpx.Client | None = None,
         repo: str = REPO,
+        name: str = "fdroid",
+        label: str = "F-Droid",
     ) -> None:
         self._cache_dir = Path(cache_dir)
         self._client = client
         self._repo = repo.rstrip("/")
+        # ⚠️ Per instance, not per class (W97 C3). Several repositories speak this
+        # format, and the name is stored as provenance on whatever is imported —
+        # a build from IzzyOnDroid recorded as "fdroid" would be a lie in the one
+        # field that exists to answer "where did this come from".
+        self.name = name
+        self.label = label
         self._index: dict[str, Any] | None = None
         self._checked_at = 0.0
 
@@ -126,7 +131,11 @@ class FDroidSource:
         return index
 
     def _index_path(self) -> Path:
-        return self._cache_dir / "fdroid-index-v2.json"
+        # ⚠️ Named per repository. A shared filename would have one repository's
+        # index overwrite another's — and since each is verified against its own
+        # `entry.json`, the collision would surface as a digest mismatch, or
+        # worse, as the wrong catalogue answering.
+        return self._cache_dir / f"{self.name}-index-v2.json"
 
     def index(self) -> dict[str, Any]:
         """The parsed index, fetched only when its published digest changes."""

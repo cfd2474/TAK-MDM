@@ -453,3 +453,75 @@ def test_a_job_the_server_has_forgotten_says_so(client):
 
     assert response.status_code == 404
     assert "no longer known" in response.json()["error"]
+
+
+# --------------------------------------------------------------------------- #
+# Several repositories, one format (W97, C3)
+# --------------------------------------------------------------------------- #
+
+
+def test_each_repository_caches_its_own_index(tmp_path):
+    """⚠️ The bug a shared filename would have caused.
+
+    Every repository verifies its index against its own `entry.json`, so one
+    overwriting another's cache would surface as a digest mismatch — or worse, as
+    the wrong catalogue answering a search.
+    """
+    apk = build_apk("org.example.app", 42)
+    cache = tmp_path / "cache"
+
+    first = _source(tmp_path, _index(apk), apk)
+    first._cache_dir = cache
+    first.name = "fdroid"
+    first.search("example")
+
+    second = _source(tmp_path, _index(apk, package="org.other.app"), apk)
+    second._cache_dir = cache
+    second.name = "izzyondroid"
+    second.search("other")
+
+    assert (cache / "fdroid-index-v2.json").exists()
+    assert (cache / "izzyondroid-index-v2.json").exists()
+
+
+def test_provenance_records_the_repository_that_served_it(tmp_path, db, artifact_storage):
+    """⚠️ A build from a third-party repository recorded as "fdroid" would be a lie
+    in the one field that exists to answer where it came from."""
+    apk = build_apk("org.example.app", 42)
+    source = _source(tmp_path, _index(apk), apk)
+    source.name = "izzyondroid"
+
+    imported = repo_import.import_version(db, artifact_storage, source, source.versions("org.example.app")[0])
+    db.commit()
+
+    assert imported.source == "izzyondroid"
+
+
+def test_the_offered_repositories_say_what_they_are():
+    """Each carries a note, because listing them side by side would otherwise
+    imply they are the same decision. They are not."""
+    from app.services.app_sources import repos
+
+    names = [r.name for r in repos.KNOWN]
+    assert names[0] == "fdroid", "official F-Droid is the recommendation"
+    assert "izzyondroid" in names
+    assert all(r.note for r in repos.KNOWN)
+
+    third_party = next(r for r in repos.KNOWN if r.name == "izzyondroid")
+    assert "third-party" in third_party.note
+
+
+def test_an_unknown_repository_builds_nothing(tmp_path):
+    from app.services.app_sources import repos
+
+    assert repos.build("nowhere", tmp_path) is None
+    assert repos.build("fdroid", tmp_path).name == "fdroid"
+
+
+def test_the_console_offers_every_repository_with_its_note(client):
+    body = client.get("/apps").text
+
+    assert "data-repo-source" in body
+    for label in ("F-Droid", "F-Droid archive", "IzzyOnDroid"):
+        assert label in body
+    assert "third-party repository" in body

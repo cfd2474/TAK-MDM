@@ -2296,6 +2296,30 @@
   if (!panel) return;
 
   var query = panel.querySelector("[data-repo-query]");
+  var picker = panel.querySelector("[data-repo-source]");
+  var note = panel.querySelector("[data-repo-note]");
+
+  // Which repository is being searched has to travel with every call: a version
+  // list or an import that guessed "fdroid" would fetch a different build than
+  // the one on screen.
+  function source() {
+    return picker ? picker.value : "fdroid";
+  }
+
+  function showNote() {
+    if (!picker || !note) return;
+    var chosen = picker.options[picker.selectedIndex];
+    note.textContent = chosen ? chosen.getAttribute("data-note") || "" : "";
+  }
+  if (picker) {
+    picker.addEventListener("change", function () {
+      showNote();
+      // The results on screen belong to the repository that produced them.
+      results.innerHTML = "";
+      say("");
+    });
+    showNote();
+  }
   var status = panel.querySelector("#repo-status");
   var results = panel.querySelector("#repo-results");
   var modal = panel.querySelector("#repo-modal");
@@ -2330,7 +2354,8 @@
     say("Searching F-Droid…");
     results.innerHTML = "";
 
-    fetch("/apps/repo/search?q=" + encodeURIComponent(q))
+    fetch("/apps/repo/search?source=" + encodeURIComponent(source()) +
+          "&q=" + encodeURIComponent(q))
       .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
       .then(function (res) {
         if (!res.ok) { say(res.body.error || "search failed", true); return; }
@@ -2386,7 +2411,8 @@
     modalBody.innerHTML = "<p class='muted'>Reading versions…</p>";
     modal.hidden = false;
 
-    fetch("/apps/repo/versions?package=" + encodeURIComponent(app.package_name))
+    fetch("/apps/repo/versions?source=" + encodeURIComponent(source()) +
+          "&package=" + encodeURIComponent(app.package_name))
       .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
       .then(function (res) {
         if (!res.ok) {
@@ -2474,6 +2500,7 @@
 
     var body = new FormData();
     body.append("csrf_token", csrf());
+    body.append("source", source());
     body.append("package", app.package_name);
     body.append("version_code", version.version_code);
     body.append("label", app.name);

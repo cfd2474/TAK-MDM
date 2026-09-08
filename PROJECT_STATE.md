@@ -614,6 +614,33 @@ No scraping, the same verification chain, and roughly double the catalogue —
 plus, via the archive, the ability to fetch a *specific older build*, which is
 exactly the situation R19 ended in (a 32-bit newest, a working older one).
 
+###### ✅ Chunk C3 complete (2026-09-07) — three repositories
+
+**1131 server tests** (5 new). Deployed, no migration. Verified live on the host:
+
+| Repository | Packages | Search |
+|---|---|---|
+| F-Droid | 4335 | `net.osmand.plus`, newest `531003` (`arm64-v8a`) |
+| F-Droid archive | 5030 | reached, older builds |
+| IzzyOnDroid | 1394 | reached, no OsmAnd — it is in official F-Droid |
+
+⚠️ **A shared cache filename would have been a real bug, caught before shipping.**
+`_index_path()` returned a fixed name, so a second repository's index would have
+overwritten the first's. Each index is verified against *its own* `entry.json`, so
+the collision would have surfaced as a digest mismatch — or worse, as the wrong
+catalogue answering a search. Now keyed by repository name, confirmed on the host:
+three separate files.
+
+⚠️ **`name` moved from the class to the instance**, because it is stored as
+provenance. A build fetched from IzzyOnDroid and recorded as `fdroid` would be a
+lie in the one field that exists to answer where something came from.
+
+⚠️ **The repositories are not equally trusted, and each says so in the picker.**
+Official F-Droid builds from source on its own infrastructure; IzzyOnDroid is a
+third party shipping mostly developer-provided binaries. Both legitimate, not the
+same decision — and listing them side by side without a word would have implied
+otherwise.
+
 **Dependencies added:** `httpx` only, already present. `beautifulsoup4` and
 `cloudscraper` are **not** added — nothing left to scrape.
 

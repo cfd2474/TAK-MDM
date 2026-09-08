@@ -113,6 +113,7 @@ from app.services import import_jobs
 from app.services import tak_gov
 from app.services import tak_gov_link
 from app.services import app_groups as app_group_service
+from app.services.app_sources import repos as app_repos
 from app.services import commands as command_service
 from app.services import content_admin
 from app.services import custom_attributes as attribute_service
@@ -1617,6 +1618,7 @@ def apps_page(
         store_packages=[p for p in packages if p.store_listed],
         groups=app_group_service.list_groups(session),
         tpc=_tpc_panel(request, session, vault),
+        repo_sources=app_repos.KNOWN,
     )
 
 
@@ -1795,11 +1797,9 @@ def _repo_source(name: str, settings: Settings):
     Constructed per request rather than held globally: it is cheap, and the index
     it caches lives on disk, so nothing of value is thrown away between calls.
     """
-    from app.services.app_sources.fdroid import FDroidSource
+    from app.services.app_sources import repos
 
-    if name and name != "fdroid":
-        return None
-    return FDroidSource(Path(str(settings.cache_dir)))
+    return repos.build(name or "fdroid", Path(str(settings.cache_dir)))
 
 
 def _version_row(session: Session, version, preflight) -> dict:
