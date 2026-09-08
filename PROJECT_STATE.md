@@ -677,6 +677,40 @@ deciding they do not serve robots.
   API rather than a scrape, and where ATAK plugins actually live. Play is not the
   channel of record for ATAK; tak.gov is, and the TPC tab already reaches it.
 
+###### 💡 Deferred: filling in app details (operator, 2026-09-07)
+
+*"keep this in mind if we find a method to pull APK files. this could be a good
+way to fill in app details."* — on `play-scraper`, whose metadata is its only
+useful half.
+
+**Most of that value does not need Play, and is already in hand.** The F-Droid
+index this console parses carries, per app: `name`, `summary`, `description`,
+`icon`, `screenshots`, `categories`, `license`, `sourceCode`, `authorName`,
+`changelog`, `issueTracker`. Only name and summary are read today; the rest is
+parsed and thrown away. Enriching the **ATLAS store** tab for anything in the
+three repositories is therefore a parsing change, not a new source — and it costs
+no extra request, because the index is already cached.
+
+Where Play would genuinely add something is the **proprietary** apps: ATAK,
+Handtevy, ArcGIS, Chrome. For those, note before building:
+
+⚠️ **Store descriptions and screenshots are the publisher's copyrighted content.**
+Reading them to decide something is one matter; re-serving them inside an ATLAS
+store shown to device users is republication, and that is a licensing question
+rather than a technical one. Worth answering before it is built, not after.
+
+⚠️ **`play-scraper` is archived (2026-03-11) and Play's payload is obfuscated and
+unstable.** Measured: a version string was extractable for Firefox and not for
+ATAK or Chrome, from a 1.2 MB page. Anything built on it inherits that.
+
+⚠️ **The APK already answers some of this.** `inspect_apk` reads the label and
+extracts the icon (W51, W53), so the gap is description, category and
+screenshots — not identity.
+
+The order that makes sense, if this is ever picked up: use the index metadata that
+is already downloaded, then decide whether the proprietary apps justify the rights
+question.
+
 **Dependencies added:** `httpx` only, already present. `beautifulsoup4` and
 `cloudscraper` are **not** added — nothing left to scrape.
 
