@@ -39,6 +39,7 @@ from app.config import Settings, get_settings
 from app.db.models import ComplianceStatus, Device
 from app.security.bundle import BundleSigner
 from app.services import commands as command_service
+from app.services import disenroll
 from app.services import desired_state as desired_state_service
 from app.services import effective_policy as eff
 from app.services import agent_update as agent_update_service
@@ -136,6 +137,28 @@ def checkin(
 
     # Results first: a command finished this cycle should not be handed back below.
     _, unknown_command_ids = command_service.record_results(session, device, payload.results)
+
+    # ⚠️ Before anything else reads the device, because this deletes it (W104).
+    #
+    # The acknowledgement means "received, resetting now" — it arrives from a
+    # device that still exists, and no later message ever will. So the record goes
+    # here, and the response is deliberately empty: there is nothing to ask of a
+    # tablet that is erasing itself, and every field below would be computed from
+    # a row that no longer exists.
+    if disenroll.acknowledged(session, device):
+        device_id = device.id
+        state_version = device.state_version
+        disenroll.complete(session, device)
+        session.commit()
+        return CheckinResponse(
+            device_id=device_id,
+            state_version=state_version,
+            generated_at=datetime.now(timezone.utc),
+            policy_changed=False,
+            next_checkin_seconds=settings.checkin_interval_seconds,
+            unknown_command_ids=unknown_command_ids,
+        )
+
     _record_convergence(device, payload)
 
     # The device's report of which optional items its user has applied is

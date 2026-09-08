@@ -196,8 +196,59 @@
 </div>
 {% endif %}
 
+<h2 id="location">Location history</h2>
+<div class="panel">
+  {#
+    A placeholder, and it says so. The alternative — an empty map, or a panel
+    implying data is merely absent today — would have an operator waiting for
+    points that nothing is collecting (W104).
+  #}
+  <p class="muted">
+    Not collected yet. The agent has a <code>locate</code> command for finding a
+    device on request, but nothing records a history — so there is nothing here to
+    show rather than nothing to see.
+  </p>
+</div>
+
 <h2 id="lifecycle">Lifecycle</h2>
 <div class="panel">
+  {#
+    ⚠️ Disenroll is the destructive one and sits apart from retire and delete.
+    Retire revokes certificates and leaves the tablet as it is; this erases the
+    tablet.
+  #}
+  {% if disenrolling %}
+    <div class="banner warn">
+      <strong>Factory reset queued.</strong>
+      Sent at {{ disenrolling.created_at.strftime('%Y-%m-%d %H:%M') }}. The device
+      resets when it next checks in and acknowledges the command — and this record
+      is removed at that moment, because nothing can report back afterwards.
+    </div>
+  {% elif device.enrollment_state.value != 'retired' %}
+    <form method="post" action="/devices/{{ device.id }}/disenroll" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <p>
+        <strong>Disenroll and factory reset.</strong>
+        This erases <span class="mono">{{ device.serial_number }}</span> completely —
+        apps, accounts, settings and its external storage — and returns it to
+        out-of-box state. <strong>It cannot be undone</strong>, and the data on the
+        device is not recoverable.
+      </p>
+      <p class="field-tip">
+        The reset runs only once the device confirms it received the instruction,
+        so a tablet that is off or offline resets when it next comes back. This
+        record is removed at that confirmation — the last message it will ever send.
+      </p>
+      <label for="disenroll-confirm">Type the serial number to confirm</label>
+      <input type="text" id="disenroll-confirm" name="confirm" class="field-full"
+             autocomplete="off">
+      <div>
+        <button type="submit" class="danger">Disenroll and factory reset</button>
+      </div>
+    </form>
+    <hr>
+  {% endif %}
+
   {% if device.enrollment_state.value == 'retired' %}
     <p class="muted">
       <span class="pill bad">retired</span>

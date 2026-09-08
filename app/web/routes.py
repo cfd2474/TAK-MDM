@@ -334,7 +334,16 @@ def device_detail(
         pending_log_request=_has_open_log_request(session, device_id),
         identifiers=device_identity.for_device(session, device_id),
         attributes=attribute_service.values_for_device(session, device_id),
+        disenrolling=_disenroll_pending(session, device),
     )
+
+
+def _disenroll_pending(session: Session, device: Device):
+    """The reset already on its way, if any — so the page says so rather than
+    offering the button again."""
+    from app.services import disenroll
+
+    return disenroll.pending(session, device)
 
 
 def _has_open_log_request(session: Session, device_id: uuid.UUID) -> bool:
@@ -430,6 +439,40 @@ def retire_device_form(
     revoke_device_certificates(session, device, reason="device retired")
     session.commit()
     return _redirect(f"/devices/{device_id}")
+
+
+@router.post("/devices/{device_id}/disenroll")
+def disenroll_device_form(
+    device_id: uuid.UUID,
+    confirm: str = Form(default=""),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Factory reset the device and forget it (W104).
+
+    ⚠️ **Typing the serial is the confirmation.** This erases a tablet, and a
+    dialog anyone can dismiss by reflex is not proportionate to that — the
+    operator has to name the specific device they mean, which cannot be done by
+    accident on the wrong row.
+
+    The record is *not* removed here. It goes when the device acknowledges the
+    reset, which is the only moment the server can know the instruction arrived.
+    """
+    from app.services import disenroll
+
+    device = session.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
+
+    if confirm.strip() != device.serial_number:
+        return _redirect(
+            f"/devices/{device_id}?error="
+            + _quote("type the serial number exactly to confirm the factory reset")
+        )
+
+    disenroll.request(session, device)
+    session.commit()
+    return _redirect(f"/devices/{device_id}?disenrolling=1")
 
 
 @router.post("/devices/{device_id}/delete")

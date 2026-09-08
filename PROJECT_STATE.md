@@ -405,6 +405,92 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W104 — Device details, and disenroll as a factory reset
+
+Operator, 2026-09-08: a details page per device — serial and device details,
+location history (later), the policies reaching it, and a disenroll that factory
+resets the device. The agent must acknowledge receipt **before** resetting, and
+the server removes the device once that acknowledgement arrives.
+
+#### Most of this already exists, which changes the shape of the work
+
+| Asked for | State |
+|---|---|
+| A details page, reached by clicking a device | ✅ `/devices/{id}`, linked from the Fleet page |
+| Serial and device details | ✅ on that page |
+| The policies reaching the device | ✅ `considered`, **in resolver order**, so it shows real precedence |
+| Location history | ❌ to build (placeholder this chunk) |
+| Disenroll → factory reset | ❌ to build |
+| Agent acks before resetting | ✅ **already implemented** |
+
+⚠️ **The acknowledgement-before-reset requirement is already met, exactly.**
+`WipeCommandHandler` returns `CommandOutcome.okAfterReporting`, and the reconciler
+runs deferred effects only after `flushCommandResults()` succeeds — if the result
+cannot be delivered, the wipe does *not* run and is retried on a later cycle. The
+existing comment gives the reason in the operator's own terms: *"there is no next
+check-in after a factory reset in which to report anything."* **No agent change,
+and therefore no APK release.**
+
+#### ⚠️ What the acknowledgement actually means
+
+It means *"received, and about to reset"* — not *"reset completed"*. Nothing can
+report the latter, because the device that would report it has just been erased.
+
+So a device whose reset fails *after* acking is removed from the server while
+still being a managed Device Owner, holding certificates the server has revoked.
+It cannot check in again, and recovering it means a manual factory reset. That is
+an acceptable outcome and arguably the right one — but it is a real consequence of
+removing on ack rather than on completion, and it is written down rather than
+discovered later.
+
+#### Chunk C1
+
+1. `disenroll` on the device page: a distinct, strongly-confirmed action that
+   queues a `wipe` command. Separate from the existing delete, which refuses
+   anything not already retired.
+2. On the acknowledgement, the server retires or removes the device and revokes
+   its certificates — one place, in `record_results`, so it happens however the
+   result arrives.
+3. A location-history section on the page, honestly empty for now.
+4. The device page states what disenroll does before it is pressed, in the words
+   that matter: this factory resets the tablet and cannot be undone.
+5. Tests: the ack path removes the device; a *failed* wipe does not; a disenroll
+   already in flight is not queued twice.
+6. Deploy. No APK.
+
+###### ✅ Complete (2026-09-08) — 1176 server tests, server-side only
+
+**Operator chose deletion**, knowing the record's logs, identifiers, attributes and
+command history go with it. Retiring and hiding was offered as the alternative that
+preserves the audit trail; delete is what was asked for and what was built.
+
+⚠️ **No agent change and no APK.** The acknowledgement-before-reset ordering was
+already implemented — `okAfterReporting` plus a reconciler that runs deferred
+effects only after `flushCommandResults()` succeeds. A device that cannot deliver
+its acknowledgement does **not** reset, and retries later.
+
+⚠️ **A disenroll wipe is marked as one.** An ordinary `wipe` — a lost or stolen
+device — must not delete the record an operator still needs, so only a wipe
+carrying `disenroll: true` removes anything. There is a test for each direction.
+
+⚠️ **Typing the serial is the confirmation.** A dialog dismissed by reflex is not
+proportionate to erasing a tablet, and naming the specific device cannot be done by
+accident on the wrong row. Pressing twice queues one reset, not two — the device
+would take the first and vanish, orphaning the second.
+
+⚠️ **The record is deleted mid-check-in, so the reply is deliberately empty.**
+Everything after that point would be computed from a row that no longer exists.
+The device is erasing itself; there is nothing left to ask of it.
+
+⚠️ **What the acknowledgement is not.** It means *received, resetting now* —
+never *reset completed*, because nothing can report that. A reset failing after
+acking leaves a tablet still owned by this agent, holding revoked certificates,
+recoverable only by a manual reset at the device.
+
+**Location history is a placeholder that says so.** An empty map would have an
+operator waiting for points nothing is collecting; the panel states that the
+`locate` command exists but no history is recorded.
+
 ### ✅ W102 — The running build, in a footer
 
 Operator, 2026-09-08: keep the active web UI build listed in a footer for quick
