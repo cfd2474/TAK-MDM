@@ -847,3 +847,14 @@ dl.kv dd { margin: 0; font-size: 13px; }
 /* Inside a wrapping .rs-row the tip belongs to one control, not the row, so it
    takes the full width and drops below rather than squeezing between fields. */
 .rs-row .field-tip { flex-basis: 100%; }
+
+/* The build footer (W102). Deliberately quiet: it is for the moment someone asks
+   "which build is this", not something to read on every page. */
+.site-footer {
+  padding: 18px 24px 26px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  opacity: .75;
+}
+.site-footer:hover { opacity: 1; }

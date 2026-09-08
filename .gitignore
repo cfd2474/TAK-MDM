@@ -43,3 +43,6 @@ scratch/
 
 # Downloaded repository indexes (W98). Re-fetchable, and F-Droid alone is 59 MB.
 cache/
+
+# Written at pack time by scripts/write_build.py (W102). Per-deploy, never committed.
+BUILD

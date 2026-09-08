@@ -22,6 +22,7 @@ from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
+from app.version import build_info
 from app.security import admin_auth
 from app.services import notifications
 from app.web import routes as web_routes
@@ -109,7 +110,9 @@ app = FastAPI(
     title="ATLAS",
     summary="ATAK Tactical Lifecycle & Administration System",
     description="Self-hosted Android MDM with stackable, composable policies.",
-    version="0.1.0",
+    # ⚠️ The running revision, not a number somebody must remember to bump —
+    # "0.1.0" sat here through a hundred work items telling nobody anything (W102).
+    version=build_info().revision,
     contact={"name": "TAK-Solutions LLC"},
     license_info={"name": "Apache 2.0", "identifier": "Apache-2.0"},
     lifespan=lifespan,

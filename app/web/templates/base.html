@@ -51,6 +51,18 @@
   {% endif %}
   {% block content %}{% endblock %}
 </main>
+{#
+  ⚠️ The running revision, on every page (W102). The question a footer answers is
+  "is this server the code I think it is", and only the commit can answer it — a
+  hand-maintained version string goes stale silently, which `version="0.1.0"` in
+  main.py did for a hundred work items.
+
+  It reads "build unknown" when nothing could be established, rather than showing
+  something plausible. A wrong build number is believed; a missing one is not.
+#}
+<footer class="site-footer">
+  <span class="mono" title="Source: {{ build.source }}">{{ build.label }}</span>
+</footer>
 <script src="/static/atlas.js" defer></script>
 </body>
 </html>

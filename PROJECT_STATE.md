@@ -405,6 +405,36 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W102 — The running build, in a footer
+
+Operator, 2026-09-08: keep the active web UI build listed in a footer for quick
+reference.
+
+⚠️ **A version string somebody must remember to bump is worse than none.**
+`main.py` carried `version="0.1.0"` through a hundred work items, telling every
+reader something false. The question a footer answers is *"is this server running
+the code I think it is"*, and only the revision can answer it — so the footer
+shows the commit, its date, and whether the tree was modified.
+
+⚠️ **The deploy tarball excludes `.git`**, so the host cannot ask git anything.
+`scripts/write_build.py` stamps a `BUILD` file at pack time and that ships inside
+the tarball. Resolution order: `TAKMDM_BUILD` env, the `BUILD` file, local git
+(development), then nothing.
+
+⚠️ **With no source it says `build unknown`, never a guess.** A plausible
+build number is *believed*, and sends someone debugging code that is not running;
+a missing one is merely unhelpful. Two tests exist for that refusal alone,
+including a half-written `BUILD` file, which must not read as an answer.
+
+⚠️ **A dirty tree is reported as modified.** Deploying uncommitted work is
+ordinary here; labelling it with the last commit's hash alone would make the
+footer claim something untrue.
+
+Injected in `_render`, for the reason the CSRF token is: every page needs it, and
+a page that forgot would render nothing rather than fail, so nobody would notice.
+`BUILD` is gitignored — it is per-deploy, and committing it would ship a stale
+value. **1167 server tests.**
+
 ### ✅ W101 — Google Play on its own tab, searchable by name
 
 Operator, 2026-09-08: a Google Play tab between TPC Plugins and 3rd party repo,

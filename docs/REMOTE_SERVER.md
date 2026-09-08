@@ -84,8 +84,15 @@ list is anchored (`./artifacts`, not `artifacts`) so it drops the *uploaded APK
 store* at the repo root without also dropping the `app/artifacts` **source
 package** — an unanchored pattern silently ships a broken server.
 
+⚠️ **Stamp the build first.** The tarball excludes `.git`, so the running
+server has no other way to say which revision it is — and the console footer
+reads "build unknown" without it (W102). It records a dirty tree as dirty, which
+is honest: deploying uncommitted work is ordinary, and labelling it with the last
+commit alone would make the footer claim something false.
+
 ```bash
 SP="<scratchpad>"   # the session scratchpad from your environment block
+python scripts/write_build.py          # writes ./BUILD, which the footer reads
 tar -czf "$SP/atlas.tgz" \
   --exclude='./.git' --exclude='./.venv' --exclude='./artifacts' --exclude='./pki' \
   --exclude='./Test Files' --exclude='./agent/build' --exclude='./agent/app/build' \

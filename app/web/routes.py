@@ -73,6 +73,7 @@ from app.security import admin_auth, csrf
 from app.security.admin_auth import AdminIdentity, admin_required
 from app.security.enrollment_qr import EnrollmentQrGuard
 from app.security.token_vault import TokenVault
+from app.version import build_info
 from app.artifacts import app_restrictions
 from app.artifacts.storage import ArtifactStorage
 from app.config import Settings, get_settings
@@ -234,6 +235,10 @@ def _render(
     not happen at all.
     """
     context["identity"] = identity
+    # The running revision, for the footer (W102). Injected here for the same
+    # reason the CSRF token is: every page needs it, and a page that forgot would
+    # simply show nothing rather than fail, so nobody would notice.
+    context["build"] = build_info()
     settings = get_settings()
 
     token = admin_auth.issue_csrf_token(identity, settings) if identity else ""
