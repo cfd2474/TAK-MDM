@@ -10,8 +10,9 @@
   ('local', 'Local apps'),
   ('store', 'ATLAS store'),
   ('tpc', 'TPC Plugins'),
+  ('repo', '3rd party repo'),
   ('groups', 'App groups'),
-], active=(request.query_params.get('tab') if request.query_params.get('tab') in ['local','store','tpc','groups'] else 'local'), scope='apps-tabs') }}
+], active=(request.query_params.get('tab') if request.query_params.get('tab') in ['local','store','tpc','repo','groups'] else 'local'), scope='apps-tabs') }}
 
 <div id="apps-tabs">
   <div class="tab-panel" data-tab-panel="local">
@@ -285,6 +286,56 @@
         </tbody>
       </table>
       {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="repo" hidden>
+    {#
+      Look an app up in a third-party repository and pull a build into the
+      library (W97).
+
+      ⚠️ Everything shown here is the *catalogue's* claim. What gets recorded is
+      read from the downloaded file, the same rule the TPC import follows — so a
+      listing naming the wrong package cannot smuggle one in under it.
+    #}
+    <div class="card">
+      <h3 style="margin-top:0">F-Droid</h3>
+      <p class="muted" style="font-size:13px">
+        F-Droid publishes a signed index: every build states its SHA-256, the CPU
+        architectures it carries, the Android version it needs and its signing
+        certificate. Downloads are checked against that digest, so a file that is
+        not what was published is refused rather than imported.
+      </p>
+      <p class="field-tip">
+        ⚠️ It carries open-source apps only. Chrome, ArcGIS and Handtevy are not
+        there — those still arrive through <a href="?#tab-local">Local apps</a>,
+        which reads the same facts out of the file you upload.
+      </p>
+
+      <div class="prefs-toolbar" style="margin-top:12px">
+        <input type="search" id="repo-q" class="field-grow"
+               aria-label="Search F-Droid" data-repo-query>
+        <button type="button" class="ghost" data-repo-search>Search</button>
+      </div>
+      <p class="field-tip">Search by app name or exact package name.</p>
+
+      <p class="muted" id="repo-status" style="font-size:12px"></p>
+      <div id="repo-results"></div>
+    </div>
+
+    {#
+      One modal for the whole flow: versions, what is known about each, and the
+      download once it starts. A large APK takes minutes, so the request that
+      begins it returns a job and this polls it.
+    #}
+    <div class="modal-backdrop" id="repo-modal" hidden>
+      <div class="modal modal-wide">
+        <h2 id="repo-modal-title">Versions</h2>
+        <div id="repo-modal-body"></div>
+        <div style="margin-top:12px; text-align:right">
+          <button type="button" class="ghost" data-repo-close>Close</button>
+        </div>
+      </div>
     </div>
   </div>
 

@@ -2285,3 +2285,241 @@
       });
   });
 })();
+
+/* --- 3rd party app repo: search, inspect, import (W97) ----------------------
+   The compatibility facts are the point of this screen. R19 cost days because
+   nobody could see, until it failed on a device, that a build was 32-bit only —
+   so the version list says what each build carries before anything is fetched,
+   and the import button is disabled when the server has already said no. */
+(function () {
+  var panel = document.querySelector('[data-tab-panel="repo"]');
+  if (!panel) return;
+
+  var query = panel.querySelector("[data-repo-query]");
+  var status = panel.querySelector("#repo-status");
+  var results = panel.querySelector("#repo-results");
+  var modal = panel.querySelector("#repo-modal");
+  var modalTitle = panel.querySelector("#repo-modal-title");
+  var modalBody = panel.querySelector("#repo-modal-body");
+  var poll = null;
+
+  function say(message, bad) {
+    status.textContent = message || "";
+    status.style.color = bad ? "var(--bad)" : "";
+  }
+
+  function csrf() {
+    var token = document.querySelector('input[name="csrf_token"]');
+    return token ? token.value : "";
+  }
+
+  function closeModal() {
+    modal.hidden = true;
+    if (poll) { clearInterval(poll); poll = null; }
+  }
+
+  panel.addEventListener("click", function (e) {
+    if (e.target.closest("[data-repo-close]")) closeModal();
+  });
+
+  // --- search --------------------------------------------------------------
+
+  function search() {
+    var q = (query.value || "").trim();
+    if (!q) { results.innerHTML = ""; say(""); return; }
+    say("Searching F-Droid…");
+    results.innerHTML = "";
+
+    fetch("/apps/repo/search?q=" + encodeURIComponent(q))
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+      .then(function (res) {
+        if (!res.ok) { say(res.body.error || "search failed", true); return; }
+        var apps = res.body.apps || [];
+        if (!apps.length) { say("Nothing matching " + q + "."); return; }
+        say(apps.length + " result" + (apps.length === 1 ? "" : "s"));
+
+        var table = document.createElement("table");
+        table.innerHTML = "<thead><tr><th>App</th><th>Package</th><th></th></tr></thead>";
+        var body = document.createElement("tbody");
+        apps.forEach(function (app) {
+          var row = document.createElement("tr");
+          var name = document.createElement("td");
+          name.innerHTML = "<strong></strong><div class='muted' style='font-size:12px'></div>";
+          name.querySelector("strong").textContent = app.name;
+          name.querySelector("div").textContent = app.summary || "";
+          var pkg = document.createElement("td");
+          pkg.className = "mono";
+          pkg.textContent = app.package_name;
+          var act = document.createElement("td");
+          var button = document.createElement("button");
+          button.type = "button";
+          button.className = "ghost";
+          button.textContent = "Versions";
+          button.addEventListener("click", function () { openVersions(app); });
+          act.appendChild(button);
+          row.appendChild(name); row.appendChild(pkg); row.appendChild(act);
+          body.appendChild(row);
+        });
+        table.appendChild(body);
+        results.appendChild(table);
+      })
+      .catch(function () { say("search failed", true); });
+  }
+
+  panel.querySelector("[data-repo-search]").addEventListener("click", search);
+  query.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); search(); }
+  });
+
+  // --- versions ------------------------------------------------------------
+
+  function architecture(version) {
+    // ⚠️ Three states, as everywhere else this is shown (W96): the index may
+    // declare architectures, declare none, or say nothing at all.
+    if (version.abis === null) return "<span class='muted'>not stated</span>";
+    if (!version.abis.length) return "<span class='pill good'>any</span>";
+    return "<span class='mono'>" + version.abis.join(", ") + "</span>";
+  }
+
+  function openVersions(app) {
+    modalTitle.textContent = app.name;
+    modalBody.innerHTML = "<p class='muted'>Reading versions…</p>";
+    modal.hidden = false;
+
+    fetch("/apps/repo/versions?package=" + encodeURIComponent(app.package_name))
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+      .then(function (res) {
+        if (!res.ok) {
+          modalBody.innerHTML = "<p style='color:var(--bad)'></p>";
+          modalBody.querySelector("p").textContent = res.body.error || "could not read versions";
+          return;
+        }
+        renderVersions(app, res.body.versions || []);
+      })
+      .catch(function () {
+        modalBody.innerHTML = "<p style='color:var(--bad)'>could not read versions</p>";
+      });
+  }
+
+  function renderVersions(app, versions) {
+    modalBody.innerHTML = "";
+    if (!versions.length) {
+      modalBody.innerHTML = "<p class='muted'>No downloadable builds.</p>";
+      return;
+    }
+
+    var table = document.createElement("table");
+    table.innerHTML =
+      "<thead><tr><th>versionCode</th><th>Version</th><th>Architecture</th>" +
+      "<th>Needs</th><th></th></tr></thead>";
+    var body = document.createElement("tbody");
+
+    versions.forEach(function (v) {
+      var row = document.createElement("tr");
+      row.innerHTML =
+        "<td class='mono'>" + v.version_code + "</td>" +
+        "<td>" + (v.version_name || "—") + "</td>" +
+        "<td>" + architecture(v) + "</td>" +
+        "<td class='muted'>" + (v.min_sdk ? "API " + v.min_sdk : "—") + "</td>";
+
+      var act = document.createElement("td");
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "ghost";
+      button.textContent = "Import";
+      if (v.blocking && v.blocking.length) {
+        // Already refused by the server, so the button says why rather than
+        // inviting a click that cannot succeed.
+        button.disabled = true;
+        button.title = v.blocking[0];
+        button.textContent = "Refused";
+      } else {
+        button.addEventListener("click", function () { startImport(app, v); });
+      }
+      act.appendChild(button);
+      row.appendChild(act);
+      body.appendChild(row);
+
+      var notes = (v.blocking || []).concat(v.warnings || []);
+      if (notes.length) {
+        var noteRow = document.createElement("tr");
+        var cell = document.createElement("td");
+        cell.colSpan = 5;
+        cell.style.paddingTop = "0";
+        notes.forEach(function (text, i) {
+          var p = document.createElement("p");
+          p.className = "field-tip";
+          p.style.margin = "2px 0";
+          if (v.blocking && i < v.blocking.length) p.style.color = "var(--bad)";
+          p.textContent = (v.blocking && i < v.blocking.length ? "⚠️ " : "") + text;
+          cell.appendChild(p);
+        });
+        noteRow.appendChild(cell);
+        body.appendChild(noteRow);
+      }
+    });
+
+    table.appendChild(body);
+    modalBody.appendChild(table);
+  }
+
+  // --- import --------------------------------------------------------------
+
+  function startImport(app, version) {
+    modalBody.innerHTML = "<p>Importing " + app.name + " " + version.version_code + "…</p>" +
+      // The stylesheet's .progress expects a <span> child; reused rather than
+      // inventing a second bar style.
+      "<div class='progress'><span id='repo-bar'></span></div>" +
+      "<p class='muted' id='repo-progress'></p>";
+
+    var body = new FormData();
+    body.append("csrf_token", csrf());
+    body.append("package", app.package_name);
+    body.append("version_code", version.version_code);
+    body.append("label", app.name);
+
+    fetch("/apps/repo/import", { method: "POST", body: body })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+      .then(function (res) {
+        if (!res.ok || !res.body.id) {
+          modalBody.innerHTML = "<p style='color:var(--bad)'></p>";
+          modalBody.querySelector("p").textContent = res.body.error || "import failed";
+          return;
+        }
+        watch(res.body.id);
+      })
+      .catch(function () {
+        modalBody.innerHTML = "<p style='color:var(--bad)'>import failed</p>";
+      });
+  }
+
+  function watch(jobId) {
+    if (poll) clearInterval(poll);
+    poll = setInterval(function () {
+      fetch("/apps/repo/import/" + jobId)
+        .then(function (r) { return r.json(); })
+        .then(function (job) {
+          var bar = document.getElementById("repo-bar");
+          var text = document.getElementById("repo-progress");
+          if (bar && job.total) bar.style.width = job.percent + "%";
+          if (text) {
+            text.textContent = job.total
+              ? job.percent + "% of " + Math.round(job.total / 1048576) + " MB"
+              : "downloading…";
+          }
+          if (job.state === "done") {
+            clearInterval(poll); poll = null;
+            modalBody.innerHTML =
+              "<p><strong></strong> imported and <strong>held</strong>. " +
+              "Publish it from Local apps when you want devices to install it.</p>";
+            modalBody.querySelector("strong").textContent = job.package_name || job.label;
+          } else if (job.state === "failed") {
+            clearInterval(poll); poll = null;
+            modalBody.innerHTML = "<p style='color:var(--bad)'></p>";
+            modalBody.querySelector("p").textContent = job.error || "import failed";
+          }
+        })
+        .catch(function () { /* keep polling; a dropped poll is not a failure */ });
+    }, 1000);
+  }
+})();

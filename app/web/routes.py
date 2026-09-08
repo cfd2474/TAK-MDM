@@ -1784,6 +1784,185 @@ def upload_policy_image_form(
     return JSONResponse({"id": str(managed.id), "name": managed.name})
 
 
+# --------------------------------------------------------------------------- #
+# 3rd party app repo (W97)
+# --------------------------------------------------------------------------- #
+
+
+def _repo_source(name: str, settings: Settings):
+    """The source by name, built against the on-disk cache.
+
+    Constructed per request rather than held globally: it is cheap, and the index
+    it caches lives on disk, so nothing of value is thrown away between calls.
+    """
+    from app.services.app_sources.fdroid import FDroidSource
+
+    if name and name != "fdroid":
+        return None
+    return FDroidSource(Path(str(settings.cache_dir)))
+
+
+def _version_row(session: Session, version, preflight) -> dict:
+    """One build, as the console needs to show it.
+
+    ⚠️ Every compatibility fact is included even when it is *absent*, because
+    "this source does not say" and "it runs anywhere" have to look different on
+    the page — the same distinction the `abis` column keeps (W96).
+    """
+    return {
+        "version_code": version.version_code,
+        "version_name": version.version_name,
+        "size": version.size,
+        "abis": list(version.abis) if version.abis is not None else None,
+        "min_sdk": version.min_sdk,
+        "signer": version.signer_sha256,
+        "verifiable": version.verifiable,
+        "blocking": preflight.blocking,
+        "warnings": preflight.warnings,
+    }
+
+
+@router.get("/apps/repo/search")
+def repo_search(
+    q: str = "",
+    source: str = "fdroid",
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    identity: AdminIdentity = Depends(admin_required),
+) -> JSONResponse:
+    from app.services.app_sources.base import SourceError
+
+    client = _repo_source(source, settings)
+    if client is None:
+        return JSONResponse({"error": f"unknown source {source!r}"}, status_code=404)
+
+    try:
+        apps = client.search(q)
+    except SourceError as exc:
+        # Verbatim: these name the repository and what it did, which is the only
+        # part an operator can act on.
+        return JSONResponse({"error": str(exc)}, status_code=502)
+
+    return JSONResponse(
+        {
+            "source": client.name,
+            "apps": [
+                {
+                    "package_name": a.package_name,
+                    "name": a.name,
+                    "summary": a.summary,
+                    "web_url": a.web_url,
+                }
+                for a in apps
+            ],
+        }
+    )
+
+
+@router.get("/apps/repo/versions")
+def repo_versions(
+    package: str,
+    source: str = "fdroid",
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    identity: AdminIdentity = Depends(admin_required),
+) -> JSONResponse:
+    from app.services import repo_import
+    from app.services.app_sources.base import SourceError
+
+    client = _repo_source(source, settings)
+    if client is None:
+        return JSONResponse({"error": f"unknown source {source!r}"}, status_code=404)
+
+    try:
+        versions = client.versions(package)
+    except SourceError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+
+    return JSONResponse(
+        {
+            "source": client.name,
+            "package_name": package,
+            "versions": [
+                _version_row(session, v, repo_import.preflight(session, v))
+                for v in versions
+            ],
+        }
+    )
+
+
+@router.post("/apps/repo/import")
+def repo_import_form(
+    package: str = Form(...),
+    version_code: int = Form(...),
+    source: str = Form(default="fdroid"),
+    label: str = Form(default=""),
+    session: Session = Depends(get_db),
+    session_factory=Depends(get_session_factory),
+    storage: ArtifactStorage = Depends(get_storage),
+    settings: Settings = Depends(get_settings),
+    identity: AdminIdentity = Depends(admin_required),
+) -> JSONResponse:
+    """Start an import and hand back a job to watch.
+
+    ⚠️ **The version is looked up again here rather than taken from the form.**
+    Everything the browser holds about a build is the catalogue's word relayed
+    through a page; re-reading it means the download URL and the digest come from
+    the index at the moment of import, not from whatever a form field says.
+    """
+    from app.services import import_jobs, repo_import
+    from app.services.app_sources.base import SourceError
+
+    client = _repo_source(source, settings)
+    if client is None:
+        return JSONResponse({"error": f"unknown source {source!r}"}, status_code=404)
+
+    try:
+        versions = client.versions(package)
+    except SourceError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+
+    chosen = next((v for v in versions if v.version_code == version_code), None)
+    if chosen is None:
+        return JSONResponse(
+            {"error": f"versionCode {version_code} is no longer offered for {package}"},
+            status_code=404,
+        )
+
+    checks = repo_import.preflight(session, chosen)
+    if not checks.ok:
+        # Refused here rather than after a download: the reasons are all knowable
+        # from the listing, and spending bandwidth to arrive at the same answer
+        # helps nobody.
+        return JSONResponse({"error": checks.blocking[0]}, status_code=422)
+
+    job = import_jobs.start_repo(
+        session_factory,
+        storage,
+        source=client,
+        version=chosen,
+        label=label.strip() or package,
+    )
+    return JSONResponse(job.as_dict(), status_code=status.HTTP_202_ACCEPTED)
+
+
+@router.get("/apps/repo/import/{job_id}")
+def repo_import_status(
+    job_id: str,
+    identity: AdminIdentity = Depends(admin_required),
+) -> JSONResponse:
+    from app.services import import_jobs
+
+    job = import_jobs.get(job_id)
+    if job is None:
+        return JSONResponse(
+            {"state": "failed", "error": "the import job is no longer known — "
+             "the server may have restarted. Press Import again."},
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    return JSONResponse(job.as_dict())
+
+
 @router.post("/apps/tpc/import")
 def import_tpc_plugin_form(
     identifier: str = Form(...),

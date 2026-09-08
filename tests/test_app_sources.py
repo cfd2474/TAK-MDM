@@ -30,8 +30,11 @@ import json
 import httpx
 import pytest
 
+from sqlalchemy import select
+
 from app.db.models import AppPackage, AppPackageVersion, Device
 from app.services import repo_import
+from tests.conftest import ADMIN_HEADERS
 from app.services.app_sources.base import SourceError, SourceVersion
 from app.services.app_sources.fdroid import FDroidSource
 from tests.apk_fixtures import build_apk, make_signing_certificate
@@ -312,3 +315,141 @@ def test_a_source_without_a_checksum_says_so(db):
     result = repo_import.preflight(db, _version(sha256=None))
 
     assert any("no checksum" in w for w in result.warnings)
+
+
+# --------------------------------------------------------------------------- #
+# The console (W97, C2)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_repo_tab_exists_and_says_what_f_droid_is_not(client):
+    """⚠️ The limit is stated on the page, not learned by searching in vain.
+
+    F-Droid carries open-source apps only, so the apps this fleet actually runs —
+    ATAK aside — are not there. An operator who does not know that reads an empty
+    result as a broken feature.
+    """
+    body = client.get("/apps").text
+
+    assert 'data-tab-panel="repo"' in body
+    assert "3rd party repo" in body
+    assert "open-source apps only" in body
+
+
+def test_search_reaches_the_source_and_reports_its_failures_verbatim(client, monkeypatch):
+    """A repository that is unreachable says so in its own words: "search failed"
+    would throw away the only actionable part."""
+    from app.services.app_sources.base import SourceError
+    from app.web import routes
+
+    class Broken:
+        name = "fdroid"
+
+        def search(self, query, limit=25):
+            raise SourceError("F-Droid returned 503 for the index")
+
+    monkeypatch.setattr(routes, "_repo_source", lambda name, settings: Broken())
+
+    response = client.get("/apps/repo/search?q=osmand", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 502
+    assert "503" in response.json()["error"]
+
+
+def test_an_unknown_source_is_a_404_not_a_crash(client):
+    response = client.get("/apps/repo/search?q=x&source=nowhere", headers=ADMIN_HEADERS)
+    assert response.status_code == 404
+
+
+def test_a_blocked_build_is_refused_before_anything_is_downloaded(
+    client, db, artifact_storage, monkeypatch, tmp_path
+):
+    """⚠️ The reasons are knowable from the listing, so the bandwidth is not spent.
+
+    Here the library already holds that versionCode; the import must not fetch the
+    file only to have `ingest` reject it at the end.
+    """
+    from app.services import packages as package_service
+    from app.web import routes
+
+    apk = build_apk("org.example.app", 42)
+    package_service.ingest(db, artifact_storage, apk)
+    db.commit()
+
+    source = _source(tmp_path, _index(apk), apk)
+    fetched: list[str] = []
+    original = source.download
+    source.download = lambda v: (fetched.append(v.download_url), original(v))[1]
+    monkeypatch.setattr(routes, "_repo_source", lambda name, settings: source)
+
+    response = client.post(
+        "/apps/repo/import",
+        data={"package": "org.example.app", "version_code": 42},
+        headers=ADMIN_HEADERS,
+    )
+
+    assert response.status_code == 422
+    assert "already in the library" in response.json()["error"]
+    assert fetched == [], "nothing should have been downloaded"
+
+
+def test_the_version_is_re_read_at_import_not_taken_from_the_form(
+    client, db, artifact_storage, monkeypatch, tmp_path
+):
+    """⚠️ Everything the browser holds is the catalogue's word relayed by a page.
+
+    Asking the index again means the download URL and digest come from the source
+    at the moment of import, so a stale or edited form cannot redirect the fetch.
+    """
+    from app.web import routes
+
+    apk = build_apk("org.example.app", 42)
+    source = _source(tmp_path, _index(apk), apk)
+    monkeypatch.setattr(routes, "_repo_source", lambda name, settings: source)
+
+    response = client.post(
+        "/apps/repo/import",
+        data={"package": "org.example.app", "version_code": 999},
+        headers=ADMIN_HEADERS,
+    )
+
+    assert response.status_code == 404
+    assert "no longer offered" in response.json()["error"]
+
+
+def test_an_import_runs_as_a_job_and_lands_held(
+    client, db, artifact_storage, monkeypatch, tmp_path
+):
+    """The whole path, driven synchronously so the outcome cannot depend on
+    thread timing."""
+    from app.services import import_jobs
+    from app.web import routes
+
+    apk = build_apk("org.example.app", 42)
+    source = _source(tmp_path, _index(apk), apk)
+    monkeypatch.setattr(routes, "_repo_source", lambda name, settings: source)
+    monkeypatch.setattr(import_jobs, "_thread", lambda work: work())
+
+    started = client.post(
+        "/apps/repo/import",
+        data={"package": "org.example.app", "version_code": 42, "label": "Example"},
+        headers=ADMIN_HEADERS,
+    )
+    assert started.status_code == 202, started.text
+
+    job = client.get(f"/apps/repo/import/{started.json()['id']}", headers=ADMIN_HEADERS)
+    assert job.json()["state"] == "done", job.json().get("error")
+
+    stored = db.scalar(
+        select(AppPackageVersion).where(AppPackageVersion.version_code == 42)
+    )
+    assert stored.published is False
+    assert stored.source == "fdroid"
+
+
+def test_a_job_the_server_has_forgotten_says_so(client):
+    """A modal that spun forever would be the worst answer to a restart."""
+    response = client.get("/apps/repo/import/nosuchjob", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 404
+    assert "no longer known" in response.json()["error"]

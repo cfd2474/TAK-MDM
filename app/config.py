@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     artifact_dir: Path = Path("artifacts")
     # 2 GiB. XAPKs with OBB payloads get large; nginx has a matching limit.
     max_upload_bytes: int = 2 * 1024 * 1024 * 1024
+    # ⚠️ Deliberately not inside `artifact_dir` (W97). That directory is addressed
+    # by digest and swept; a 59 MB F-Droid index living there would be an
+    # unreferenced blob to anything that tidies it up. Cached data that can be
+    # re-fetched belongs somewhere losing it costs nothing.
+    cache_dir: Path = Path("cache")
 
     # --- Device identity PKI -------------------------------------------------
     pki_dir: Path = Path("pki")

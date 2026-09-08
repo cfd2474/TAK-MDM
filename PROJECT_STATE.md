@@ -405,7 +405,7 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
-### 🚧 W97 — 3rd Party App Repo
+### ✅ W97 — 3rd Party App Repo
 
 Operator, 2026-09-07: *"i want to add a '3rd Party App Repo' to the apps section
 … a place to lookup apps and download apk/xapk files into the mdm library"*, with
@@ -508,6 +508,41 @@ message**, because silence must not read as approval.
 5. Tests against recorded fixtures — no network in the suite — including a
    mislabelled catalogue row and a hash mismatch.
 6. Deploy.
+
+#### ✅ Chunk C2 complete (2026-09-07)
+
+**1126 server tests** (21 in `test_app_sources.py`). Deployed; migration
+`b8d0f2h4j6l8` applied after a backup.
+
+⚠️ **The live smoke test is the feature's own argument.** Against the real fleet,
+OsmAnd publishes three builds of the *same version*:
+
+| Build | ABIs | Preflight |
+|---|---|---|
+| `531003` | `arm64-v8a` | no compatibility warning |
+| `531002` | `x86, x86_64` | **2 of 2 reporting devices cannot run this** |
+| `531001` | `armeabi-v7a` | **2 of 2 reporting devices cannot run this** |
+
+The last row is R19's exact shape — a 32-bit build that would fail permanently —
+named by device serial *before a byte is downloaded*, instead of surfacing days
+later as a DEGRADED tablet. The third device, silent since yesterday, produced the
+line that matters just as much: *"1 of 3 devices have not reported their
+architecture yet, so they are not covered by the checks above."*
+
+**The version is re-read from the index at import**, never taken from the form:
+everything the browser holds is the catalogue's word relayed through a page, and
+re-asking means the download URL and digest come from the source at the moment of
+import. A build already blocked is refused *before* the download, since every
+reason is knowable from the listing.
+
+`start_repo` is a sibling of `start` rather than a parameter on it — the tak.gov
+import needs a vault, a product and a product version, none of which mean anything
+to a repository that just serves files. The job machinery is what was worth
+sharing; the console polls one route either way.
+
+⚠️ **`cache_dir` is deliberately not inside `artifact_dir`.** That directory is
+addressed by digest and swept; a 59 MB index living there would look like an
+unreferenced blob to anything tidying up. Losing the cache costs one re-fetch.
 
 #### Chunk C2 — the console
 

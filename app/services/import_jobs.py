@@ -155,6 +155,66 @@ def _run(job, session_factory, vault, storage, product, product_version) -> None
         session.close()
 
 
+def start_repo(
+    session_factory,
+    storage,
+    *,
+    source,
+    version,
+    label: str,
+    runner=None,
+) -> ImportJob:
+    """Begin a third-party repository import in the background (W97).
+
+    Sibling of [start] rather than a parameter on it: the tak.gov import needs a
+    token vault, a product and a product version, and none of those mean anything
+    to a repository that simply serves files. Sharing the *job* machinery is the
+    part worth reusing — the console polls one route either way.
+    """
+    job = ImportJob(
+        id=uuid.uuid4().hex,
+        identifier=f"{source.name}:{version.package_name}",
+        label=label,
+        # The catalogue usually states the size, so the bar is a real percentage
+        # from the first byte rather than an indeterminate spinner.
+        total=version.size or 0,
+    )
+    with _LOCK:
+        _prune_locked()
+        _JOBS[job.id] = job
+
+    def work() -> None:
+        _run_repo(job, session_factory, storage, source, version)
+
+    (runner or _thread)(work)
+    return job
+
+
+def _run_repo(job, session_factory, storage, source, version) -> None:
+    from app.services import repo_import
+
+    session = session_factory()
+    try:
+        imported = repo_import.import_version(
+            session, storage, source, version, label=job.label
+        )
+        session.commit()
+        job.package_name = imported.package.package_name
+        job.downloaded = job.total
+        job.state = "done"
+    except Exception as exc:  # noqa: BLE001 - the message is the whole point
+        session.rollback()
+        # Verbatim, for the same reason as the tak.gov path: these are hash
+        # mismatches, signature refusals and ingest errors, each of which names
+        # the specific problem. "Import failed" would throw that away.
+        job.error = str(exc) or exc.__class__.__name__
+        job.state = "failed"
+        logger.warning("repo import %s failed: %s", job.identifier, job.error)
+    finally:
+        job.finished_at = datetime.now(timezone.utc)
+        session.close()
+
+
 def _prune_locked() -> None:
     cutoff = datetime.now(timezone.utc) - _RETENTION
     for key in [
