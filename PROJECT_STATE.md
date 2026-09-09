@@ -19,7 +19,6 @@ tests.** Alembic head `h4j6l8n0p2r4`.
 
 | | |
 |---|---|
-| Chrome is **not in the app library** | An incomplete arm64 import was deleted in W96 and never replaced. Operator's call whether to re-import. |
 | Handtevy `4001269` from Play | Would be the first import exercising **signature continuity** against a package already in the library (`4001247`). |
 | Disenroll (W104) | Never run on hardware. Suggest `SM-X828U` — not `SM-X520`, which carries the kiosk profile. |
 | Geofence `wifi: off` and `password_enforced` | Deliberately not hardware-tested. See W106 C4 for why Wi-Fi off is a one-way door on a Wi-Fi-only tablet. |
@@ -606,10 +605,10 @@ operator is not looking at. The fields remain the source of truth: the map write
 into them and reads back, so typing, dragging and finding all converge, and the
 form submits exactly what is drawn.
 
-**Correction to the last status note:** Chrome *is* in the library as a package
-(`com.android.chrome`, "Chrome (Play)") — what was deleted in W96 was its only
-*version*, so it shows in pickers with nothing installable behind it. The earlier
-note said the package was absent; it is the version that is.
+**Chrome: closed, not an issue** (operator, 2026-09-09). For the record, the
+package row `com.android.chrome` ("Chrome (Play)") still exists with no version
+behind it, so it appears in pickers with nothing installable. The operator is not
+concerned; do not raise it again.
 
 ⚠️ **The geocoder must not become a required dependency.** Coordinates stay
 typeable, and a failed or unconfigured lookup leaves the form exactly as it was
