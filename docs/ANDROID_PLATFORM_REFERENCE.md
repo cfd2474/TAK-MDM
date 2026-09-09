@@ -1417,6 +1417,52 @@ so that case has to cancel. See `AgentNotification.rest`.
 Both failures are silent, and both produce the *same* wrong picture, which is
 what made the second one look like the first one not being fixed.
 
+### The Security category: what AOSP gives without Knox (W112 scoping, 2026-09-09)
+
+Checked against the framework source rather than recalled. Four of the five
+sub-topics are reachable with no OEM extension at all; the Knox-only parts are
+narrower than they look.
+
+| Sub-topic | Without Knox? | The AOSP answer |
+|---|---|---|
+| **Certificates** | ✅ fully | `installCaCert`, `installKeyPair`, `generateKeyPair` (hardware-backed, with attestation), `setDelegatedScopes(DELEGATION_CERT_INSTALL)` |
+| **SCEP** | ✅ but we write the client | No SCEP API exists in AOSP. SCEP is an HTTP protocol, and the agent already generates keys and CSRs for enrolment (`DeviceIdentity.kt`), so this is a protocol client plus `installKeyPair` — work, not a dependency |
+| **Global HTTP proxy** | ✅ | `setRecommendedGlobalProxy` |
+| **Web content filtering** | ⚠️ partly | **No filtering API of any kind in AOSP** — zero matches for url/content/web filter. See below |
+| **OS updates** | ✅ scheduling only | `setSystemUpdatePolicy` + `getPendingSystemUpdate` |
+
+⚠️ **The global proxy is advisory, and the javadoc says so outright:**
+
+> This proxy is only a recommendation and it is possible that some apps will
+> ignore it.
+
+So it configures rather than enforces — anything using raw sockets, or ignoring
+the system proxy, simply goes around it. It also cannot be set at all when there
+are unaffiliated secondary users on the device.
+
+⚠️ **"Web content filtering" has no direct API, and the honest substitute is DNS.**
+`setGlobalPrivateDnsModeSpecifiedHost` pins the device to a DoT resolver of the
+operator's choosing — enforced, and the user cannot change it — so a filtering
+resolver gives real category blocking. `setAlwaysOnVpnPackage` is the other route
+and needs a VPN app to exist. **Neither does URL-level rules inside HTTPS**, and
+nothing in AOSP does. That is the one place where an OEM extension genuinely buys
+something ATLAS cannot otherwise have.
+
+⚠️ **`POSTPONE` is capped at 30 days and then the update installs anyway:**
+
+> Postpones the installation of system updates for 30 days. After the 30-day
+> period has ended, the system prompts the user to install the update.
+
+So AOSP offers *when*, never *whether* or *which version*. Pinning a fleet to a
+specific firmware build is Samsung **E-FOTA**, and that is a real Knox dependency
+rather than a convenience — worth knowing before promising a version-locked fleet.
+
+**Conclusion:** certificates, SCEP, the proxy and update *scheduling* need no
+Knox. The genuinely Knox-gated pieces are **URL-level web filtering** and
+**version-pinned firmware**, and both have partial AOSP substitutes (a filtering
+DNS resolver; postpone-and-window scheduling) that are worth building first
+because they work on any device.
+
 ### ⚠️ `setKeyguardDisabled` cannot bypass a PIN that is already set (W111)
 
 📖 AOSP's own javadoc on `DevicePolicyManager.setKeyguardDisabled`, quoted in
