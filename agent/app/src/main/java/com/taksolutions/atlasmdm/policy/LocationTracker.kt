@@ -28,6 +28,7 @@ import androidx.core.content.ContextCompat
 import com.taksolutions.atlasmdm.admin.MdmDeviceAdminReceiver
 import com.taksolutions.atlasmdm.core.AgentConfig
 import com.taksolutions.atlasmdm.diag.AgentLog
+import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -68,13 +69,38 @@ class LocationTracker(private val context: Context) {
      * Absent section means no tracking policy reaches this device, which is not
      * the same as an error — it means off.
      */
-    fun reconcile(section: JSONObject?): List<String> {
-        val minutes = LocationSamplingPlan.intervalMinutes(section)
+    fun reconcile(section: JSONObject?, fenceDefaultMinutes: Int = 5): List<String> {
+        val tracking = LocationSamplingPlan.intervalMinutes(section)
+        val fences = GeofencePlan.parse(section)
+
+        // Remembered so fences can be evaluated on iterations with no bundle —
+        // every iteration of an outage, which is when a fence most needs to work.
+        config.geofencesJson = section?.optJSONArray(GeofencePlan.FENCES_KEY)?.toString()
+
+        // ⚠️ A fence implies sampling even when tracking is off. Otherwise an
+        // operator who set a fence and left the interval at 0 has configured
+        // something that can never evaluate, and it reads as broken rather than
+        // as unconfigured.
+        val minutes = GeofencePlan.samplingInterval(
+            trackingMinutes = tracking,
+            overrideMinutes = config.geofenceIntervalOverride,
+            hasFences = fences.isNotEmpty(),
+            fenceDefaultMinutes = fenceDefaultMinutes,
+        )
         val previous = config.locationIntervalMinutes
 
         if (minutes != previous) {
             AgentLog.i(TAG, "location reporting interval: $previous -> $minutes minute(s)")
             config.locationIntervalMinutes = minutes
+        }
+
+        if (fences.isEmpty() && config.activeGeofences.isNotEmpty()) {
+            // ⚠️ The policy has stopped naming any fence, so whatever the last one
+            // was doing must be undone now. Left to the sampler, a device whose
+            // tracking was switched off in the same edit would never take another
+            // fix, and would keep its radios held wherever the fence left them.
+            GeofenceEnforcer(context).enforce(GeofencePlan.Actions())
+            config.geofenceIntervalOverride = 0
         }
 
         if (minutes <= 0) {
@@ -146,6 +172,29 @@ class LocationTracker(private val context: Context) {
             "location sampled (${fix.provider}, ${(now - fix.time) / 1000}s old); " +
                 "${config.pendingLocations.size} buffered"
         )
+
+        evaluateFences(fix.latitude, fix.longitude)
+    }
+
+    /**
+     * Decide which fences apply at this position, and carry out what they say.
+     *
+     * Runs on the fix, not on the sync: a fence has to keep working when the
+     * server cannot be reached, which is the situation it mostly exists for.
+     */
+    private fun evaluateFences(latitude: Double, longitude: Double) {
+        val raw = config.geofencesJson ?: return
+        val fences = runCatching {
+            GeofencePlan.parse(JSONObject().put(GeofencePlan.FENCES_KEY, JSONArray(raw)))
+        }.getOrElse {
+            AgentLog.w(TAG, "could not read the stored geofences: ${it.message}")
+            return
+        }
+        if (fences.isEmpty()) return
+
+        val actions = GeofencePlan.resolve(fences, latitude, longitude)
+        config.geofenceIntervalOverride = actions.intervalOverrideMinutes
+        GeofenceEnforcer(context).enforce(actions)
     }
 
     private fun hasPermission(): Boolean =

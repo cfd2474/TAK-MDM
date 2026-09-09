@@ -413,13 +413,19 @@ def test_tracking_and_fencing_is_a_working_category_now(client: TestClient):
     assert "reporting_interval_minutes" in body
 
 
-def test_geofencing_says_it_is_coming_rather_than_offering_a_form(client: TestClient):
-    """D94: hidden instead, an operator would read it as forgotten."""
+def test_geofencing_is_a_real_form_now(client: TestClient):
+    """⚠️ It was a stub until C4, and the stub must be gone rather than beside it.
+
+    A sub-topic listed twice — once working, once inert — offers the operator the
+    same thing in two places and lets them configure the one that does nothing.
+    That is the mistake the wallpaper placeholder records in the catalog.
+    """
     body = client.get("/policies/new").text
     panel = body[body.index('data-page-panel="tracking_fencing:geofencing"'):]
     panel = panel[: panel.index("</section>")]
 
-    assert "Not available yet." in panel
+    assert "Not available yet." not in panel
+    assert body.count('data-page-panel="tracking_fencing:geofencing"') == 1
 
 
 def test_location_tracking_is_listed_above_geofencing(client: TestClient):
@@ -1000,3 +1006,207 @@ def test_the_sweeper_does_not_run_in_tests():
     )
 
     assert _start_location_retention(app) is None, "gated off, no thread started"
+
+
+# --------------------------------------------------------------------------- #
+# Geofencing (C4)
+# --------------------------------------------------------------------------- #
+
+
+def _fence_form(rows: list[dict]) -> list[tuple[str, str]]:
+    """The form encoding the geofence editor produces, checkbox pairing included.
+
+    ⚠️ Password enforced is a yes/no **select**, not a checkbox, so it submits on
+    every row. That is what keeps positional pairing honest: an unchecked checkbox
+    submits nothing at all and would shift every later row's setting onto the
+    wrong fence.
+    """
+    fields: list[tuple[str, str]] = []
+    for row in rows:
+        fields.append(("geofences__name", row.get("name", "")))
+        fields.append(("geofences__latitude", str(row.get("latitude", ""))))
+        fields.append(("geofences__longitude", str(row.get("longitude", ""))))
+        fields.append(("geofences__radius_m", str(row.get("radius_m", 200))))
+        fields.append(("geofences__trigger", row.get("trigger", "entry")))
+        fields.append(("geofences__wifi", row.get("wifi", "unmanaged")))
+        fields.append(("geofences__bluetooth", row.get("bluetooth", "unmanaged")))
+        fields.append((
+            "geofences__reporting_interval_override_minutes",
+            str(row.get("override", 0)),
+        ))
+        fields.append((
+            "geofences__password_enforced", "yes" if row.get("password") else "no"
+        ))
+    return fields
+
+
+def _parse_fences(rows: list[dict]) -> list[dict]:
+    from starlette.datastructures import FormData
+
+    from app.policies import form_parse
+
+    form = FormData(_fence_form(rows))
+    spec = form_parse.parse_form("TRACKING_FENCING", form)
+    return spec.get("geofences", [])
+
+
+def test_a_geofence_round_trips_through_the_form(client: TestClient):
+    parsed = _parse_fences([
+        {"name": "Vault", "latitude": 33.6236, "longitude": -117.127,
+         "radius_m": 150, "trigger": "entry", "wifi": "off",
+         "bluetooth": "on", "override": 2, "password": True}
+    ])
+
+    assert len(parsed) == 1
+    fence = parsed[0]
+    assert fence["name"] == "Vault"
+    assert fence["wifi"] == "off"
+    assert fence["bluetooth"] == "on"
+    assert fence["password_enforced"] is True
+    assert str(fence["reporting_interval_override_minutes"]) == "2"
+
+
+def test_a_no_answer_does_not_shift_onto_the_next_fence(client: TestClient):
+    """⚠️ The bug this shape of form invites, and why the control is a select.
+
+    An unchecked checkbox submits nothing at all, so paired by position every
+    fence after the first "no" would inherit the next fence's password setting —
+    a device demanding a lock screen because of a fence that never asked for one.
+    A select always submits, so the positions stay aligned.
+    """
+    parsed = _parse_fences([
+        {"name": "one", "latitude": 1.0, "longitude": 1.0, "password": False},
+        {"name": "two", "latitude": 2.0, "longitude": 2.0, "password": True},
+        {"name": "three", "latitude": 3.0, "longitude": 3.0, "password": False},
+    ])
+
+    assert [f["name"] for f in parsed] == ["one", "two", "three"]
+    assert [f["password_enforced"] for f in parsed] == [False, True, False]
+
+
+def test_a_half_typed_row_is_dropped_rather_than_refused(client: TestClient):
+    """The row an operator added and did not fill in should not cost them the
+    rest of the form."""
+    parsed = _parse_fences([
+        {"name": "real", "latitude": 33.6, "longitude": -117.1},
+        {"name": "", "latitude": "", "longitude": ""},
+    ])
+
+    assert len(parsed) == 1
+    assert parsed[0]["name"] == "real"
+
+
+def test_two_fences_cannot_share_a_name(client: TestClient):
+    """⚠️ The name is the merge key across stacked policies, so a duplicate would
+    silently collapse two fences into one."""
+    parsed = _parse_fences([
+        {"name": "Zone", "latitude": 1.0, "longitude": 1.0},
+        {"name": "Zone", "latitude": 2.0, "longitude": 2.0},
+    ])
+
+    assert len({f["name"] for f in parsed}) == 2
+
+
+def test_a_geofence_policy_saves_and_reaches_the_device(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    policy = client.post(
+        "/api/v1/policies",
+        json={
+            "name": "vault-fence",
+            "policy_type": "TRACKING_FENCING",
+            "spec": {
+                "reporting_interval_minutes": 5,
+                "geofences": [
+                    {
+                        "name": "Vault",
+                        "latitude": 33.6236,
+                        "longitude": -117.127,
+                        "radius_m": 150,
+                        "trigger": "entry",
+                        "wifi": "off",
+                        "password_enforced": True,
+                    }
+                ],
+            },
+        },
+    )
+    assert policy.status_code == 201, policy.text
+    client.post(
+        "/api/v1/assignments",
+        json={
+            "policy_id": policy.json()["id"],
+            "scope": "device",
+            "target_id": result["device_id"],
+            "rank": 1,
+        },
+    )
+
+    body = checkin(client, headers, force_full=True)
+    section = body["desired_state"]["policy"]["TRACKING_FENCING"]
+
+    assert section["geofences"][0]["name"] == "Vault"
+    assert section["geofences"][0]["wifi"] == "off"
+    assert section["geofences"][0]["password_enforced"] is True
+
+
+def test_a_fence_tighter_than_a_gps_fix_is_refused(client: TestClient):
+    """⚠️ A 5 m fence would flap between inside and outside while the device sat
+    still, applying and releasing its actions on every sample."""
+    response = client.post(
+        "/api/v1/policies",
+        json={
+            "name": "too-tight",
+            "policy_type": "TRACKING_FENCING",
+            "spec": {
+                "geofences": [
+                    {"name": "pin", "latitude": 1.0, "longitude": 1.0, "radius_m": 5}
+                ]
+            },
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_an_impossible_fence_centre_is_refused(client: TestClient):
+    response = client.post(
+        "/api/v1/policies",
+        json={
+            "name": "off-world",
+            "policy_type": "TRACKING_FENCING",
+            "spec": {
+                "geofences": [
+                    {"name": "nowhere", "latitude": 91.0, "longitude": 0.0,
+                     "radius_m": 500}
+                ]
+            },
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_the_geofence_editor_warns_about_turning_wifi_off(client: TestClient):
+    """⚠️ Turning the radio off also cuts the path used to tell it to come back.
+    The console says so where the choice is made, not in a document."""
+    body = client.get("/policies/new").text
+    panel = body[body.index('data-page-panel="tracking_fencing:geofencing"'):]
+    panel = panel[: panel.index("</section>")]
+
+    assert "cuts the path" in panel
+    # Wrapped across lines in the source, so match a phrase that cannot span it.
+    assert "prompt whoever" in panel
+
+
+def test_the_editor_uses_a_select_so_every_row_submits(client: TestClient):
+    """The structural guarantee behind positional pairing, asserted on the markup
+    rather than only on the parser."""
+    body = client.get("/policies/new").text
+    panel = body[body.index("data-geofences"):]
+    panel = panel[: panel.index("</template>")]
+
+    assert 'name="geofences__password_enforced"' in panel
+    assert 'value="yes"' in panel and 'value="no"' in panel

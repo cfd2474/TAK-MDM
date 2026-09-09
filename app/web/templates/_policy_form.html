@@ -68,6 +68,142 @@
          placeholder="not set" style="min-width:220px">
 {% endmacro %}
 
+{% macro _geofences(f, items, name) %}
+  {#
+    Geofences (W106 C4). One row per fence: where it is, how big, when it applies
+    and what it does.
+
+    ⚠️ Rows pair **by position** across the parallel field lists, which is safe
+    here and is not in `_kiosk_apps` — because every control below is an input or
+    a select, and both submit on every row. Password enforced is a yes/no select
+    rather than a checkbox for exactly that reason: an unchecked checkbox submits
+    nothing at all, so one would shift every later row's setting onto the wrong
+    fence, which is the bug the kiosk favourites note records. A select cannot.
+  #}
+  <div class="rowset" data-rowset data-geofences>
+    {% for item in items or [] %}
+      <div class="rs-row geofence-row">
+        <label>Name
+          <input type="text" name="{{ name }}__name" value="{{ item.name }}"
+                 maxlength="64">
+        </label>
+        <label>Latitude
+          <input type="number" step="any" min="-90" max="90"
+                 name="{{ name }}__latitude" value="{{ item.latitude }}">
+        </label>
+        <label>Longitude
+          <input type="number" step="any" min="-180" max="180"
+                 name="{{ name }}__longitude" value="{{ item.longitude }}">
+        </label>
+        <label>Radius (m)
+          <input type="number" min="25" max="500000"
+                 name="{{ name }}__radius_m" value="{{ item.radius_m }}">
+        </label>
+        <label>Behaviour
+          <select name="{{ name }}__trigger">
+            <option value="entry" {{ 'selected' if item.trigger == 'entry' }}>
+              Entry &mdash; while inside</option>
+            <option value="exit" {{ 'selected' if item.trigger == 'exit' }}>
+              Exit &mdash; while outside</option>
+          </select>
+        </label>
+        <label>Wi-Fi
+          <select name="{{ name }}__wifi">
+            <option value="unmanaged" {{ 'selected' if item.wifi == 'unmanaged' }}>Not managed</option>
+            <option value="on" {{ 'selected' if item.wifi == 'on' }}>On</option>
+            <option value="off" {{ 'selected' if item.wifi == 'off' }}>Off</option>
+          </select>
+        </label>
+        <label>Bluetooth
+          <select name="{{ name }}__bluetooth">
+            <option value="unmanaged" {{ 'selected' if item.bluetooth == 'unmanaged' }}>Not managed</option>
+            <option value="on" {{ 'selected' if item.bluetooth == 'on' }}>On</option>
+            <option value="off" {{ 'selected' if item.bluetooth == 'off' }}>Off</option>
+          </select>
+        </label>
+        <label>Reporting override (min)
+          <input type="number" min="0" max="360"
+                 name="{{ name }}__reporting_interval_override_minutes"
+                 value="{{ item.reporting_interval_override_minutes or 0 }}">
+        </label>
+        <label>Password enforced
+          {{ _yesno(name ~ '__password_enforced', item.password_enforced) }}
+        </label>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    {% endfor %}
+
+    <template data-row-template>
+      <div class="rs-row geofence-row">
+        <label>Name
+          <input type="text" name="{{ name }}__name" maxlength="64">
+        </label>
+        <label>Latitude
+          <input type="number" step="any" min="-90" max="90" name="{{ name }}__latitude">
+        </label>
+        <label>Longitude
+          <input type="number" step="any" min="-180" max="180" name="{{ name }}__longitude">
+        </label>
+        <label>Radius (m)
+          <input type="number" min="25" max="500000" name="{{ name }}__radius_m" value="200">
+        </label>
+        <label>Behaviour
+          <select name="{{ name }}__trigger">
+            <option value="entry">Entry &mdash; while inside</option>
+            <option value="exit">Exit &mdash; while outside</option>
+          </select>
+        </label>
+        <label>Wi-Fi
+          <select name="{{ name }}__wifi">
+            <option value="unmanaged">Not managed</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
+        <label>Bluetooth
+          <select name="{{ name }}__bluetooth">
+            <option value="unmanaged">Not managed</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
+        <label>Reporting override (min)
+          <input type="number" min="0" max="360"
+                 name="{{ name }}__reporting_interval_override_minutes" value="0">
+        </label>
+        <label>Password enforced
+          {{ _yesno(name ~ '__password_enforced', false) }}
+        </label>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    </template>
+
+    <button type="button" class="ghost" data-add-row>Add geofence</button>
+  </div>
+
+  <p class="field-tip">
+    Name each fence for the place rather than the rule &mdash; the name is what
+    appears in the device's log when the fence takes effect, and it is what
+    matches this fence to the same one in another policy.
+  </p>
+  <p class="field-tip">
+    Where two active fences disagree, the more restrictive answer wins: a radio
+    off beats it on, a password required beats not, and the shorter reporting
+    interval beats the longer.
+  </p>
+  <p class="field-tip">
+    <strong>Turning Wi-Fi off also cuts the path this server uses to reach the
+    device.</strong> Fences are evaluated on the device itself, so leaving one
+    restores the radio without needing the network &mdash; but a device switched
+    off inside a fence and moved keeps the radio off until it next gets a fix.
+  </p>
+  <p class="field-tip">
+    <strong>Password enforced</strong> requires a screen lock and locks the device
+    at once. On a device with no password set, Android will prompt whoever is
+    holding it to create one.
+  </p>
+{% endmacro %}
+
 {% macro _package_list(f, items, name) %}
   <div class="rowset" data-rowset>
     {% for item in items or [] %}
@@ -899,6 +1035,7 @@
   {% elif f.control == 'package_list' %}{{ _package_list(f, value, name) }}
   {% elif f.control == 'app_list' %}{{ _app_list(f, value, name, app_packages) }}
   {% elif f.control == 'kiosk_apps' %}{{ _kiosk_apps(f, value, name, app_packages) }}
+  {% elif f.control == 'geofences' %}{{ _geofences(f, value, name) }}
   {% elif f.control == 'kiosk_app' %}{{ _kiosk_app(f, value, name, app_packages) }}
   {% elif f.control == 'activity_choice' %}{{ _activity_choice(f, value, name) }}
   {% elif f.control == 'file_list' %}{{ _file_list(f, value, name, managed_files) }}

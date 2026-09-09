@@ -401,6 +401,55 @@ class AgentConfig(context: Context) {
      * by one entry per threshold per month, forever.
      */
     /**
+     * The radio state a geofence found before it took a radio, or null if no
+     * fence has taken it (W106 C4).
+     *
+     * ⚠️ **Recorded, never inferred.** "Everything currently off" is not the same
+     * set as "everything we turned off", and restoring the former would be this
+     * agent reversing a decision that was never its own — the rule
+     * `hiddenByPolicy` already follows. Without this, leaving a fence would either
+     * strand the radio off or switch on one the user had deliberately turned off.
+     */
+    var geofenceWifiRestore: String?
+        get() = prefs.getString(KEY_FENCE_WIFI_RESTORE, null)
+        set(value) = prefs.edit { putString(KEY_FENCE_WIFI_RESTORE, value) }
+
+    var geofenceBluetoothRestore: String?
+        get() = prefs.getString(KEY_FENCE_BT_RESTORE, null)
+        set(value) = prefs.edit { putString(KEY_FENCE_BT_RESTORE, value) }
+
+    /**
+     * Whether a fence currently requires a password.
+     *
+     * Held so the device is locked on the *transition* into that state rather than
+     * on every evaluation — relocking every couple of minutes for as long as a
+     * tablet sat inside a fence would not be enforcement, it would be an unusable
+     * device.
+     */
+    var geofencePasswordEnforced: Boolean
+        get() = prefs.getBoolean(KEY_FENCE_PASSWORD, false)
+        set(value) = prefs.edit { putBoolean(KEY_FENCE_PASSWORD, value) }
+
+    /**
+     * The geofence list as the policy delivered it, so fences can be evaluated on
+     * sync iterations where no bundle was fetched — including every iteration of
+     * an outage, which is when a fence most needs to still work.
+     */
+    var geofencesJson: String?
+        get() = prefs.getString(KEY_FENCES, null)
+        set(value) = prefs.edit { putString(KEY_FENCES, value) }
+
+    /** Sampling interval a fence override is asking for, or 0. */
+    var geofenceIntervalOverride: Int
+        get() = prefs.getInt(KEY_FENCE_INTERVAL, 0)
+        set(value) = prefs.edit { putInt(KEY_FENCE_INTERVAL, value.coerceAtLeast(0)) }
+
+    /** Names of the fences that applied last time, for the log and for change detection. */
+    var activeGeofences: String
+        get() = prefs.getString(KEY_FENCE_ACTIVE, "") ?: ""
+        set(value) = prefs.edit { putString(KEY_FENCE_ACTIVE, value) }
+
+    /**
      * Minutes between location samples, or 0 for off (W106).
      *
      * Persisted rather than read from the cached bundle each time, because the
@@ -505,6 +554,12 @@ class AgentConfig(context: Context) {
         private const val KEY_LOCATION_INTERVAL = "location_interval_minutes"
         private const val KEY_LAST_LOCATION_SAMPLE = "last_location_sample_at"
         private const val KEY_PENDING_LOCATIONS = "pending_locations"
+        private const val KEY_FENCE_WIFI_RESTORE = "geofence_wifi_restore"
+        private const val KEY_FENCE_BT_RESTORE = "geofence_bluetooth_restore"
+        private const val KEY_FENCE_PASSWORD = "geofence_password_enforced"
+        private const val KEY_FENCE_ACTIVE = "geofence_active"
+        private const val KEY_FENCES = "geofences_json"
+        private const val KEY_FENCE_INTERVAL = "geofence_interval_override"
 
         // Keys inside PROVISIONING_ADMIN_EXTRAS_BUNDLE, matching the server's
         // provisioning payload generator.

@@ -48,6 +48,7 @@ import com.taksolutions.atlasmdm.policy.ArtifactSweepPlan
 import com.taksolutions.atlasmdm.policy.InstallerCachePlan
 import com.taksolutions.atlasmdm.policy.InstallRetryPlan
 import com.taksolutions.atlasmdm.policy.LauncherConfigPlan
+import com.taksolutions.atlasmdm.policy.GeofencePlan
 import com.taksolutions.atlasmdm.policy.LocationSamplingPlan
 import com.taksolutions.atlasmdm.policy.LocationTracker
 import com.taksolutions.atlasmdm.policy.PolicyApplier
@@ -559,6 +560,20 @@ class Reconciler(private val context: Context) {
                 "will create a duplicate record instead of re-adopting this one (D24)."
         }
         val policy = desired.optJSONObject("policy") ?: JSONObject()
+
+        // ⚠️ A geofence's password requirement is folded into the PASSWORD spec
+        // rather than applied separately, so there stays exactly one writer of the
+        // password setters. A second writer would be undone by the next reconcile
+        // — `applyPassword` drives every field to a definite value each time, R14 —
+        // minutes later and without a word. Folding also makes the release
+        // automatic: when no fence asks, the floor is simply not added.
+        if (config.geofencePasswordEnforced) {
+            policy.put(
+                "PASSWORD",
+                GeofencePlan.passwordSpecWithFence(policy.optJSONObject("PASSWORD"), true),
+            )
+        }
+
         errors += policyApplier.apply(policy)
         val appReport = reconcileApps(desired.optJSONArray("apps") ?: JSONArray())
         errors += appReport.errors

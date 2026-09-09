@@ -156,18 +156,10 @@ CATALOG: tuple[Category, ...] = (
     ),
     Category(
         "tracking_fencing", "Tracking and fencing", "TRACKING_FENCING",
-        # ⚠️ Geofencing is a stub rather than a subtopic because the category is
-        # wired now, and a wired category's subtopics are ignored (D94). It is
-        # listed so the sub-page an operator was promised is visibly coming
-        # rather than absent — but see the ordering note below.
-        stub_pages=(
-            StubPage(
-                "geofencing", "Geofencing",
-                "A coordinate, a radius, and what changes on the device while it "
-                "is inside or outside. Not built yet — W106 C4.",
-                after="device-location-tracking",
-            ),
-        ),
+        # Geofencing was a stub here until W106 C4 built it. It is a real sub-page
+        # now — one `ui_group` in the spec — and listing it in both places would
+        # offer the operator the same thing twice, once working and once inert,
+        # which is the mistake the wallpaper note above records.
         blurb="How often a device reports where it is, and the fences it answers to.",
     ),
     Category("android_enterprise", "Android Enterprise compliance", None, blurb="Placeholder."),

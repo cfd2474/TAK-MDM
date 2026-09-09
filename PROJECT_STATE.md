@@ -670,6 +670,116 @@ rather than renaming either and breaking a released agent.
 **Not done, deliberately:** nothing purges yet. Retention is C5, and until it
 lands this table only grows.
 
+#### ✅ C4 — Geofencing
+
+**Both open questions answered by the operator, 2026-09-08.**
+
+* **Password enforced = require *and* lock now.** The requirement is set and
+  `lockNow()` is called, so the rule takes effect immediately rather than at the
+  next lock. ⚠️ On a device with no password this makes Android prompt whoever is
+  holding it to create one — chosen knowingly.
+* **Conflicts resolve most-restrictive.** Off beats on, enforced beats not, the
+  shorter interval wins.
+
+1. Spec: a `Geofence` model and a `geofences` list on `TRACKING_FENCING`, in a
+   **Geofencing** `ui_group` declared *after* the tracking field so it keeps
+   sitting below it. Retire the stub page. Merged `MERGE_BY_KEY` on name, so
+   stacked policies extend the set and can override one fence by name.
+2. `GeofencePlan` — pure: haversine distance, inside/outside per trigger, and the
+   most-restrictive fold. JVM-tested, like every other plan here.
+3. `GeofenceEnforcer` — the Android half: Wi-Fi, Bluetooth, password, interval
+   override, and **releasing each one** when no fence asks for it any more.
+4. Wire into the sampler, so a fence is evaluated against every fix.
+5. Console: an editor for the fence list.
+6. Tests both sides.
+7. Build, publish, deploy, verify on hardware.
+
+⚠️ **The release path is where this will go wrong, not the apply path.** Every
+password setter in this system *latches* (W41): whatever was last written stays
+until something writes over it, and survives the policy being unassigned. A fence
+that sets a requirement on entry and merely stops setting it on exit leaves the
+device permanently locked down by a rule nobody can see in the console. So leaving
+a fence must **actively push the permissive value**, and that is the case worth
+testing hardest — an apply that fails is visible, a release that never happens is
+not.
+
+⚠️ **A geofence needs positions, so it cannot depend on tracking being on.** If
+an operator sets a fence but leaves the reporting interval at 0, the fence would
+never evaluate and would look broken rather than unconfigured. Fences therefore
+imply sampling, falling back to the existing `geofencing.poll_interval_s` admin
+setting — which until now has been inert.
+
+###### ✅ Complete (2026-09-08) — agent 0.48.0 (versionCode 93), 1236 server tests
+
+**The whole lifecycle verified on `SM-X520`**, apply *and* release:
+
+```
+22:20:24 I/GeofenceEnforcer: geofence set bluetooth off
+22:20:24 I/GeofenceEnforcer: geofences now active: Bench
+22:20:25 I/LocationTracker:  location reporting interval: 5 -> 2 minute(s)
+22:21:23 I/GeofenceEnforcer: bluetooth restored to on (was ours)
+22:21:23 I/GeofenceEnforcer: no geofence applies now
+22:23:24 I/LocationTracker:  location reporting interval: 2 -> 5 minute(s)
+```
+
+⚠️ **"was ours" is the load-bearing part of that log line.** A radio the fence
+turned off is recorded together with what it was before, and only that is put
+back — the rule `hiddenByPolicy` already follows. "Everything currently off" is
+not the same set as "everything we turned off", and restoring the former would be
+the agent reversing a decision that was never its own.
+
+⚠️ **The password requirement is folded into the PASSWORD spec, not applied
+beside it.** `applyPassword` drives every password field to a definite value on
+*every* reconcile, pushing the permissive value when the policy is absent (R14) —
+so a geofence calling `setPasswordQuality` itself would have been undone by the
+next sync, minutes later, silently. Folding keeps one writer and makes release
+automatic: when no fence asks, the floor is simply not added. This was found by
+reading `applyPassword` before writing the enforcer, not by watching it fail.
+
+⚠️ **`lockNow()` fires on the transition, never on every evaluation.** Re-locking
+each time a fence was evaluated would relock the tablet every couple of minutes
+for as long as it stayed inside — not enforcement, an unusable device.
+
+⚠️ **The password control is a yes/no select, not a checkbox.** An unchecked
+checkbox submits nothing at all, so positional pairing would shift every later
+fence's setting onto the wrong row — the bug the kiosk favourites note records.
+A first version used a hidden companion field to work around that; the codebase
+already had `_yesno`, which removes the hazard instead of managing it.
+
+**Geometry is haversine.** A degree of longitude is 111 km at the equator and
+55 km at 60°, so a flat approximation is correct in testing and wrong in the
+field by a factor that depends on where the fence is. The `asin(min(1.0, …))`
+guard matters too — without it a device standing perfectly still computes NaN,
+which compares false against every radius and reads as *outside every fence*.
+
+**A fence missing its geometry is skipped, not defaulted to 0,0** — a real place
+in the Atlantic that every device is permanently outside, which would silently
+apply whatever an exit trigger carried.
+
+**22 JVM tests** for `GeofencePlan`, plus server-side tests for the form
+round-trip, the ordering, and the refusals (a fence tighter than 25 m would flap
+between inside and outside while a device sat still).
+
+⚠️ **Two actions were deliberately NOT tested on hardware, and the reason is a
+real operational hazard rather than caution.**
+
+* **`wifi: off`** — `SM-X520` is a Wi-Fi-only tablet. Turning the radio off takes
+  it fully offline, and because a fence is evaluated *on the device*, a stationary
+  tablet never leaves the fence and so can never be told the fence was removed.
+  It would be stranded until someone physically touched it. **This is a property
+  of the feature, not of the test**: an entry fence with Wi-Fi off, on a
+  Wi-Fi-only device that stays put, is a one-way door. The console warns beside
+  the field; it is worth an operator knowing before they use it.
+* **`password_enforced`** — would lock the tablet and, having no password set,
+  prompt for one on a device nobody can reach. The code path is unit-tested and
+  the fold is verified; the on-device half awaits a tablet someone is holding.
+
+⚠️ **Wi-Fi off can strand a device.** Turning the radio off inside a fence also
+cuts the path the agent uses to be told to turn it back on. The device keeps
+evaluating locally, so leaving the fence restores it — but a device that is
+switched off inside the fence and moved comes back with the radio off until it
+next gets a fix. Worth stating in the console next to the field.
+
 #### ✅ C5 — Retention: the table stops only growing
 
 Operator, 2026-09-08: *"default to 30 days, but have a setting in admin to adjust
