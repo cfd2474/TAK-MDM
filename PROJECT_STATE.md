@@ -559,6 +559,79 @@ a tab — the grey-box failure `atlas-map.js` already carries a note about. A si
 map that follows the selected row also answers the question an operator actually
 has, which is whether their fences overlap.
 
+### ⏳ W112 — Security ▸ Certificates
+
+Operator, 2026-09-09, after asking which of the Security sub-topics need Knox:
+scope Certificates as the next chunk. Four of the five need no Knox at all
+(recorded in the Android reference); this is the one worth building first,
+because the machinery already exists and ATAK deployments actually need it.
+
+#### ⚠️ The scoping finding that changes the shape of this
+
+**ATAK does not use the Android trust store.** `docs/ARCHITECTURE.md` already
+records it: *"XML, and `.p12` certs are all file pushes into `/sdcard/atak/…`"*.
+ATAK reads its CA and client certificates from files it is pointed at by its own
+preferences.
+
+So there are **two unrelated certificate stories**, and conflating them would be
+the expensive mistake here:
+
+| | Where it lands | How ATLAS does it |
+|---|---|---|
+| **ATAK's server certs** | `.p12` files under `/sdcard/atak/…`, named by ATAK preferences | ✅ **Already possible today** — FILES pushes the file, ATAK_CONFIG sets the preference |
+| **Device certificates** | Android's own keystore and trust store | ❌ This chunk |
+
+⚠️ **The console must not imply the second does the first.** An operator who
+installs their TAK server CA through a Certificates policy and expects ATAK to
+trust it will get a device that looks configured and an ATAK that cannot connect —
+with nothing anywhere saying why. Whatever this ships has to say what it is for:
+Wi-Fi EAP, browser trust, VPN, and apps that ask Android for a client certificate.
+
+#### ⚠️ Two ways to get a client certificate onto a device, and they are not equal
+
+* **Upload a PKCS#12.** The operator supplies a `.p12` and its password; the
+  server stores both and the agent calls `installKeyPair`. **Private key material
+  transits and then rests on this server** — the thing R8 already says about
+  `pki/ca.key`, now multiplied by every device certificate an operator uploads.
+* **Generate on the device.** `generateKeyPair` makes the key in hardware, the
+  agent sends a CSR, our CA signs it, `installKeyPair` installs the chain. **The
+  private key never leaves the device**, and this is not new ground —
+  `DeviceIdentity.kt` already does exactly this for the agent's own identity,
+  StrongBox included.
+
+**The second is strictly better and mostly built. The first is what an operator
+with an existing enterprise CA will need anyway.** Recommendation: build
+generate-on-device first and treat PKCS#12 upload as a separate, later decision
+with its own security note — not as the default path.
+
+#### Steps
+
+1. **Verify on hardware before designing around it**: that a Device-Owner
+   `installCaCert` actually lands in the trust store on `SM-X520`, whether the
+   user can remove it, and what warning Android shows. The reference records
+   nothing about this yet, and §6 says not to reason from recollection.
+2. `CERTIFICATES` policy spec: trust anchors (PEM/DER, from the Content library)
+   and client certificates (generate-on-device, named by alias and purpose).
+3. Server: issue device certificates from the existing CA on CSR, reusing
+   `app/security/ca.py` rather than a second issuing path.
+4. Agent: `installCaCert` / `uninstallCaCert`, `generateKeyPair` +
+   `installKeyPair`, all driven declaratively.
+5. Console: the Security category wired, with the ATAK distinction stated plainly.
+6. Tests both sides, then build, deploy, verify.
+
+⚠️ **Absent must mean removed, and it matters more here than anywhere.** Every
+other latching setting in this system leaves a stale *configuration* behind; a
+trust anchor left installed by a policy that no longer applies is a device that
+still trusts a CA the operator revoked. `getInstalledCaCerts` makes the current
+state readable, so the applier can drive it declaratively the way `applyPassword`
+does (R14) — and the same rule applies: only remove what **we** installed, never
+everything currently present, or ATLAS starts deleting the user's own anchors.
+
+⚠️ **A device certificate is an identity, so its lifecycle is not a policy's.**
+Unassigning a policy should stop *issuing*, but revoking what was issued is a
+separate act with separate consequences. Worth settling before building, not
+after: the same distinction W104 drew between retiring a device and wiping it.
+
 ### ✅ W111 — A trusted area that really does suspend the passcode
 
 Operator, 2026-09-09: *"can we have it remove a password policy that was placed by
