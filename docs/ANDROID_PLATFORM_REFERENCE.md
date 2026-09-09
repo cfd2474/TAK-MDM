@@ -1430,6 +1430,21 @@ The device stayed `compliant` with **no apply errors** through install, removal
 and re-install, so `installCaCert` and `uninstallCaCert` both returned true for a
 Device Owner on Android 16 with no user interaction and no OEM extension.
 
+⚠️ **A user can delete a policy-installed anchor, and Android announces it.**
+Observed on `SM-X828U`: a *"CA cert installed"* notification appears, and the
+certificate is removable by hand from **Settings › Encryption & credentials ›
+Trusted credentials › User**. A Device Owner does **not** get an anchor the user
+cannot touch.
+
+So device trust is **maintained, not enforced**. The only answer is to re-assert
+it: check `hasCaCertInstalled` against the device on every reconcile and put back
+what has gone, rather than trusting the agent's own record of what it installed.
+An applier that skips anything it believes it already installed leaves a deleted
+anchor gone for ever — and the console would show a policy that says "trust this"
+while the device does not. A device can therefore be without a policy anchor for
+up to one check-in cycle, which is worth saying in the console rather than
+implying enforcement.
+
 ⚠️ **`uninstallCaCert` identifies a certificate by its *content*.** There is no
 alias and no handle — the caller passes the same DER/PEM bytes back. An agent that
 does not keep them can remove nothing specific; the only call that works without

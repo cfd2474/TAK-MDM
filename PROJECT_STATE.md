@@ -596,6 +596,20 @@ anchor is inert — uploaded, assigned, removed and re-instated. The device's lo
 Compliant with **no apply errors** throughout, which is what says both platform
 calls returned true. Recorded in the Android reference §6.
 
+✅ **Operator checked the device (2026-09-09):** the certificate installed,
+Android showed a *"CA cert installed"* notification, and **the user can remove it
+from Settings**.
+
+⚠️ **That third answer found a real bug**, and it is the kind no test here would
+have caught. The applier skipped anything already in its own `installedByUs`
+record — so a user deleting the anchor would have left ATLAS believing trust was
+in place while the device had dropped it, with the policy silently not holding.
+Fixed in agent 0.53.0: `hasCaCertInstalled` asks the **device** on every reconcile
+and restores what has gone, the same self-healing the passcode has and for the
+same reason — the platform gives the user a way to undo it. The console now says
+trust is **maintained rather than enforced**, and that a device can be without an
+anchor for up to a check-in cycle.
+
 ⚠️ **Left installed for the operator to inspect**, labelled *"Delete me after
 testing"* and expiring in two days regardless. Policy `5064a51b`, file
 `d1bf9815`. What still needs a human's eyes: whether Android shows a

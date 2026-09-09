@@ -578,6 +578,14 @@
     check-in. Only certificates ATLAS installed are removed &mdash; anything a
     user added themselves is left alone.
   </p>
+  <p class="field-tip">
+    &#9888; <strong>A user can delete these from the device</strong> (Settings
+    &rsaquo; Encryption &amp; credentials &rsaquo; Trusted credentials &rsaquo;
+    User), and Android shows a <em>"CA cert installed"</em> notification when one
+    arrives. ATLAS notices and puts it back on the next check-in, so trust here is
+    <strong>maintained rather than enforced</strong> &mdash; a device can be
+    without it for up to one check-in cycle.
+  </p>
 {% endmacro %}
 
 {% macro _file_list(f, items, name, managed_files) %}

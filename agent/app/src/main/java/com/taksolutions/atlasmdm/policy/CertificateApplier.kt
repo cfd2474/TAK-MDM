@@ -39,6 +39,12 @@ import org.json.JSONArray
  * a trust anchor left behind is a device still trusting a CA the operator revoked.
  * So this runs on every reconcile and drives the set to exactly what policy says,
  * the way `applyPassword` drives its fields (R14).
+ *
+ * ⚠️ **A user can delete a policy-installed anchor**, verified on `SM-X828U`. So
+ * the desired set is re-asserted against what the device actually holds
+ * (`hasCaCertInstalled`) rather than against what this agent remembers doing —
+ * otherwise a deleted anchor would never come back and the policy would silently
+ * not hold. Trust here is *maintained*, not *enforced*, and the console says so.
  */
 class CertificateApplier(
     private val context: Context,
@@ -69,9 +75,26 @@ class CertificateApplier(
 
         val installedByUs = config.caCertsInstalled.toMutableSet()
 
-        // --- add what is missing ------------------------------------------- //
+        // --- add what is missing, and put back what a user removed --------- //
         for (entry in desired) {
-            if (installedByUs.contains(entry.sha256)) continue
+            // ⚠️ **The device is asked, not our own record.** A user *can* delete a
+            // policy-installed anchor from Settings — verified on `SM-X828U`, which
+            // also shows a "CA cert installed" notification. Trusting
+            // `installedByUs` alone would mean ATLAS believed an anchor was in
+            // place while the device had dropped it, and never restored it: a
+            // policy that says "trust this" quietly not holding.
+            //
+            // So the check is `hasCaCertInstalled`, and re-installing is the
+            // ordinary path rather than an error. This is the same self-healing
+            // the passcode has — re-asserted every reconcile because the platform
+            // gives the user a way to undo it.
+            val remembered = config.rememberedCaCert(entry.sha256)
+            if (installedByUs.contains(entry.sha256) && remembered != null) {
+                val stillThere = runCatching { manager.hasCaCertInstalled(admin, remembered) }
+                    .getOrDefault(true)
+                if (stillThere) continue
+                AgentLog.i(TAG, "trusted CA was removed on the device; restoring ${entry.name}")
+            }
 
             val bytes = fetch(entry.sha256)
             if (bytes == null) {

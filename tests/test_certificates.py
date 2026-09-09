@@ -258,3 +258,37 @@ def test_the_applier_runs_even_with_no_certificates_section(client: TestClient):
 
     assert 'CertificateApplier(context, ::downloadCertificateBytes)' in reconciler
     assert 'optJSONArray("certificates") ?: JSONArray()' in reconciler
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ What the hardware taught (SM-X828U, 2026-09-09)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_user_removed_anchor_is_put_back(client: TestClient):
+    """⚠️ A user *can* delete a policy-installed CA from Settings — observed on
+    hardware, along with a "CA cert installed" notification.
+
+    The first version skipped anything in its own `installedByUs` record, so a
+    deleted anchor would never have come back: ATLAS believing trust was in place
+    while the device had dropped it, and the policy silently not holding. The
+    device is asked instead of the record.
+    """
+    applier = pathlib.Path(
+        "agent/app/src/main/java/com/taksolutions/atlasmdm/policy/CertificateApplier.kt"
+    ).read_text(encoding="utf-8")
+
+    body = applier[applier.index("fun apply("):]
+    assert "hasCaCertInstalled" in body
+    assert "restoring" in body
+
+
+def test_the_console_does_not_claim_trust_is_enforced(client: TestClient):
+    """⚠️ It is maintained, not enforced. An operator told otherwise would believe
+    a device trusts an authority during a window when it does not."""
+    body = client.get("/policies/new").text
+    panel = body[body.index('data-page-panel="security:trusted-certificates"'):]
+    panel = panel[: panel.index("</section>")]
+
+    assert "A user can delete these from the device" in panel
+    assert "maintained rather than enforced" in panel
