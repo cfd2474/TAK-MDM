@@ -491,6 +491,32 @@ recoverable only by a manual reset at the device.
 operator waiting for points nothing is collecting; the panel states that the
 `locate` command exists but no history is recorded.
 
+### ✅ W105 — Manage went to Enroll
+
+Operator, 2026-09-08: *"when I click manage, it takes me to enroll"*.
+
+**My own W100 change caused it.** The 443 server block for
+`mdm.tak-solutions.com` ends with `location = / { return 302 /enrollment; }` —
+that hostname exists to hand a device to someone enrolling it, so its bare root
+sends them there. The Manage nav link was `href="/"`. On the IP and on port 80 it
+worked; on the hostname the redirect swallowed it.
+
+⚠️ **A nav link names the page it opens.** Relying on what `/` happens to mean
+is relying on which host the console is being read from, and that now varies by
+design. The dashboard answers on **`/fleet`** as well as `/`, the nav and the
+brand logo both point at `/fleet`, and the post-delete redirect goes there too.
+`/` still serves the dashboard, so nothing that bookmarked it breaks.
+
+⚠️ **A Jinja comment cannot go inside the `{% set sections = […] %}` list.**
+That is one expression, not a block of statements, and a `{# … #}` inside it is a
+`TemplateSyntaxError` at *every* page render — caught here only because the footer
+test loads four pages. The explanation sits above the block instead.
+
+Two regression tests in `tests/test_build_version.py`: the rendered page carries
+`href="/fleet"` and no nav link depends on the root, and both paths answer 200.
+
+**1178 server tests. Console-only — no agent change, no APK.**
+
 ### ✅ W102 — The running build, in a footer
 
 Operator, 2026-09-08: keep the active web UI build listed in a footer for quick

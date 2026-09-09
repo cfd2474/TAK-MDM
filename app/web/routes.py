@@ -270,6 +270,7 @@ def _render(
 
 
 @router.get("/", response_class=HTMLResponse)
+@router.get("/fleet", response_class=HTMLResponse)
 def dashboard(
     request: Request,
     session: Session = Depends(get_db),
@@ -500,7 +501,7 @@ def delete_device_form(
     revoke_device_certificates(session, device, reason="device deleted")
     session.delete(device)
     session.commit()
-    return _redirect("/")
+    return _redirect("/fleet")
 
 
 @router.get("/devices/{device_id}/logs/{bundle_id}", response_class=HTMLResponse)

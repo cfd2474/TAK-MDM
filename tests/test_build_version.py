@@ -125,3 +125,28 @@ def test_every_page_carries_the_footer(client: TestClient):
         body = client.get(path).text
         assert "site-footer" in body, path
         assert "build " in body, path
+
+
+# --------------------------------------------------------------------------- #
+# Navigation (W105)
+# --------------------------------------------------------------------------- #
+
+
+def test_manage_links_to_the_fleet_page_not_the_site_root(client: TestClient):
+    """⚠️ The root is not the fleet page on every host.
+
+    `mdm.tak-solutions.com` redirects `/` to the enrolment page, which is what
+    that hostname exists for — and while Manage pointed at `/`, the redirect
+    swallowed it and Manage went to Enroll. A nav link names the page it opens
+    rather than relying on what the root happens to mean where it is served.
+    """
+    body = client.get("/fleet").text
+
+    assert 'href="/fleet"' in body
+    assert '<a href="/" ' not in body, "no nav link depends on the root"
+
+
+def test_the_fleet_page_answers_on_both_paths(client: TestClient):
+    """`/` still works — it is the dashboard on the port that has no redirect."""
+    assert client.get("/fleet").status_code == 200
+    assert client.get("/").status_code == 200
