@@ -38,6 +38,7 @@ from app.policies.specs import (
     PasswordSpec,
     PolicySpec,
     RestrictionsSpec,
+    TrackingFencingSpec,
     WallpaperSpec,
 )
 from app.policies.strategies import Merge, MergeStrategy
@@ -180,6 +181,11 @@ registry.register(
     AtakConfigSpec,
     "ATAK's own settings and its plugins', delivered through ATAK's enterprise "
     "configuration key.",
+)
+registry.register(
+    "TRACKING_FENCING",
+    TrackingFencingSpec,
+    "How often a device reports its location, and the fences it answers to.",
 )
 registry.register(
     "CUSTOMIZATIONS",

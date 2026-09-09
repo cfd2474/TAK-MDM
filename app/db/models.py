@@ -30,10 +30,12 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -1134,4 +1136,104 @@ class TakGovLink(Base):
     last_error: Mapped[str | None] = mapped_column(Text, default=None)
     updated_at: Mapped[datetime] = mapped_column(
         UtcDateTime, default=_utcnow, onupdate=_utcnow
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Where devices have been (W106)
+# --------------------------------------------------------------------------- #
+
+
+class LocationSource(str, enum.Enum):
+    """Why this point exists. Kept because the three are not equally trustworthy
+    and an operator reading a track deserves to know which is which."""
+
+    #: The device reported it on its own schedule, per the tracking policy.
+    PERIODIC = "periodic"
+    #: An operator asked, via the `locate` command.
+    COMMAND = "command"
+    #: Recorded because a geofence condition changed (W106 C4).
+    GEOFENCE = "geofence"
+
+
+class DeviceLocation(Base):
+    """One position report from one device.
+
+    ⚠️ **This is the only table in the schema expected to reach millions of rows**,
+    and the two decisions below follow from that rather than from house style.
+
+    **A `bigint` identity key, not a `uuid4`.** Everything else here uses
+    :func:`_uuid_pk`, and for tables of thousands of rows that is right. Random
+    keys on an append-only table scatter every insert across the index instead of
+    filling the rightmost page, which costs write throughput and bloats the index
+    precisely as the table gets big. Nothing links to a point by id, so the key
+    carries no meaning worth randomising.
+
+    **Two timestamps, and they mean different things.**
+
+    * ``recorded_at`` is the device's own fix time. It can be stale by hours —
+      `LocateCommandHandler` returns *last known* position deliberately, since a
+      live fix can take minutes indoors — and it can be wrong outright if the
+      device's clock is.
+    * ``received_at`` is when this server was told, which is the only timestamp we
+      can vouch for.
+
+    A track drawn on ``recorded_at`` is the honest one; ``received_at`` is what
+    explains a device that went quiet and then delivered six hours at once.
+    Recording only one of them would make those two situations indistinguishable.
+    """
+
+    __tablename__ = "device_location"
+
+    #: ⚠️ `bigint` on Postgres, `INTEGER` on SQLite — and the variant is load-bearing,
+    #: not tidiness. SQLite auto-assigns a rowid only for a column declared exactly
+    #: `INTEGER PRIMARY KEY`; a `BIGINT` one is an ordinary column that stays NULL,
+    #: so every insert fails a NOT NULL check under the test suite while working
+    #: perfectly in production.
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("device.id", ondelete="CASCADE"), index=True
+    )
+
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+
+    #: Reported accuracy radius in metres. NULL means the device did not say —
+    #: never "perfectly accurate". The console shows those two differently.
+    accuracy_m: Mapped[float | None] = mapped_column(Float, default=None)
+    #: `gps`, `network`, or whatever the platform called it. Free text on purpose:
+    #: it is the device's word, and an OEM may use one we have never seen.
+    provider: Mapped[str | None] = mapped_column(String(32), default=None)
+
+    recorded_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
+    received_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+    source: Mapped[LocationSource] = mapped_column(
+        Enum(LocationSource, native_enum=False, length=16),
+        default=LocationSource.PERIODIC,
+    )
+
+    device: Mapped[Device] = relationship(lazy="selectin")
+
+    __table_args__ = (
+        # Every read is "this device, newest first" — the detail page's latest
+        # point, the history range, and the retention purge alike.
+        Index("ix_device_location_device_recorded", "device_id", "recorded_at"),
+        # ⚠️ Refused at the database, not only in the schema. A latitude of 91 is
+        # not a coordinate, and a NaN silently poisons every bounding box drawn
+        # from the table thereafter.
+        CheckConstraint(
+            "latitude >= -90 AND latitude <= 90", name="ck_device_location_latitude"
+        ),
+        CheckConstraint(
+            "longitude >= -180 AND longitude <= 180",
+            name="ck_device_location_longitude",
+        ),
+        CheckConstraint(
+            "accuracy_m IS NULL OR accuracy_m >= 0", name="ck_device_location_accuracy"
+        ),
     )

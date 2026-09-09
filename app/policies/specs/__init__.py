@@ -28,6 +28,7 @@ from app.policies.specs.network_data_use import NetworkDataUseSpec
 from app.policies.specs.networks import NetworksSpec
 from app.policies.specs.password import PasswordSpec
 from app.policies.specs.restrictions import RestrictionsSpec
+from app.policies.specs.tracking_fencing import TrackingFencingSpec
 from app.policies.specs.wallpaper import WallpaperSpec
 
 __all__ = [
@@ -41,5 +42,6 @@ __all__ = [
     "PasswordSpec",
     "PolicySpec",
     "RestrictionsSpec",
+    "TrackingFencingSpec",
     "WallpaperSpec",
 ]

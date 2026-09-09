@@ -514,6 +514,59 @@ sets the default.
 `/data/system/*.xml` writes — a rooted or platform-signed deployment, not a normally
 installed Device Owner.
 
+### Background location: what periodic reporting actually requires (W106)
+
+📖 Three separate gates, and missing any one of them fails differently:
+
+| Gate | Requirement | Our state |
+|---|---|---|
+| The runtime permission | `ACCESS_FINE_LOCATION` or `_COARSE` | ✅ declared, self-granted |
+| Location services switched on | *"The user must have enabled location services"* | ✅ fixable — see `setLocationEnabled` below |
+| Reading location while not visible | A `location` foreground service, **or** `ACCESS_BACKGROUND_LOCATION` | ❌ neither yet |
+
+📖 **A foreground service is the documented way to read location without the
+background permission** — an app running a `location`-typed FGS counts as
+while-in-use. That type needs `android:foregroundServiceType="location"` *and* the
+`FOREGROUND_SERVICE_LOCATION` manifest permission (the type is a bitmask, so it
+combines with the `specialUse` the sync service already declares).
+
+⚠️ **But the FGS route does not stand on its own here, and the reason is easy to
+miss.** Quoting the foreground-service-types page:
+
+> The location runtime permissions are subject to while-in-use restrictions. For
+> this reason, you cannot create a `location` foreground service while your app is
+> in the background, unless you've been granted the `ACCESS_BACKGROUND_LOCATION`
+> runtime permission.
+
+The agent's sync service **starts at boot** — that is a background start. So the
+service type alone is not enough for us: it needs `ACCESS_BACKGROUND_LOCATION`
+anyway, and then both are required rather than either.
+
+📖 **`ACCESS_BACKGROUND_LOCATION` is protection level `dangerous`**, so it is
+within `setPermissionGrantState`'s reach, and `ensureSelfPermissions()` already
+self-grants every dangerous permission the manifest declares — adding it to the
+manifest *is* the grant, with no new code. Android 11's enterprise notes confirm
+the admin path survives and describe only a **user notification**, not a block:
+
+> If the admin sets a global policy to auto-accept all permissions, the user is
+> notified when an app requests, and is granted, location permission because of
+> this policy.
+
+⚠️ **Documented, not yet verified on hardware.** No Google page states in so many
+words that a Device Owner may grant *background* location specifically; the
+conclusion above is assembled from the permission's protection level plus the
+enterprise notes. Treat it as 📖 until a tablet says otherwise — C2 of W106 is where
+it gets tested, and the failure mode to watch for is a silent one: the grant call
+reports nothing wrong and the fix simply never arrives while the screen is off.
+
+✅ **`DevicePolicyManager.setLocationEnabled(admin, boolean)` (API 30+)** lets a
+Device Owner switch the device's master location setting on, which removes the
+second gate as a source of mystery — otherwise a correctly permissioned agent
+reports nothing at all because location is off in Settings, and nothing in our own
+logs would say so. Android 11 notes that the user is notified when an admin does
+this. `Settings.Secure.LOCATION_MODE` is deprecated for this purpose and must not
+be used via `setSecureSetting`.
+
 ### ⚠️ The storage permission trap
 
 **On Android 11+, granting `WRITE_EXTERNAL_STORAGE` to an app permanently prevents

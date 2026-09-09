@@ -635,24 +635,48 @@ def _catalog_view(
                 "warnings": _category_warnings(
                     session, storage, category, spec, whole_spec
                 ),
-                # Stub sub-topics first, then the working ones (D94). Order is
-                # the category's own declaration — "Plugin behavior" is listed
-                # above ATAK Config's two configurable sub-topics because that is
-                # how the operator asked for it, not because stubs sort first.
-                "pages": [
-                    {"page": stub, "has_data": False, "stub": True}
-                    for stub in category.stub_pages
-                ]
-                + [
-                    {"page": p, "has_data": p.slug in managed, "stub": False}
-                    for p in pages
-                ],
+                # Order is the category's own declaration (D94), which is why
+                # a stub can name the sub-page it follows: "Plugin behavior" sits
+                # at the top of ATAK Config and "Geofencing" sits *below* Device
+                # location tracking, both because that is how they were asked for.
+                "pages": _ordered_sub_pages(category, pages, managed),
                 "section": section,
                 "spec": spec,
                 "has_data": bool(spec),
             }
         )
     return view
+
+
+def _ordered_sub_pages(category, pages, managed: set[str]) -> list[dict]:
+    """A category's sub-pages, stubs placed where the category says they go.
+
+    A stub with no ``after`` leads, which is the long-standing behaviour and what
+    ATAK Config wants. A stub naming a real sub-page follows it — that is how
+    Geofencing sits below Device location tracking rather than above it (W106).
+
+    ⚠️ A stub whose ``after`` names nothing on the page still appears, at the end.
+    Silently dropping it would hide a sub-topic an operator was told to expect,
+    and a misplaced entry is a far smaller problem than a missing one.
+    """
+    real = [{"page": p, "has_data": p.slug in managed, "stub": False} for p in pages]
+
+    leading = [s for s in category.stub_pages if s.after is None]
+    following: dict[str, list] = {}
+    for stub in category.stub_pages:
+        if stub.after is not None:
+            following.setdefault(stub.after, []).append(stub)
+
+    out = [{"page": s, "has_data": False, "stub": True} for s in leading]
+    for entry in real:
+        out.append(entry)
+        for stub in following.pop(entry["page"].slug, []):
+            out.append({"page": stub, "has_data": False, "stub": True})
+
+    # Whatever named a sub-page that is not here, rather than vanishing.
+    for orphans in following.values():
+        out.extend({"page": s, "has_data": False, "stub": True} for s in orphans)
+    return out
 
 
 def _managed_file_names(session: Session) -> dict[str, str]:

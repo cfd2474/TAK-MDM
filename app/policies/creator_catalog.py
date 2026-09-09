@@ -38,14 +38,22 @@ from dataclasses import dataclass, field
 class StubPage:
     """A sub-topic of a wired category that has no backend yet (D94).
 
-    Rendered before the category's real sub-pages, in declaration order — which
-    is how "Plugin behavior" sits at the top of ATAK Config while the two
-    configurable sub-topics below it work.
+    Rendered before the category's real sub-pages by default — which is how
+    "Plugin behavior" sits at the top of ATAK Config while the two configurable
+    sub-topics below it work.
+
+    ⚠️ **Set `after` when the operator asked for a different order.** The default
+    is a default, not a rule: Tracking and fencing was asked for as *location
+    tracking, then geofencing*, and leaving the stub to sort first would have
+    silently delivered the reverse. Where a stub belongs is a property of what was
+    asked for, so it is declared here rather than inferred from stub-ness (W106).
     """
 
     slug: str
     label: str
     blurb: str = ""
+    #: Slug of the real sub-page this stub should follow. ``None`` puts it first.
+    after: str | None = None
 
 
 @dataclass(frozen=True)
@@ -147,8 +155,20 @@ CATALOG: tuple[Category, ...] = (
         blurb="Files placed on the device, ATAK data packages, and terrain data.",
     ),
     Category(
-        "tracking_fencing", "Tracking and fencing", None,
-        subtopics=("location tracking", "geofencing"),
+        "tracking_fencing", "Tracking and fencing", "TRACKING_FENCING",
+        # ⚠️ Geofencing is a stub rather than a subtopic because the category is
+        # wired now, and a wired category's subtopics are ignored (D94). It is
+        # listed so the sub-page an operator was promised is visibly coming
+        # rather than absent — but see the ordering note below.
+        stub_pages=(
+            StubPage(
+                "geofencing", "Geofencing",
+                "A coordinate, a radius, and what changes on the device while it "
+                "is inside or outside. Not built yet — W106 C4.",
+                after="device-location-tracking",
+            ),
+        ),
+        blurb="How often a device reports where it is, and the fences it answers to.",
     ),
     Category("android_enterprise", "Android Enterprise compliance", None, blurb="Placeholder."),
     Category(

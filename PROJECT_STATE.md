@@ -491,6 +491,191 @@ recoverable only by a manual reset at the device.
 operator waiting for points nothing is collecting; the panel states that the
 `locate` command exists but no history is recorded.
 
+### ⏳ W106 — Location tracking, geofencing, and a map
+
+Operator, 2026-09-08: under **Tracking and fencing**, two sub-categories —
+**Device location tracking** (reporting interval in minutes, 0 = disabled) and
+**Geofencing** (a coordinate + radius; behaviour type Entry/Exit; password
+enforced yes/no; wifi on/off/not managed; bluetooth on/off/not managed;
+reporting interval override, 0 = no override). On the device page, a map showing
+device location, duplicating how
+[EUD_Remote_Assist_Portal](https://github.com/cfd2474/EUD_Remote_Assist_Portal)
+displays locations. *"lets start with device location tracking."*
+
+#### What already exists — more than expected
+
+| Piece | State |
+|---|---|
+| `tracking_fencing` category with both sub-topics | ✅ already in `creator_catalog.py`, unwired placeholder |
+| `ACCESS_FINE_LOCATION` / `_COARSE_LOCATION` in the manifest | ✅ |
+| `PermissionRequirement.Location`, silently granted by the Device Owner | ✅ |
+| `LocateCommandHandler` — lat, lon, accuracy, provider, fix time, **age** | ✅ on demand |
+| Turning **Wi-Fi** on and off as Device Owner | ✅ verified on `SM-X520` (W72) |
+| Turning **Bluetooth** on and off as Device Owner | ✅ `DeviceControls.setBluetoothEnabled` |
+| Periodic reporting, storage, history, map, geofence evaluation | ❌ to build |
+
+So every action the geofence needs is already reachable from code on the device.
+What is missing is a **schedule**, somewhere to **put** the points, and a **map**.
+
+#### ⚠️ What the reference project actually does — read before duplicating it
+
+I read its source rather than its README, which does not cover this.
+
+* **`web/src/components/DeviceMap.tsx`** — Leaflet, OpenStreetMap tiles, one
+  marker, popup with a label, `zoom 14`, scroll-wheel zoom **off**.
+* **`web/src/components/DeviceLocationPanel.tsx`** — above the map: reverse-geocoded
+  **address**, **coordinates** to 5 decimal places, **GPS accuracy** as `±N m` or
+  *"Not reported by device"*; below it a **Location history** link.
+* **`web/src/pages/DeviceLocationHistory.tsx`** — a **From/To** range where
+  **From is the *newer* bound** (`Now` or a calendar date) and **To is further
+  back**, both at local midnight; `To` must be on or before `From`. Default range
+  is now → 48 hours ago. Then a map of **numbered** markers, and a **Records**
+  table (`#`, date/time, coordinates, accuracy) where clicking a row flies the map
+  to that point at zoom 16 and highlights the marker. Empty range says
+  *"No location points in this range."*; no records at all says *"no records"*.
+  **Export all history** pulls the full unsampled set as CSV.
+* **`server/src/services/locationHistory.ts`** — the downsampling, which is the
+  part worth copying exactly:
+
+  | Age of point | Kept |
+  |---|---|
+  | ≤ 2 h | **every point** |
+  | ≤ 6 h | newest per 15 min |
+  | ≤ 48 h | newest per 1 h |
+  | ≤ 96 h | newest per 6 h |
+  | older | newest per 24 h |
+
+⚠️ **The reference project has no retention and deletes nothing.** Its
+`telemetry_history` table has no purge, no TTL, and no cleanup job — I checked
+`migrate.ts` and the whole `server/src` tree. The tiers above are a **display
+downsample**, not a retention policy: every raw point is kept for ever and merely
+*drawn* thinly once it is old. Duplicating the display is the operator's ask and
+is worth doing; duplicating the storage behaviour is not, because a fleet
+reporting every 15 minutes writes ~35k rows per device per year and the thing
+being accumulated is *a year of where a named person went*. **This chunk adds a
+real retention window with a default; the display tiers are copied exactly.**
+
+⚠️ **Its reverse geocoding sends device coordinates to `nominatim.openstreetmap.org`**,
+a third party, on every panel view (24 h in-memory cache). Map tiles go to
+`tile.openstreetmap.org`, which reveals the viewport the same way. For a tactical
+fleet this is a disclosure decision, not a detail — so tiles are configurable and
+**reverse geocoding is off unless switched on**, rather than on by default.
+
+#### Design decisions this chunk commits to
+
+* **Points ride the check-in as a batch.** The device buffers fixes at its
+  interval and flushes the backlog on the next check-in, so an offline device
+  keeps its history instead of dropping it. Check-in is already 900 s — the same
+  15 minutes the reference project uses as its default.
+* **`recorded_at` and `received_at` are both stored.** The first is the device's
+  fix time and can be wrong or stale; the second is ours. `LocateCommandHandler`
+  already reports fix **age** for exactly this reason.
+* **Entry/Exit is a *state*, not an edge.** The operator's words: *"Entry will be
+  when the device is inside the geofence, exit is when device is outside."* So the
+  actions hold while the condition holds and revert when it stops — which is also
+  the only version that survives a reboot or a missed transition.
+* **Geofences are evaluated on the device.** A fence that only works with a
+  network is not a fence.
+
+#### Chunk plan
+
+| | | |
+|---|---|---|
+| **C1** | Storage, the tracking policy, and check-in ingestion | server only |
+| **C2** | Agent: periodic reporting on the policy's interval | agent, needs an APK |
+| **C3** | Console: the map on the device page, and the history page | server only |
+| **C4** | Geofencing: policy spec + on-device evaluation | both |
+| **C5** | Retention window, purge, and the admin setting | server only |
+
+#### ✅ C1 — Storage, the tracking policy, and ingestion
+
+1. Verify against `docs/ANDROID_PLATFORM_REFERENCE.md` (§6) how a Device Owner
+   gets **background** location on API 36 — `ACCESS_BACKGROUND_LOCATION` vs a
+   `foregroundServiceType="location"` service. **This gates C2, so it is answered
+   before anything is built on the assumption that C2 is possible**, and written
+   into the reference either way.
+2. `device_locations` table + migration: device FK (cascade), lat, lon,
+   `accuracy_m`, provider, `recorded_at`, `received_at`, `source`
+   (`periodic` / `command` / `geofence`), indexed `(device_id, recorded_at DESC)`.
+   Denormalised `last_*` columns on `devices` so the fleet list needs no join.
+3. `LOCATION_TRACKING` policy spec — `reporting_interval_minutes`, 0 = disabled;
+   wire the `tracking_fencing` category and put **location tracking above
+   geofencing**, matching the operator's ordering elsewhere.
+4. Extend `CheckinRequest` with an optional batch of points — absent means "an
+   older agent said nothing", never "erase what we know" (the W32 rule).
+5. Ingest service: reject impossible coordinates, clamp a batch size, update the
+   denormalised `last_*`, and record `locate` command results as points too, so
+   the existing on-demand command starts building history immediately.
+6. Tests, then deploy. No agent change and no APK in C1.
+
+###### ✅ Complete (2026-09-08) — 1201 server tests, server-side only
+
+**Step 1 answered C2 in advance: periodic reporting is viable, with two gates, not
+one.** Recorded in `docs/ANDROID_PLATFORM_REFERENCE.md` §6. A `location`-typed
+foreground service is the documented way to read location without the background
+permission — but the agent's sync service *starts at boot*, and Android refuses to
+create a `location` FGS from the background without `ACCESS_BACKGROUND_LOCATION`.
+So C2 needs **both**: the service type plus that permission. The permission is
+`dangerous`, so `ensureSelfPermissions()` self-grants it the moment the manifest
+declares it — the operator's *"we can do this during provisioning"* is exactly
+right, and needs no new code. 📖 **Documented, not hardware-verified**: no Google
+page says in so many words that a DO may grant *background* location, and the
+failure mode is silent — the grant reports nothing wrong and fixes never arrive
+while the screen is off. Bonus: `setLocationEnabled` lets the DO switch the
+device's master location setting on, removing the other silent-failure path.
+
+**Two deviations from the approved plan, both deliberate.**
+
+1. **No denormalised `last_*` columns on `device`.** The plan said add them so the
+   fleet list needs no join. With `(device_id, recorded_at)` indexed, the latest
+   point is an index seek, and nothing today draws a fleet map — so the columns
+   would have bought nothing and introduced a second copy of a fact that can drift
+   from the first. `locations.latest()` is the single source.
+2. **One `TRACKING_FENCING` spec, not two policy types.** In this console a
+   sub-page *is* a `ui_group` (W12), so "Device location tracking" and
+   "Geofencing" are two groups in one spec. Two policy types would have produced
+   two categories, which is not what was asked for.
+
+⚠️ **Stub sub-pages sorted first, which silently reversed the requested order.**
+Geofencing would have rendered *above* Device location tracking. `StubPage` now
+takes `after`, naming the sub-page it follows; the default is unchanged, so ATAK
+Config's "Plugin behavior" still leads. Both orders are asserted — the second
+because fixing one category by breaking another is the obvious way to get this
+wrong.
+
+⚠️ **`0` means off, and `HIGHEST_RANK` is why it can.** Under `MIN` — the
+instinctive choice for an interval — a policy that disables tracking would win
+every contest and silently turn it off fleet-wide; under `MAX`, off could never
+win and no device could be exempted. `0` is not a smaller interval, it is a
+different kind of answer, and only rank lets an operator say either thing.
+
+⚠️ **A `bigint` key needs `.with_variant(Integer, "sqlite")`.** SQLite
+auto-assigns a rowid only for a column declared exactly `INTEGER PRIMARY KEY`, so
+a `BIGINT` key is an ordinary column that stays NULL — every insert failed under
+the suite while being correct for Postgres. The migration carries the variant too.
+
+**What the ingest refuses**, each because it is believed rather than checked
+later: impossible coordinates (and NaN specifically, which passes any range test
+written the obvious way), fixes stamped in the future (a wrong clock otherwise
+pins a device to the top of every history view for ever), and points already
+stored (a lost response makes a correct agent re-send, so duplicates would corrupt
+the track exactly when coverage is worst). Every drop is counted and logged.
+
+**`locate` results are stored as points too**, so history begins filling for
+devices with no tracking policy and before C2 ships — which is also what will give
+C3's map something to draw. The agent says `accuracy_metres` / `fixed_at_millis`
+where the wire schema says `accuracy_m` / `recorded_at`; one function knows both,
+rather than renaming either and breaking a released agent.
+
+**Not done, deliberately:** nothing purges yet. Retention is C5, and until it
+lands this table only grows.
+
+**Open question for C4, not C1:** two fences whose conditions both hold and whose
+actions disagree (one says Wi-Fi on, one says off) need a defined precedence, and
+"password enforced" needs scoping — requiring a password the device does not have
+puts a lock-screen setup in front of whoever is holding it, which is a different
+thing from toggling a radio.
+
 ### ✅ W105 — Manage went to Enroll
 
 Operator, 2026-09-08: *"when I click manage, it takes me to enroll"*.

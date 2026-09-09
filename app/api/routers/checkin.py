@@ -45,6 +45,7 @@ from app.services import effective_policy as eff
 from app.services import agent_update as agent_update_service
 from app.services import files as file_service
 from app.services import fleet as fleet_service
+from app.services import locations as location_service
 
 router = APIRouter(prefix="/api/v1/device", tags=["device"])
 
@@ -158,6 +159,17 @@ def checkin(
             next_checkin_seconds=settings.checkin_interval_seconds,
             unknown_command_ids=unknown_command_ids,
         )
+
+    # ⚠️ After the disenroll return, not before it. A device being wiped is about
+    # to have its record deleted and its points cascade with it, so storing them
+    # here would be work whose only result is a larger transaction.
+    #
+    # Both sources land in the same place: the batch the device buffered, and any
+    # `locate` an operator asked for and the device answered this cycle. The
+    # second means history starts filling for devices with no tracking policy at
+    # all, which is also what gives C3's map something to draw before C2 ships.
+    location_service.record(session, device, payload.locations)
+    location_service.record_locate_results(session, device, payload.results)
 
     _record_convergence(device, payload)
 

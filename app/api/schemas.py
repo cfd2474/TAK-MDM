@@ -30,6 +30,7 @@ from app.db.models import (
     IdentifierKind,
     PartRole,
 )
+from app.services.locations import MAX_BATCH as MAX_LOCATION_BATCH
 
 
 class ORMModel(BaseModel):
@@ -584,6 +585,27 @@ class CommandResultReport(BaseModel):
     error: str | None = None
 
 
+class LocationReport(BaseModel):
+    """One position the device recorded, delivered on a later check-in (W106).
+
+    ⚠️ **`recorded_at` is the device's clock, not ours.** The agent reports *last
+    known* position on purpose — a live fix can take minutes indoors — so a point
+    can legitimately be older than the check-in carrying it, sometimes by hours.
+    The server stores its own receipt time alongside, and the two together are
+    what distinguish a stale fix from a delayed delivery.
+
+    The bounds here are the same ones the table enforces. Being refused twice is
+    deliberate: this catches a malformed report with a readable 422, and the CHECK
+    constraint catches anything that ever reaches the database another way.
+    """
+
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    accuracy_m: float | None = Field(default=None, ge=0)
+    provider: str | None = Field(default=None, max_length=32)
+    recorded_at: datetime
+
+
 class CheckinRequest(BaseModel):
     # What the device currently holds. Used to decide whether to resend the bundle.
     state_version: int | None = None
@@ -620,6 +642,25 @@ class CheckinRequest(BaseModel):
     # marketplace (F4). The device's report is authoritative and replaces the
     # server's record — omit the field entirely to leave it untouched.
     applied_optional_files: list[uuid.UUID] | None = None
+
+    #: Positions buffered since the last successful check-in (W106).
+    #:
+    #: Unlike `applied_optional_files` above, this is *not* None-versus-empty:
+    #: location history is append-only, so "said nothing" and "had nothing to add"
+    #: are the same statement and there is no record for an empty list to erase.
+    #: An agent too old to know the field simply never sends it.
+    #:
+    #: ⚠️ Capped, and the cap is enforced here rather than by trimming later. A
+    #: device with a long backlog sends it across several check-ins; being told so
+    #: by a 422 is a debuggable failure, whereas silently keeping the first 500 of
+    #: 2,000 points would leave a gap nobody could account for.
+    #:
+    #: The limit is imported rather than repeated: the schema's 422 and the
+    #: service's "only the first N were read" warning describe the same threshold,
+    #: and two literals would eventually disagree about where it is.
+    locations: list[LocationReport] = Field(
+        default_factory=list, max_length=MAX_LOCATION_BATCH
+    )
 
 
 class DeviceLogUploadRequest(BaseModel):
