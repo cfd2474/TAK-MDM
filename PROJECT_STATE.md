@@ -9,6 +9,29 @@ update after every completed step.
 
 ## Current status
 
+**Latest (2026-09-09).** W94–W108 complete and deployed. Location tracking,
+geofencing, the map and history page, retention, find-my-device, remote lock, and
+battery/IMEI/phone on the device page. Agent **0.50.0 (versionCode 95)** published
+fleet-wide; `SM-X520` is on it and reporting. **1273 server tests, 38 agent JVM
+tests.** Alembic head `h4j6l8n0p2r4`.
+
+**What is actually waiting** — nothing is blocked on code:
+
+| | |
+|---|---|
+| Chrome is **not in the app library** | An incomplete arm64 import was deleted in W96 and never replaced. Operator's call whether to re-import. |
+| Handtevy `4001269` from Play | Would be the first import exercising **signature continuity** against a package already in the library (`4001247`). |
+| Disenroll (W104) | Never run on hardware. Suggest `SM-X828U` — not `SM-X520`, which carries the kiosk profile. |
+| Geofence `wifi: off` and `password_enforced` | Deliberately not hardware-tested. See W106 C4 for why Wi-Fi off is a one-way door on a Wi-Fi-only tablet. |
+| Reverse geocoding | Offered and declined by default in C3; operator's call whether to add it as an off-by-default setting. |
+
+⚠️ **The migration did not run automatically on the W108 deploy.** `alembic
+upgrade head` had to be run by hand after `docker compose up -d --build api`.
+Worth watching whether that recurs — a schema change that silently does not apply
+is the kind of thing that surfaces later as an unrelated-looking bug.
+
+---
+
 **Phase:** ✅ **Chunks 10–14 complete.** F1–F6 all hardware-proven; R1, R11, R13
 closed. **Enrollment is now a single persistent token with 15-minute signed QR
 derivatives** (Chunk 14), verified live through real nginx — including that
@@ -678,7 +701,7 @@ rather than assumed.
 the lock screen, which a swipe dismisses. The button should say so rather than
 implying a device has been secured — the same honesty the geofence lock needed.
 
-### ⏳ W106 — Location tracking, geofencing, and a map
+### ✅ W106 — Location tracking, geofencing, and a map
 
 Operator, 2026-09-08: under **Tracking and fencing**, two sub-categories —
 **Device location tracking** (reporting interval in minutes, 0 = disabled) and
