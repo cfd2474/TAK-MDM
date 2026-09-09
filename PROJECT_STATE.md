@@ -584,10 +584,23 @@ reusing what `DeviceIdentity.kt` already does. **PKCS#12 upload stays a separate
 decision**: it would put private key material on this server, which is R8
 multiplied by every certificate an operator uploads.
 
-⚠️ **Not yet verified on hardware.** Whether a Device-Owner `installCaCert`
-lands, whether the user can remove it, and what warning Android shows are still
-open — agent 0.52.0 is published and `SM-X520` will take it, so the next session
-can watch a real anchor install.
+✅ **Verified on hardware (`SM-X828U`, agent 0.52.0), install *and* removal.** A
+throwaway CA was generated — private key held in memory and never written, so the
+anchor is inert — uploaded, assigned, removed and re-instated. The device's log:
+
+```
+13:45:09 I/CertificateApplier: trusted CA installed: ATLAS W112 Verification CA
+13:48:58 I/CertificateApplier: trusted CA removed: 479243d5ce1218b6…
+```
+
+Compliant with **no apply errors** throughout, which is what says both platform
+calls returned true. Recorded in the Android reference §6.
+
+⚠️ **Left installed for the operator to inspect**, labelled *"Delete me after
+testing"* and expiring in two days regardless. Policy `5064a51b`, file
+`d1bf9815`. What still needs a human's eyes: whether Android shows a
+*"network may be monitored"* notice, and whether the user can delete the anchor
+from Settings — neither is visible from the server.
 
 #### Steps
 

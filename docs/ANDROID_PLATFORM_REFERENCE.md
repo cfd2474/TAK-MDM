@@ -1417,6 +1417,31 @@ so that case has to cancel. See `AgentNotification.rest`.
 Both failures are silent, and both produce the *same* wrong picture, which is
 what made the second one look like the first one not being fixed.
 
+### ✅ A Device Owner installs and removes trust anchors (W112) — verified on `SM-X828U`
+
+Both directions, on hardware, from the device's own log:
+
+```
+13:45:09 I/CertificateApplier: trusted CA installed: ATLAS W112 Verification CA
+13:48:58 I/CertificateApplier: trusted CA removed: 479243d5ce1218b6…
+```
+
+The device stayed `compliant` with **no apply errors** through install, removal
+and re-install, so `installCaCert` and `uninstallCaCert` both returned true for a
+Device Owner on Android 16 with no user interaction and no OEM extension.
+
+⚠️ **`uninstallCaCert` identifies a certificate by its *content*.** There is no
+alias and no handle — the caller passes the same DER/PEM bytes back. An agent that
+does not keep them can remove nothing specific; the only call that works without
+them is `uninstallAllUserCaCerts`, which removes **every** user-installed anchor
+including ones a person added themselves. So the bytes are stored per anchor, and
+the sha256 recorded, precisely so removal can be exact.
+
+⚠️ **`installCaCert` returns `false` rather than throwing** when the bytes cannot
+be parsed — the same shape as `setWifiEnabled` (W72) and `setKeyguardDisabled`
+(W111). A caller that ignores the return value reports success on a certificate
+the device never trusted.
+
 ### The Security category: what AOSP gives without Knox (W112 scoping, 2026-09-09)
 
 Checked against the framework source rather than recalled. Four of the five
