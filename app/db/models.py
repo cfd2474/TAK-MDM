@@ -151,6 +151,29 @@ class Device(Base):
     name: Mapped[str | None] = mapped_column(String(128), default=None)
     model: Mapped[str | None] = mapped_column(String(64), default=None)
     imei: Mapped[str | None] = mapped_column(String(32), default=None)
+    #: The second SIM slot's IMEI on a dual-SIM device (W108). NULL on a device
+    #: with one slot, and on every device that has no cellular radio at all.
+    imei2: Mapped[str | None] = mapped_column(String(32), default=None)
+    #: The line number, when the carrier provisioned one onto the SIM.
+    #:
+    #: ⚠️ **Very often NULL even on a perfectly working cellular device.** The
+    #: number is stored on the SIM only if the carrier put it there, and many do
+    #: not. Absence here is normal and is not a fault to chase.
+    phone_number: Mapped[str | None] = mapped_column(String(32), default=None)
+    #: Whether this device has a cellular radio at all.
+    #:
+    #: ⚠️ **This is what makes an absent IMEI readable.** Without it, "this tablet
+    #: has no modem" and "the IMEI could not be read" are the same blank on the
+    #: page, and an operator would go hunting for a permission bug on a Wi-Fi-only
+    #: device. NULL means an agent too old to say — a third state again.
+    has_telephony: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    #: Battery charge 0-100, as of `last_checkin_at`.
+    #:
+    #: ⚠️ Shown against that timestamp rather than as a bare number: 4% reported a
+    #: minute ago and 4% reported yesterday are different situations, and the bare
+    #: figure reads as current.
+    battery_level: Mapped[int | None] = mapped_column(Integer, default=None)
+    battery_charging: Mapped[bool | None] = mapped_column(Boolean, default=None)
     os_version: Mapped[str | None] = mapped_column(String(32), default=None)
     agent_version: Mapped[str | None] = mapped_column(String(32), default=None)
     # The agent's versionCode, distinct from the display versionName above: the

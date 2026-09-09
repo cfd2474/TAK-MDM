@@ -634,6 +634,21 @@ class CheckinRequest(BaseModel):
     #: reports neither and must not have its record erased for staying quiet.
     supported_abis: list[str] | None = None
     sdk_int: int | None = None
+
+    #: Hardware facts an operator wants on the device page (W108). All optional,
+    #: all None-means-unsaid: an older agent reports none of them and must not
+    #: have its record blanked for staying quiet.
+    #:
+    #: ⚠️ `has_telephony` is what makes an absent IMEI interpretable. `False` says
+    #: "this device has no cellular radio" — definitive. `None` says "the agent did
+    #: not say". Collapsing the two would send an operator looking for a permission
+    #: bug on a Wi-Fi-only tablet.
+    has_telephony: bool | None = None
+    imei: str | None = Field(default=None, max_length=32)
+    imei2: str | None = Field(default=None, max_length=32)
+    phone_number: str | None = Field(default=None, max_length=32)
+    battery_level: int | None = Field(default=None, ge=0, le=100)
+    battery_charging: bool | None = None
     results: list[CommandResultReport] = Field(default_factory=list)
     # Escape hatch for an agent whose local cache is gone.
     force_full: bool = False

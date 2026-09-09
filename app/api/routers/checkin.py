@@ -127,6 +127,27 @@ def checkin(
     if payload.sdk_int is not None:
         device.sdk_int = payload.sdk_int
 
+    # ⚠️ Each guarded separately, and each meaning "only overwrite what we were
+    # actually told" (W32). A device that stops reporting a field keeps the last
+    # value we had rather than losing it — which for an IMEI is the difference
+    # between a record an operator can act on and a blank one.
+    if payload.has_telephony is not None:
+        device.has_telephony = payload.has_telephony
+    if payload.imei is not None:
+        device.imei = payload.imei
+    if payload.imei2 is not None:
+        device.imei2 = payload.imei2
+    if payload.phone_number is not None:
+        device.phone_number = payload.phone_number
+    # ⚠️ Battery is the exception that proves the rule: it is *volatile*, so the
+    # newest report always wins, and 0 is a real reading rather than "unsaid" —
+    # `is not None` matters here in a way `if payload.battery_level` would get
+    # exactly backwards on a flat device, which is the one worth seeing.
+    if payload.battery_level is not None:
+        device.battery_level = payload.battery_level
+    if payload.battery_charging is not None:
+        device.battery_charging = payload.battery_charging
+
     # "Settled" means this device has already checked in at least once on the
     # agent build it is running. Computed *before* the column is overwritten, so
     # the first check-in after an update never counts — which is what stops a

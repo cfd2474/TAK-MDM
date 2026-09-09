@@ -209,6 +209,96 @@
 </div>
 {% endif %}
 
+<h2 id="hardware">Hardware</h2>
+<div class="panel">
+  <dl class="kv">
+    <dt>Battery</dt>
+    <dd>
+      {#
+        ⚠️ `is not none`, not truthiness. A flat device reports 0, and `{% if
+        device.battery_level %}` would render that as "not reported" — hiding
+        precisely the reading worth seeing.
+      #}
+      {% if device.battery_level is not none %}
+        <strong{% if device.battery_level <= 15 and not device.battery_charging %}
+          class="location-stale"{% endif %}>{{ device.battery_level }}%</strong>
+        {% if device.battery_charging %}
+          &middot; charging
+        {% endif %}
+        {#
+          Always against a time. 4% reported a minute ago and 4% reported
+          yesterday are different situations, and the bare figure reads as
+          current.
+        #}
+        <span class="muted">
+          &mdash; as of
+          {% if device.last_checkin_at %}
+            {{ device.last_checkin_at.strftime('%Y-%m-%d %H:%M UTC') }}
+          {% else %}
+            its last check-in
+          {% endif %}
+        </span>
+      {% else %}
+        <span class="muted">Not reported &mdash; the agent on this device is
+        older than battery reporting.</span>
+      {% endif %}
+    </dd>
+
+    {#
+      ⚠️ Three different silences, and the whole point of `has_telephony`.
+      Collapsed into one blank, an operator would go looking for a permission bug
+      on a tablet that simply has no modem.
+    #}
+    {% if device.has_telephony is none %}
+      <dt>IMEI</dt>
+      <dd class="muted">
+        Not reported &mdash; the agent on this device is older than IMEI
+        reporting.
+      </dd>
+    {% elif not device.has_telephony %}
+      <dt>IMEI</dt>
+      <dd class="muted">
+        No cellular radio &mdash; this device has no IMEI and no phone number.
+      </dd>
+    {% else %}
+      <dt>IMEI 1</dt>
+      <dd>
+        {% if device.imei %}
+          <span class="mono">{{ device.imei }}</span>
+        {% else %}
+          <span class="muted">Not readable</span>
+        {% endif %}
+      </dd>
+
+      <dt>IMEI 2</dt>
+      <dd>
+        {% if device.imei2 %}
+          <span class="mono">{{ device.imei2 }}</span>
+        {% else %}
+          <span class="muted">None &mdash; one SIM slot, or the second is empty</span>
+        {% endif %}
+      </dd>
+
+      <dt>Phone number</dt>
+      <dd>
+        {% if device.phone_number %}
+          <span class="mono">{{ device.phone_number }}</span>
+        {% else %}
+          {#
+            Absence here is ordinary. The number is on the SIM only if the
+            carrier provisioned it, and many never do — saying "not available"
+            without saying why invites someone to go and fix nothing.
+          #}
+          <span class="muted">
+            Not provisioned &mdash; carriers only store a number on the SIM
+            sometimes, so this is often blank on a working device.
+          </span>
+        {% endif %}
+      </dd>
+    {% endif %}
+  </dl>
+</div>
+
 <h2 id="actions">Actions</h2>
 <div class="panel">
   {#

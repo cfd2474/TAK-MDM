@@ -33,6 +33,7 @@ import com.taksolutions.atlasmdm.command.RebootCommandHandler
 import com.taksolutions.atlasmdm.command.ScreenshotCommandHandler
 import com.taksolutions.atlasmdm.command.WipeCommandHandler
 import com.taksolutions.atlasmdm.core.AgentConfig
+import com.taksolutions.atlasmdm.core.HardwareFacts
 import com.taksolutions.atlasmdm.core.BundleVerifier
 import com.taksolutions.atlasmdm.diag.AgentLog
 import com.taksolutions.atlasmdm.diag.Redactor
@@ -376,6 +377,12 @@ class Reconciler(private val context: Context) {
             // Outcomes of commands run since the last check-in. Carried on the
             // request, so a result is reported exactly one cycle after execution.
             .put("results", JSONArray(config.pendingCommandResults.map { JSONObject(it) }))
+
+        // Battery, IMEIs and line number (W108). Added here rather than inline
+        // above because `has_telephony` has to be sent even when every value
+        // below it fails to read — that flag is what lets the console tell
+        // "no cellular radio" apart from "could not read the IMEI".
+        HardwareFacts.addTo(request, context)
 
         // Positions buffered since the last accepted check-in, oldest first and
         // capped below the server's own limit — which rejects an oversized batch

@@ -491,6 +491,94 @@ recoverable only by a manual reset at the device.
 operator waiting for points nothing is collecting; the panel states that the
 `locate` command exists but no history is recorded.
 
+### ✅ W108 — Battery, IMEI and phone number on the device page
+
+Operator, 2026-09-08: *"on the device details, I want to see battery level, imei
+(if available, imei 1 and 2), and phone number (if available)."*
+
+**Reported attributes, not identifiers.** `IdentifierKind` exists to *match* a
+device to a record across re-enrolment (D24); putting IMEI in there would change
+matching semantics for every device. These belong beside `supported_abis` and
+`sdk_int` — things a device tells us about itself at check-in (W96).
+
+✅ **The permission question is already settled.** §6a-ii records that a Device
+Owner holding **ordinary `READ_PHONE_STATE`** reads device identifiers on
+Android 16, verified on `SM-X520` — contradicting the widely repeated claim that
+`READ_PRIVILEGED_PHONE_STATE` is required. The agent already declares and
+self-grants it, so IMEI needs no new permission.
+
+#### ⚠️ Three kinds of "no IMEI", and they are not the same thing
+
+The operator's *"if available"* is doing real work here, and a single blank would
+throw away the distinction:
+
+| What is true | What the page must say |
+|---|---|
+| The device has no cellular radio — `SM-X520` is Wi-Fi-only | **No cellular radio.** Definitive; stop looking. |
+| It has one, but the value could not be read | **Not readable**, which is a permission or platform problem worth chasing. |
+| An agent too old to report any of this | **Not reported**, which is an agent version problem. |
+
+So the agent reports whether the device has telephony **at all**, separately from
+the values. Without that flag the first two are indistinguishable, and an operator
+would go hunting for a permission bug on a tablet that simply has no modem.
+
+#### Steps
+
+1. Migration and model: `battery_level`, `battery_charging`, `imei2`,
+   `phone_number`, `has_telephony`.
+2. Check-in schema and handler — absent still means "said nothing", never "erase"
+   (the W32 rule that `atak_version` and `supported_abis` already follow).
+3. Agent: battery from `BatteryManager`, IMEI per SIM slot, line number.
+4. Device page: show them, and distinguish the three absences above.
+5. Tests, build, deploy, verify.
+
+⚠️ **A phone number is very often absent even on a cellular device**, because it
+lives on the SIM only if the carrier provisioned it there. That is normal, not a
+fault, and the page should not imply otherwise.
+
+###### ✅ Complete (2026-09-08) — agent 0.50.0 (versionCode 95), 1273 server tests
+
+`SM-X520` reported `battery=65 charging=False telephony=False`, and the page shows
+**65%** with an "as of" and **"No cellular radio"** — with neither of the other two
+messages present. That is the design working: a Wi-Fi-only tablet is the exact
+case the third state exists for, and it is what most of this fleet is.
+
+⚠️ **`is not none`, not truthiness, for the battery.** A flat device reports `0`,
+and `{% if device.battery_level %}` would render that as "not reported" — hiding
+precisely the reading somebody is looking for when they ask why a device stopped
+checking in. Tested with a real 0.
+
+⚠️ **Battery is the one field where the newest report always wins.** Everything
+else here follows the W32 rule (absent means "said nothing", never "erase") so a
+downgraded agent cannot blank an IMEI the operator can act on. Battery is volatile
+and a fall to 0 is the most important reading it will ever send.
+
+⚠️ **No new permission was needed for IMEI**, and §6a-ii is why: a Device Owner
+holding **ordinary `READ_PHONE_STATE`** reads device identifiers on Android 16 —
+verified on hardware in W23 against the widely repeated claim that
+`READ_PRIVILEGED_PHONE_STATE` is required. `READ_PHONE_NUMBERS` was added for the
+line number, which API 30 split out of `READ_PHONE_STATE`.
+
+⚠️ **Each SIM slot is read in its own `runCatching`.** `getImei(slot)` throws for
+a slot that does not exist, and one exception must not cost the other slot's value
+— a read that gave up after slot 0 failed is how a single-SIM device would report
+nothing at all.
+
+⚠️ **`BATTERY_PROPERTY_CAPACITY` returns `Integer.MIN_VALUE`, not `-1`,** when
+the device has nothing to give. A `level >= 0` guard would pass garbage straight
+through; the check is `in 0..100`.
+
+**A flaky test to be aware of, not caused by this work:**
+`test_upload_records_identity_read_from_the_file` errored once in a full run and
+passed alone, in its own file, and on a clean re-run. Nothing here touches
+packages. It looks like a Windows temp-directory teardown race — recorded so the
+next session does not chase it as a regression from W108.
+
+⚠️ **Battery is only meaningful with an "as of".** It is shown against
+`last_checkin_at` rather than as a bare number — a device that has been dark for a
+day reporting 4% is a different situation from one reporting 4% a minute ago, and
+the bare figure reads as current.
+
 ### ✅ W107 — Find my device, and lock the screen
 
 Operator, 2026-09-08: *"let's add the ability to remotely ping the device with

@@ -71,6 +71,12 @@
       records for one tablet after reprovisioning.
     -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!--
+      The SIM's line number (W108). Split out of READ_PHONE_STATE at API 30 and
+      `dangerous`, so `ensureSelfPermissions()` grants it. Very often there is no
+      number to read: it is on the SIM only if the carrier put it there.
+    -->
+    <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
 
     <!--
       Removing apps a policy lists in removed_packages. As Device Owner the
