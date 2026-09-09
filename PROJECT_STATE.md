@@ -22,7 +22,6 @@ tests.** Alembic head `h4j6l8n0p2r4`.
 | Handtevy `4001269` from Play | Would be the first import exercising **signature continuity** against a package already in the library (`4001247`). |
 | Disenroll (W104) | Never run on hardware. Suggest `SM-X828U` — not `SM-X520`, which carries the kiosk profile. |
 | Geofence `wifi: off` and `password_enforced` | Deliberately not hardware-tested. See W106 C4 for why Wi-Fi off is a one-way door on a Wi-Fi-only tablet. |
-| Reverse geocoding | Offered and declined by default in C3; operator's call whether to add it as an off-by-default setting. |
 
 ⚠️ **The migration did not run automatically on the W108 deploy.** `alembic
 upgrade head` had to be run by hand after `docker compose up -d --build api`.
@@ -559,6 +558,31 @@ instances in one form, each measuring itself wrong while its row is hidden behin
 a tab — the grey-box failure `atlas-map.js` already carries a note about. A single
 map that follows the selected row also answers the question an operator actually
 has, which is whether their fences overlap.
+
+###### Geocoding provider: settled 2026-09-09
+
+The operator asked to "continue with the reverse geocoding — type in address and
+hit submit and have it register those coordinates on the geofence", and raised not
+wanting to pay for a service, suggesting `openaddresses.io`.
+
+Three things resolved it, and none of them was new code:
+
+1. **It already existed.** That description is *forward* geocoding, which W109
+   shipped. Verified live: `1600 Pennsylvania Avenue NW` → `38.8976387,
+   -77.0365525`. *Reverse* geocoding — coordinates to address, on the device map —
+   remains deliberately unbuilt (C3), for the disclosure reason recorded there.
+2. **Nothing is being paid.** Nominatim needs no key, account or billing. Its
+   constraints are a usage policy, which is why the lookup is a button rather than
+   an autocomplete.
+3. ⚠️ **`openaddresses.io` cannot do this job.** It is a *downloadable dataset*,
+   not a hosted API — "parse & import into a database... or use for geocoding".
+   There is no endpoint to query, so it is not a swap for Nominatim; it is raw
+   material for a geocoder you run yourself.
+
+**Decision: stay on Nominatim.** Self-hosting was offered (Photon is lightest;
+Pelias is the one that ingests OpenAddresses) and declined — *"no. as is will
+work"*. If that changes, **no code change is needed**: `Admin → Location → Address
+lookup URL` already points the console anywhere.
 
 ###### ✅ Complete (2026-09-09) — 1289 server tests, verified live
 
