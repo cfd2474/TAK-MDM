@@ -182,6 +182,34 @@ sealed class PermissionRequirement {
             ) == PackageManager.PERMISSION_GRANTED
     }
 
+    /**
+     * Background location, for periodic reporting while the screen is off (W106).
+     *
+     * ⚠️ **Listed separately from [Location] because it fails separately.** With
+     * foreground location alone, tracking works perfectly for as long as someone is
+     * looking at the tablet and stops the moment they are not — which reads as a
+     * flaky agent rather than as a missing permission. Showing it as its own line
+     * is the difference between diagnosing that in a minute and in an afternoon.
+     *
+     * A Device Owner self-grants it like any other `dangerous` permission. That is
+     * assembled from the permission's protection level plus Android's enterprise
+     * notes rather than stated outright anywhere, so this row is also how a device
+     * tells us the assembly was wrong.
+     */
+    data object BackgroundLocation : PermissionRequirement() {
+        override val id = "background_location"
+        override val title = "Background location"
+        override val rationale =
+            "Needed to record location while the screen is off. Without it, " +
+                "tracking works only while the device is in use."
+        override val optional = true
+
+        override fun isGranted(context: Context) =
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.ACCESS_BACKGROUND_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+    }
+
     /** Notifications, for the foreground service. Runtime, granted silently. */
     data object Notifications : PermissionRequirement() {
         override val id = "notifications"
@@ -202,6 +230,7 @@ sealed class PermissionRequirement {
             DisplayOverOtherApps,
             BatteryExemption,
             Location,
+            BackgroundLocation,
             Notifications,
             // Last, because it is the only one that is optional in practice - and
             // the only one that cannot be granted later, since a locked device

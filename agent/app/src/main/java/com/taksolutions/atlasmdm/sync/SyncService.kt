@@ -16,11 +16,14 @@
 
 package com.taksolutions.atlasmdm.sync
 
+import android.Manifest
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.IBinder
+import androidx.core.content.ContextCompat
 import com.taksolutions.atlasmdm.diag.AgentLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +34,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import com.taksolutions.atlasmdm.core.AgentConfig
+import com.taksolutions.atlasmdm.policy.LocationTracker
 import com.taksolutions.atlasmdm.ui.AgentNotification
 
 /**
@@ -53,11 +57,7 @@ class SyncService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(
-            NOTIFICATION_ID,
-            AgentNotification.idle(this),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-        )
+        startForeground(NOTIFICATION_ID, AgentNotification.idle(this), foregroundTypes())
         // ⚠️ Tells InstallNotifier that resting on this id is safe. Without a
         // foreground service holding it, an ongoing notification cannot be
         // dismissed by anyone.
@@ -67,12 +67,65 @@ class SyncService : Service() {
         return START_STICKY
     }
 
+    /**
+     * The foreground service types this service may legally claim *right now*.
+     *
+     * ⚠️ **Computed, never constant.** Android throws `SecurityException` when a
+     * declared type's runtime prerequisites are unmet, and the documentation is
+     * explicit that this "might cause a running foreground service to be removed
+     * from the foreground process state, and might cause your app to crash". This
+     * is the service that manages the device: claiming `location` before the
+     * Device Owner has self-granted the permission would take the whole agent down
+     * at boot, on every device, to add a feature most fleets will not enable.
+     *
+     * So `specialUse` is unconditional and `location` is added only once a fix is
+     * actually permitted. `startForeground` is called again when that changes.
+     */
+    private fun foregroundTypes(): Int {
+        var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        val granted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(
+                this, Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        if (granted) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        return types
+    }
+
     private suspend fun runLoop() {
         val reconciler = Reconciler(applicationContext)
         val config = AgentConfig(applicationContext)
+        val locations = LocationTracker(applicationContext)
         var backoffSeconds = 5L
+        var claimedLocationType = false
 
         while (scope.isActive) {
+            // ⚠️ Sampling lives here rather than inside `sync()`, and that is the
+            // point of it: a device with no network still records its track. Put
+            // in the reconcile, an offline tablet would buffer nothing and come
+            // back from an outage with a gap exactly where the track mattered.
+            runCatching { locations.sampleIfDue() }
+                .onFailure { AgentLog.w(TAG, "location sample failed: ${it.message}") }
+
+            // The permission usually arrives after this service has already
+            // started - the Device Owner self-grants on the first reconcile - so
+            // the claim is upgraded once rather than assumed at startup.
+            if (!claimedLocationType && locations.isEnabled()) {
+                val types = foregroundTypes()
+                if (types and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION != 0) {
+                    runCatching {
+                        startForeground(NOTIFICATION_ID, AgentNotification.idle(this), types)
+                        claimedLocationType = true
+                        AgentLog.i(TAG, "foreground service now claims the location type")
+                    }.onFailure {
+                        // Never fatal: losing the type costs tracking, throwing
+                        // here would cost the device its management.
+                        AgentLog.w(TAG, "could not claim location FGS type: ${it.message}")
+                    }
+                }
+            }
+
             val ok = runCatching {
                 val outcome = reconciler.sync()
                 AgentLog.i(

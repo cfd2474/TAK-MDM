@@ -552,12 +552,42 @@ the admin path survives and describe only a **user notification**, not a block:
 > notified when an app requests, and is granted, location permission because of
 > this policy.
 
-⚠️ **Documented, not yet verified on hardware.** No Google page states in so many
-words that a Device Owner may grant *background* location specifically; the
-conclusion above is assembled from the permission's protection level plus the
-enterprise notes. Treat it as 📖 until a tablet says otherwise — C2 of W106 is where
-it gets tested, and the failure mode to watch for is a silent one: the grant call
-reports nothing wrong and the fix simply never arrives while the screen is off.
+✅ **Verified on `SM-X520` (agent 0.47.0, API 36), 2026-09-08.** No Google page
+states in so many words that a Device Owner may grant *background* location; the
+conclusion was assembled from the permission's protection level plus the
+enterprise notes, and the device settled it. From its own log:
+
+```
+20:16:21 I/PolicyApplier: self-granting 1 permission(s): android.permission.ACCESS_BACKGROUND_LOCATION
+20:17:56 I/LocationTracker: location reporting interval: 0 -> 1 minute(s)
+20:19:56 I/LocationTracker: location sampled (gps, 1s old); 1 buffered
+20:19:56 I/SyncService: foreground service now claims the location type
+```
+
+⚠️ **The fixes are 1–2 seconds old, which is the part that matters.** A device
+denied background location does not fail loudly — `getLastKnownLocation` keeps
+returning something, just increasingly stale. So "points arrived" is not the test;
+"points arrived carrying a fresh fix age" is. Ages of 1–2 s over a run of samples
+are a live GPS session, which is what proves the grant and the service type both
+took effect.
+
+⚠️ **A foreground service type must never be claimed unconditionally.** Quoting
+the Android 14 foreground-service-types page:
+
+> If your app doesn't fulfill all of the runtime requirements for starting a
+> foreground service, the system throws a `SecurityException` after you call
+> `startForeground()` for that service. This prevents the foreground service from
+> starting, might cause a running foreground service to be removed from the
+> foreground process state, and might cause your app to crash.
+
+For us that service is `SyncService` — the one that manages the device at all. A
+`location` type claimed before the Device Owner has self-granted the permission
+would take the agent down at boot on every device in the fleet, to add a feature
+most of them will not enable. So the manifest declares `specialUse|location` (the
+attribute is a bitmask; declaring is free) while `startForeground` is passed a type
+computed from what is *actually* granted, and the claim is upgraded later once
+tracking is on. A failure to upgrade is logged and swallowed: losing the type costs
+tracking, throwing would cost the device its management.
 
 ✅ **`DevicePolicyManager.setLocationEnabled(admin, boolean)` (API 30+)** lets a
 Device Owner switch the device's master location setting on, which removes the

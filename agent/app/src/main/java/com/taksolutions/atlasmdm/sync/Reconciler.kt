@@ -48,6 +48,8 @@ import com.taksolutions.atlasmdm.policy.ArtifactSweepPlan
 import com.taksolutions.atlasmdm.policy.InstallerCachePlan
 import com.taksolutions.atlasmdm.policy.InstallRetryPlan
 import com.taksolutions.atlasmdm.policy.LauncherConfigPlan
+import com.taksolutions.atlasmdm.policy.LocationSamplingPlan
+import com.taksolutions.atlasmdm.policy.LocationTracker
 import com.taksolutions.atlasmdm.policy.PolicyApplier
 import com.taksolutions.atlasmdm.ui.InstallNotifier
 import com.taksolutions.atlasmdm.policy.WallpaperPlan
@@ -372,6 +374,15 @@ class Reconciler(private val context: Context) {
             // request, so a result is reported exactly one cycle after execution.
             .put("results", JSONArray(config.pendingCommandResults.map { JSONObject(it) }))
 
+        // Positions buffered since the last accepted check-in, oldest first and
+        // capped below the server's own limit — which rejects an oversized batch
+        // outright rather than trimming it, so a long backlog drains over several
+        // cycles instead of failing every one of them (W106).
+        val locationBatch = LocationSamplingPlan.nextBatch(config.pendingLocations)
+        if (locationBatch.isNotEmpty()) {
+            request.put("locations", LocationSamplingPlan.toJsonArray(locationBatch))
+        }
+
         val response = api.checkin(request)
 
         // The operator-assigned name, echoed on every check-in so the on-device
@@ -391,6 +402,14 @@ class Reconciler(private val context: Context) {
         // once it has actually been accepted. Clearing on send would lose the
         // outcome of a wipe or a log collection to one dropped response.
         config.pendingCommandResults = emptyList()
+
+        // ⚠️ Drop exactly what was sent, not the whole buffer. The sampler runs on
+        // the same loop and may have added points while this request was in
+        // flight; clearing wholesale would discard fixes the server never saw.
+        if (locationBatch.isNotEmpty()) {
+            config.pendingLocations =
+                LocationSamplingPlan.remaining(config.pendingLocations, locationBatch.size)
+        }
 
         runCommands(response.optJSONArray("commands") ?: JSONArray())
         val serverVersion = response.optInt("state_version", config.stateVersion)
@@ -578,6 +597,11 @@ class Reconciler(private val context: Context) {
         // job is to forget any warnings it was remembering (W44).
         errors += DataUsageTracker(context)
             .reconcile(policy.optJSONObject("NETWORK_DATA_USE") ?: JSONObject())
+        // Unconditional, like the tracker above: with no section, tracking is off,
+        // and the point of running anyway is that *removing* the policy has to
+        // stop the sampler rather than leave the last interval running for ever.
+        errors += LocationTracker(context)
+            .reconcile(policy.optJSONObject("TRACKING_FENCING"))
         return ApplyReport(errors, warnings)
     }
 

@@ -25,6 +25,22 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!--
+      Periodic location reporting (W106). Three gates, and all three are needed:
+
+      1. FINE/COARSE above - the runtime permission for a fix at all.
+      2. ACCESS_BACKGROUND_LOCATION - because SyncService starts at BOOT_COMPLETED,
+         and Android refuses to create a `location` foreground service from the
+         background without it. The FGS type alone is NOT enough for us, which is
+         easy to miss: the service type is the documented way to avoid this
+         permission, but only for a service started while the app is visible.
+      3. FOREGROUND_SERVICE_LOCATION - to declare the type at all.
+
+      All are `dangerous` or `normal`, so `ensureSelfPermissions()` grants them
+      during provisioning with no extra code.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!--
       Configuring Wi-Fi networks from a NETWORKS policy. Both are `normal`
       permissions (auto-granted). The deprecated WifiManager config API
       (addNetwork/removeNetwork) is grandfathered for a Device Owner.
@@ -238,10 +254,20 @@
             </intent-filter>
         </receiver>
 
+        <!--
+          ⚠️ `specialUse|location`, and the attribute is a bitmask so the original
+          type is kept rather than replaced. Declaring `location` here is safe;
+          what is NOT safe is *passing* it to startForeground() unconditionally.
+          Android throws SecurityException when a type's runtime prerequisites are
+          unmet, which "might cause a running foreground service to be removed
+          from the foreground process state, and might cause your app to crash" —
+          and this is the service that manages the device. SyncService therefore
+          computes the type from what is actually granted (W106).
+        -->
         <service
             android:name=".sync.SyncService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="specialUse|location">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Device management: maintains the managed-configuration

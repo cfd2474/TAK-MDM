@@ -670,6 +670,98 @@ rather than renaming either and breaking a released agent.
 **Not done, deliberately:** nothing purges yet. Retention is C5, and until it
 lands this table only grows.
 
+#### ✅ C2 — The agent reports on the policy's interval
+
+1. Confirm `TRACKING_FENCING` actually reaches the device in the desired-state
+   bundle. It should, since `policy` is passed through whole — but nothing else in
+   this chunk works if it does not, so it is checked rather than assumed.
+2. Manifest and permissions: `ACCESS_BACKGROUND_LOCATION`,
+   `FOREGROUND_SERVICE_LOCATION`, and `foregroundServiceType="specialUse|location"`
+   on `SyncService` (the attribute is a bitmask, so the existing type stays). Add
+   the requirement to `PermissionRequirement` so the compliance screen shows it,
+   and call `setLocationEnabled` so the master switch cannot be the silent cause.
+3. `LocationSamplingPlan` — a **pure** object: is a sample due, what does the
+   buffer hold after appending, which points go in the next batch. No Android
+   types, so it is testable on the JVM like every other `*Plan` here.
+4. `LocationTracker` — the thin Android shell: `reconcile(section)` persists the
+   interval (absent section = off, the `DataUsageTracker` pattern), `sampleIfDue()`
+   reads the last known fix and appends.
+5. Wire it: `Reconciler` puts `locations` on the check-in and clears the buffer
+   **only after the server accepts**, and `SyncService` samples every loop
+   iteration — not inside `sync()`, so a device with no network keeps recording
+   the track it is buffering.
+6. JVM tests for the plan, and Python tests for the bundle.
+7. Build, publish, deploy, verify on hardware.
+
+⚠️ **Step 7 is where 📖 becomes ✅ or does not.** Whether a Device Owner may
+self-grant *background* location is documented-by-assembly, not stated outright,
+and it fails silently: the grant call reports nothing wrong and fixes simply never
+arrive while the screen is off. The check is therefore "points arrived from a
+device whose screen has been off", not "the permission shows as granted".
+
+###### ✅ Complete (2026-09-08) — agent 0.47.0 (versionCode 92), verified on `SM-X520`
+
+✅ **A Device Owner *can* self-grant `ACCESS_BACKGROUND_LOCATION`.** This was the
+open 📖 from C1, and the tablet settled it. From its own log:
+
+```
+20:16:21 I/PolicyApplier: self-granting 1 permission(s): android.permission.ACCESS_BACKGROUND_LOCATION
+20:17:56 I/LocationTracker: location reporting interval: 0 -> 1 minute(s)
+20:19:56 I/LocationTracker: location sampled (gps, 1s old); 1 buffered
+20:19:56 I/SyncService: foreground service now claims the location type
+```
+
+⚠️ **The fix *age* is the verification, not the arrival.** A device denied
+background location does not fail loudly — `getLastKnownLocation` keeps returning
+something, just steadily staler. "Points arrived" would have looked identical.
+Ages of 1–2 s across a run of samples are a live GPS session, and that is what
+proves both the grant and the service type took.
+
+⚠️ **The change that could have bricked the fleet, and did not.** Android throws
+`SecurityException` when a foreground service type's runtime prerequisites are
+unmet, which per Google "might cause a running foreground service to be removed
+from the foreground process state, and might cause your app to crash" — and the
+service in question is the one that manages the device at all. Claiming `location`
+unconditionally would have taken every tablet down at boot to add a feature most
+fleets will not switch on. The manifest declares `specialUse|location` (a bitmask,
+so the original type is kept), `startForeground` is passed a type computed from
+what is actually granted, and the claim is upgraded once tracking turns on. A
+failed upgrade is logged and swallowed: losing the type costs tracking, throwing
+would cost the device its management. Confirmed in the APK as `0x40000008`
+(`SPECIAL_USE | LOCATION`), and confirmed on hardware by the device continuing to
+check in after taking the update.
+
+⚠️ **Sampling is in the sync loop, not in `sync()`.** An offline device still
+records — which is the entire point of buffering, and putting it inside the
+reconcile would have produced a gap exactly where the track mattered.
+
+⚠️ **The buffer is a JSON array, not a `StringSet`.** Every other buffer in
+`AgentConfig` uses `putStringSet`, which is right for them and wrong here: a set
+has no order, and a track delivered out of order is not a track. It would also
+merge two genuinely distinct fixes that happened to serialise identically.
+
+⚠️ **Delivery drops exactly what was sent, not the whole buffer.** Sampling runs
+on the same loop, so points can be added while a check-in is in flight; clearing
+wholesale would discard fixes the server never saw, invisibly.
+
+Other decisions worth keeping: a clock that jumps backwards reads as "due now"
+rather than suspending tracking until it catches up; a full buffer drops oldest
+first (a track is read from the recent end) and says so in the log;
+`setLocationEnabled` turns the master switch on, since otherwise a perfectly
+permissioned agent reports nothing and no log anywhere explains it.
+
+**16 JVM tests** for `LocationSamplingPlan`, **1203 server tests**.
+
+**Live on `SM-X520` now** at a 5-minute interval (`W106 location test` policy),
+left running deliberately so C3's map has real track to draw. Set the interval to
+0, or unassign the policy, to stop it.
+
+⚠️ **Sampling rides the sync loop rather than a new scheduler.** The loop already
+wakes at least every 120 s (`waitForChange` parks server-side and returns), already
+holds a foreground service, and already has the battery exemption that took work
+to get. A second scheduler would be a second thing to keep alive across reboots and
+app replacement, for granularity no policy here needs — the interval is in minutes.
+
 **Open question for C4, not C1:** two fences whose conditions both hold and whose
 actions disagree (one says Wi-Fi on, one says off) need a defined precedence, and
 "password enforced" needs scoping — requiring a password the device does not have

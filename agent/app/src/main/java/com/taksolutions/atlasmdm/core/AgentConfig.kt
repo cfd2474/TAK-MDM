@@ -19,6 +19,7 @@ package com.taksolutions.atlasmdm.core
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import org.json.JSONArray
 
 /**
  * Persistent agent settings.
@@ -399,6 +400,46 @@ class AgentConfig(context: Context) {
      * which drops keys from windows that have rolled over — otherwise this set grows
      * by one entry per threshold per month, forever.
      */
+    /**
+     * Minutes between location samples, or 0 for off (W106).
+     *
+     * Persisted rather than read from the cached bundle each time, because the
+     * sampler runs on sync iterations where no bundle was fetched — including
+     * every iteration of an outage, which is exactly when the track matters.
+     */
+    var locationIntervalMinutes: Int
+        get() = prefs.getInt(KEY_LOCATION_INTERVAL, 0)
+        set(value) = prefs.edit { putInt(KEY_LOCATION_INTERVAL, value.coerceAtLeast(0)) }
+
+    /** Wall-clock time of the last sample attempt. 0 means "never". */
+    var lastLocationSampleAt: Long
+        get() = prefs.getLong(KEY_LAST_LOCATION_SAMPLE, 0L)
+        set(value) = prefs.edit { putLong(KEY_LAST_LOCATION_SAMPLE, value) }
+
+    /**
+     * Positions recorded but not yet accepted by the server, oldest first.
+     *
+     * ⚠️ **A JSON array in one string, not a `StringSet`.** The other buffers here
+     * use `putStringSet`, which is fine for them and wrong for this: a set has no
+     * order, and a track delivered out of order is not a track. A set would also
+     * silently merge two genuinely distinct fixes that happened to serialise
+     * identically.
+     */
+    var pendingLocations: List<String>
+        get() = runCatching {
+            val raw = prefs.getString(KEY_PENDING_LOCATIONS, null) ?: return emptyList()
+            val array = JSONArray(raw)
+            (0 until array.length()).map { array.getString(it) }
+        }.getOrElse {
+            // Unreadable means a partial write or a format change. Losing the
+            // buffer is bad; refusing to ever record again because of one bad
+            // string is worse, and it would be permanent.
+            emptyList()
+        }
+        set(value) = prefs.edit {
+            putString(KEY_PENDING_LOCATIONS, JSONArray(value).toString())
+        }
+
     var dataUsageWarned: Set<String>
         get() = prefs.getStringSet(KEY_DATA_USAGE_WARNED, emptySet()) ?: emptySet()
         set(value) = prefs.edit { putStringSet(KEY_DATA_USAGE_WARNED, value) }
@@ -461,6 +502,9 @@ class AgentConfig(context: Context) {
         private const val KEY_WIFI_BY_POLICY = "wifi_by_policy"
         private const val KEY_WIFI_ID_PREFIX = "wifi_id:"
         private const val KEY_DATA_USAGE_WARNED = "data_usage_warned"
+        private const val KEY_LOCATION_INTERVAL = "location_interval_minutes"
+        private const val KEY_LAST_LOCATION_SAMPLE = "last_location_sample_at"
+        private const val KEY_PENDING_LOCATIONS = "pending_locations"
 
         // Keys inside PROVISIONING_ADMIN_EXTRAS_BUNDLE, matching the server's
         // provisioning payload generator.

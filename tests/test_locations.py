@@ -477,3 +477,77 @@ def test_an_absurd_interval_is_refused(client: TestClient):
     )
 
     assert response.status_code == 422
+
+
+# --------------------------------------------------------------------------- #
+# Reaching the device (C2 step 1)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_interval_reaches_the_device_in_the_bundle(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """⚠️ Nothing in C2 works if the policy does not arrive.
+
+    The desired-state bundle passes `policy` through whole, so a new type should
+    need no plumbing — "should" being the reason this is a test and not a note.
+    """
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    policy = client.post(
+        "/api/v1/policies",
+        json={
+            "name": "track-every-5",
+            "policy_type": "TRACKING_FENCING",
+            "spec": {"reporting_interval_minutes": 5},
+        },
+    ).json()
+    client.post(
+        "/api/v1/assignments",
+        json={
+            "policy_id": policy["id"],
+            "scope": "device",
+            "target_id": result["device_id"],
+            "rank": 1,
+        },
+    )
+
+    body = checkin(client, headers, force_full=True)
+
+    section = body["desired_state"]["policy"]["TRACKING_FENCING"]
+    assert section["reporting_interval_minutes"] == 5
+
+
+def test_tracking_switched_off_reaches_the_device_as_zero(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """⚠️ 0 must survive the whole path, not be dropped as falsey somewhere.
+
+    An interval that vanishes between the console and the device leaves the agent
+    on its previous setting — a device that an operator believes they have stopped
+    tracking, still reporting.
+    """
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    policy = client.post(
+        "/api/v1/policies",
+        json={
+            "name": "track-off",
+            "policy_type": "TRACKING_FENCING",
+            "spec": {"reporting_interval_minutes": 0},
+        },
+    ).json()
+    client.post(
+        "/api/v1/assignments",
+        json={
+            "policy_id": policy["id"],
+            "scope": "device",
+            "target_id": result["device_id"],
+            "rank": 1,
+        },
+    )
+
+    body = checkin(client, headers, force_full=True)
+
+    section = body["desired_state"]["policy"]["TRACKING_FENCING"]
+    assert section["reporting_interval_minutes"] == 0
