@@ -956,3 +956,16 @@ dl.kv dd { margin: 0; font-size: 13px; }
   outline-offset: 2px;
   border-radius: 6px;
 }
+
+/* Address candidates, when a search matches more than one place (W109a). */
+.geofence-results { margin: 6px 0 10px; display: flex; flex-direction: column; gap: 4px; }
+.geofence-results button {
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.geofence-results button:hover { border-color: var(--accent); }

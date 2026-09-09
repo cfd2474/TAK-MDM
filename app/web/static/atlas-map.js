@@ -199,6 +199,27 @@ function atlasWireGeofencePicker() {
     return row.querySelector('[name$="__' + suffix + '"]');
   }
 
+  /**
+   * The rows, creating the first one if the operator has not added it yet.
+   *
+   * ⚠️ **Typing an address is the act of creating a fence.** The first version
+   * refused with "Add a geofence row first", which is the form's internal order
+   * of operations leaking out as an instruction — nobody opens this panel
+   * intending to press Add and then type. Reported from the field within an hour
+   * of shipping.
+   *
+   * The existing Add button is clicked rather than the template cloned here, so
+   * there stays one code path that knows how a row is built.
+   */
+  function rowsEnsuringOne() {
+    var all = rows();
+    if (all.length) return all;
+    var add = document.querySelector("[data-geofences] [data-add-row]");
+    if (!add) return [];
+    add.click();
+    return rows();
+  }
+
   function readRow(row) {
     var lat = parseFloat((fieldIn(row, "latitude") || {}).value);
     var lon = parseFloat((fieldIn(row, "longitude") || {}).value);
@@ -278,6 +299,46 @@ function atlasWireGeofencePicker() {
     if (fence) map.setView([fence.lat, fence.lon], Math.max(map.getZoom(), 13));
   }
 
+  function clearResults() {
+    var box = picker.querySelector("[data-geofence-results]");
+    if (!box) return;
+    box.innerHTML = "";
+    box.hidden = true;
+  }
+
+  function showResults(results, row) {
+    var box = picker.querySelector("[data-geofence-results]");
+    if (!box) { place(row, results[0]); return; }
+    box.innerHTML = "";
+    results.forEach(function (result) {
+      var option = document.createElement("button");
+      option.type = "button";
+      option.textContent = result.label;
+      option.addEventListener("click", function () {
+        place(row, result);
+        clearResults();
+      });
+      box.appendChild(option);
+    });
+    box.hidden = false;
+  }
+
+  /** Put a found place on a row, naming the fence if it has no name yet. */
+  function place(row, result) {
+    writeRow(row, result.latitude, result.longitude);
+    map.setView([result.latitude, result.longitude], 15);
+
+    // A fence named for the place it is, which is what the field asks for. Only
+    // when empty: an operator's own name is never overwritten by a lookup.
+    var nameField = fieldIn(row, "name");
+    if (nameField && !(nameField.value || "").trim()) {
+      nameField.value = result.label.split(",")[0].trim().slice(0, 64);
+      nameField.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    redraw();
+    say("Placed at: " + result.label);
+  }
+
   function say(message, bad) {
     if (!status) return;
     status.textContent = message || "";
@@ -287,11 +348,8 @@ function atlasWireGeofencePicker() {
 
   // --- placing a fence by clicking --------------------------------------- //
   map.on("click", function (event) {
-    var all = rows();
-    if (!all.length) {
-      say("Add a geofence row first, then click the map to place it.", true);
-      return;
-    }
+    var all = rowsEnsuringOne();
+    if (!all.length) return;
     if (selected >= all.length) selected = all.length - 1;
     writeRow(all[selected], event.latlng.lat, event.latlng.lng);
     say("");
@@ -317,10 +375,14 @@ function atlasWireGeofencePicker() {
     var query = (addressBox.value || "").trim();
     if (!query) { say("Type an address first.", true); return; }
 
-    var all = rows();
-    if (!all.length) { say("Add a geofence row first.", true); return; }
+    var all = rowsEnsuringOne();
+    if (!all.length) {
+      say("Could not add a geofence row to place this in.", true);
+      return;
+    }
     if (selected >= all.length) selected = all.length - 1;
 
+    clearResults();
     say("Looking up the address…");
     findButton.disabled = true;
 
@@ -334,17 +396,29 @@ function atlasWireGeofencePicker() {
           // ⚠️ Distinct from the error above. "Not found" and "the service is
           // unreachable" send an operator to completely different places, and
           // collapsing them has someone retyping a perfectly good address.
-          say("No match for that address. Try a simpler form, or type coordinates.", true);
+          //
+          // The hint is specific because the common failure is specific: this
+          // geocoder wants a street *type*. "110 West Upper, Corona California"
+          // finds nothing; "110 W Upper Dr, Corona CA" finds it.
+          say(
+            "No match. Include the street type (Dr, St, Ave) and the state — " +
+              'e.g. "110 W Upper Dr, Corona CA". A town name on its own works too.',
+            true
+          );
           return;
         }
-        var best = data.results[0];
-        writeRow(all[selected], best.latitude, best.longitude);
-        map.setView([best.latitude, best.longitude], 15);
-        say(
-          data.results.length > 1
-            ? "Placed at: " + best.label + " (best of " + data.results.length + " matches)"
-            : "Placed at: " + best.label
-        );
+
+        if (data.results.length === 1) {
+          place(all[selected], data.results[0]);
+          return;
+        }
+
+        // ⚠️ More than one match is normal for a street name, and picking the
+        // first silently is how a fence lands on the right-named road in the
+        // wrong town — which nothing downstream would ever flag, because the
+        // coordinates are perfectly valid.
+        say("More than one place matches. Choose one:");
+        showResults(data.results, all[selected]);
       })
       .catch(function () {
         say("The address lookup did not complete. Enter coordinates directly.", true);

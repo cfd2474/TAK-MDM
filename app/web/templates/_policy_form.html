@@ -202,6 +202,10 @@
       <button type="button" class="ghost" data-geofence-find>Find</button>
     </div>
     <p class="field-tip" data-geofence-status hidden></p>
+    {# ⚠️ More than one match is the normal case for a street name. Picking the
+       first silently is how a fence ends up on the right-named road in the wrong
+       town, which nothing downstream would ever flag. #}
+    <div class="geofence-results" data-geofence-results hidden></div>
     <div class="location-history-map" data-geofence-map
          data-tiles='{{ geofence_tiles }}'></div>
     <p class="field-tip">

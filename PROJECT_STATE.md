@@ -559,6 +559,42 @@ a tab — the grey-box failure `atlas-map.js` already carries a note about. A si
 map that follows the selected row also answers the question an operator actually
 has, which is whether their fences overlap.
 
+###### ⚠️ W109a — the field found it in an hour (2026-09-09)
+
+Operator: *"I typed in an address of 110 West upper Corona California, when I
+clicked find nothing happened and it said you must enter address in the form
+first."* Three separate faults behind one report.
+
+**1. Find refused when there were no fence rows.** A new policy has none, so the
+first thing anyone does is type an address — and got *"Add a geofence row
+first."* That is the form's internal order of operations leaking out as an
+instruction; nobody opens the panel intending to press **Add**, then type. Find
+and a map click now create the first row themselves, by clicking the existing Add
+button rather than cloning the template, so one code path still knows how a row is
+built. **This is the whole bug the operator hit** — the other two were waiting
+behind it.
+
+**2. That address does not geocode.** `110 West upper Corona California` returns
+nothing; `110 W Upper Dr, Corona CA` finds Upper Drive. Nominatim wants the street
+*type*. The no-match message now says so with that exact shape, rather than the
+useless *"try a simpler form"* it had.
+
+**3. ⚠️ Several places matched, and the first was taken silently.** `Upper Dr,
+Corona CA` returns more than one Upper Drive. The original code placed the fence
+at `results[0]` and mentioned *"best of N matches"* in passing — which is how a
+geofence lands on the right-named road in the wrong town, with **nothing
+downstream able to flag it**, because the coordinates are perfectly valid. More
+than one match is now offered as a list to choose from. A found place also names
+an unnamed fence, and never overwrites a name the operator typed.
+
+⚠️ **Two verification lessons, both mine.** A `grep -c` returning 0 exits non-zero
+and killed a `set -e` deploy script mid-check. And an immediately-following `curl`
+caught the container mid-restart and reported the new script as missing when it
+was fine — the second run showed 3 matches and a byte-identical size. A check run
+against a service that is still coming up is not a check.
+
+**1296 server tests.**
+
 ###### Geocoding provider: settled 2026-09-09
 
 The operator asked to "continue with the reverse geocoding — type in address and

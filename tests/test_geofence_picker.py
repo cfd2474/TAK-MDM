@@ -259,3 +259,81 @@ def test_the_picker_does_not_search_as_you_type(client: TestClient):
 
     assert 'addressBox.addEventListener("input"' not in picker
     assert 'findButton.addEventListener("click", find)' in picker
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ Reported from the field (2026-09-09)
+# --------------------------------------------------------------------------- #
+
+
+def _picker_script() -> str:
+    script = pathlib.Path("app/web/static/atlas-map.js").read_text(encoding="utf-8")
+    return script[script.index("function atlasWireGeofencePicker"):]
+
+
+def test_finding_an_address_creates_the_first_fence_row(client: TestClient):
+    """⚠️ The bug an operator hit within an hour of shipping.
+
+    A new policy has no geofence rows, so Find answered "Add a geofence row
+    first" — the form's internal order of operations leaking out as an
+    instruction. Nobody opens that panel intending to press Add and then type;
+    typing an address *is* the act of creating a fence.
+    """
+    picker = _picker_script()
+
+    assert "rowsEnsuringOne" in picker
+    # The refusal is gone as a *code path*. The phrase itself survives in the
+    # comment explaining why it was removed, which is worth keeping.
+    assert 'say("Add a geofence row first' not in picker
+
+
+def test_the_row_is_created_through_the_existing_add_button(client: TestClient):
+    """Rather than cloning the template here — one code path knows how a row is
+    built, and it is the one already used and tested."""
+    picker = _picker_script()
+
+    assert '[data-geofences] [data-add-row]' in picker
+
+
+def test_clicking_the_map_also_creates_the_first_row(client: TestClient):
+    """The same mistake in the other entry point."""
+    picker = _picker_script()
+
+    assert "Add a geofence row first, then click the map" not in picker
+
+
+def test_more_than_one_match_is_offered_rather_than_guessed(client: TestClient):
+    """⚠️ "Upper Dr, Corona CA" returns several places.
+
+    Silently taking the first is how a fence lands on the right-named road in the
+    wrong town — and nothing downstream would flag it, because the coordinates
+    are perfectly valid.
+    """
+    picker = _picker_script()
+
+    assert "showResults" in picker
+    assert "More than one place matches" in picker
+
+
+def test_a_no_match_says_what_to_try(client: TestClient):
+    """⚠️ The common failure is specific, so the hint is too: this geocoder wants
+    a street type. "110 West upper Corona California" finds nothing; "110 W Upper
+    Dr, Corona CA" finds it."""
+    picker = _picker_script()
+
+    assert "Include the street type" in picker
+
+
+def test_a_found_place_names_an_unnamed_fence(client: TestClient):
+    """Named for the place it is, which is what the field asks for — and only
+    when empty, so an operator's own name is never overwritten by a lookup."""
+    picker = _picker_script()
+
+    assert 'fieldIn(row, "name")' in picker
+    assert "nameField.value" in picker
+
+
+def test_the_candidate_list_is_in_the_editor(client: TestClient):
+    body = client.get("/policies/new").text
+
+    assert "data-geofence-results" in body
