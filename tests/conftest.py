@@ -122,6 +122,7 @@ def settings() -> Settings:
         # would fetch 184 MB from F-Droid on every test session — making the
         # suite depend on a third party, and hammering them for nothing.
         warm_indexes=False,
+        purge_location_history=False,
     )
 
 

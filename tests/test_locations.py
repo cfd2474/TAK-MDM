@@ -815,3 +815,188 @@ def test_tiles_default_to_openstreetmap_and_can_be_replaced(client: TestClient, 
     config = location_service.tile_config(db)
     assert config["tileUrl"] == "https://tiles.internal/{z}/{x}/{y}.png"
     assert config["tileAttribution"] == "", "no OSM credit on someone else's tiles"
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ Retention (C5) — the only thing here that destroys data
+# --------------------------------------------------------------------------- #
+#
+# Everything else in W106 is additive. This deletes operator data unattended, on
+# a timer, permanently, and nobody watches it do so. The tests are therefore
+# weighted towards what must *not* happen rather than what must.
+
+
+def _store(db, device, minutes_ago: float, **over):
+    """Insert a point directly, so ages far past any check-in are reachable."""
+    from app.db.models import DeviceLocation, LocationSource
+
+    point = DeviceLocation(
+        device_id=device.id,
+        latitude=over.get("latitude", 39.7392),
+        longitude=over.get("longitude", -104.9903),
+        accuracy_m=5.0,
+        provider="gps",
+        recorded_at=_now() - timedelta(minutes=minutes_ago),
+        received_at=_now(),
+        source=LocationSource.PERIODIC,
+    )
+    db.add(point)
+    db.flush()
+    return point
+
+
+def test_points_past_the_window_are_removed(client: TestClient, db, enrolled):
+    enrolled()
+    device = _device(db)
+    _store(db, device, minutes_ago=60 * 24 * 40)  # 40 days
+    _store(db, device, minutes_ago=60 * 24 * 10)  # 10 days
+
+    removed = location_service.purge(db, days=30)
+    db.commit()
+
+    assert removed == 1
+    assert len(_points(db)) == 1
+
+
+def test_the_default_window_is_thirty_days(client: TestClient, db, enrolled):
+    """What the operator asked for, and what applies when nobody sets anything."""
+    enrolled()
+
+    assert location_service.DEFAULT_RETENTION_DAYS == 30
+    assert location_service.retention_days(db) == 30
+
+
+def test_the_setting_overrides_the_default(client: TestClient, db, enrolled):
+    from app.services import settings_store
+
+    enrolled()
+    device = _device(db)
+    _store(db, device, minutes_ago=60 * 24 * 10)  # 10 days old
+    settings_store.put(db, location_service.RETENTION_KEY, "7")
+    db.commit()
+
+    assert location_service.retention_days(db) == 7
+    assert location_service.purge(db) == 1
+
+
+def test_zero_keeps_everything_rather_than_deleting_everything(
+    client: TestClient, db, enrolled
+):
+    """⚠️ The polarity trap, and the reason it is spelled this way.
+
+    A tracking policy's `reporting_interval_minutes` uses 0 for *off*, so someone
+    could read 0 here as "no retention" and mean "keep nothing". It means keep
+    everything — and that is the reading chosen deliberately, because misread as
+    "keep for ever" it costs disk, while misread the other way it would silently
+    destroy a fleet's history with no way back.
+    """
+    from app.services import settings_store
+
+    enrolled()
+    device = _device(db)
+    _store(db, device, minutes_ago=60 * 24 * 3650)  # ten years old
+    settings_store.put(db, location_service.RETENTION_KEY, "0")
+    db.commit()
+
+    assert location_service.purge(db) == 0
+    assert len(_points(db)) == 1, "nothing was deleted"
+
+
+def test_a_nonsense_setting_falls_back_to_the_default_not_to_zero(
+    client: TestClient, db, enrolled
+):
+    """⚠️ The settings row is a text column an operator types into.
+
+    Reading "thirty" as 0 would compute a cutoff of *now* and take the whole
+    table. It falls back to the documented default instead, and says so.
+    """
+    from app.services import settings_store
+
+    enrolled()
+    device = _device(db)
+    _store(db, device, minutes_ago=60 * 24 * 5)  # 5 days: inside 30
+
+    for junk in ("thirty", "", "  ", "-1", "12.5", "30 days"):
+        settings_store.put(db, location_service.RETENTION_KEY, junk)
+        db.commit()
+        assert location_service.retention_days(db) == 30, junk
+        assert location_service.purge(db) == 0, junk
+
+    assert len(_points(db)) == 1, "a typo never emptied the table"
+
+
+def test_recent_points_are_never_touched(client: TestClient, db, enrolled):
+    enrolled()
+    device = _device(db)
+    for age_days in (0, 1, 5, 29):
+        _store(db, device, minutes_ago=60 * 24 * age_days)
+
+    assert location_service.purge(db, days=30) == 0
+    assert len(_points(db)) == 4
+
+
+def test_retention_reads_the_fix_time_not_the_delivery_time(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """⚠️ A point delivered late is still as old as the console says it is.
+
+    Deleting on `received_at` would keep a point the page shows as three months
+    old, because it happened to arrive yesterday — a discrepancy nobody could
+    account for from the page they are looking at.
+    """
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    # Recorded 90 days ago, received just now.
+    checkin(client, headers, locations=[_report(minutes_ago=60 * 24 * 90)])
+    point = _points(db)[0]
+    assert (point.received_at - point.recorded_at) > timedelta(days=89)
+
+    assert location_service.purge(db, days=30) == 1
+
+
+def test_the_purge_only_ever_touches_locations(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """⚠️ A track is the most personal thing stored here, and also the only thing
+    this job is allowed to remove."""
+    from sqlalchemy import func, select as sa_select
+
+    from app.db.models import Device, DeviceCommand
+
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    enqueue(client, result["device_id"], "locate")
+    checkin(client, headers)
+    device = _device(db)
+    _store(db, device, minutes_ago=60 * 24 * 90)
+
+    devices_before = db.scalar(sa_select(func.count()).select_from(Device))
+    commands_before = db.scalar(sa_select(func.count()).select_from(DeviceCommand))
+
+    location_service.purge(db, days=30)
+    db.commit()
+
+    assert db.scalar(sa_select(func.count()).select_from(Device)) == devices_before
+    assert db.scalar(sa_select(func.count()).select_from(DeviceCommand)) == commands_before
+    assert _points(db) == []
+
+
+def test_the_sweeper_does_not_run_in_tests():
+    """⚠️ Not a nicety. A background thread reading the real settings during a
+    test run would aim real DELETEs at a real table — the index warm-up already
+    taught this lesson the cheaper way, by fetching 184 MB per run."""
+    from app.config import Settings
+
+    assert Settings().purge_location_history is True, "on by default in production"
+
+    from tests.conftest import ADMIN_HEADERS  # noqa: F401  (import shape check)
+    from app.main import _start_location_retention
+    from fastapi import FastAPI
+    from app.config import get_settings
+
+    app = FastAPI()
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        purge_location_history=False
+    )
+
+    assert _start_location_retention(app) is None, "gated off, no thread started"

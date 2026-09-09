@@ -14,7 +14,9 @@
 
 import asyncio
 import logging
+import sys
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -49,6 +51,44 @@ from app.api.routers import (
 log = logging.getLogger(__name__)
 
 
+def _make_our_logs_visible() -> None:
+    """Let this application's own INFO lines reach the container log.
+
+    ⚠️ **Without this they are discarded.** Uvicorn configures the root logger at
+    WARNING, so every `log.info` written anywhere under `app.` has been going
+    nowhere since the beginning — the index warm-up's "index ready", the catalog
+    backfill's progress, and (the reason this was noticed) the retention sweep's
+    daily line. `docker compose logs` showed the server starting and nothing else,
+    which reads as a quiet, healthy server rather than as a muted one.
+
+    ⚠️ **Raising the level is not enough, and that is the whole trap.** Uvicorn
+    configures handlers on its own `uvicorn.*` loggers and leaves the **root
+    logger with none**. Records from `app.` therefore propagate to a root that
+    cannot print them and fall through to Python's `logging.lastResort` handler —
+    which is hard-wired to WARNING. That is why this server's warnings have always
+    appeared while its INFO lines never have, and why a first attempt that only
+    called `setLevel` changed nothing at all.
+
+    So the `app` tree gets a handler of its own. Uvicorn's access log is left
+    alone: a line per request would bury exactly the operational lines this exists
+    to surface.
+    """
+    logger = logging.getLogger("app")
+    logger.setLevel(logging.INFO)
+    # Guarded, because lifespan can run more than once in a process (a reload, or
+    # a test that builds the app repeatedly) and each pass would add another
+    # handler, printing every line twice, then three times.
+    if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("%(levelname)s [%(name)s] %(message)s"))
+        logger.addHandler(handler)
+
+#: How often the retention sweeper wakes. Daily, because retention is measured in
+#: days — sweeping more often would delete the same rows a few hours earlier and
+#: cost a query every time for nothing.
+_RETENTION_INTERVAL_SECONDS = 24 * 60 * 60
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Give the change bus the serving loop.
@@ -56,10 +96,12 @@ async def lifespan(app: FastAPI):
     Writes happen in FastAPI's threadpool, but long-poll waiters are asyncio events
     on this loop, so notifications have to hop back onto it.
     """
+    _make_our_logs_visible()
     notifications.bus.bind_loop(asyncio.get_running_loop())
     admin_auth.warn_if_unprotected(get_settings())
     _start_catalog_backfill(app)
     _start_index_warmup(app)
+    _start_location_retention(app)
     yield
 
 
@@ -115,6 +157,63 @@ def _start_index_warmup(app: FastAPI) -> threading.Thread | None:
                 )
 
     thread = threading.Thread(target=run, name="index-warmup", daemon=True)
+    thread.start()
+    return thread
+
+
+def _start_location_retention(app: FastAPI) -> threading.Thread | None:
+    """Delete location history past its retention window, once a day (W106 C5).
+
+    ⚠️ **This host has no cron**, which is the whole reason the job lives inside
+    the application. A retention policy that depends on someone remembering to
+    install a timer is a retention policy that quietly does not run — and the
+    failure is invisible, because a table that keeps growing looks exactly like a
+    table that is being maintained until the day someone checks.
+
+    Runs once at boot and then every 24 hours. Both matter: a server restarted
+    often would never reach a daily tick, and one running for months must not wait
+    for a restart.
+
+    ⚠️ Failures are logged and swallowed, and the thread keeps its schedule. A
+    purge that fails is a table that grows for another day; a purge that takes the
+    process down with it is a fleet that stops being managed.
+    """
+    # ⚠️ Resolved through `dependency_overrides`, for the same reason the index
+    # warm-up is: a background thread that reads the real settings is one that
+    # touches the real database in the middle of a test run — and this one issues
+    # DELETEs, which makes it considerably worse than a slow index fetch.
+    overrides = app.dependency_overrides
+    settings = overrides.get(get_settings, get_settings)()
+    if not settings.purge_location_history:
+        return None
+
+    def run() -> None:
+        from app.db.base import SessionLocal
+        from app.services import locations as location_service
+
+        while True:
+            try:
+                with SessionLocal() as session:
+                    window = location_service.retention_days(session)
+                    removed = location_service.purge(session)
+                    session.commit()
+                    # ⚠️ Logged every sweep, including the ones that delete
+                    # nothing — which is almost all of them. A retention job that
+                    # only speaks up when it deletes is indistinguishable from one
+                    # that is not running at all, and the whole failure mode here
+                    # is silent: a table that keeps growing looks exactly like a
+                    # table being maintained, until someone checks. One line a day
+                    # is what makes "is retention actually running" answerable.
+                    log.info(
+                        "location retention: %d point(s) removed, keeping %s",
+                        removed,
+                        "everything (window is 0)" if window <= 0 else f"{window} days",
+                    )
+            except Exception:
+                log.warning("location retention sweep failed", exc_info=True)
+            time.sleep(_RETENTION_INTERVAL_SECONDS)
+
+    thread = threading.Thread(target=run, name="location-retention", daemon=True)
     thread.start()
     return thread
 

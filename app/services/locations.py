@@ -47,7 +47,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.db.models import Device, DeviceLocation, LocationSource
@@ -480,3 +480,94 @@ def tile_config(session: Session) -> dict[str, str]:
         # attribution; only fall back when they have not chosen a URL either.
         "tileAttribution": attribution or (DEFAULT_TILE_ATTRIBUTION if not url else ""),
     }
+
+
+# --------------------------------------------------------------------------- #
+# Retention (W106 C5)
+# --------------------------------------------------------------------------- #
+
+#: How long location history is kept when nobody has said otherwise.
+DEFAULT_RETENTION_DAYS = 30
+
+#: The setting that overrides it.
+RETENTION_KEY = "location.retention_days"
+
+#: Sentinel for "never delete anything".
+#:
+#: ⚠️ **The polarity here is the opposite of the one next door**, and that is a
+#: real hazard rather than a pedantic note: a tracking policy's
+#: `reporting_interval_minutes` uses `0` for *off*, so an operator could read `0`
+#: here as "no retention" and mean "keep nothing". It means keep everything.
+#:
+#: It is spelled this way anyway, because the two readings do not cost the same.
+#: Misread as "keep for ever" it costs disk, which is noticed and fixed. Misread
+#: the other way it would silently delete a fleet's history on a timer, which is
+#: not recoverable. The ambiguity is resolved in the direction that fails safe,
+#: and the admin field says so in as many words.
+KEEP_FOR_EVER = 0
+
+
+def retention_days(session: Session) -> int:
+    """The configured retention window, in days.
+
+    ⚠️ Anything unparseable or negative falls back to the default rather than to
+    "keep nothing". A settings row is a text column an operator types into, and
+    the failure mode of reading `"thirty"` as `0` would be to delete the table.
+    """
+    from app.services import settings_store
+
+    raw = settings_store.get(session, RETENTION_KEY, "").strip()
+    if not raw:
+        return DEFAULT_RETENTION_DAYS
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "%s is %r, which is not a number of days; using the default of %d",
+            RETENTION_KEY,
+            raw,
+            DEFAULT_RETENTION_DAYS,
+        )
+        return DEFAULT_RETENTION_DAYS
+    if value < 0:
+        logger.warning("%s is negative (%d); using the default", RETENTION_KEY, value)
+        return DEFAULT_RETENTION_DAYS
+    return value
+
+
+def purge(session: Session, days: int | None = None) -> int:
+    """Delete location points older than the retention window. Returns the count.
+
+    ⚠️ **This is the only thing in W106 that destroys operator data**, and it does
+    it unattended, on a timer, permanently. Two properties matter more than
+    anything else here:
+
+    * **It is always bounded by an age filter.** There is no code path that issues
+      a delete over the whole table — a `days` of 0 returns early rather than
+      computing a cutoff of "now" and taking everything with it.
+    * **It touches `device_location` and nothing else.** A track is the most
+      personal thing this system stores, but it is also the only thing this is
+      allowed to remove.
+
+    Deleted by `recorded_at`, the device's own fix time, because that is what the
+    operator sees in the console. Using `received_at` would mean a point displayed
+    as three weeks old surviving a 30-day window because it was delivered late,
+    which is a discrepancy nobody could explain from the page.
+    """
+    window = retention_days(session) if days is None else days
+    if window <= KEEP_FOR_EVER:
+        return 0
+
+    cutoff = _utcnow() - timedelta(days=window)
+    removed = session.execute(
+        delete(DeviceLocation).where(DeviceLocation.recorded_at < cutoff)
+    ).rowcount or 0
+
+    if removed:
+        logger.info(
+            "location retention: removed %d point(s) recorded before %s (%d day window)",
+            removed,
+            cutoff.isoformat(),
+            window,
+        )
+    return removed

@@ -82,15 +82,22 @@ GROUPS: dict[str, Group] = {
                   Field("sms.api_key", "API key", "password"),
                   Field("sms.from_number", "From number"),
               ]),
-        Group("location", "Location map",
-              "Where the console fetches map tiles. The default is OpenStreetMap's "
-              "public tile service, which means a browser showing a device's "
-              "position asks openstreetmap.org for the tiles around it — that "
-              "reveals roughly where an operator is looking to a third party. Point "
-              "these at an internal tile server to keep it in-house, or on a "
-              "deployment with no internet, where the default silently shows an "
-              "empty map.",
+        Group("location", "Location",
+              "How long device location history is kept, and where the console "
+              "fetches map tiles. The tile default is OpenStreetMap's public "
+              "service, which means a browser showing a device's position asks "
+              "openstreetmap.org for the tiles around it — revealing roughly where "
+              "an operator is looking to a third party. Point these at an internal "
+              "tile server to keep it in-house, or on a deployment with no "
+              "internet, where the default silently shows an empty map.",
               [
+                  Field("location.retention_days", "Keep location history for (days)",
+                        "number",
+                        "Points older than this are deleted permanently, once a "
+                        "day. Default 30. Set 0 to keep history for ever — note "
+                        "that 0 here means KEEP EVERYTHING, the opposite of the 0 "
+                        "in a tracking policy's reporting interval, which means "
+                        "off."),
                   Field("location.tile_url", "Tile URL template", "text",
                         "Leaflet template, e.g. "
                         "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"),

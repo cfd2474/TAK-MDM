@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     # 184 MB from F-Droid would make the suite depend on a third party being up,
     # and would hammer them on every run.
     warm_indexes: bool = True
+    #: Whether the daily location-retention sweep runs (W106 C5). Off in tests,
+    #: which is not a nicety: the sweeper issues DELETEs, and a background thread
+    #: reading the real settings during a test run would aim them at a real table.
+    purge_location_history: bool = True
 
     # --- Device identity PKI -------------------------------------------------
     pki_dir: Path = Path("pki")

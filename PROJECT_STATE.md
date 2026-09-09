@@ -670,6 +670,81 @@ rather than renaming either and breaking a released agent.
 **Not done, deliberately:** nothing purges yet. Retention is C5, and until it
 lands this table only grows.
 
+#### ✅ C5 — Retention: the table stops only growing
+
+Operator, 2026-09-08: *"default to 30 days, but have a setting in admin to adjust
+retention."*
+
+1. `location.retention_days` in the existing **Location** settings group,
+   defaulting to **30**.
+2. `purge(session, days)` in the locations service — a bulk delete by age,
+   returning what it removed so the log says so.
+3. A periodic sweeper, following `_start_index_warmup`'s shape: a daemon thread
+   resolved through `dependency_overrides` and gated by a setting, so it cannot
+   run inside the test suite. **The host has no cron** — this is why the job lives
+   in the app rather than in a timer someone has to remember to install.
+4. Run it once at boot and then daily. A deployment that is restarted often should
+   still purge; one that runs for months must not wait for a restart.
+5. Tests, deploy, verify against the real track.
+
+⚠️ **`0` means keep for ever, and the polarity is the risk.** The tracking
+interval next door uses `0` for *off*, so someone could read `0` here as "no
+retention" meaning "keep nothing" and erase the fleet's history. The field is
+labelled unmistakably — but the deciding argument is which way the misreading
+fails: read as "keep for ever" it costs disk, read as "delete everything" it costs
+data that cannot be recovered. It fails safe in the direction it is being given.
+
+###### ✅ Complete (2026-09-08) — 1227 server tests, running on the host
+
+Default **30 days**, adjustable at **Admin → Location**. The sweeper runs at boot
+and every 24 h, in-process, because **this host has no cron** — a retention policy
+that depends on someone remembering to install a timer is one that quietly does
+not run, and the failure is invisible: a table that keeps growing looks exactly
+like a table being maintained until the day somebody checks.
+
+Confirmed on the host:
+
+```
+INFO [app.main] location retention: 0 point(s) removed, keeping 30 days
+```
+
+⚠️ **A nonsense setting falls back to 30, never to 0.** The row is a text column
+an operator types into; reading `"thirty"` as `0` would compute a cutoff of *now*
+and take the entire table. Tested against `"thirty"`, `""`, `"12.5"`, `"-1"` and
+`"30 days"`.
+
+⚠️ **Deleted on `recorded_at`, not `received_at`.** A point delivered late is
+still as old as the console says it is; retaining by delivery time would keep a
+point the page shows as three months old because it happened to arrive yesterday,
+and nothing on that page would explain it.
+
+---
+
+### ⚠️ Operational note: this server's INFO logs went nowhere for months (W106 C5)
+
+Found while trying to confirm the retention sweep had actually run.
+
+**Uvicorn configures handlers on its own `uvicorn.*` loggers and leaves the root
+logger with none.** Records from `app.` propagated to a root that could not print
+them and fell through to Python's `logging.lastResort` handler — which is
+hard-wired to WARNING. So this server's warnings have always appeared and **not
+one of its INFO lines ever has**: the index warm-up's `index ready`, the catalog
+backfill's progress, every `logger.info` in every service.
+
+⚠️ **`setLevel` alone does not fix it**, which cost a deploy to learn: the level
+was never the thing stopping them. The `app` logger needed a handler of its own.
+
+The visible symptom was a server that started and then said nothing, which reads
+as quiet and healthy rather than as muted. If a past session concluded some
+background job "was not running" because nothing appeared in `docker compose
+logs`, that conclusion is worth revisiting — the evidence for it did not exist.
+
+⚠️ **Deleting is the point, so it needs the most care in this whole feature.**
+Everything else here is additive; this is the one piece that destroys operator
+data on a timer, unattended, for ever. The purge is bounded to `device_location`
+by an explicit age filter, never a bare delete, and it is tested for the case that
+matters most: a misconfiguration must not take the table with it.
+
 #### ✅ C3 — The map, and the history page
 
 Duplicating `EUD_Remote_Assist_Portal`'s display, which was read from its source
