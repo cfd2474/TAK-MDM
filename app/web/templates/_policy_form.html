@@ -523,6 +523,63 @@
   </div>
 {% endmacro %}
 
+{% macro _ca_list(f, items, name, managed_files) %}
+  {#
+    Trust anchors (W112). Deliberately *not* `_file_list`: that control carries a
+    destination path, extraction and persistence, none of which mean anything for
+    a certificate. Asking an operator where to put a trust anchor would be asking
+    a question with no correct answer.
+  #}
+  <div class="rowset" data-rowset>
+    {% for entry in items or [] %}
+      <div class="rs-row">
+        <select name="{{ name }}" class="field-full">
+          <option value="">&mdash; pick an uploaded certificate &mdash;</option>
+          {% for mf in managed_files %}
+            <option value="{{ mf.id }}"
+              {{ 'selected' if (entry | string) == (mf.id | string) }}>
+              {{ mf.name }}
+            </option>
+          {% endfor %}
+        </select>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    {% endfor %}
+    <template data-row-template>
+      <div class="rs-row">
+        <select name="{{ name }}" class="field-full">
+          <option value="">&mdash; pick an uploaded certificate &mdash;</option>
+          {% for mf in managed_files %}
+            <option value="{{ mf.id }}">{{ mf.name }}</option>
+          {% endfor %}
+        </select>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    </template>
+    <button type="button" class="ghost" data-add-row>Add certificate</button>
+  </div>
+
+  <p class="field-tip">
+    Upload the authority's certificate (PEM or DER) in <strong>Content</strong>
+    first, then pick it here. It goes into Android's own trust store &mdash; what
+    Wi-Fi EAP, the browser, VPN clients and apps asking the platform for a
+    certificate consult.
+  </p>
+  <p class="field-tip banner warn">
+    &#9888; <strong>This is not what configures ATAK.</strong> ATAK reads its CA
+    and client certificates from <code>.p12</code> files under
+    <code>/sdcard/atak/</code> that its own preferences point at &mdash; place
+    those with <strong>File management</strong> and name them in
+    <strong>ATAK Config</strong>. A TAK server CA installed here will not make
+    ATAK connect.
+  </p>
+  <p class="field-tip">
+    Removing an authority from this list removes it from the device on its next
+    check-in. Only certificates ATLAS installed are removed &mdash; anything a
+    user added themselves is left alone.
+  </p>
+{% endmacro %}
+
 {% macro _file_list(f, items, name, managed_files) %}
   <div class="rowset" data-rowset data-general-files>
     {% for entry in items or [] %}{{ _file_row(name, managed_files, entry) }}{% endfor %}
@@ -1104,6 +1161,7 @@
   {% elif f.control == 'kiosk_app' %}{{ _kiosk_app(f, value, name, app_packages) }}
   {% elif f.control == 'activity_choice' %}{{ _activity_choice(f, value, name) }}
   {% elif f.control == 'file_list' %}{{ _file_list(f, value, name, managed_files) }}
+  {% elif f.control == 'ca_list' %}{{ _ca_list(f, value, name, managed_files) }}
   {% elif f.control == 'image_file' %}{{ _image_file(f, value, name) }}
   {% elif f.control == 'wifi_list' %}{{ _wifi_list(f, value, name) }}
   {% elif f.control == 'usage_rules' %}{{ _usage_rules(f, value, name, none) }}

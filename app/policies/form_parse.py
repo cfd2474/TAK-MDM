@@ -211,6 +211,21 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
             if rows:
                 spec[name] = rows
 
+        elif field.control == "ca_list":
+            # A plain list of file ids — no destination, no extraction. Blank rows
+            # are the ones an operator added and did not fill in, and duplicates
+            # would install the same anchor twice.
+            seen_ids: set[str] = set()
+            ids = []
+            for raw in form.getlist(name):
+                value = (raw or "").strip()
+                if not value or value in seen_ids:
+                    continue
+                seen_ids.add(value)
+                ids.append(value)
+            if ids:
+                spec[name] = ids
+
         elif field.control == "file_list":
             file_ids = form.getlist(f"{name}__file_id")
             dests = form.getlist(f"{name}__dest_path")

@@ -540,6 +540,55 @@ Find press** — never as-you-type, which would leak every keystroke — and aga
 **configurable endpoint**, so a deployment with its own geocoder or none at all is
 not forced onto a public one. The console says where the query goes.
 
+###### ✅ C1 — Trust anchors (2026-09-09), agent 0.52.0, 1341 server tests
+
+The Security category is wired and live, with **Trusted certificates** working and
+the other four sub-topics as scoped stubs *after* it — the W106 lesson about stubs
+sorting ahead of the page that does something.
+
+**A dedicated `ca_list` control, not `file_list`.** The FILES control carries a
+destination path, extraction and persistence, and none of them mean anything for a
+trust anchor — asking an operator where to put one is asking a question with no
+correct answer. Asserted: the panel contains no `dest_path` and no `extract`.
+
+⚠️ **The console says this is not what configures ATAK**, because that is the
+mistake the category invites. ATAK reads `.p12` files from `/sdcard/atak/…` named
+by its own preferences; a TAK server CA installed here will not make it connect,
+and without the warning that failure has no visible cause.
+
+**Integrity comes from the existing machinery.** An anchor travels as a sha256,
+not as bytes: the bundle is signed and carries the hash, the artifact store is
+keyed by it, and `downloadArtifact` verifies it before the bytes are used. A
+certificate cannot be swapped in transit without breaking the signature or the
+hash — which matters more here than for any other file, because these bytes decide
+what the device will trust.
+
+⚠️ **`uninstallAllUserCaCerts` is not used, and a test enforces that.** It is the
+convenient call and the wrong one: it removes every user-installed anchor,
+including ones a person added for their own reasons. Removal works from a record
+of what ATLAS installed, keyed by sha256 — the rule `hiddenByPolicy` follows for
+packages.
+
+⚠️ **The certificate bytes are kept on the device**, because `uninstallCaCert`
+names a certificate **by its content** rather than by an alias. Without them there
+is no way to remove one specific anchor — only the API that removes everybody's.
+
+⚠️ **An empty list is sent, never a missing key.** The agent has to be *told* to
+trust nothing so it can remove what it installed; a missing section would read as
+"no instruction" and leave a revoked authority in place. The applier therefore
+runs on every reconcile, like the trackers.
+
+**Still to do — C2:** client certificates. `generateKeyPair` on the device, CSR to
+the existing CA, `installKeyPair` back — the private key never leaving the tablet,
+reusing what `DeviceIdentity.kt` already does. **PKCS#12 upload stays a separate
+decision**: it would put private key material on this server, which is R8
+multiplied by every certificate an operator uploads.
+
+⚠️ **Not yet verified on hardware.** Whether a Device-Owner `installCaCert`
+lands, whether the user can remove it, and what warning Android shows are still
+open — agent 0.52.0 is published and `SM-X520` will take it, so the next session
+can watch a real anchor install.
+
 #### Steps
 
 1. `app/services/geocoding.py` — forward lookup, configurable endpoint, a real
@@ -559,7 +608,7 @@ a tab — the grey-box failure `atlas-map.js` already carries a note about. A si
 map that follows the selected row also answers the question an operator actually
 has, which is whether their fences overlap.
 
-### ⏳ W112 — Security ▸ Certificates
+### ⏳ W112 — Security ▸ Certificates (C1 ✅ trust anchors)
 
 Operator, 2026-09-09, after asking which of the Security sub-topics need Knox:
 scope Certificates as the next chunk. Four of the five need no Knox at all

@@ -120,11 +120,42 @@ CATALOG: tuple[Category, ...] = (
         blurb="Wi-Fi networks. (VPN needs a per-app VPN client — deferred.)",
     ),
     Category(
-        "security", "Security", None,
-        subtopics=(
-            "certificates", "scep", "global http proxy",
-            "web content filtering", "os updates",
+        "security", "Security", "CERTIFICATES",
+        # The other four sub-topics are scoped but unbuilt (W112). Listed as
+        # stubs rather than hidden so an operator can see what is coming, and
+        # ordered after the one that works — the W106 lesson about stubs sorting
+        # ahead of real pages.
+        stub_pages=(
+            StubPage(
+                "scep", "SCEP",
+                "Enrol device certificates from a SCEP server. No Android API "
+                "exists for this — it is an HTTP protocol the agent would speak "
+                "itself. Not built yet.",
+                after="trusted-certificates",
+            ),
+            StubPage(
+                "global-http-proxy", "Global HTTP proxy",
+                "A proxy for the whole device. ⚠️ Android calls it a "
+                "*recommendation*: some apps ignore it. Not built yet.",
+                after="trusted-certificates",
+            ),
+            StubPage(
+                "web-content-filtering", "Web content filtering",
+                "Android has no content-filtering API. The workable answer is a "
+                "forced private DNS resolver, which blocks by category rather "
+                "than by URL. Not built yet.",
+                after="trusted-certificates",
+            ),
+            StubPage(
+                "os-updates", "OS updates",
+                "Schedule when updates install, and freeze them during "
+                "operations. ⚠️ Postponement caps at 30 days and a specific "
+                "version cannot be pinned without Samsung E-FOTA. Not built yet.",
+                after="trusted-certificates",
+            ),
         ),
+        blurb="Certificates the device trusts. Proxy, filtering and update "
+              "scheduling are scoped but not built.",
     ),
     Category("accounts", "Accounts", None, subtopics=("email", "exchange activesync")),
     Category(

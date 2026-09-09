@@ -130,6 +130,10 @@ def build(
         # Both wallpaper slots when both are set: the device chooses by its own
         # screen (D46) and downloads only the one it uses.
         "wallpaper": payload.get("wallpaper", {}),
+        # Trust anchors, as sha256 references into the artifact store. The
+        # bundle is signed and carries the hash, so the bytes cannot be
+        # swapped without breaking one or the other (W112).
+        "certificates": payload.get("certificates", []),
     }
 
 

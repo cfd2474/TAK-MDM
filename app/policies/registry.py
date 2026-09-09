@@ -30,6 +30,7 @@ from pydantic import ValidationError
 from app.policies.specs import (
     AppCatalogSpec,
     AtakConfigSpec,
+    CertificatesSpec,
     CustomizationsSpec,
     FilesSpec,
     KioskSpec,
@@ -186,6 +187,11 @@ registry.register(
     "TRACKING_FENCING",
     TrackingFencingSpec,
     "How often a device reports its location, and the fences it answers to.",
+)
+registry.register(
+    "CERTIFICATES",
+    CertificatesSpec,
+    "Certificate authorities the device itself trusts.",
 )
 registry.register(
     "CUSTOMIZATIONS",
