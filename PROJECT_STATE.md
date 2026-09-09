@@ -566,26 +566,37 @@ scope Certificates as the next chunk. Four of the five need no Knox at all
 (recorded in the Android reference); this is the one worth building first,
 because the machinery already exists and ATAK deployments actually need it.
 
-#### ⚠️ The scoping finding that changes the shape of this
+#### This section is general MDM, not ATAK
 
-**ATAK does not use the Android trust store.** `docs/ARCHITECTURE.md` already
-records it: *"XML, and `.p12` certs are all file pushes into `/sdcard/atak/…`"*.
-ATAK reads its CA and client certificates from files it is pointed at by its own
-preferences.
+Operator, 2026-09-09: *"the section for: certificates · scep · global http proxy ·
+web content filtering · os updates would be for general MDM, not ATAK."*
 
-So there are **two unrelated certificate stories**, and conflating them would be
-the expensive mistake here:
+So the target is ordinary fleet management — Wi-Fi EAP, browser and app trust,
+VPN, and apps that ask Android for a client certificate. ATLAS is a device
+management product that happens to be good at ATAK, and this category is one of
+the places that distinction is real.
 
-| | Where it lands | How ATLAS does it |
-|---|---|---|
-| **ATAK's server certs** | `.p12` files under `/sdcard/atak/…`, named by ATAK preferences | ✅ **Already possible today** — FILES pushes the file, ATAK_CONFIG sets the preference |
-| **Device certificates** | Android's own keystore and trust store | ❌ This chunk |
+⚠️ **One footnote, kept because it will otherwise be discovered the hard way.**
+ATAK does *not* read the Android trust store: `docs/ARCHITECTURE.md` records that
+its `.p12` certs "are all file pushes into `/sdcard/atak/…`", pointed at by ATAK's
+own preferences — which FILES and ATAK_CONFIG already deliver today. Nothing in
+this chunk changes that, and the console should not let anyone infer otherwise:
+installing a TAK server CA here and expecting ATAK to trust it produces a device
+that looks configured and an ATAK that cannot connect, with nothing saying why.
 
-⚠️ **The console must not imply the second does the first.** An operator who
-installs their TAK server CA through a Certificates policy and expects ATAK to
-trust it will get a device that looks configured and an ATAK that cannot connect —
-with nothing anywhere saying why. Whatever this ships has to say what it is for:
-Wi-Fi EAP, browser trust, VPN, and apps that ask Android for a client certificate.
+#### The APIs, confirmed present in the framework source
+
+`installCaCert`, `uninstallCaCert`, `getInstalledCaCerts`, `hasCaCertInstalled`,
+`uninstallAllUserCaCerts`, `installKeyPair`, `removeKeyPair`, `generateKeyPair`,
+and `setDelegatedScopes(DELEGATION_CERT_INSTALL)` for handing installation to
+another app.
+
+⚠️ **`uninstallAllUserCaCerts` is the trap in that list.** It is the convenient
+call and it is the wrong one: it removes every user-installed anchor, including
+the ones a person put there themselves. Release has to work from a record of what
+*we* installed — the rule `hiddenByPolicy` already follows for packages, and
+`getInstalledCaCerts` plus `hasCaCertInstalled` make it checkable rather than
+remembered.
 
 #### ⚠️ Two ways to get a client certificate onto a device, and they are not equal
 
@@ -616,7 +627,8 @@ with its own security note — not as the default path.
    `app/security/ca.py` rather than a second issuing path.
 4. Agent: `installCaCert` / `uninstallCaCert`, `generateKeyPair` +
    `installKeyPair`, all driven declaratively.
-5. Console: the Security category wired, with the ATAK distinction stated plainly.
+5. Console: the Security category wired, said plainly as device-level trust —
+   with a line making clear it is not what configures ATAK.
 6. Tests both sides, then build, deploy, verify.
 
 ⚠️ **Absent must mean removed, and it matters more here than anywhere.** Every
