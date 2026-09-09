@@ -23,6 +23,7 @@ it.
 from __future__ import annotations
 
 import pathlib
+import re
 
 import httpx
 import pytest
@@ -169,11 +170,20 @@ def test_the_endpoint_is_a_setting(client: TestClient, db):
 def test_the_browser_never_calls_the_geocoder_itself(client: TestClient):
     """⚠️ Proxied on purpose: the operator's own address is never disclosed to a
     third party, only this server's. The editor must therefore call *us*."""
-    script = pathlib.Path("app/web/static/atlas-map.js").read_text(encoding="utf-8")
-    picker = script[script.index("function atlasWireGeofencePicker"):]
+    picker = _picker_script()
 
     assert "/policies/geocode" in picker
-    assert "nominatim" not in picker.lower()
+
+    # ⚠️ Every fetch target must be same-origin. Asserted on the *URLs* rather
+    # than on the word "nominatim", which now appears in a comment explaining
+    # which service holds what — a test that bans a word bans talking about it.
+    targets = re.findall(r'fetch\(\s*("[^"]*"|[A-Za-z_$][\w$]*)', picker)
+    assert targets, "the picker fetches something"
+    for target in targets:
+        if target.startswith('"'):
+            assert target.startswith('"/'), target
+    for host in ("nominatim.openstreetmap.org", "photon.komoot.io", "http://", "https://"):
+        assert host not in picker, f"the browser must not reach {host} itself"
 
 
 def test_a_failed_lookup_answers_200_with_an_error(client: TestClient, monkeypatch):
@@ -703,3 +713,65 @@ def test_a_query_with_no_house_number_does_not_get_an_extra_attempt(
 
     # Boxed, then unboxed. No house-number variant, because there is no number.
     assert len(asked) == 2
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ House numbers: the two services hold different data (2026-09-09)
+# --------------------------------------------------------------------------- #
+
+
+def test_choosing_a_street_upgrades_to_the_house_number(client: TestClient):
+    """⚠️ Photon and Nominatim disagree about what they hold, and each is right
+    about itself.
+
+    Photon indexes no house numbers on Upper Drive in Corona, so its suggestions
+    stop at the street. Nominatim returns `110, Upper Drive, Corona, 92882` for
+    the same query — the number *is* in OpenStreetMap, only the suggestion index
+    lacks it. So a pick places the street at once and then asks the other service
+    whether it can do better.
+    """
+    picker = _picker_script()
+
+    assert "refineToHouseNumber" in picker
+    # One request, on a click — a press rather than autocomplete, so it stays
+    # inside Nominatim's usage policy.
+    assert "/policies/geocode?q=" in picker
+
+
+def test_the_refinement_never_substitutes_silently(client: TestClient):
+    """The marker moves only if the answer really carries the number typed, and
+    the message says where it ended up."""
+    picker = _picker_script()
+
+    block = picker[picker.index("function refineToHouseNumber"):]
+    block = block[: block.index("/** Put a found place")]
+
+    assert "startsWithNumber(candidate.label, number)" in block
+    assert 'say("Placed at: " + exact.label)' in block
+
+
+def test_a_failed_refinement_leaves_the_street_placement_alone(client: TestClient):
+    """A position the operator can already see on the map is not worth a
+    complaint about."""
+    picker = _picker_script()
+
+    block = picker[picker.index("function refineToHouseNumber"):]
+    block = block[: block.index("/** Put a found place")]
+
+    assert ".catch(" in block
+    assert "say(" not in block.split(".catch(")[1], "the failure path stays quiet"
+
+
+def test_the_house_number_match_is_not_a_prefix_match(client: TestClient):
+    """⚠️ "1100 Main St" starts with the characters of "110" and is a different
+    address. A plain indexOf would decide it already matched and skip the
+    refinement that was the whole point."""
+    picker = _picker_script()
+
+    block = picker[picker.index("function startsWithNumber"):]
+    block = block[: block.index("function typedHouseNumber")]
+
+    assert 'charAt(number.length)' in block
+    # ⚠️ And no regex built from a string: "\D" written with one backslash
+    # silently becomes the letter D, which this file carried for one commit.
+    assert "RegExp" not in block

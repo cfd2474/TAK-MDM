@@ -329,6 +329,72 @@ function atlasWireGeofencePicker() {
     box.hidden = false;
   }
 
+  /**
+   * Does `label` begin with exactly this house number, not merely its digits?
+   *
+   * ⚠️ No regex, deliberately. Building one from a string needs `"\D"` to mean
+   * `\D`, and a single backslash there silently becomes the letter D — which
+   * this file did carry for one commit. Character comparison cannot be escaped
+   * wrong.
+   */
+  function startsWithNumber(label, number) {
+    if (label.indexOf(number) !== 0) return false;
+    var next = label.charAt(number.length);
+    return next === "" || next < "0" || next > "9";
+  }
+
+  /** The leading house number of what was typed, or "" if there is none. */
+  function typedHouseNumber() {
+    var match = (addressBox.value || "").trim().match(/^(\d+)\s/);
+    return match ? match[1] : "";
+  }
+
+  /**
+   * Sharpen a street-level pick to the exact house number, if one was typed.
+   *
+   * ⚠️ **Photon and Nominatim disagree about what they hold, and each is right
+   * about itself.** Photon has no house numbers on Upper Drive in Corona, so its
+   * suggestions stop at the street; Nominatim has `110, Upper Drive, Corona,
+   * 92882` and returns it for the same query. The number is in OpenStreetMap —
+   * only the suggestion index lacks it.
+   *
+   * So a suggestion click places the street immediately, and *then* asks the
+   * other service whether it can do better. One request, on an explicit click,
+   * which is a press rather than autocomplete and so within Nominatim's policy.
+   *
+   * Nothing is silently substituted: the marker only moves if the answer really
+   * carries the number that was typed, and the message says it was refined.
+   */
+  function refineToHouseNumber(row, chosen) {
+    var number = typedHouseNumber();
+    if (!number) return;
+    // ⚠️ Followed by a non-digit, not merely a prefix. "1100 Main St" starts with
+    // the characters of "110" and is a different address entirely — a plain
+    // indexOf would decide it already matched and skip the refinement.
+    if (startsWithNumber(chosen.label, number)) return;
+
+    var typed = (addressBox.value || "").trim();
+    fetch("/policies/geocode?q=" + encodeURIComponent(typed), {
+      headers: { Accept: "application/json" },
+    })
+      .then(function (response) { return response.json(); })
+      .then(function (data) {
+        if (!data.results || !data.results.length) return;
+        var exact = data.results.filter(function (candidate) {
+          return startsWithNumber(candidate.label, number);
+        })[0];
+        if (!exact) return;
+
+        writeRow(row, exact.latitude, exact.longitude);
+        map.setView([exact.latitude, exact.longitude], 16);
+        say("Placed at: " + exact.label);
+      })
+      .catch(function () {
+        // The street placement stands. A failed refinement is not worth a
+        // complaint about a position the operator can already see on the map.
+      });
+  }
+
   /** Put a found place on a row, naming the fence if it has no name yet. */
   function place(row, result) {
     writeRow(row, result.latitude, result.longitude);
@@ -343,6 +409,7 @@ function atlasWireGeofencePicker() {
     }
     redraw();
     say("Placed at: " + result.label);
+    refineToHouseNumber(row, result);
   }
 
   function say(message, bad) {

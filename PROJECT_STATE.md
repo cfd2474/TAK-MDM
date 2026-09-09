@@ -569,6 +569,49 @@ provided at no cost? i dont want anything hosted locally."*
 is its headline feature — which is precisely what Nominatim's usage policy
 forbids, and why W109 shipped a button instead.
 
+###### ⚠️ W110c — the suggestions stop at the street (2026-09-09)
+
+*"its still not getting the numerics."* Picking a suggestion placed *Upper Drive,
+Corona* rather than *110 Upper Drive*.
+
+✅ **The house number is in OpenStreetMap. Only Photon's index lacks it.** Checked
+rather than assumed, and the two services genuinely disagree about what they hold:
+
+| | |
+|---|---|
+| Photon, `Upper Drive Corona California` | 3 features, **no house numbers at all** |
+| Nominatim, `110 upper drive, corona` | `110, Upper Drive, Corona, Riverside County, California, 92882` at `33.8351825, -117.5786927` |
+
+So the Find button was already returning the exact address; the *suggestion* path
+was the one stopping at the street, and clicking a suggestion is what an operator
+naturally does.
+
+✅ **A pick now upgrades itself.** The street is placed immediately — no waiting —
+and then one Nominatim lookup runs to see whether it can do better. That is a
+single request on an explicit click, which is a press rather than autocomplete and
+so stays inside Nominatim's usage policy. Nothing is substituted silently: the
+marker moves only if the answer really begins with the number that was typed, and
+the message says where it ended up. A failed refinement is swallowed — the street
+placement is already visible on the map and is not worth a complaint.
+
+⚠️ **`"1100 Main St"` starts with the characters of `"110"`.** A plain `indexOf`
+prefix check would have decided the suggestion already carried the number and
+skipped the refinement entirely — the exact case the feature exists for.
+
+⚠️ **And the first version of that check was broken by escaping.** Building a
+regex from a string needs `"\D"` to mean `\D`; written with one backslash it
+silently becomes the letter *D*, so `^110(D|$)` would have matched almost nothing.
+The file carried that for one commit. It is now character comparison, which cannot
+be escaped wrong — and a test forbids `RegExp` in that function.
+
+**A second over-broad assertion, of the same shape as W109a's.** A test banned the
+*word* "nominatim" from the picker script to prove the browser never calls it
+directly — and then failed on a comment explaining which service holds what. It
+now checks the fetch **URLs** are same-origin, which is the thing that matters.
+A test that bans a word bans talking about it.
+
+**1319 server tests.**
+
 ###### ⚠️ W110b — Ontario for a California address (2026-09-09)
 
 *"110 w upper dr, corona ca"* suggested **Upper Canada Drive, Kitchener,
