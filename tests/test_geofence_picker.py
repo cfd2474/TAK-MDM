@@ -250,15 +250,27 @@ def test_coordinates_remain_typeable(client: TestClient):
     assert 'name="geofences__longitude"' in body
 
 
-def test_the_picker_does_not_search_as_you_type(client: TestClient):
-    """⚠️ An autocomplete would send a query per keystroke — "f", "fo", "for" —
-    leaking far more than the finished string, and Nominatim's usage policy
-    forbids exactly that. The lookup is bound to the button and to Enter."""
-    script = pathlib.Path("app/web/static/atlas-map.js").read_text(encoding="utf-8")
-    picker = script[script.index("function atlasWireGeofencePicker"):]
+def test_nominatim_is_never_the_one_asked_as_you_type(client: TestClient):
+    """⚠️ Rewritten in W110, and the constraint it guards is unchanged.
 
-    assert 'addressBox.addEventListener("input"' not in picker
+    This originally asserted the picker never searches while typing, because
+    Nominatim's usage policy forbids autocomplete. W110 added suggestions — but
+    against **Photon**, which is built for it, while the press still goes to
+    Nominatim. So the rule is not "never search as you type"; it is "never send
+    type-ahead to the service that forbids it", and that is what is asserted.
+    """
+    picker = _picker_script()
+
+    # The as-you-type path calls the suggest endpoint...
+    assert "/policies/geocode/suggest" in picker
+    # ...and the press calls the lookup endpoint, still bound to the button.
     assert 'findButton.addEventListener("click", find)' in picker
+
+    suggest_block = picker[picker.index("function requestSuggestions"):]
+    suggest_block = suggest_block[: suggest_block.index("addressBox.addEventListener")]
+    assert "/policies/geocode?" not in suggest_block, (
+        "type-ahead must not reach the Nominatim-backed lookup"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -337,3 +349,155 @@ def test_the_candidate_list_is_in_the_editor(client: TestClient):
     body = client.get("/policies/new").text
 
     assert "data-geofence-results" in body
+
+
+# --------------------------------------------------------------------------- #
+# Suggestions as you type (W110)
+# --------------------------------------------------------------------------- #
+
+
+def _photon(features) -> httpx.Client:
+    return _client(lambda request: httpx.Response(200, json={"features": features}))
+
+
+def _feature(lon, lat, **props):
+    return {"geometry": {"coordinates": [lon, lat]}, "properties": props}
+
+
+def test_photon_geojson_is_read_lon_lat_not_lat_lon(client: TestClient, db):
+    """⚠️ GeoJSON is [longitude, latitude] — the opposite order to every other
+    coordinate in this codebase.
+
+    Read the other way round, anywhere in the Americas lands in the sea off West
+    Africa. The numbers below are chosen so a swap is unmistakable rather than
+    plausible.
+    """
+    places = geocoding.suggest(
+        db,
+        "upper drive",
+        client=_photon([_feature(-117.58, 33.83, street="Upper Drive", city="Corona")]),
+    )
+
+    assert places[0].latitude == pytest.approx(33.83)
+    assert places[0].longitude == pytest.approx(-117.58)
+
+
+def test_a_label_is_assembled_from_photons_separate_fields(client: TestClient, db):
+    """Nominatim returns a finished display_name; Photon returns the parts."""
+    places = geocoding.suggest(
+        db,
+        "upper",
+        client=_photon(
+            [
+                _feature(
+                    -117.58, 33.83,
+                    housenumber="110", street="Upper Drive",
+                    city="Corona", state="California", country="United States",
+                )
+            ]
+        ),
+    )
+
+    assert places[0].label == "110 Upper Drive, Corona, California, United States"
+
+
+def test_a_short_query_asks_nobody(client: TestClient, db):
+    """⚠️ Two characters match half the planet, and every one of them is a query a
+    third party sees. The floor is a disclosure decision as much as a quality
+    one."""
+
+    def fail(request):
+        raise AssertionError("a short query must not reach the suggestion service")
+
+    assert geocoding.suggest(db, "Co", client=_client(fail)) == []
+    assert geocoding.MIN_QUERY_LENGTH == 3
+
+
+def test_suggestions_fail_silently(client: TestClient, db):
+    """⚠️ This runs on almost every keystroke. An exception per character would
+    bury the form in complaints about a convenience — the Find button is where a
+    broken lookup gets reported, once, where it can be read."""
+
+    def boom(request):
+        raise httpx.ConnectError("photon is down")
+
+    assert geocoding.suggest(db, "corona", client=_client(boom)) == []
+
+
+def test_suggestions_are_biased_toward_what_the_operator_is_looking_at(
+    client: TestClient, db
+):
+    """⚠️ Measured, not assumed: unbiased, "Cor" returns a global list; biased to
+    southern California it returns Corona, California."""
+    seen = {}
+
+    def capture(request):
+        seen["url"] = str(request.url)
+        return httpx.Response(200, json={"features": []})
+
+    geocoding.suggest(db, "corona", near=(33.87, -117.57), client=_client(capture))
+
+    assert "lat=33.87" in seen["url"]
+    assert "lon=-117.57" in seen["url"]
+
+
+def test_the_two_services_are_configured_separately(client: TestClient, db):
+    """⚠️ Photon answers "Upper Dr Corona" with three Upper Drives in California,
+    and "110 W Upper" with a road in Nova Scotia at every bias level. Nominatim
+    handles the fully-typed form and forbids type-ahead. Each is used where it is
+    strong, so each needs its own endpoint."""
+    assert geocoding.DEFAULT_SUGGEST_ENDPOINT != geocoding.DEFAULT_ENDPOINT
+    assert "photon" in geocoding.DEFAULT_SUGGEST_ENDPOINT
+    assert "nominatim" in geocoding.DEFAULT_ENDPOINT
+
+    from app.services import settings_store
+
+    settings_store.put(db, geocoding.SETTING_SUGGEST_ENDPOINT, "https://photon.internal/api")
+    db.commit()
+
+    assert geocoding.suggest_endpoint(db) == "https://photon.internal/api"
+    assert geocoding.endpoint(db) == geocoding.DEFAULT_ENDPOINT, "unchanged"
+
+
+def test_the_suggest_endpoint_never_errors(client: TestClient, monkeypatch):
+    """Called while somebody types; a 500 would surface as a broken console."""
+
+    def boom(session, query, near=None, client=None):
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(geocoding, "suggest", lambda *a, **k: [])
+
+    response = client.get("/policies/geocode/suggest?q=corona", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 200
+    assert response.json()["results"] == []
+
+
+def test_the_box_debounces_and_floors_the_query(client: TestClient):
+    """⚠️ Fair use of a free service, and less of the operator's typing sent."""
+    picker = _picker_script()
+
+    assert "suggestTimer" in picker
+    assert "300" in picker
+    assert "query.length < 3" in picker
+
+
+def test_stale_suggestions_cannot_overwrite_newer_ones(client: TestClient):
+    """⚠️ Answers arrive out of order. Without a sequence guard a slow reply for
+    "Cor" lands after the fast one for "Corona" and replaces it."""
+    picker = _picker_script()
+
+    assert "suggestSeq" in picker
+    assert "seq !== suggestSeq" in picker
+
+
+def test_choosing_a_suggestion_creates_a_row_if_there_is_none(client: TestClient):
+    """⚠️ W109a's lesson applied to the path W110 added, rather than learned
+    twice: choosing a suggestion is exactly the moment an operator means to
+    create the fence."""
+    picker = _picker_script()
+
+    chooser = picker[picker.index("function showResults"):]
+    chooser = chooser[: chooser.index("function place")]
+
+    assert "rowsEnsuringOne()" in chooser

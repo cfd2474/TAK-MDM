@@ -22,9 +22,13 @@ free one. Three things follow from that, and none of them is decoration:
 
 * **Server-side.** The browser never contacts the geocoder, so the operator's own
   address is not disclosed to it either — only this server's.
-* **Only on an explicit press.** There is no as-you-type autocomplete, which would
-  send a query per keystroke: "f", "fo", "for", "fort"… Nominatim's usage policy
-  forbids exactly that, and it would leak far more than the finished string.
+* **Two services, each where it is strong.** :func:`search` is the explicit press
+  and goes to Nominatim, whose usage policy forbids type-ahead. :func:`suggest` is
+  the as-you-type box and goes to Photon, which is built for it. Measured before
+  choosing — see :func:`suggest` for the numbers.
+* **Type-ahead is more disclosure than a press, and is treated as such.** It sends
+  partial strings, so it is debounced in the browser, refuses queries under three
+  characters, and fails silently rather than complaining once per keystroke.
 * **Configurable, and optional.** A deployment can point this at its own geocoder
   or leave it off. Coordinates stay typeable either way — an operator with no
   internet must still be able to draw a fence.
@@ -166,3 +170,154 @@ def _parse(payload: object) -> list[Place]:
 def reset_cache() -> None:
     with _CACHE_LOCK:
         _CACHE.clear()
+
+
+# --------------------------------------------------------------------------- #
+# Suggestions as you type (W110)
+# --------------------------------------------------------------------------- #
+
+#: komoot's public Photon instance. Free, keyless, and built for type-ahead —
+#: which is the one thing Nominatim's usage policy forbids, and the reason the
+#: two live side by side rather than one replacing the other.
+DEFAULT_SUGGEST_ENDPOINT = "https://photon.komoot.io/api"
+
+SETTING_SUGGEST_ENDPOINT = "location.suggest_url"
+
+#: ⚠️ Below this, suggestions are noise and the request is wasted. Two characters
+#: match half the planet, and every one of them is a query a third party sees.
+MIN_QUERY_LENGTH = 3
+
+MAX_SUGGESTIONS = 6
+
+
+def suggest_endpoint(session: Session) -> str:
+    from app.services import settings_store
+
+    return (
+        settings_store.get(session, SETTING_SUGGEST_ENDPOINT, "").strip()
+        or DEFAULT_SUGGEST_ENDPOINT
+    )
+
+
+def suggest(
+    session: Session,
+    query: str,
+    *,
+    near: tuple[float, float] | None = None,
+    client: httpx.Client | None = None,
+) -> list[Place]:
+    """Address suggestions for a partial string, for a type-ahead box.
+
+    ⚠️ **Separate from :func:`search`, and deliberately a different service.**
+    Measured against the operator's own address before choosing:
+
+    * Photon answers `"Upper Dr Corona"` with three Upper Drives in Corona,
+      California — exactly the disambiguation a chooser needs.
+    * Photon answers `"110 W Upper"` with a road in **Nova Scotia**, at every
+      `location_bias_scale` from the default to 5. Its ranking lets the house
+      number dominate the street name.
+    * Nominatim answers the fully-typed `"110 W Upper Dr, Corona CA"` correctly,
+      and forbids type-ahead in its usage policy.
+
+    So each is used where it is strong: Photon while typing, Nominatim on the
+    press. A single service for both would be worse at one of the two jobs.
+
+    ``near`` biases results toward where the operator is looking, which is what
+    turns `"Cor"` from a global list into Corona, California.
+    """
+    query = (query or "").strip()
+    if len(query) < MIN_QUERY_LENGTH:
+        return []
+
+    url = suggest_endpoint(session)
+    params: dict[str, object] = {"q": query, "limit": MAX_SUGGESTIONS}
+    if near is not None:
+        params["lat"], params["lon"] = near
+
+    key = f"suggest\n{url}\n{query.lower()}\n{near}"
+    with _CACHE_LOCK:
+        cached = _CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    owned = client is None
+    http = client or httpx.Client(timeout=TIMEOUT_SECONDS, follow_redirects=True)
+    try:
+        response = http.get(url, params=params, headers={"User-Agent": USER_AGENT})
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        # ⚠️ Suggestions fail *quietly*. This runs on almost every keystroke, and
+        # an error banner per character would bury the form in complaints about a
+        # convenience. The Find button still reports failures loudly, which is
+        # where an operator actually needs to hear about them.
+        logger.info("suggestions unavailable from %s: %s", url, exc)
+        return []
+    finally:
+        if owned:
+            http.close()
+
+    places = _parse_photon(payload)
+    with _CACHE_LOCK:
+        if len(_CACHE) >= _CACHE_LIMIT:
+            _CACHE.clear()
+        _CACHE[key] = places
+    return places
+
+
+def _parse_photon(payload: object) -> list[Place]:
+    """Read Photon's GeoJSON. A different shape from Nominatim's flat JSON."""
+    if not isinstance(payload, dict):
+        return []
+    features = payload.get("features")
+    if not isinstance(features, list):
+        return []
+
+    places: list[Place] = []
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        geometry = feature.get("geometry") or {}
+        coordinates = geometry.get("coordinates") if isinstance(geometry, dict) else None
+        if not isinstance(coordinates, list) or len(coordinates) < 2:
+            continue
+        try:
+            # ⚠️ GeoJSON is [longitude, latitude] — the opposite order to every
+            # other coordinate in this codebase. Reading it as lat/lon puts a
+            # fence in the sea off West Africa for anywhere in the Americas.
+            longitude = float(coordinates[0])
+            latitude = float(coordinates[1])
+        except (TypeError, ValueError):
+            continue
+        if not (-90.0 <= latitude <= 90.0 and -180.0 <= longitude <= 180.0):
+            continue
+
+        label = _photon_label(feature.get("properties") or {})
+        if not label:
+            label = f"{latitude:.5f}, {longitude:.5f}"
+        places.append(Place(label=label, latitude=latitude, longitude=longitude))
+    return places
+
+
+def _photon_label(properties: object) -> str:
+    """A readable one-line address from Photon's separate fields.
+
+    Nominatim hands back a finished `display_name`; Photon hands back the parts
+    and expects the caller to assemble them. Joined widest-last so the
+    distinguishing detail — which of three Upper Drives — is what the eye meets
+    first in a list.
+    """
+    if not isinstance(properties, dict):
+        return ""
+
+    number = str(properties.get("housenumber") or "").strip()
+    street = str(properties.get("street") or properties.get("name") or "").strip()
+    head = f"{number} {street}".strip() if number else street
+
+    parts = [
+        head,
+        str(properties.get("city") or properties.get("county") or "").strip(),
+        str(properties.get("state") or "").strip(),
+        str(properties.get("country") or "").strip(),
+    ]
+    return ", ".join(part for part in parts if part)

@@ -602,6 +602,35 @@ def geocode_lookup(
     )
 
 
+@router.get("/policies/geocode/suggest")
+def geocode_suggest(
+    q: str = "",
+    lat: float | None = None,
+    lon: float | None = None,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> JSONResponse:
+    """Address suggestions for a partial string (W110).
+
+    ⚠️ **Never raises, never 500s.** This is called while somebody is typing, so
+    a failure has to be silence rather than an error — the Find button is where a
+    broken lookup gets reported, once, where it can be read.
+
+    `lat`/`lon` bias results toward what the operator is looking at, which is the
+    difference between "Cor" meaning Corona, California and meaning a global list.
+    """
+    near = (lat, lon) if lat is not None and lon is not None else None
+    places = geocoding.suggest(session, q, near=near)
+    return JSONResponse(
+        {
+            "results": [
+                {"label": p.label, "latitude": p.latitude, "longitude": p.longitude}
+                for p in places
+            ]
+        }
+    )
+
+
 @router.post("/devices/{device_id}/action/{action}")
 def device_action_form(
     device_id: uuid.UUID,

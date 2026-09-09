@@ -308,14 +308,20 @@ function atlasWireGeofencePicker() {
 
   function showResults(results, row) {
     var box = picker.querySelector("[data-geofence-results]");
-    if (!box) { place(row, results[0]); return; }
+    if (!box) { if (row) place(row, results[0]); return; }
     box.innerHTML = "";
     results.forEach(function (result) {
       var option = document.createElement("button");
       option.type = "button";
       option.textContent = result.label;
       option.addEventListener("click", function () {
-        place(row, result);
+        // ⚠️ Resolved at click, not at render. A suggestion list can be built
+        // before any fence row exists — and choosing one is exactly the moment
+        // the operator means to create it. This is W109a's lesson applied to the
+        // path W110 added, rather than learned twice.
+        var all = rowsEnsuringOne();
+        if (!all.length) return;
+        place(row || all[Math.min(selected, all.length - 1)], result);
         clearResults();
       });
       box.appendChild(option);
@@ -425,6 +431,57 @@ function atlasWireGeofencePicker() {
       })
       .finally(function () { findButton.disabled = false; });
   }
+
+  // --- suggestions as you type -------------------------------------------- //
+  //
+  // ⚠️ **Debounced, floored and cancelled**, and each guard is there for its own
+  // reason. Debounce, because a request per keystroke is neither fair use of a
+  // free service nor necessary. A three-character floor, because two characters
+  // match half the planet and every one of them is a query somebody else sees.
+  // Cancellation, because answers arriving out of order would otherwise let a
+  // stale reply for "Cor" overwrite the list for "Corona".
+  var suggestTimer = null;
+  var suggestSeq = 0;
+
+  function suggestionsBox() {
+    return picker.querySelector("[data-geofence-results]");
+  }
+
+  function requestSuggestions() {
+    var query = (addressBox.value || "").trim();
+    if (query.length < 3) { clearResults(); return; }
+
+    var seq = ++suggestSeq;
+    var centre = map.getCenter();
+    var url = "/policies/geocode/suggest?q=" + encodeURIComponent(query) +
+      "&lat=" + centre.lat.toFixed(4) + "&lon=" + centre.lng.toFixed(4);
+
+    fetch(url, { headers: { Accept: "application/json" } })
+      .then(function (response) { return response.json(); })
+      .then(function (data) {
+        // A reply for a query the operator has already typed past.
+        if (seq !== suggestSeq) return;
+        if (!data.results || !data.results.length) { clearResults(); return; }
+
+        var all = rows();
+        showResults(data.results, all.length ? all[Math.min(selected, all.length - 1)] : null);
+      })
+      .catch(function () {
+        // Silent. The Find button reports failures; a banner per keystroke would
+        // bury the form in complaints about a convenience.
+        clearResults();
+      });
+  }
+
+  addressBox.addEventListener("input", function () {
+    if (suggestTimer) window.clearTimeout(suggestTimer);
+    suggestTimer = window.setTimeout(requestSuggestions, 300);
+  });
+
+  // Clicking away puts the list down; clicking a suggestion is handled first.
+  document.addEventListener("click", function (event) {
+    if (!picker.contains(event.target)) clearResults();
+  });
 
   findButton.addEventListener("click", find);
   addressBox.addEventListener("keydown", function (event) {

@@ -559,6 +559,68 @@ a tab — the grey-box failure `atlas-map.js` already carries a note about. A si
 map that follows the selected row also answers the question an operator actually
 has, which is whether their fences overlap.
 
+### ✅ W110 — Address suggestions as you type
+
+Operator, 2026-09-09: *"some mapping services have a system where it will popup
+matching addresses as you type… is this a service that we can implement that is
+provided at no cost? i dont want anything hosted locally."*
+
+✅ **Yes: komoot's public Photon instance.** Free, keyless, hosted, and type-ahead
+is its headline feature — which is precisely what Nominatim's usage policy
+forbids, and why W109 shipped a button instead.
+
+#### ⚠️ Two services, because measurement said so
+
+Photon was tested against the operator's own address before being adopted:
+
+| Typed | Photon | Nominatim |
+|---|---|---|
+| `Cor` | ✅ Corona, California (with bias) | ✗ policy forbids type-ahead |
+| `Upper Dr Corona` | ✅ three Upper Drives in Corona CA | ✅ |
+| `110 W Upper` | ❌ **Nova Scotia**, at every `location_bias_scale` up to 5 | ✅ |
+
+Photon lets a house number dominate a partial street name, and no amount of bias
+fixes it. So **Photon answers while you type, Nominatim answers the press** — each
+where it is strong. A single service for both would be worse at one of the jobs.
+
+⚠️ **Bias is what makes suggestions useful at all.** Unbiased, `"Cor"` returns a
+global list; biased to the map's current centre it returns Corona, California. The
+browser sends the map centre with every suggestion request.
+
+#### What the type-ahead does about being type-ahead
+
+It is more disclosure than a button — partial strings, not just finished ones —
+and it is treated as such rather than waved through:
+
+* **Debounced at 300 ms**, so it is a few requests rather than one per keypress.
+  komoot's terms are *"please be fair — extensive usage will be throttled"*.
+* **A three-character floor.** Two characters match half the planet, and every one
+  of them is a query somebody else sees.
+* ⚠️ **Sequence-guarded.** Replies arrive out of order, and without it a slow
+  answer for `"Cor"` lands after the fast one for `"Corona"` and replaces it.
+* **Silent on failure.** It runs on almost every keystroke; an error banner per
+  character would bury the form in complaints about a convenience. The Find button
+  is where a broken lookup is reported, once, where it can be read.
+* **Still proxied**, so the browser never contacts komoot and the operator's own
+  address is never disclosed to it.
+
+⚠️ **No availability guarantee.** komoot calls it a demo service and reserves the
+right to change or withdraw it. Suggestions failing costs convenience only:
+`Find` still works, and coordinates stay typeable. `Admin → Location → Address
+suggestions URL` points it elsewhere, or at something unreachable to turn it off.
+
+**A W109 test was rewritten rather than deleted.** It asserted the picker never
+searches while typing. That rule was really *"never send type-ahead to the service
+that forbids it"*, which is still true — so the test now asserts the suggest path
+never reaches the Nominatim-backed endpoint.
+
+⚠️ **GeoJSON is `[longitude, latitude]`** — the reverse of every other coordinate
+in this codebase. Read the other way round, anywhere in the Americas lands in the
+sea off West Africa. Tested with numbers chosen so a swap is unmistakable.
+
+**1306 server tests.** Verified live: `"Upper Dr Coro"` → three Upper Drives in
+Corona, California; `"Cor"` → Corona; `"Co"` → asks nobody.
+
 ###### ⚠️ W109a — the field found it in an hour (2026-09-09)
 
 Operator: *"I typed in an address of 110 West upper Corona California, when I

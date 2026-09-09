@@ -103,6 +103,14 @@ GROUPS: dict[str, Group] = {
                         "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"),
                   Field("location.tile_attribution", "Tile attribution", "text",
                         "Shown in the map corner. Most tile providers require it."),
+                  Field("location.suggest_url", "Address suggestions URL", "text",
+                        "Used for the as-you-type suggestions in the geofence "
+                        "editor. Blank uses komoot's public Photon service, which "
+                        "is free and needs no key. ⚠️ Suggestions send what you "
+                        "are part-way through typing, not just the finished "
+                        "address — more disclosure than the Find button. Clear "
+                        "this and set it to something unreachable to turn "
+                        "suggestions off; Find keeps working."),
                   Field("location.geocoder_url", "Address lookup URL", "text",
                         "Used by the geofence editor to turn a typed address into "
                         "a coordinate. Sent only when someone presses Find, from "
