@@ -569,6 +569,43 @@ provided at no cost? i dont want anything hosted locally."*
 is its headline feature — which is precisely what Nominatim's usage policy
 forbids, and why W109 shipped a button instead.
 
+###### ⚠️ W110b — Ontario for a California address (2026-09-09)
+
+*"110 w upper dr, corona ca"* suggested **Upper Canada Drive, Kitchener,
+Ontario**. Diagnosed by isolating the tokens rather than guessing, all inside one
+southern California box:
+
+| Typed | Photon |
+|---|---|
+| `w upper dr corona` | ✅ Upper Drive, Corona CA |
+| `110 upper dr corona` | ✅ Upper Drive, Corona CA |
+| `upper dr corona ca` | ✅ Upper Drive, Corona CA — so **"ca" was never the problem** |
+| **`110 w upper dr corona`** | ❌ **nothing at all** |
+
+⚠️ **Photon requires every token to match.** Corona has an *Upper Drive* and an
+*East Upper Drive* but no *West* one, so no record holds both `110` and `w`. The
+house number alone is fine; the directional alone is fine; together they
+over-constrain to zero.
+
+⚠️ **The wrong answer came from my fallback, not from the box.** W110a made the
+empty box fall straight through to a worldwide search — which found Upper Canada
+Drive and presented it confidently at the top of the list. **A precise-looking
+answer on the wrong continent is worse than no answer**, because the operator
+reads the first row as the result.
+
+✅ **Fixed by ordering: loosen the query before widening the map.** The ladder is
+now (1) query in the box, (2) query minus a leading house number, still in the
+box, (3) query with no box, (4) both loosened. Step 2 is what rescues this, and it
+never leaves southern California to do it. Dropping the number costs nothing that
+matters: a geofence has a radius in the hundreds of metres, so street-level
+placement is already finer than the fence itself.
+
+Verified live: the operator's exact string now returns *East Upper Drive, Corona,
+California* and *Upper Drive, Corona, California*; `"Berlin Germany"` inside a
+California box still reaches Berlin.
+
+**1315 server tests.**
+
 ###### ⚠️ W110a — unreadable, and answering Nova Scotia (2026-09-09)
 
 A screenshot from the operator. Two faults, one of which no test could ever have

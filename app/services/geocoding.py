@@ -249,11 +249,7 @@ def suggest(
     owned = client is None
     http = client or httpx.Client(timeout=TIMEOUT_SECONDS, follow_redirects=True)
     try:
-        places = _ask_photon(http, url, query, near, bbox)
-        if not places and bbox is not None:
-            # The operator is searching for somewhere off-screen. Widen rather
-            # than answer "no matches" for a place that plainly exists.
-            places = _ask_photon(http, url, query, near, None)
+        places = _search_photon(http, url, query, near, bbox)
     except (httpx.HTTPError, ValueError) as exc:
         # ⚠️ Suggestions fail *quietly*. This runs on almost every keystroke, and
         # an error banner per character would bury the form in complaints about a
@@ -270,6 +266,68 @@ def suggest(
             _CACHE.clear()
         _CACHE[key] = places
     return places
+
+
+def _without_house_number(query: str) -> str:
+    """The same query with a leading house number removed, or "" if there is none.
+
+    ⚠️ **Photon requires every token to match**, and a house number combined with
+    a directional prefix over-constrains hard. Measured on the operator's own
+    address, all inside the same California box:
+
+    * `"w upper dr corona"` → Upper Drive, Corona CA
+    * `"110 upper dr corona"` → Upper Drive, Corona CA
+    * `"110 w upper dr corona"` → **nothing at all**
+
+    Corona has an *Upper Drive* and an *East Upper Drive* but no *West* one, so no
+    record holds both `110` and `w`. Dropping the number is what rescues it, and
+    costs nothing that matters here: a geofence has a radius measured in hundreds
+    of metres, so street-level placement is already finer than the fence.
+    """
+    stripped = query.strip()
+    parts = stripped.split(None, 1)
+    if len(parts) == 2 and parts[0].rstrip(",").isdigit():
+        return parts[1].strip()
+    return ""
+
+
+def _search_photon(
+    http: httpx.Client,
+    url: str,
+    query: str,
+    near: tuple[float, float] | None,
+    bbox: tuple[float, float, float, float] | None,
+) -> list[Place]:
+    """Ask progressively less precisely, staying local for as long as possible.
+
+    ⚠️ **The order is the whole point, and the first version had it wrong.** It
+    went straight from "nothing in the box" to "search the world", which answered
+    `"110 w upper dr, corona ca"` with Upper Canada Drive in **Ontario** —
+    confident, precise-looking and on the wrong continent. An operator scanning a
+    list reads the top entry as the answer.
+
+    Loosening the *query* while staying inside the map beats keeping the query and
+    leaving the map. A slightly less precise local answer is useful; a perfectly
+    precise answer two thousand miles away is a trap.
+    """
+    attempts: list[tuple[str, tuple[float, float, float, float] | None]] = [(query, bbox)]
+
+    simpler = _without_house_number(query)
+    if simpler:
+        attempts.append((simpler, bbox))
+    if bbox is not None:
+        # Only now leave the visible map — the operator may genuinely be looking
+        # for somewhere off-screen, and "Berlin Germany" in a California box
+        # returns exactly zero.
+        attempts.append((query, None))
+        if simpler:
+            attempts.append((simpler, None))
+
+    for attempt_query, attempt_box in attempts:
+        places = _ask_photon(http, url, attempt_query, near, attempt_box)
+        if places:
+            return places
+    return []
 
 
 def _ask_photon(

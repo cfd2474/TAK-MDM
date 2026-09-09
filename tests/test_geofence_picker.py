@@ -604,3 +604,102 @@ def test_a_malformed_box_is_dropped_rather_than_refused(client: TestClient, monk
 
     assert response.status_code == 200
     assert seen["bbox"] is None
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ Ontario for a California address (2026-09-09)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_leading_house_number_is_droppable(client: TestClient):
+    from app.services.geocoding import _without_house_number as strip
+
+    assert strip("110 w upper dr, corona ca") == "w upper dr, corona ca"
+    assert strip("110 upper dr") == "upper dr"
+    # Nothing to drop: these must not be mangled into a broader search.
+    assert strip("upper dr corona") == ""
+    assert strip("corona ca") == ""
+    assert strip("110") == ""
+
+
+def test_the_query_loosens_before_the_map_widens(client: TestClient, db):
+    """⚠️ The ordering is the fix, and the first version had it backwards.
+
+    Measured on the operator's address, all in one California box:
+    "110 w upper dr corona" returns nothing, "w upper dr corona" returns Upper
+    Drive in Corona. Going straight from "nothing in the box" to "search the
+    world" answered with Upper Canada Drive in Ontario — confident, precise and
+    on the wrong continent, which an operator reads as the answer.
+    """
+    asked = []
+
+    def capture(request):
+        url = str(request.url)
+        asked.append(url)
+        # Photon's real behaviour: the full query finds nothing, the query
+        # without the house number finds the street.
+        if "110" in url:
+            return httpx.Response(200, json={"features": []})
+        return httpx.Response(200, json={"features": [
+            _feature(-117.58, 33.83, street="Upper Drive", city="Corona", state="California")
+        ]})
+
+    places = geocoding.suggest(
+        db, "110 w upper dr, corona ca",
+        near=(33.87, -117.57),
+        bbox=(-118.5, 33.4, -116.8, 34.3),
+        client=_client(capture),
+    )
+
+    assert places, "the street was found"
+    assert "Corona" in places[0].label
+    # ⚠️ Two attempts, and the second still carried the box: the search never
+    # left the visible map to get this answer.
+    assert len(asked) == 2
+    assert "bbox=" in asked[0] and "bbox=" in asked[1]
+
+
+def test_the_map_is_only_widened_as_a_last_resort(client: TestClient, db):
+    """"Berlin Germany" inside a California box returns exactly zero from Photon,
+    so leaving the box has to remain possible — just last."""
+    asked = []
+
+    def capture(request):
+        url = str(request.url)
+        asked.append(url)
+        if "bbox=" in url:
+            return httpx.Response(200, json={"features": []})
+        return httpx.Response(200, json={"features": [
+            _feature(13.4050, 52.5200, name="Berlin", country="Germany")
+        ]})
+
+    places = geocoding.suggest(
+        db, "Berlin Germany",
+        bbox=(-118.5, 33.4, -116.8, 34.3),
+        client=_client(capture),
+    )
+
+    assert places[0].label.startswith("Berlin")
+    assert "bbox=" in asked[0], "the box was tried first"
+    assert "bbox=" not in asked[-1], "and dropped only after it failed"
+
+
+def test_a_query_with_no_house_number_does_not_get_an_extra_attempt(
+    client: TestClient, db
+):
+    """Loosening only happens when there is something to loosen — otherwise the
+    same query would be asked twice for nothing."""
+    asked = []
+
+    def capture(request):
+        asked.append(str(request.url))
+        return httpx.Response(200, json={"features": []})
+
+    geocoding.suggest(
+        db, "upper dr corona",
+        bbox=(-118.5, 33.4, -116.8, 34.3),
+        client=_client(capture),
+    )
+
+    # Boxed, then unboxed. No house-number variant, because there is no number.
+    assert len(asked) == 2
