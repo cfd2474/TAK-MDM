@@ -38,9 +38,9 @@ only rule that lets an operator say either thing and have it hold.
 from __future__ import annotations
 
 import enum
-from typing import Annotated
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.policies.specs.base import PolicySpec
 from app.policies.strategies import Merge, MergeStrategy
@@ -66,6 +66,28 @@ class RadioState(str, enum.Enum):
     ON = "on"
     OFF = "off"
     UNMANAGED = "unmanaged"
+
+
+class FencePassword(str, enum.Enum):
+    """What a fence asks of the screen lock.
+
+    ⚠️ **`OFF` suspends the *policy*, it does not defeat a lock somebody chose.**
+    `setKeyguardDisabled` cannot bypass an existing PIN and neither can Knox — both
+    recorded in the Android reference and `docs/KNOX.md`. What works is narrower
+    and genuinely useful: relax the constraints this system itself imposed, then
+    clear the passcode this system itself set. AOSP allows the clear *"if the
+    current password constraints allow it"*, which is why the order matters.
+
+    That is why `OFF` is only accepted on a profile whose PASSWORD policy sets a
+    passcode — it is the one case where the agent knows what to put back.
+    """
+
+    #: The fence has no opinion; the PASSWORD policy applies as written.
+    NONE = "none"
+    #: A trusted area: suspend the passcode while inside, restore it on leaving.
+    OFF = "off"
+    #: Require a lock, and lock the device at once.
+    ON = "on"
 
 
 class FenceTrigger(str, enum.Enum):
@@ -113,12 +135,15 @@ class Geofence(BaseModel):
         "Exit: while it is outside.",
     )
 
-    password_enforced: bool = Field(
-        default=False,
+    password: FencePassword = Field(
+        default=FencePassword.NONE,
         description=(
-            "Require a screen lock while this fence applies, and lock the device "
-            "immediately so it takes effect at once. On a device with no password "
-            "set, Android will prompt whoever is holding it to create one."
+            "On: require a screen lock while this fence applies, and lock the "
+            "device at once. Off: a trusted area — suspend the passcode this "
+            "policy set while the device is inside, and restore it on leaving. "
+            "Off needs a Password policy in this same profile that sets a "
+            "passcode, because that is what gets put back. It cannot remove a PIN "
+            "the user chose themselves."
         ),
     )
     wifi: RadioState = Field(
@@ -131,6 +156,28 @@ class Geofence(BaseModel):
         ),
     )
     bluetooth: RadioState = Field(default=RadioState.UNMANAGED)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_the_old_boolean(cls, data: Any) -> Any:
+        """Read `password_enforced: true/false` as `password: on/none`.
+
+        ⚠️ Policies written before this field became three-state are still in the
+        database, and a stored spec is not migrated when the model changes. Without
+        this, every existing fence would fail validation the next time its policy
+        was read — and the failure would surface as a device unable to resolve its
+        policy, not as anything mentioning geofences.
+        """
+        if not isinstance(data, dict) or "password" in data:
+            return data
+        if "password_enforced" in data:
+            data = dict(data)
+            legacy = data.pop("password_enforced")
+            enforced = legacy if isinstance(legacy, bool) else str(legacy).lower() in (
+                "1", "true", "yes", "on"
+            )
+            data["password"] = FencePassword.ON if enforced else FencePassword.NONE
+        return data
 
     reporting_interval_override_minutes: int = Field(
         default=0,

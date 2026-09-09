@@ -173,7 +173,7 @@ class LocationTracker(private val context: Context) {
                 "${config.pendingLocations.size} buffered"
         )
 
-        evaluateFences(fix.latitude, fix.longitude)
+        evaluateFences(fix.latitude, fix.longitude, now - fix.time)
     }
 
     /**
@@ -182,7 +182,7 @@ class LocationTracker(private val context: Context) {
      * Runs on the fix, not on the sync: a fence has to keep working when the
      * server cannot be reached, which is the situation it mostly exists for.
      */
-    private fun evaluateFences(latitude: Double, longitude: Double) {
+    private fun evaluateFences(latitude: Double, longitude: Double, fixAgeMillis: Long) {
         val raw = config.geofencesJson ?: return
         val fences = runCatching {
             GeofencePlan.parse(JSONObject().put(GeofencePlan.FENCES_KEY, JSONArray(raw)))
@@ -192,7 +192,28 @@ class LocationTracker(private val context: Context) {
         }
         if (fences.isEmpty()) return
 
-        val actions = GeofencePlan.resolve(fences, latitude, longitude)
+        var actions = GeofencePlan.resolve(fences, latitude, longitude)
+
+        // ⚠️ **A stale fix is treated as outside a trusted area.**
+        //
+        // Every other fence action is safe to hold on an old position — a radio
+        // stays off and the worst case is an inconvenience. Suspending the
+        // passcode is not: a device that lost GPS indoors, or was carried out of
+        // the zone in a bag, would sit unlocked on the strength of a fix from
+        // hours ago, and nothing would look wrong from the console.
+        //
+        // So if the device's position cannot be confirmed *now*, the passcode
+        // comes back. The cost is a tablet that occasionally relocks when it need
+        // not; the alternative is one unlocked somewhere nobody can place.
+        if (actions.lock == GeofencePlan.Lock.OFF && fixAgeMillis > TRUSTED_FIX_MAX_AGE_MS) {
+            AgentLog.w(
+                TAG,
+                "trusted area not honoured: the position is ${fixAgeMillis / 60_000} " +
+                    "minutes old, so the passcode stays in force",
+            )
+            actions = actions.copy(lock = GeofencePlan.Lock.NONE)
+        }
+
         config.geofenceIntervalOverride = actions.intervalOverrideMinutes
         GeofenceEnforcer(context).enforce(actions)
     }
@@ -243,6 +264,16 @@ class LocationTracker(private val context: Context) {
 
     companion object {
         private const val TAG = "LocationTracker"
+
+        /**
+         * How old a fix may be and still hold a trusted area open.
+         *
+         * ⚠️ Ten minutes, and deliberately not the reporting interval: an operator
+         * may set a long interval to save battery, and that must not buy a longer
+         * window in which a device sits unlocked on a position nobody has
+         * confirmed.
+         */
+        const val TRUSTED_FIX_MAX_AGE_MS = 10 * 60 * 1000L
 
         /**
          * ⚠️ `Locale.US` and an explicit UTC zone, not the device's.

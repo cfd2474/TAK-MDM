@@ -16,6 +16,7 @@
 
 package com.taksolutions.atlasmdm.policy
 
+import com.taksolutions.atlasmdm.policy.GeofencePlan.Lock
 import com.taksolutions.atlasmdm.policy.GeofencePlan.Radio
 import org.json.JSONArray
 import org.json.JSONObject
@@ -39,11 +40,11 @@ class GeofencePlanTest {
         lon: Double = -117.1270,
         radius: Double = 200.0,
         entry: Boolean = true,
-        password: Boolean = false,
+        lock: Lock = Lock.NONE,
         wifi: Radio = Radio.UNMANAGED,
         bluetooth: Radio = Radio.UNMANAGED,
         override: Int = 0,
-    ) = GeofencePlan.Fence(name, lat, lon, radius, entry, password, wifi, bluetooth, override)
+    ) = GeofencePlan.Fence(name, lat, lon, radius, entry, lock, wifi, bluetooth, override)
 
     // -------------------------------------------------------------- geometry
 
@@ -151,11 +152,37 @@ class GeofencePlanTest {
     }
 
     @Test
-    fun `any fence requiring a password wins`() {
-        val lax = fence(name = "a", radius = 5000.0, password = false)
-        val strict = fence(name = "b", radius = 5000.0, password = true)
+    fun `requiring a lock beats suspending it, which beats no opinion`() {
+        // ⚠️ ON must beat OFF. Overlapping a trusted area with a fence that
+        // requires a lock is exactly how a secure zone would be silently
+        // unlocked by a neighbouring one.
+        val quiet = fence(name = "a", radius = 5000.0, lock = Lock.NONE)
+        val trusted = fence(name = "b", radius = 5000.0, lock = Lock.OFF)
+        val strict = fence(name = "c", radius = 5000.0, lock = Lock.ON)
 
-        assertTrue(GeofencePlan.resolve(listOf(lax, strict), 33.6236, -117.1270).passwordEnforced)
+        assertEquals(
+            Lock.ON,
+            GeofencePlan.resolve(listOf(quiet, trusted, strict), 33.6236, -117.1270).lock,
+        )
+        assertEquals(
+            Lock.OFF,
+            GeofencePlan.resolve(listOf(quiet, trusted), 33.6236, -117.1270).lock,
+        )
+        assertEquals(
+            Lock.NONE,
+            GeofencePlan.resolve(listOf(quiet), 33.6236, -117.1270).lock,
+        )
+    }
+
+    @Test
+    fun `the lock precedence does not depend on fence order`() {
+        val trusted = fence(name = "a", radius = 5000.0, lock = Lock.OFF)
+        val strict = fence(name = "b", radius = 5000.0, lock = Lock.ON)
+
+        assertEquals(
+            GeofencePlan.resolve(listOf(trusted, strict), 33.6236, -117.1270).lock,
+            GeofencePlan.resolve(listOf(strict, trusted), 33.6236, -117.1270).lock,
+        )
     }
 
     @Test
@@ -214,7 +241,7 @@ class GeofencePlanTest {
                     .put("longitude", -117.1270)
                     .put("radius_m", 150)
                     .put("trigger", "entry")
-                    .put("password_enforced", true)
+                    .put("password", "on")
                     .put("wifi", "off")
                     .put("bluetooth", "on")
                     .put("reporting_interval_override_minutes", 2)
@@ -226,7 +253,7 @@ class GeofencePlanTest {
         assertEquals("Vault", parsed.name)
         assertEquals(150.0, parsed.radiusMetres, 0.001)
         assertTrue(parsed.triggerOnEntry)
-        assertTrue(parsed.passwordEnforced)
+        assertEquals(Lock.ON, parsed.lock)
         assertEquals(Radio.OFF, parsed.wifi)
         assertEquals(Radio.ON, parsed.bluetooth)
         assertEquals(2, parsed.intervalOverrideMinutes)
@@ -274,7 +301,7 @@ class GeofencePlanTest {
         // ⚠️ Folded into the PASSWORD spec rather than applied separately, so the
         // existing single writer applies and releases it. A second writer would be
         // undone by the next reconcile, minutes later, silently.
-        val merged = GeofencePlan.passwordSpecWithFence(JSONObject(), enforced = true)
+        val merged = GeofencePlan.passwordSpecWithFence(JSONObject(), Lock.ON)
 
         assertEquals(GeofencePlan.PASSWORD_QUALITY_SOMETHING, merged.optInt("quality"))
     }
@@ -283,7 +310,7 @@ class GeofencePlanTest {
     fun `a stricter password policy is not weakened by the fence floor`() {
         val strict = JSONObject().put("quality", 6).put("min_length", 12)
 
-        val merged = GeofencePlan.passwordSpecWithFence(strict, enforced = true)
+        val merged = GeofencePlan.passwordSpecWithFence(strict, Lock.ON)
 
         assertEquals(6, merged.optInt("quality"))
         assertEquals(12, merged.optInt("min_length"), )
@@ -296,7 +323,7 @@ class GeofencePlanTest {
         // policy is the permissive one.
         val original = JSONObject().put("quality", 2)
 
-        val untouched = GeofencePlan.passwordSpecWithFence(original, enforced = false)
+        val untouched = GeofencePlan.passwordSpecWithFence(original, Lock.NONE)
 
         assertEquals(2, untouched.optInt("quality"))
         assertFalse(untouched === JSONObject())
@@ -308,15 +335,55 @@ class GeofencePlanTest {
         // edited it in place would leak its floor into everything downstream.
         val original = JSONObject().put("quality", 0)
 
-        GeofencePlan.passwordSpecWithFence(original, enforced = true)
+        GeofencePlan.passwordSpecWithFence(original, Lock.ON)
 
         assertEquals(0, original.optInt("quality"))
     }
 
     @Test
     fun `an absent password policy still gets the fence floor`() {
-        val merged = GeofencePlan.passwordSpecWithFence(null, enforced = true)
+        val merged = GeofencePlan.passwordSpecWithFence(null, Lock.ON)
 
         assertEquals(GeofencePlan.PASSWORD_QUALITY_SOMETHING, merged.optInt("quality"))
+    }
+
+    @Test
+    fun `a trusted area hands the applier an empty spec`() {
+        // ⚠️ Empty is not the same as "skip". applyPassword drives every field to
+        // a definite value each reconcile and treats absent as permissive (R14),
+        // so an empty spec is what actively *releases* the constraints — and
+        // releasing them is what lets the passcode be cleared at all.
+        val strict = JSONObject().put("quality", 6).put("min_length", 12)
+
+        val released = GeofencePlan.passwordSpecWithFence(strict, Lock.OFF)
+
+        assertEquals(0, released.length())
+        assertEquals(6, strict.optInt("quality"), )
+    }
+
+    @Test
+    fun `an unknown stored lock name reads as none`() {
+        // The safe end: a device whose stored setting cannot be read keeps its
+        // passcode rather than suspending it.
+        assertEquals(Lock.NONE, GeofencePlan.lockFromName(null))
+        assertEquals(Lock.NONE, GeofencePlan.lockFromName(""))
+        assertEquals(Lock.NONE, GeofencePlan.lockFromName("banana"))
+        assertEquals(Lock.OFF, GeofencePlan.lockFromName("off"))
+        assertEquals(Lock.ON, GeofencePlan.lockFromName("on"))
+    }
+
+    @Test
+    fun `the pre-W111 boolean is still understood`() {
+        val section = JSONObject().put(
+            "geofences",
+            JSONArray().put(
+                JSONObject()
+                    .put("name", "Legacy")
+                    .put("latitude", 1.0).put("longitude", 2.0).put("radius_m", 100)
+                    .put("password_enforced", true)
+            ),
+        )
+
+        assertEquals(Lock.ON, GeofencePlan.parse(section).single().lock)
     }
 }

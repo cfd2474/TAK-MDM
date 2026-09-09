@@ -121,10 +121,10 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
         elif field.control == "geofences":
             # ⚠️ Paired **by position**, which is safe here because every control
             # in this row is an input or a select and both submit on every row.
-            # Password enforced is a yes/no select rather than a checkbox for
-            # exactly that reason: an unchecked checkbox submits nothing at all,
-            # so one would shift every later row's setting onto the wrong fence —
-            # the same shape of bug the kiosk favourites note above records.
+            # The screen lock is a select rather than a checkbox for exactly that
+            # reason: an unchecked checkbox submits nothing at all, so one would
+            # shift every later row's setting onto the wrong fence — the same
+            # shape of bug the kiosk favourites note above records.
             names = form.getlist(f"{name}__name")
             latitudes = form.getlist(f"{name}__latitude")
             longitudes = form.getlist(f"{name}__longitude")
@@ -133,7 +133,7 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
             wifis = form.getlist(f"{name}__wifi")
             bluetooths = form.getlist(f"{name}__bluetooth")
             overrides = form.getlist(f"{name}__reporting_interval_override_minutes")
-            passwords = form.getlist(f"{name}__password_enforced")
+            passwords = form.getlist(f"{name}__password")
 
             def _at(values: list[str], index: int, default: str = "") -> str:
                 return values[index].strip() if index < len(values) else default
@@ -149,7 +149,7 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
                     # not cost them the rest of the form.
                     continue
 
-                enforced = _yes(passwords, i, default=False)
+                lock = _at(passwords, i, "none") or "none"
 
                 label = _at(names, i) or f"fence {i + 1}"
                 # Names are the merge key across stacked policies, so two fences
@@ -166,7 +166,7 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
                     "trigger": _at(triggers, i, "entry") or "entry",
                     "wifi": _at(wifis, i, "unmanaged") or "unmanaged",
                     "bluetooth": _at(bluetooths, i, "unmanaged") or "unmanaged",
-                    "password_enforced": enforced,
+                    "password": lock,
                 }
                 override = _at(overrides, i, "0") or "0"
                 fence["reporting_interval_override_minutes"] = override

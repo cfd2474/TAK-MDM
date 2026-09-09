@@ -317,6 +317,47 @@ class PolicyApplier(private val context: Context) {
      * private prefs (same store as the enrollment secret) so it survives a
      * process restart; an un-activated one is lost on reboot and regenerated.
      */
+    /**
+     * Clear the passcode this system set — a trusted area (W111).
+     *
+     * ⚠️ **Only ever called after the constraints have been released.** AOSP:
+     * *"Calling with a null or empty password will clear any existing PIN, pattern
+     * or password **if the current password constraints allow it**."* Called while
+     * a quality or length rule is still in force it is simply refused, returns
+     * `false`, and the device stays locked with nothing to say why — so the caller
+     * hands `applyPassword` an empty spec first, in the same reconcile.
+     *
+     * ⚠️ **Restoring needs no code.** `applyPassword` re-asserts `set_password`
+     * on every reconcile, so the moment the fence stops applying, the policy's own
+     * passcode goes back by the same path that fights a user changing it.
+     */
+    fun clearPasscodeForTrustedArea(): List<String> {
+        if (!isDeviceOwner) return listOf("trusted area: not device owner")
+
+        val token = loadOrCreateResetToken()
+        if (!dpm.isResetPasswordTokenActive(admin)) {
+            // The token could not be activated, which §6c says happens when a
+            // passcode was already set before enrolment. Reported rather than
+            // retried: it needs a human at the device once.
+            return listOf(
+                "trusted area: the passcode cannot be suspended because the reset " +
+                    "token is not active on this device"
+            )
+        }
+
+        val cleared = runCatching { dpm.resetPasswordWithToken(admin, "", token, 0) }
+            .onFailure { return listOf("trusted area: ${it.message}") }
+            .getOrDefault(false)
+
+        return if (cleared) {
+            AgentLog.i(TAG, "trusted area: passcode suspended")
+            emptyList()
+        } else {
+            // ⚠️ Returns false rather than throwing, like setWifiEnabled (W72).
+            listOf("trusted area: the platform refused to suspend the passcode")
+        }
+    }
+
     private fun ensurePasswordSet(desired: String): List<String> {
         if (desired.isBlank()) return emptyList()
         val failures = mutableListOf<String>()

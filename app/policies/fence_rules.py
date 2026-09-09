@@ -47,21 +47,51 @@ TRACKING_KEY = "tracking_fencing"
 PASSWORD_KEY = "password"
 
 
-def password_fences(tracking_spec: Mapping[str, Any] | None) -> list[str]:
-    """Names of fences in this spec that demand a lock."""
-    if not tracking_spec:
-        return []
-    fences = tracking_spec.get("geofences") or []
+def _fence_password(fence: Mapping[str, Any]) -> str:
+    """This fence's password setting, reading the pre-W111 boolean too."""
+    if "password" in fence:
+        value = fence.get("password")
+        return str(getattr(value, "value", value) or "none").lower()
+    return "on" if _truthy(fence.get("password_enforced")) else "none"
+
+
+def _named(fences: Any, wanted: str) -> list[str]:
     if not isinstance(fences, Iterable):
         return []
-
     names: list[str] = []
     for index, fence in enumerate(fences):
         if not isinstance(fence, Mapping):
             continue
-        if _truthy(fence.get("password_enforced")):
+        if _fence_password(fence) == wanted:
             names.append(str(fence.get("name") or f"fence {index + 1}"))
     return names
+
+
+def password_fences(tracking_spec: Mapping[str, Any] | None) -> list[str]:
+    """Names of fences in this spec that demand a lock."""
+    if not tracking_spec:
+        return []
+    return _named(tracking_spec.get("geofences") or [], "on")
+
+
+def suspending_fences(tracking_spec: Mapping[str, Any] | None) -> list[str]:
+    """Names of fences that suspend the passcode — trusted areas (W111)."""
+    if not tracking_spec:
+        return []
+    return _named(tracking_spec.get("geofences") or [], "off")
+
+
+def sets_a_passcode(password_spec: Mapping[str, Any] | None) -> bool:
+    """Does this PASSWORD policy set the passcode itself?
+
+    ⚠️ **The condition that makes a trusted area safe.** Suspending works by
+    clearing the passcode *this system set* and putting it back on the way out.
+    Where the user chose their own PIN there is nothing to put back — clearing it
+    would lock them out of their own credential permanently.
+    """
+    if not password_spec:
+        return False
+    return bool(str(password_spec.get("set_password") or "").strip())
 
 
 def _truthy(value: Any) -> bool:
@@ -92,6 +122,19 @@ def violation(
     password_spec: Mapping[str, Any] | None,
 ) -> str | None:
     """The message to refuse with, or None if this combination is allowed."""
+    suspending = suspending_fences(tracking_spec)
+    if suspending and not sets_a_passcode(password_spec):
+        listed = ", ".join(repr(name) for name in suspending)
+        many = len(suspending) > 1
+        return (
+            f"the {'geofences' if many else 'geofence'} {listed} "
+            f"{'suspend' if many else 'suspends'} the passcode, so this profile's "
+            "Password policy has to set one. A trusted area works by clearing the "
+            "passcode this policy applied and putting it back on the way out — "
+            "with nothing set here there is nothing to restore, and a PIN the user "
+            "chose themselves cannot be removed at all."
+        )
+
     demanding = password_fences(tracking_spec)
     if not demanding:
         return None
@@ -124,14 +167,14 @@ def blocks_password_removal(tracking_spec: Mapping[str, Any] | None) -> str | No
     them; this one fires from an entirely different tab, minutes later, and the
     thing it protects is not on screen.
     """
-    demanding = password_fences(tracking_spec)
+    demanding = password_fences(tracking_spec) + suspending_fences(tracking_spec)
     if not demanding:
         return None
 
     listed = ", ".join(repr(name) for name in demanding)
     many = len(demanding) > 1
     plural = "geofences" if many else "geofence"
-    verb = "require" if many else "requires"
+    verb = "depend on" if many else "depends on"
     return (
         f"this profile's {plural} {listed} {verb} a password, so its Password "
         "section cannot be removed while they do. Set Password enforced to No on "

@@ -576,14 +576,23 @@ class Reconciler(private val context: Context) {
         // — `applyPassword` drives every field to a definite value each time, R14 —
         // minutes later and without a word. Folding also makes the release
         // automatic: when no fence asks, the floor is simply not added.
-        if (config.geofencePasswordEnforced) {
+        val fenceLock = GeofencePlan.lockFromName(config.geofenceLock)
+        if (fenceLock != GeofencePlan.Lock.NONE) {
             policy.put(
                 "PASSWORD",
-                GeofencePlan.passwordSpecWithFence(policy.optJSONObject("PASSWORD"), true),
+                GeofencePlan.passwordSpecWithFence(policy.optJSONObject("PASSWORD"), fenceLock),
             )
         }
 
         errors += policyApplier.apply(policy)
+
+        // ⚠️ After `apply`, never before. The constraints have to be released in
+        // the same reconcile before the passcode can be cleared — AOSP refuses the
+        // clear while a quality or length rule is still in force, and says so only
+        // by returning false.
+        if (fenceLock == GeofencePlan.Lock.OFF) {
+            errors += policyApplier.clearPasscodeForTrustedArea()
+        }
         val appReport = reconcileApps(desired.optJSONArray("apps") ?: JSONArray())
         errors += appReport.errors
         warnings += appReport.warnings

@@ -559,6 +559,109 @@ a tab — the grey-box failure `atlas-map.js` already carries a note about. A si
 map that follows the selected row also answers the question an operator actually
 has, which is whether their fences overlap.
 
+### ✅ W111 — A trusted area that really does suspend the passcode
+
+Operator, 2026-09-09: *"can we have it remove a password policy that was placed by
+the web portal? if we set the standard password policy, could this setting not
+disable the same policy?… can it suspend a previous DPC set password policy, then
+re-enable it when the geofence policy has been breached?"*
+
+⚠️ **This reframing is what made it possible.** My first answer was no, and it
+was right about the wrong question: `setKeyguardDisabled` cannot bypass a PIN, and
+Knox cannot either (both recorded). But **suspending the policy we ourselves set**
+is a different act, and AOSP allows it:
+
+> Calling with a `null` or empty password will clear any existing PIN, pattern or
+> password **if the current password constraints allow it**.
+
+So: relax the constraints, *then* clear. Reverse the order and the clear is
+refused and returns `false`.
+
+✅ **The risk that would have bricked the fleet is ruled out.** The device identity
+key is built with `setUserAuthenticationRequired(false)`, so it is **not** bound to
+the lock credential and survives the passcode being cleared and restored. Had that
+been `true`, the first fence to fire would have destroyed every device's identity.
+Checked before answering, not after building.
+
+✅ **Restoring is free.** `applyPassword` is declarative (R14) and re-asserts
+`set_password` on every reconcile, so leaving the fence puts the passcode back
+with no new code — the same mechanism that already fights the user changing it.
+
+#### Conditions, each of which the console must enforce
+
+1. **ATLAS must own the passcode.** Only a profile whose PASSWORD policy sets
+   `set_password` may carry an *off* fence — that is the only case where the agent
+   knows what to restore. Clearing a passcode the *user* chose would lock them out
+   of their own credential with nothing to put back.
+2. **The reset token must be active**, which §6c says happens cleanly only when it
+   is provisioned before any passcode exists — i.e. at enrolment.
+3. `FEATURE_SECURE_LOCK_SCREEN`, which these tablets have.
+
+#### ⚠️ Three windows where a device could sit unlocked outside the zone
+
+All three fail **secure** — the cost is a device that occasionally re-locks when it
+need not, against the alternative of a tablet unlocked somewhere we cannot place.
+
+| Window | Answer |
+|---|---|
+| Leaving the zone | The passcode returns on the next fix, so up to one reporting interval late. The per-fence interval override exists for this. |
+| **GPS lost inside the zone** | A stale fix is treated as **outside**. If we cannot confirm the device is in the trusted area, the passcode comes back. |
+| Reboot | No fence is active until the first fix, so the policy's passcode applies. |
+
+###### ✅ Complete (2026-09-09) — agent 0.51.0 (versionCode 96), 1329 server tests
+
+Live: the editor offers **Not managed / Off — trusted area / On — require a
+lock**, and a lone trusted fence is refused with *"suspends the passcode, so this
+profile's Password policy has to set one."*
+
+**How suspension actually works, and why the order is load-bearing.** An *off*
+fence hands `applyPassword` an **empty** spec — which is not "skip it". R14 made
+that applier declarative: every field is driven to a definite value each reconcile
+and absent means permissive, so an empty spec is what actively *releases* the
+constraints. Only then can the passcode be cleared, because AOSP clears one
+*"if the current password constraints allow it"*. `clearPasscodeForTrustedArea`
+therefore runs **after** `apply`, in the same reconcile, and a test asserts that
+ordering by index rather than by hope.
+
+**Restoring needed no code at all.** `applyPassword` re-asserts `set_password` on
+every reconcile — the same mechanism that already fights a user changing it — so
+leaving the fence puts the passcode back by itself.
+
+⚠️ **`ON` beats `OFF` beats `NONE`.** Overlapping a trusted area with a fence that
+requires a lock is exactly how a secure zone would be silently unlocked by a
+neighbouring one. Asserted, and asserted order-independent.
+
+⚠️ **A stale fix is treated as outside.** Every other fence action is safe to hold
+on an old position — a radio stays off and the worst case is inconvenience.
+Suspending a passcode is not: a device that lost GPS indoors, or left the zone in
+a bag, would sit unlocked on a fix from hours ago with nothing looking wrong in
+the console. Ten minutes, **deliberately not the reporting interval** — a long
+interval set for battery must not buy a longer unlocked window.
+
+⚠️ **An unreadable stored state reads as `NONE`.** The safe end: a device whose
+setting cannot be parsed keeps its passcode.
+
+⚠️ **The old boolean is still read.** Stored specs are not migrated when a model
+changes, and every fence written before this would otherwise have failed
+validation on its next resolve — surfacing as a device that cannot get its policy,
+with nothing in the error mentioning geofences. Covered on both sides.
+
+**Gated where it must be:** *off* is accepted only on a profile whose PASSWORD
+policy **sets a passcode**, because that passcode is the thing restored. Removing
+that Password section is refused while a fence depends on it — the W106 C4a trap,
+one level subtler.
+
+#### Steps
+
+1. Spec: `password_enforced` (bool) becomes `password` (none/off/on), reading the
+   old boolean so stored policies keep working.
+2. Resolve most-restrictive: **on beats off beats none**.
+3. `fence_rules`: *on* needs a PASSWORD policy; *off* needs one that sets a
+   passcode.
+4. Agent: an *off* fence blanks the PASSWORD spec and clears the passcode; the
+   stale-fix guard; restore happens by itself.
+5. Tests both sides, then build, deploy and verify on hardware.
+
 ### ✅ W110 — Address suggestions as you type
 
 Operator, 2026-09-09: *"some mapping services have a system where it will popup

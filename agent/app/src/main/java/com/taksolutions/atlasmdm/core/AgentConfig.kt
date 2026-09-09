@@ -419,16 +419,16 @@ class AgentConfig(context: Context) {
         set(value) = prefs.edit { putString(KEY_FENCE_BT_RESTORE, value) }
 
     /**
-     * Whether a fence currently requires a password.
+     * What the active fences ask of the screen lock: `none`, `off` or `on`.
      *
      * Held so the device is locked on the *transition* into that state rather than
      * on every evaluation — relocking every couple of minutes for as long as a
      * tablet sat inside a fence would not be enforcement, it would be an unusable
      * device.
      */
-    var geofencePasswordEnforced: Boolean
-        get() = prefs.getBoolean(KEY_FENCE_PASSWORD, false)
-        set(value) = prefs.edit { putBoolean(KEY_FENCE_PASSWORD, value) }
+    var geofenceLock: String
+        get() = prefs.getString(KEY_FENCE_PASSWORD, "none") ?: "none"
+        set(value) = prefs.edit { putString(KEY_FENCE_PASSWORD, value) }
 
     /**
      * The geofence list as the policy delivered it, so fences can be evaluated on

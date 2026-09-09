@@ -127,8 +127,12 @@
                  name="{{ name }}__reporting_interval_override_minutes"
                  value="{{ item.reporting_interval_override_minutes or 0 }}">
         </label>
-        <label>Password enforced
-          {{ _yesno(name ~ '__password_enforced', item.password_enforced) }}
+        <label>Screen lock
+          <select name="{{ name }}__password">
+            <option value="none" {{ 'selected' if (item.password or 'none') == 'none' }}>Not managed</option>
+            <option value="off" {{ 'selected' if item.password == 'off' }}>Off &mdash; trusted area</option>
+            <option value="on" {{ 'selected' if item.password == 'on' }}>On &mdash; require a lock</option>
+          </select>
         </label>
         <button type="button" class="ghost" data-remove-row>Remove</button>
       </div>
@@ -172,8 +176,12 @@
           <input type="number" min="0" max="360"
                  name="{{ name }}__reporting_interval_override_minutes" value="0">
         </label>
-        <label>Password enforced
-          {{ _yesno(name ~ '__password_enforced', false) }}
+        <label>Screen lock
+          <select name="{{ name }}__password">
+            <option value="none" selected>Not managed</option>
+            <option value="off">Off &mdash; trusted area</option>
+            <option value="on">On &mdash; require a lock</option>
+          </select>
         </label>
         <button type="button" class="ghost" data-remove-row>Remove</button>
       </div>
@@ -239,15 +247,24 @@
     off inside a fence and moved keeps the radio off until it next gets a fix.
   </p>
   <p class="field-tip">
-    <strong>Password enforced</strong> requires a screen lock and locks the device
-    at once. On a device with no password set, Android will prompt whoever is
-    holding it to create one.
+    <strong>Screen lock &mdash; On</strong> requires a lock while the fence applies
+    and locks the device at once. On a device with no password set, Android will
+    prompt whoever is holding it to create one.
+  </p>
+  <p class="field-tip">
+    <strong>Screen lock &mdash; Off</strong> is a trusted area: it suspends the
+    passcode <em>this policy set</em> while the device is inside, and restores it
+    on leaving. It needs a <strong>Password</strong> section in this same profile
+    that sets a passcode &mdash; that passcode is what gets put back.
+    &#9888; It cannot remove a PIN the user chose themselves, and if the device
+    stops reporting its position the passcode returns rather than staying off.
   </p>
   <p class="field-tip banner warn" data-fence-lock-note>
-    <strong>Password enforced needs a Password policy in this same profile</strong>,
-    and is unavailable until there is one. On its own, a geofence lock only tells
-    the device that <em>some</em> lock is required &mdash; whoever is holding it
-    then picks the PIN, and that becomes the rule. Fill in the
+    <strong>Screen lock needs a Password policy in this same profile</strong>, and
+    is unavailable until there is one. <em>On</em> without one only tells the
+    device that <em>some</em> lock is required &mdash; whoever is holding it then
+    picks the PIN, and that becomes the rule. <em>Off</em> needs one that sets a
+    passcode, because that passcode is what gets restored on leaving. Fill in the
     <strong>Password</strong> section and this becomes available.
   </p>
 {% endmacro %}

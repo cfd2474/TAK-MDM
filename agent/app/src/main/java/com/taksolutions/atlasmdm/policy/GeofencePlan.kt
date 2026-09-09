@@ -45,13 +45,23 @@ object GeofencePlan {
 
     enum class Radio { ON, OFF, UNMANAGED }
 
+    /**
+     * What a fence asks of the screen lock (W111).
+     *
+     * ⚠️ `OFF` suspends the passcode *this system set*, and cannot touch a PIN the
+     * user chose — `setKeyguardDisabled` cannot bypass one and neither can Knox.
+     * The server only accepts `OFF` on a profile whose PASSWORD policy sets a
+     * passcode, which is the one case where there is something to put back.
+     */
+    enum class Lock { NONE, OFF, ON }
+
     data class Fence(
         val name: String,
         val latitude: Double,
         val longitude: Double,
         val radiusMetres: Double,
         val triggerOnEntry: Boolean,
-        val passwordEnforced: Boolean,
+        val lock: Lock,
         val wifi: Radio,
         val bluetooth: Radio,
         val intervalOverrideMinutes: Int,
@@ -64,14 +74,14 @@ object GeofencePlan {
      * from "leave it on" — nothing is applied and nothing is released.
      */
     data class Actions(
-        val passwordEnforced: Boolean = false,
+        val lock: Lock = Lock.NONE,
         val wifi: Radio = Radio.UNMANAGED,
         val bluetooth: Radio = Radio.UNMANAGED,
         val intervalOverrideMinutes: Int = 0,
         val activeFences: List<String> = emptyList(),
     ) {
         val hasAny: Boolean
-            get() = passwordEnforced ||
+            get() = lock != Lock.NONE ||
                 wifi != Radio.UNMANAGED ||
                 bluetooth != Radio.UNMANAGED ||
                 intervalOverrideMinutes > 0
@@ -95,7 +105,7 @@ object GeofencePlan {
                 longitude = row.optDouble("longitude"),
                 radiusMetres = row.optDouble("radius_m", 0.0),
                 triggerOnEntry = row.optString("trigger", "entry") != "exit",
-                passwordEnforced = row.optBoolean("password_enforced", false),
+                lock = lock(row),
                 wifi = radio(row.optString("wifi", "unmanaged")),
                 bluetooth = radio(row.optString("bluetooth", "unmanaged")),
                 intervalOverrideMinutes =
@@ -103,6 +113,18 @@ object GeofencePlan {
             )
         }
         return out
+    }
+
+    /** Reads the three-state field, and the pre-W111 boolean beside it. */
+    private fun lock(row: JSONObject): Lock {
+        if (row.has("password")) {
+            return when (row.optString("password", "none")) {
+                "on" -> Lock.ON
+                "off" -> Lock.OFF
+                else -> Lock.NONE
+            }
+        }
+        return if (row.optBoolean("password_enforced", false)) Lock.ON else Lock.NONE
     }
 
     private fun radio(value: String): Radio = when (value) {
@@ -174,13 +196,20 @@ object GeofencePlan {
 
         var wifi = Radio.UNMANAGED
         var bluetooth = Radio.UNMANAGED
-        var password = false
+        var lock = Lock.NONE
         var interval = 0
 
         for (fence in active) {
             wifi = moreRestrictive(wifi, fence.wifi)
             bluetooth = moreRestrictive(bluetooth, fence.bluetooth)
-            password = password || fence.passwordEnforced
+            // ⚠️ ON beats OFF beats NONE. A trusted area must never win over a
+            // fence that requires a lock — overlapping them is exactly how a
+            // secure zone would be silently unlocked by a neighbouring one.
+            lock = when {
+                lock == Lock.ON || fence.lock == Lock.ON -> Lock.ON
+                lock == Lock.OFF || fence.lock == Lock.OFF -> Lock.OFF
+                else -> Lock.NONE
+            }
             if (fence.intervalOverrideMinutes > 0) {
                 interval =
                     if (interval == 0) fence.intervalOverrideMinutes
@@ -189,7 +218,7 @@ object GeofencePlan {
         }
 
         return Actions(
-            passwordEnforced = password,
+            lock = lock,
             wifi = wifi,
             bluetooth = bluetooth,
             intervalOverrideMinutes = interval,
@@ -245,9 +274,16 @@ object GeofencePlan {
      * password. `effectiveQuality` already takes the strictest of what it is
      * given, so a PASSWORD policy asking for more keeps its answer.
      */
-    fun passwordSpecWithFence(spec: JSONObject?, enforced: Boolean): JSONObject {
+    fun passwordSpecWithFence(spec: JSONObject?, lock: Lock): JSONObject {
         val base = spec ?: JSONObject()
-        if (!enforced) return base
+
+        // ⚠️ A trusted area hands the applier an **empty** spec, which is not the
+        // same as skipping it. `applyPassword` drives every field to a definite
+        // value on every reconcile and treats absent as permissive (R14) — so an
+        // empty spec is what actively releases the constraints, and releasing
+        // them is what lets the passcode be cleared at all.
+        if (lock == Lock.OFF) return JSONObject()
+        if (lock != Lock.ON) return base
 
         val merged = JSONObject()
         for (key in base.keys()) merged.put(key, base.get(key))
@@ -258,6 +294,20 @@ object GeofencePlan {
 
     /** `PasswordPlan.PwQuality.SOMETHING` — some lock, of any kind. */
     const val PASSWORD_QUALITY_SOMETHING = 1
+
+    /** The stored name of a lock state, and back. Unknown reads as NONE — the
+     *  safe end: a device with an unreadable setting keeps its passcode. */
+    fun lockFromName(name: String?): Lock = when (name) {
+        "on" -> Lock.ON
+        "off" -> Lock.OFF
+        else -> Lock.NONE
+    }
+
+    fun nameOf(lock: Lock): String = when (lock) {
+        Lock.ON -> "on"
+        Lock.OFF -> "off"
+        Lock.NONE -> "none"
+    }
 
     /** Fences as JSON, for the buffered record of what was applied. */
     fun namesOf(fences: List<Fence>): JSONArray = JSONArray(fences.map { it.name })

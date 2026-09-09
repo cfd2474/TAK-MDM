@@ -1019,8 +1019,7 @@ def test_the_sweeper_does_not_run_in_tests():
 def _fence_form(rows: list[dict]) -> list[tuple[str, str]]:
     """The form encoding the geofence editor produces, checkbox pairing included.
 
-    ⚠️ Password enforced is a yes/no **select**, not a checkbox, so it submits on
-    every row. That is what keeps positional pairing honest: an unchecked checkbox
+    ⚠️ The screen lock is a **select**, not a checkbox, so it submits on every row. That is what keeps positional pairing honest: an unchecked checkbox
     submits nothing at all and would shift every later row's setting onto the
     wrong fence.
     """
@@ -1037,9 +1036,7 @@ def _fence_form(rows: list[dict]) -> list[tuple[str, str]]:
             "geofences__reporting_interval_override_minutes",
             str(row.get("override", 0)),
         ))
-        fields.append((
-            "geofences__password_enforced", "yes" if row.get("password") else "no"
-        ))
+        fields.append(("geofences__password", row.get("password") or "none"))
     return fields
 
 
@@ -1057,7 +1054,7 @@ def test_a_geofence_round_trips_through_the_form(client: TestClient):
     parsed = _parse_fences([
         {"name": "Vault", "latitude": 33.6236, "longitude": -117.127,
          "radius_m": 150, "trigger": "entry", "wifi": "off",
-         "bluetooth": "on", "override": 2, "password": True}
+         "bluetooth": "on", "override": 2, "password": "on"}
     ])
 
     assert len(parsed) == 1
@@ -1065,26 +1062,26 @@ def test_a_geofence_round_trips_through_the_form(client: TestClient):
     assert fence["name"] == "Vault"
     assert fence["wifi"] == "off"
     assert fence["bluetooth"] == "on"
-    assert fence["password_enforced"] is True
+    assert fence["password"] == "on"
     assert str(fence["reporting_interval_override_minutes"]) == "2"
 
 
-def test_a_no_answer_does_not_shift_onto_the_next_fence(client: TestClient):
+def test_a_lock_setting_does_not_shift_onto_the_next_fence(client: TestClient):
     """⚠️ The bug this shape of form invites, and why the control is a select.
 
-    An unchecked checkbox submits nothing at all, so paired by position every
-    fence after the first "no" would inherit the next fence's password setting —
-    a device demanding a lock screen because of a fence that never asked for one.
-    A select always submits, so the positions stay aligned.
+    A checkbox submits nothing when unticked, so paired by position every fence
+    after the first would inherit the next one's setting — a device demanding a
+    lock because of a fence that never asked, or worse, *suspending* one because
+    of a fence that did not say so. A select always submits, so positions align.
     """
     parsed = _parse_fences([
-        {"name": "one", "latitude": 1.0, "longitude": 1.0, "password": False},
-        {"name": "two", "latitude": 2.0, "longitude": 2.0, "password": True},
-        {"name": "three", "latitude": 3.0, "longitude": 3.0, "password": False},
+        {"name": "one", "latitude": 1.0, "longitude": 1.0, "password": "none"},
+        {"name": "two", "latitude": 2.0, "longitude": 2.0, "password": "on"},
+        {"name": "three", "latitude": 3.0, "longitude": 3.0, "password": "off"},
     ])
 
     assert [f["name"] for f in parsed] == ["one", "two", "three"]
-    assert [f["password_enforced"] for f in parsed] == [False, True, False]
+    assert [f["password"] for f in parsed] == ["none", "on", "off"]
 
 
 def test_a_half_typed_row_is_dropped_rather_than_refused(client: TestClient):
@@ -1209,8 +1206,8 @@ def test_the_editor_uses_a_select_so_every_row_submits(client: TestClient):
     panel = body[body.index("data-geofences"):]
     panel = panel[: panel.index("</template>")]
 
-    assert 'name="geofences__password_enforced"' in panel
-    assert 'value="yes"' in panel and 'value="no"' in panel
+    assert 'name="geofences__password"' in panel
+    assert 'value="none"' in panel and 'value="off"' in panel and 'value="on"' in panel
 
 
 # --------------------------------------------------------------------------- #
@@ -1538,3 +1535,179 @@ def test_clearing_both_in_one_save_is_allowed(client: TestClient, db):
     fresh = profile_service.get_profile(db, profile.id)
     assert profile_service.section_for(fresh, "password") is None
     assert profile_service.section_for(fresh, "tracking_fencing") is not None
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ Trusted areas: suspending the passcode this system set (W111)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_old_boolean_still_reads(client: TestClient):
+    """⚠️ Stored specs are not migrated when a model changes.
+
+    Every fence written before this field became three-state is still in the
+    database. Without the compatibility read they would fail validation the next
+    time a policy was resolved — surfacing as a device that cannot get its
+    policy, with nothing in the error mentioning geofences.
+    """
+    from app.policies.specs.tracking_fencing import Geofence
+
+    base = dict(name="HQ", latitude=33.6, longitude=-117.1, radius_m=200)
+
+    assert Geofence(**base, password_enforced=True).password.value == "on"
+    assert Geofence(**base, password_enforced=False).password.value == "none"
+    assert Geofence(**base).password.value == "none"
+
+
+def test_a_trusted_area_needs_a_passcode_to_restore(client: TestClient, db):
+    """⚠️ The condition that makes this safe at all.
+
+    Suspending works by clearing the passcode *this policy set* and putting it
+    back on the way out. Where the user chose their own PIN there is nothing to
+    put back — and clearing it would strand them without their own credential.
+    """
+    from app.policies import fence_rules
+
+    trusted = {"geofences": [{"name": "Base", "password": "off"}]}
+
+    assert fence_rules.violation(trusted, None) is not None
+    assert fence_rules.violation(trusted, {"quality": 4}) is not None, (
+        "a password policy that sets no passcode is not enough"
+    )
+    assert fence_rules.violation(trusted, {"set_password": "246810"}) is None
+
+
+def test_the_refusal_explains_what_is_missing(client: TestClient, db):
+    from app.policies import fence_rules
+
+    message = fence_rules.violation(
+        {"geofences": [{"name": "Base", "password": "off"}]}, {"quality": 4}
+    )
+
+    assert "suspends the passcode" in message
+    assert "nothing to restore" in message
+
+
+def test_a_lone_trusted_fence_is_refused_by_the_api(client: TestClient):
+    response = client.post(
+        "/api/v1/policies",
+        json={
+            "name": "lone-trusted",
+            "policy_type": "TRACKING_FENCING",
+            "spec": {
+                "geofences": [
+                    {"name": "Base", "latitude": 33.6, "longitude": -117.1,
+                     "radius_m": 500, "password": "off"}
+                ]
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Password" in response.text
+
+
+def test_a_profile_with_a_set_passcode_accepts_a_trusted_area(client: TestClient, db):
+    from app.services import profiles as profile_service
+
+    profile = profile_service.create_profile(
+        db,
+        name="trusted-base",
+        description=None,
+        sections={
+            "password": {"quality": 2, "min_length": 6, "set_password": "246810"},
+            "tracking_fencing": {
+                "geofences": [
+                    {"name": "Base", "latitude": 33.6, "longitude": -117.1,
+                     "radius_m": 500, "password": "off"}
+                ]
+            },
+        },
+    )
+    db.commit()
+
+    assert profile_service.section_for(profile, "tracking_fencing") is not None
+
+
+def test_removing_the_passcode_policy_is_refused_while_a_fence_suspends_it(
+    client: TestClient, db
+):
+    """⚠️ The same trap as W106 C4a, one level subtler: deleting the Password
+    section would leave a fence trying to restore a passcode that no longer
+    exists."""
+    from app.services import profiles as profile_service
+
+    profile = profile_service.create_profile(
+        db,
+        name="trusted-then-removed",
+        description=None,
+        sections={
+            "password": {"quality": 2, "min_length": 6, "set_password": "246810"},
+            "tracking_fencing": {
+                "geofences": [
+                    {"name": "Base", "latitude": 33.6, "longitude": -117.1,
+                     "radius_m": 500, "password": "off"}
+                ]
+            },
+        },
+    )
+    db.commit()
+
+    try:
+        profile_service.remove_section(db, profile, "password")
+        raise AssertionError("should have been refused")
+    except profile_service.ProfileError as exc:
+        assert "cannot be removed" in str(exc)
+
+
+def test_the_editor_offers_three_states(client: TestClient):
+    body = client.get("/policies/new").text
+    panel = body[body.index('data-page-panel="tracking_fencing:geofencing"'):]
+    panel = panel[: panel.index("</section>")]
+
+    assert 'name="geofences__password"' in panel
+    for value in ("none", "off", "on"):
+        assert f'value="{value}"' in panel
+
+
+def test_the_editor_says_what_off_cannot_do(client: TestClient):
+    """⚠️ An operator reading "Off" will assume it defeats any lock. It does not,
+    and the console has to say so where the choice is made."""
+    body = client.get("/policies/new").text
+
+    assert "cannot remove a PIN the user chose" in body
+    assert "restores it" in body
+
+
+def test_the_trusted_area_fails_secure_when_position_is_stale(client: TestClient):
+    """⚠️ The edge that decides whether this is safe.
+
+    A device that lost GPS indoors, or was carried out of the zone in a bag,
+    would otherwise sit unlocked on a fix from hours ago — and nothing would look
+    wrong from the console.
+    """
+    tracker = pathlib.Path(
+        "agent/app/src/main/java/com/taksolutions/atlasmdm/policy/LocationTracker.kt"
+    ).read_text(encoding="utf-8")
+
+    assert "TRUSTED_FIX_MAX_AGE_MS" in tracker
+    assert "actions.copy(lock = GeofencePlan.Lock.NONE)" in tracker
+    # Not derived from the reporting interval: a long interval set for battery
+    # must not buy a longer unlocked window.
+    assert "10 * 60 * 1000L" in tracker
+
+
+def test_the_passcode_is_cleared_only_after_the_constraints_are_released(
+    client: TestClient,
+):
+    """⚠️ AOSP clears a passcode only "if the current password constraints allow
+    it". Called before the release it is refused, returns false, and the device
+    stays locked with nothing to say why."""
+    reconciler = pathlib.Path(
+        "agent/app/src/main/java/com/taksolutions/atlasmdm/sync/Reconciler.kt"
+    ).read_text(encoding="utf-8")
+
+    apply_at = reconciler.index("errors += policyApplier.apply(policy)")
+    clear_at = reconciler.index("clearPasscodeForTrustedArea")
+
+    assert apply_at < clear_at, "the clear must come after the policy is applied"

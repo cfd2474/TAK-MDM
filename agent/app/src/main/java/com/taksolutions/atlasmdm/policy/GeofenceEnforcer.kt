@@ -74,7 +74,7 @@ class GeofenceEnforcer(private val context: Context) {
             present = { DeviceControls.hasBluetooth(context) },
         )
 
-        lockIfNewlyEnforced(actions.passwordEnforced)
+        noteLockChange(actions.lock)
 
         val signature = actions.activeFences.sorted().joinToString(",")
         if (signature != config.activeGeofences) {
@@ -97,14 +97,17 @@ class GeofenceEnforcer(private val context: Context) {
      * couple of minutes for as long as it stayed inside the fence, which is not
      * enforcement — it is an unusable device.
      */
-    private fun lockIfNewlyEnforced(enforced: Boolean) {
-        if (enforced == config.geofencePasswordEnforced) return
-        config.geofencePasswordEnforced = enforced
+    private fun noteLockChange(lock: GeofencePlan.Lock) {
+        val name = GeofencePlan.nameOf(lock)
+        if (name == config.geofenceLock) return
+        val previous = config.geofenceLock
+        config.geofenceLock = name
+        AgentLog.i(TAG, "geofence screen lock: $previous -> $name")
 
-        if (!enforced) {
-            AgentLog.i(TAG, "geofence password requirement released")
-            return
-        }
+        // ⚠️ The passcode is suspended and restored by the reconcile, not here.
+        // `applyPassword` is the single writer of every password setting (R14),
+        // and a second one would be undone by the next sync without a word.
+        if (lock != GeofencePlan.Lock.ON) return
 
         val dpm = context.getSystemService(DevicePolicyManager::class.java) ?: return
         if (!dpm.isDeviceOwnerApp(context.packageName)) return
