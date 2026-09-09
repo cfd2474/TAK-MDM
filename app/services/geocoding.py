@@ -1,0 +1,168 @@
+# Copyright 2026 TAK-Solutions LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Turning an address into a coordinate, for the geofence editor (W109).
+
+⚠️ **This sends what the operator typed to a third party**, and what they typed is
+where they are about to put a geofence — planning, not history. W106 C3 declined
+*reverse* geocoding because it would have sent device positions automatically on
+every page view; this is the other direction and a smaller disclosure, but not a
+free one. Three things follow from that, and none of them is decoration:
+
+* **Server-side.** The browser never contacts the geocoder, so the operator's own
+  address is not disclosed to it either — only this server's.
+* **Only on an explicit press.** There is no as-you-type autocomplete, which would
+  send a query per keystroke: "f", "fo", "for", "fort"… Nominatim's usage policy
+  forbids exactly that, and it would leak far more than the finished string.
+* **Configurable, and optional.** A deployment can point this at its own geocoder
+  or leave it off. Coordinates stay typeable either way — an operator with no
+  internet must still be able to draw a fence.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from threading import Lock
+
+import httpx
+from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
+
+#: OpenStreetMap's public geocoder. A default, not a recommendation — see above.
+DEFAULT_ENDPOINT = "https://nominatim.openstreetmap.org/search"
+
+SETTING_ENDPOINT = "location.geocoder_url"
+
+#: ⚠️ Nominatim's usage policy **requires** an identifying User-Agent and refuses
+#: or throttles requests without one. Sending a real name is also the honest thing
+#: to do: the operator of a free service is entitled to know who is calling it.
+USER_AGENT = "ATLAS-MDM/1.0 (self-hosted device management; geofence editor)"
+
+#: Short. This runs inside a console request while somebody watches a spinner, and
+#: a geocoder that has gone away must fail visibly rather than hang the page.
+TIMEOUT_SECONDS = 6.0
+
+MAX_RESULTS = 5
+
+#: Repeat searches are common — an operator tries a place, adjusts the radius,
+#: searches the same place again. Small and process-local on purpose: this is a
+#: courtesy to the geocoder, not a store of anything.
+_CACHE: dict[str, list["Place"]] = {}
+_CACHE_LOCK = Lock()
+_CACHE_LIMIT = 128
+
+
+class GeocodingError(Exception):
+    """The lookup could not be completed. The message is shown to the operator."""
+
+
+@dataclass(frozen=True)
+class Place:
+    label: str
+    latitude: float
+    longitude: float
+
+
+def endpoint(session: Session) -> str:
+    from app.services import settings_store
+
+    return (settings_store.get(session, SETTING_ENDPOINT, "").strip() or DEFAULT_ENDPOINT)
+
+
+def search(session: Session, query: str, *, client: httpx.Client | None = None) -> list[Place]:
+    """Look up an address. Returns candidates, best first.
+
+    ``client`` is injectable so tests never reach the network — a lesson from
+    W101, where a test quietly queried Google on every run.
+    """
+    query = (query or "").strip()
+    if not query:
+        return []
+
+    url = endpoint(session)
+    key = f"{url}\n{query.lower()}"
+    with _CACHE_LOCK:
+        cached = _CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    owned = client is None
+    http = client or httpx.Client(timeout=TIMEOUT_SECONDS, follow_redirects=True)
+    try:
+        response = http.get(
+            url,
+            params={"q": query, "format": "jsonv2", "limit": MAX_RESULTS},
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.HTTPError as exc:
+        # ⚠️ Reported, never swallowed into "no results". "The geocoder is
+        # unreachable" and "that address does not exist" are different answers,
+        # and an operator who reads the first as the second retypes a perfectly
+        # good address five times.
+        logger.warning("geocoder %s failed for %r: %s", url, query, exc)
+        raise GeocodingError(
+            "The address lookup service could not be reached. "
+            "Enter coordinates directly, or check Admin → Location."
+        ) from exc
+    except ValueError as exc:
+        logger.warning("geocoder %s returned unreadable JSON: %s", url, exc)
+        raise GeocodingError("The address lookup service returned an unusable answer.") from exc
+    finally:
+        if owned:
+            http.close()
+
+    places = _parse(payload)
+    with _CACHE_LOCK:
+        if len(_CACHE) >= _CACHE_LIMIT:
+            _CACHE.clear()
+        _CACHE[key] = places
+    return places
+
+
+def _parse(payload: object) -> list[Place]:
+    """Read whatever the geocoder returned, skipping anything unusable.
+
+    ⚠️ Tolerant on purpose. This is a third-party service that may be swapped for
+    another one by a setting, and a single odd row must not cost the whole result
+    list — nor must a malformed coordinate reach the form and become a fence
+    centred somewhere nobody chose.
+    """
+    if not isinstance(payload, list):
+        return []
+
+    places: list[Place] = []
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        try:
+            latitude = float(row.get("lat"))
+            longitude = float(row.get("lon"))
+        except (TypeError, ValueError):
+            continue
+        if not (-90.0 <= latitude <= 90.0 and -180.0 <= longitude <= 180.0):
+            continue
+        label = str(row.get("display_name") or "").strip()
+        if not label:
+            label = f"{latitude:.5f}, {longitude:.5f}"
+        places.append(Place(label=label, latitude=latitude, longitude=longitude))
+    return places
+
+
+def reset_cache() -> None:
+    with _CACHE_LOCK:
+        _CACHE.clear()

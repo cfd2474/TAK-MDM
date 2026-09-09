@@ -121,6 +121,7 @@ from app.services import commands as command_service
 from app.services import content_admin
 from app.services import custom_attributes as attribute_service
 from app.services import files as file_service
+from app.services import geocoding
 from app.services import guides as guide_service
 from app.services import reports as report_service
 from app.services import settings_store
@@ -566,6 +567,41 @@ _DEVICE_ACTIONS: dict[str, tuple[CommandType, str]] = {
 }
 
 
+@router.get("/policies/geocode")
+def geocode_lookup(
+    q: str = "",
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> JSONResponse:
+    """Turn a typed address into candidate coordinates, for the fence editor.
+
+    ⚠️ **The browser calls this, not the geocoder.** Proxying it here means the
+    operator's own address is never disclosed to a third-party service — only this
+    server's. It also keeps the endpoint a deployment setting rather than
+    something baked into a script the browser fetched.
+
+    Admin-only, like every other console route: this spends a shared, rate-limited
+    third-party service, and an open proxy for it is not something to leave lying
+    around.
+    """
+    try:
+        places = geocoding.search(session, q)
+    except geocoding.GeocodingError as exc:
+        # 200 with an error field, not a 5xx: the editor shows this to the
+        # operator beside the box they typed in, and a failed lookup is an
+        # ordinary outcome rather than a broken page.
+        return JSONResponse({"error": str(exc), "results": []})
+
+    return JSONResponse(
+        {
+            "results": [
+                {"label": p.label, "latitude": p.latitude, "longitude": p.longitude}
+                for p in places
+            ]
+        }
+    )
+
+
 @router.post("/devices/{device_id}/action/{action}")
 def device_action_form(
     device_id: uuid.UUID,
@@ -938,6 +974,9 @@ def _form_catalogs(session: Session) -> dict[str, Any]:
         ),
         "app_compat": _app_compat_map(packages),
         "file_names": _managed_file_names(session),
+        # The geofence picker's map source, resolved the same way every other map
+        # on the console resolves it, so one setting governs all of them (W109).
+        "geofence_tiles": json.dumps(location_service.tile_config(session)),
     }
 
 

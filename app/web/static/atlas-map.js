@@ -159,3 +159,248 @@
   document.querySelectorAll("[data-map-latest]").forEach(drawLatest);
   document.querySelectorAll("[data-map-history]").forEach(drawHistory);
 })();
+
+/*
+ * Drawing geofences instead of typing them (W109).
+ *
+ * One map for every fence row. Per-row maps would put N Leaflet instances in a
+ * form whose rows sit behind tabs, and a map measured while hidden renders as a
+ * grey box — see `settle()` in atlas-map.js. A single map also answers the
+ * question an operator actually has, which is whether two fences overlap.
+ *
+ * ⚠️ **The fields stay the source of truth.** The map writes into the row's
+ * latitude/longitude inputs and reads back from them; it never holds a position
+ * of its own. So typing coordinates, dragging the marker and finding an address
+ * all converge on the same values, and the form submits exactly what is drawn.
+ */
+function atlasWireGeofencePicker() {
+  var picker = document.querySelector("[data-geofence-picker]");
+  if (!picker || typeof L === "undefined") return;
+
+  var element = picker.querySelector("[data-geofence-map]");
+  var status = picker.querySelector("[data-geofence-status]");
+  var addressBox = picker.querySelector("[data-geofence-address]");
+  var findButton = picker.querySelector("[data-geofence-find]");
+  var tiles = JSON.parse(element.getAttribute("data-tiles") || "{}");
+
+  var map = L.map(element, { center: [39.7392, -104.9903], zoom: 4 });
+  L.tileLayer(tiles.tileUrl, { attribution: tiles.tileAttribution || "", maxZoom: 19 }).addTo(map);
+
+  var layers = [];
+  var selected = 0;
+
+  function rows() {
+    return Array.prototype.slice.call(
+      document.querySelectorAll("[data-geofences] .geofence-row")
+    );
+  }
+
+  function fieldIn(row, suffix) {
+    return row.querySelector('[name$="__' + suffix + '"]');
+  }
+
+  function readRow(row) {
+    var lat = parseFloat((fieldIn(row, "latitude") || {}).value);
+    var lon = parseFloat((fieldIn(row, "longitude") || {}).value);
+    var radius = parseFloat((fieldIn(row, "radius_m") || {}).value);
+    if (isNaN(lat) || isNaN(lon)) return null;
+    return {
+      lat: lat,
+      lon: lon,
+      // A fence with no radius yet still has a centre worth showing; 200 is the
+      // template's own default, so the circle matches what would be saved.
+      radius: isNaN(radius) || radius <= 0 ? 200 : radius,
+      name: ((fieldIn(row, "name") || {}).value || "").trim(),
+    };
+  }
+
+  function writeRow(row, lat, lon) {
+    var latField = fieldIn(row, "latitude");
+    var lonField = fieldIn(row, "longitude");
+    if (!latField || !lonField) return;
+    // Five places is about a metre — more precision than a fence needs, and less
+    // noise than the 14 digits a click would otherwise produce.
+    latField.value = lat.toFixed(5);
+    lonField.value = lon.toFixed(5);
+    // Dispatched so anything else watching the form (the unsaved-change guard)
+    // sees this as a real edit, which it is.
+    latField.dispatchEvent(new Event("input", { bubbles: true }));
+    lonField.dispatchEvent(new Event("input", { bubbles: true }));
+    redraw();
+  }
+
+  function redraw() {
+    layers.forEach(function (layer) { map.removeLayer(layer); });
+    layers = [];
+
+    rows().forEach(function (row, index) {
+      var fence = readRow(row);
+      row.classList.toggle("selected", index === selected);
+      if (!fence) return;
+
+      var isSelected = index === selected;
+      var circle = L.circle([fence.lat, fence.lon], {
+        radius: fence.radius,
+        className: isSelected ? "geofence-shape selected" : "geofence-shape",
+      }).addTo(map);
+      circle.bindTooltip(
+        (fence.name || "fence " + (index + 1)) + " — " + Math.round(fence.radius) + " m"
+      );
+      circle.on("click", function () { select(index); });
+      layers.push(circle);
+
+      var marker = L.marker([fence.lat, fence.lon], {
+        draggable: isSelected,
+        icon: L.divIcon({
+          className: "",
+          html: '<span class="location-marker-badge' + (isSelected ? " selected" : "") +
+                '">' + (index + 1) + "</span>",
+          iconSize: [30, 30],
+          iconAnchor: [15, 15],
+        }),
+      }).addTo(map);
+      // ⚠️ Only the selected fence drags. Dragging one that is not selected would
+      // silently move a fence the operator is not looking at, and the row that
+      // changed is not the row their attention is on.
+      marker.on("dragend", function (event) {
+        var at = event.target.getLatLng();
+        writeRow(row, at.lat, at.lng);
+      });
+      marker.on("click", function () { select(index); });
+      layers.push(marker);
+    });
+  }
+
+  function select(index) {
+    selected = index;
+    redraw();
+    var fence = readRow(rows()[index]);
+    if (fence) map.setView([fence.lat, fence.lon], Math.max(map.getZoom(), 13));
+  }
+
+  function say(message, bad) {
+    if (!status) return;
+    status.textContent = message || "";
+    status.hidden = !message;
+    status.classList.toggle("location-stale", !!bad);
+  }
+
+  // --- placing a fence by clicking --------------------------------------- //
+  map.on("click", function (event) {
+    var all = rows();
+    if (!all.length) {
+      say("Add a geofence row first, then click the map to place it.", true);
+      return;
+    }
+    if (selected >= all.length) selected = all.length - 1;
+    writeRow(all[selected], event.latlng.lat, event.latlng.lng);
+    say("");
+  });
+
+  // --- typing keeps the map honest ---------------------------------------- //
+  document.addEventListener("input", function (event) {
+    var name = event.target && event.target.getAttribute
+      ? event.target.getAttribute("name") : null;
+    if (!name) return;
+    if (/__(latitude|longitude|radius_m|name)$/.test(name)) redraw();
+  });
+
+  document.addEventListener("focusin", function (event) {
+    var row = event.target.closest ? event.target.closest(".geofence-row") : null;
+    if (!row) return;
+    var index = rows().indexOf(row);
+    if (index >= 0 && index !== selected) { selected = index; redraw(); }
+  });
+
+  // --- address lookup ------------------------------------------------------ //
+  function find() {
+    var query = (addressBox.value || "").trim();
+    if (!query) { say("Type an address first.", true); return; }
+
+    var all = rows();
+    if (!all.length) { say("Add a geofence row first.", true); return; }
+    if (selected >= all.length) selected = all.length - 1;
+
+    say("Looking up the address…");
+    findButton.disabled = true;
+
+    fetch("/policies/geocode?q=" + encodeURIComponent(query), {
+      headers: { Accept: "application/json" },
+    })
+      .then(function (response) { return response.json(); })
+      .then(function (data) {
+        if (data.error) { say(data.error, true); return; }
+        if (!data.results || !data.results.length) {
+          // ⚠️ Distinct from the error above. "Not found" and "the service is
+          // unreachable" send an operator to completely different places, and
+          // collapsing them has someone retyping a perfectly good address.
+          say("No match for that address. Try a simpler form, or type coordinates.", true);
+          return;
+        }
+        var best = data.results[0];
+        writeRow(all[selected], best.latitude, best.longitude);
+        map.setView([best.latitude, best.longitude], 15);
+        say(
+          data.results.length > 1
+            ? "Placed at: " + best.label + " (best of " + data.results.length + " matches)"
+            : "Placed at: " + best.label
+        );
+      })
+      .catch(function () {
+        say("The address lookup did not complete. Enter coordinates directly.", true);
+      })
+      .finally(function () { findButton.disabled = false; });
+  }
+
+  findButton.addEventListener("click", find);
+  addressBox.addEventListener("keydown", function (event) {
+    // Enter searches rather than submitting the whole policy form, which is what
+    // a lone text input in a form does by default and would be a surprising way
+    // to publish a half-finished policy.
+    if (event.key === "Enter") { event.preventDefault(); find(); }
+  });
+
+  // Rows arrive and leave through the shared rowset controls.
+  document.addEventListener("click", function (event) {
+    var target = event.target;
+    if (!target || !target.hasAttribute) return;
+    if (target.hasAttribute("data-add-row") || target.hasAttribute("data-remove-row")) {
+      window.setTimeout(function () {
+        var all = rows();
+        if (selected >= all.length) selected = Math.max(0, all.length - 1);
+        redraw();
+      }, 0);
+    }
+  });
+
+  // ⚠️ The map lives inside a tab panel that starts hidden, so it measures itself
+  // as zero and paints grey until told otherwise. Re-measured whenever its panel
+  // becomes visible, not only once at startup.
+  var panel = element.closest("[data-page-panel]");
+  if (panel && typeof MutationObserver !== "undefined") {
+    new MutationObserver(function () {
+      if (!panel.hasAttribute("hidden")) {
+        map.invalidateSize();
+        fitToFences();
+      }
+    }).observe(panel, { attributes: true, attributeFilter: ["hidden"] });
+  }
+
+  function fitToFences() {
+    var points = rows().map(readRow).filter(Boolean);
+    if (!points.length) return;
+    if (points.length === 1) {
+      map.setView([points[0].lat, points[0].lon], 14);
+      return;
+    }
+    map.fitBounds(
+      L.latLngBounds(points.map(function (p) { return [p.lat, p.lon]; })).pad(0.3)
+    );
+  }
+
+  redraw();
+  fitToFences();
+  window.setTimeout(function () { map.invalidateSize(); }, 0);
+}
+
+atlasWireGeofencePicker();

@@ -103,6 +103,14 @@ GROUPS: dict[str, Group] = {
                         "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"),
                   Field("location.tile_attribution", "Tile attribution", "text",
                         "Shown in the map corner. Most tile providers require it."),
+                  Field("location.geocoder_url", "Address lookup URL", "text",
+                        "Used by the geofence editor to turn a typed address into "
+                        "a coordinate. Sent only when someone presses Find, from "
+                        "this server rather than the browser — but what is sent is "
+                        "where a geofence is about to go, so point this at your own "
+                        "geocoder if that matters. Leave blank for OpenStreetMap's "
+                        "public service; coordinates can always be typed directly, "
+                        "so this is optional."),
               ]),
         Group("geofencing", "Geofencing defaults",
               "Defaults a new geofence policy starts from (the policy type is a "

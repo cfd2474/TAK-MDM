@@ -3,7 +3,8 @@
 
   Form-driven policy editor (W10), sub-paged (W12). No JSON typing (DW6). Import:
     {% from "_policy_form.html" import policy_subform, resulting_spec, app_group_buttons %}
-  `policy_subform(page.fields, spec, app_packages, managed_files)` renders one
+  `policy_subform(page.fields, spec, app_packages, managed_files, geofence_tiles)`
+  renders one
   ui_group's controls; the caller places each sub-page in a rail. All sub-pages of
   a category share one <form>, so `parse_form(type, whole_form)` reads every field
   whether or not its page is on screen. Field names are globally unique across the
@@ -68,7 +69,7 @@
          placeholder="not set" style="min-width:220px">
 {% endmacro %}
 
-{% macro _geofences(f, items, name) %}
+{% macro _geofences(f, items, name, geofence_tiles) %}
   {#
     Geofences (W106 C4). One row per fence: where it is, how big, when it applies
     and what it does.
@@ -179,6 +180,42 @@
     </template>
 
     <button type="button" class="ghost" data-add-row>Add geofence</button>
+  </div>
+
+  {#
+    ⚠️ One map for every fence, not one per row. Per-row maps would put N Leaflet
+    instances in a form whose rows sit behind tabs, and a map that is measured
+    while hidden renders as a grey box — the failure `atlas-map.js` already
+    carries a note about. A single map also answers the question an operator
+    actually has, which is whether two fences overlap.
+  #}
+  <div class="geofence-picker" data-geofence-picker>
+    <div class="location-filters">
+      <label style="flex:1 1 320px">
+        <span>Find an address</span>
+        {# No placeholder: W92's rule is that a hint inside a box reads as a
+           value the field already holds, and dressing one up as state to satisfy
+           the lint would be worse than a plain hint. What to type is said in the
+           tips below, where it cannot be mistaken for content. #}
+        <input type="text" data-geofence-address>
+      </label>
+      <button type="button" class="ghost" data-geofence-find>Find</button>
+    </div>
+    <p class="field-tip" data-geofence-status hidden></p>
+    <div class="location-history-map" data-geofence-map
+         data-tiles='{{ geofence_tiles }}'></div>
+    <p class="field-tip">
+      Click the map to place the selected fence. The circle is its real radius, so
+      what you see is what the device will answer to. Selecting a row focuses it;
+      coordinates can still be typed directly.
+    </p>
+    <p class="field-tip">
+      <strong>Find</strong> sends the address you typed to the lookup service
+      configured under <strong>Admin → Location</strong> &mdash; from this server,
+      not from your browser, and only when you press it. What it sends is where a
+      geofence is about to go, so point that setting at your own geocoder if that
+      matters here.
+    </p>
   </div>
 
   <p class="field-tip">
@@ -1010,7 +1047,7 @@
   </div>
 {% endmacro %}
 
-{% macro _control(f, spec, name, app_packages, managed_files) %}
+{% macro _control(f, spec, name, app_packages, managed_files, geofence_tiles='{}') %}
   {% set value = spec.get(f.name) %}
   {% if f.requires %}
     {#
@@ -1021,18 +1058,18 @@
       polite half of that, not the guard.
     #}
     <fieldset disabled style="border:0; padding:0; margin:0; opacity:.55">
-      {{ _live_control(f, value, name, app_packages, managed_files) }}
+      {{ _live_control(f, value, name, app_packages, managed_files, geofence_tiles) }}
     </fieldset>
     <div class="muted" style="font-size:12px; margin-top:4px">
       <span class="pill warn">needs {{ f.requires }}</span>
       No AOSP Device Owner API can do this, so it cannot be saved yet.
     </div>
   {% else %}
-    {{ _live_control(f, value, name, app_packages, managed_files) }}
+    {{ _live_control(f, value, name, app_packages, managed_files, geofence_tiles) }}
   {% endif %}
 {% endmacro %}
 
-{% macro _live_control(f, value, name, app_packages, managed_files) %}
+{% macro _live_control(f, value, name, app_packages, managed_files, geofence_tiles='{}') %}
   {% if f.control == 'bool' %}{{ _bool(f, value, name) }}
   {% elif f.control == 'int' %}{{ _int(f, value, name) }}
   {% elif f.control == 'enum' %}{{ _enum(f, value, name) }}
@@ -1042,7 +1079,7 @@
   {% elif f.control == 'package_list' %}{{ _package_list(f, value, name) }}
   {% elif f.control == 'app_list' %}{{ _app_list(f, value, name, app_packages) }}
   {% elif f.control == 'kiosk_apps' %}{{ _kiosk_apps(f, value, name, app_packages) }}
-  {% elif f.control == 'geofences' %}{{ _geofences(f, value, name) }}
+  {% elif f.control == 'geofences' %}{{ _geofences(f, value, name, geofence_tiles) }}
   {% elif f.control == 'kiosk_app' %}{{ _kiosk_app(f, value, name, app_packages) }}
   {% elif f.control == 'activity_choice' %}{{ _activity_choice(f, value, name) }}
   {% elif f.control == 'file_list' %}{{ _file_list(f, value, name, managed_files) }}
@@ -1086,7 +1123,7 @@
 <script type="application/json" data-app-compat>{{ app_compat | tojson }}</script>
 {% endmacro %}
 
-{% macro policy_subform(fields, spec, app_packages, managed_files) %}
+{% macro policy_subform(fields, spec, app_packages, managed_files, geofence_tiles='{}') %}
   {% for f in fields %}
   <div class="pf-field" data-field="{{ f.name }}">
     <div class="pf-label">
@@ -1095,7 +1132,7 @@
       {% if f.merge_hint %}<div class="muted" style="font-size:11px">↳ {{ f.merge_hint }}</div>{% endif %}
     </div>
     <div class="pf-control">
-      {{ _control(f, spec, f.name, app_packages, managed_files) }}
+      {{ _control(f, spec, f.name, app_packages, managed_files, geofence_tiles) }}
     </div>
   </div>
   {% endfor %}

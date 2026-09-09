@@ -34,8 +34,19 @@
   {% if row.category.key == 'app_management' and pg.page.slug == 'required-apps' %}
     {{ app_group_buttons(app_groups) }}
   {% endif %}
-  {{ policy_subform(pg.page.fields, row.spec, app_packages, managed_files) }}
+  {{ policy_subform(pg.page.fields, row.spec, app_packages, managed_files, geofence_tiles) }}
 {% endmacro %}
+
+{% block page_styles %}
+  <link rel="stylesheet" href="/static/vendor/leaflet.css?v={{ build.revision }}">
+{% endblock %}
+
+{% block page_scripts %}
+  {# For the geofence picker (W109). Both `defer`, so Leaflet is parsed before
+     the script that uses it — `async` would race and fail only sometimes. #}
+  <script src="/static/vendor/leaflet.js?v={{ build.revision }}" defer></script>
+  <script src="/static/atlas-map.js?v={{ build.revision }}" defer></script>
+{% endblock %}
 
 {% block content %}
 {{ app_compat_blob(app_compat) }}

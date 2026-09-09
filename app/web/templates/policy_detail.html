@@ -152,7 +152,7 @@
                {{ 'hidden' if pages | length > 1 }}>
         <div class="panel">
           {% if pages | length > 1 %}<h2>{{ pg.label }}</h2>{% endif %}
-          {{ policy_subform(pg.fields, current_spec, app_packages, managed_files) }}
+          {{ policy_subform(pg.fields, current_spec, app_packages, managed_files, geofence_tiles) }}
         </div>
       </section>
       {% endfor %}

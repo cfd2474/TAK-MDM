@@ -514,6 +514,107 @@ recoverable only by a manual reset at the device.
 operator waiting for points nothing is collecting; the panel states that the
 `locate` command exists but no history is recorded.
 
+### ✅ W109 — Pick a geofence on a map, and find it by address
+
+Operator, 2026-09-09: *"in the policy creator under the geofencing, I want to make
+it to where we can select a point on a map and then set a radius and be able to
+see it visually, not just type in coordinates. I also want to be able to type in
+an address in addition to coordinates."*
+
+Typing `33.6236, -117.1270` and a radius of 500 and hoping is not a way to draw a
+boundary. A fence you cannot see is one nobody can check.
+
+#### ⚠️ The address box is a disclosure decision, and a different one from C3's
+
+C3 declined **reverse** geocoding: it sent *device positions* to a third party
+automatically, on every page view, for every device an operator looked at. This is
+**forward** geocoding, and the differences matter in both directions:
+
+* **Better:** it fires only when the operator asks, on a string they typed, once.
+  No automatic traffic, and nothing about where the fleet actually is.
+* **Worse in one specific way:** what gets sent is *where you are about to set up
+  a geofence* — planning, not history. For some deployments that is the more
+  sensitive of the two.
+
+So it is built the careful way: **server-side** (the browser never talks to the
+geocoder, so an operator's own IP is not disclosed either), **only on an explicit
+Find press** — never as-you-type, which would leak every keystroke — and against a
+**configurable endpoint**, so a deployment with its own geocoder or none at all is
+not forced onto a public one. The console says where the query goes.
+
+#### Steps
+
+1. `app/services/geocoding.py` — forward lookup, configurable endpoint, a real
+   `User-Agent` (Nominatim's usage policy requires one), a short timeout, and a
+   cache so repeat searches do not re-ask.
+2. An admin setting for the endpoint, beside the existing tile setting.
+3. A console endpoint the editor calls, so the browser never reaches the geocoder.
+4. The editor: one shared map under the fence rows showing **every** fence as a
+   circle, the selected row highlighted; click the map to place the selected
+   fence; the circle follows the radius field live.
+5. Address box with a **Find** button, filling the coordinates of the selected row.
+6. Tests, deploy, verify.
+
+⚠️ **One map for all rows, not a map per row.** Per-row maps would mean N Leaflet
+instances in one form, each measuring itself wrong while its row is hidden behind
+a tab — the grey-box failure `atlas-map.js` already carries a note about. A single
+map that follows the selected row also answers the question an operator actually
+has, which is whether their fences overlap.
+
+###### ✅ Complete (2026-09-09) — 1289 server tests, verified live
+
+`"Denver Colorado"` → `39.7392364, -104.984862` through the console's own
+endpoint, and the editor renders with the picker, Leaflet and the deployment's
+real tile configuration.
+
+⚠️ **A Jinja macro imported from another template cannot see the render
+context**, and this cost the most time here. `geofence_tiles` was in the context,
+in the caller and in `policy_subform` — and still rendered empty, because the
+dispatch that calls `_geofences` lives two macros deeper (`_control` →
+`_live_control`). That is exactly why `app_packages` is threaded as a parameter
+through the same chain; the existing code already had the answer and it took a
+wrong theory about macro scoping to see it. **A new control needing page data must
+be threaded the whole way down, not merely into `policy_subform`.**
+
+⚠️ **The mistake that nearly hid a working feature.** A first verification
+reported the picker, the tiles *and the pre-existing kiosk app list* all missing.
+The page was fine — a shell variable had come back empty inside plink's nested
+quoting, so every `grep -c` ran against nothing. The tell was that something known
+to work reported as broken too; a check that says an untouched feature has
+vanished is a check that is lying. Direct `curl | grep` per line, no variables.
+
+⚠️ **The address box searches on a press, never as you type.** An autocomplete
+would send a query per keystroke — "f", "fo", "for" — leaking far more than the
+finished string, and Nominatim's usage policy forbids exactly that. Bound to the
+button and to Enter, and Enter is intercepted so it does not submit the whole
+policy form, which is what a lone text input in a form does by default and would
+be a surprising way to publish a half-finished policy. Asserted in a test that
+reads the script.
+
+⚠️ **Proxied through the server, not called from the browser.** The operator's
+own address is never disclosed to the geocoder — only this server's — and the
+endpoint stays a deployment setting rather than something baked into a script.
+Admin-only: it spends a shared, rate-limited third-party service.
+
+**Unreachable and not-found stay distinct.** "The service is down" and "that
+address does not exist" send an operator to entirely different places; collapsing
+them has someone retyping a perfectly good address five times.
+
+**One map for every fence**, with the selected row's circle highlighted and only
+that one draggable — dragging an unselected fence would move something the
+operator is not looking at. The fields remain the source of truth: the map writes
+into them and reads back, so typing, dragging and finding all converge, and the
+form submits exactly what is drawn.
+
+**Correction to the last status note:** Chrome *is* in the library as a package
+(`com.android.chrome`, "Chrome (Play)") — what was deleted in W96 was its only
+*version*, so it shows in pickers with nothing installable behind it. The earlier
+note said the package was absent; it is the version that is.
+
+⚠️ **The geocoder must not become a required dependency.** Coordinates stay
+typeable, and a failed or unconfigured lookup leaves the form exactly as it was
+with a message — an operator with no internet must still be able to draw a fence.
+
 ### ✅ W108 — Battery, IMEI and phone number on the device page
 
 Operator, 2026-09-08: *"on the device details, I want to see battery level, imei

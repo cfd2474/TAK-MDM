@@ -931,3 +931,28 @@ dl.kv dd { margin: 0; font-size: 13px; }
   pointer-events: none;
   background: var(--panel-2);
 }
+
+/* The geofence picker (W109): one map under the fence rows. */
+.geofence-picker { margin: 12px 0 16px; }
+.geofence-picker .location-history-map { height: 380px; }
+
+.geofence-shape {
+  stroke: var(--accent);
+  stroke-opacity: .7;
+  fill: var(--accent);
+  fill-opacity: .12;
+}
+
+/* The one being edited, so it is obvious which row a click will move. */
+.geofence-shape.selected {
+  stroke: var(--warn);
+  stroke-opacity: 1;
+  fill: var(--warn);
+  fill-opacity: .2;
+}
+
+.geofence-row.selected {
+  outline: 2px solid var(--warn);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
