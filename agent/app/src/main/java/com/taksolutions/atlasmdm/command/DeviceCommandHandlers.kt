@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 import com.taksolutions.atlasmdm.admin.MdmDeviceAdminReceiver
 import com.taksolutions.atlasmdm.diag.AgentLog
+import com.taksolutions.atlasmdm.ui.DeviceAnnouncer
 
 /** Shared plumbing for the handlers that drive [DevicePolicyManager]. */
 abstract class DeviceOwnerCommandHandler(protected val context: Context) : CommandHandler {
@@ -56,6 +57,29 @@ class LockCommandHandler(context: Context) : DeviceOwnerCommandHandler(context) 
         requireDeviceOwner()?.let { return CommandOutcome.failed(it) }
         dpm.lockNow()
         return CommandOutcome.ok()
+    }
+}
+
+/**
+ * `ping` — make the device announce itself so a person can find it (W107).
+ *
+ * ⚠️ **Reports success immediately and keeps sounding.** The noise runs for
+ * thirty seconds; holding the sync worker for that long would stall the very
+ * check-in that reports this command finished, and an operator watching the
+ * console would see nothing happen while the tablet was already ringing.
+ *
+ * ⚠️ **Not a Device Owner action.** Unlike its neighbours here it needs no
+ * privilege at all — which matters, because a device that has somehow lost Device
+ * Owner is exactly the one somebody is trying to find.
+ */
+class PingCommandHandler(private val appContext: Context) : CommandHandler {
+    override val type = "ping"
+
+    override fun execute(command: Command): CommandOutcome {
+        DeviceAnnouncer.start(appContext)
+        return CommandOutcome.ok(
+            JSONObject().put("sounding_for_seconds", DeviceAnnouncer.DURATION_MS / 1000)
+        )
     }
 }
 

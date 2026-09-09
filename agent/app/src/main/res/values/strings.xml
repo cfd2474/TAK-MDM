@@ -11,6 +11,9 @@
     <string name="data_usage_subject_device">This device</string>
     <string name="data_usage_warning_text">%1$s has used %2$s, passing the %3$s MB limit set by your administrator.</string>
     <string name="alert_dismiss">Acknowledge</string>
+    <string name="ping_title">Locating this device</string>
+    <string name="ping_message">An administrator is looking for this device. Tap below to stop the sound.</string>
+    <string name="ping_stop">Stop the sound</string>
     <string name="sync_notification_title">Device management active</string>
     <string name="sync_notification_text">Keeping this device up to date.</string>
     <string name="status_not_enrolled">Not enrolled</string>

@@ -491,6 +491,105 @@ recoverable only by a manual reset at the device.
 operator waiting for points nothing is collecting; the panel states that the
 `locate` command exists but no history is recorded.
 
+### ✅ W107 — Find my device, and lock the screen
+
+Operator, 2026-09-08: *"let's add the ability to remotely ping the device with
+'find my device' type call. this should be a button in the device profile on the
+webUI. I also want a 'lock screen' button in the webUI. both are features in the
+GitHub repo that the tracker was from."*
+
+In `EUD_Remote_Assist_Portal` these are an **Actions** panel on the device page:
+*Play Sound on Device* (`TRIGGER_PING`) and *Lock Device* (`LOCK_DEVICE`, behind a
+confirm modal).
+
+#### Half of this already exists
+
+| Piece | State |
+|---|---|
+| `CommandType.LOCK` | ✅ already in the enum |
+| Agent `LockCommandHandler` — `lockNow()`, registered in the dispatcher | ✅ |
+| A button for it in the console | ❌ |
+| Ping — command type, agent handler, button | ❌ all of it |
+
+So **lock is a console change only, no agent release**, and ping is the real work.
+
+#### Steps
+
+1. `CommandType.PING`, and whatever allowlist the command API enforces.
+2. Agent `PingCommandHandler`.
+3. An **Actions** panel on the device page: *Play sound*, *Lock screen*, and the
+   existing *Locate* which is currently reachable only through the API.
+4. Tests both sides.
+5. Build, publish, deploy, verify on hardware.
+
+⚠️ **A find-my-device sound has to be loud on a silent device, and stoppable by
+whoever finds it.** Those pull in opposite directions and both matter:
+
+* Played on the normal media stream it is inaudible on exactly the device someone
+  is hunting for — silenced, in a bag. So: `STREAM_ALARM`, which rings through
+  silent mode, with the volume raised for the duration and **put back afterwards**.
+* Left to ring indefinitely it is a tablet screaming in a drawer that nobody can
+  stop without the password. So: a bounded duration, and an on-screen way to stop
+  it. `AlertOverlay` already exists for this kind of thing.
+
+###### ✅ Complete (2026-09-08) — agent 0.49.0 (versionCode 94), 1263 server tests
+
+Verified on `SM-X520`, end to end:
+
+```
+23:27:00 I/CommandDispatcher: executing ping (9a76cf7e…)
+23:27:00 I/DeviceAnnouncer:   ping: alarm volume 11 -> 15
+23:27:00 I/DeviceAnnouncer:   ping sounding
+23:27:00 I/AlertOverlay:      alert overlay shown: Locating this device
+23:27:30 I/DeviceAnnouncer:   ping finished; alarm volume restored to 11
+```
+
+⚠️ **The restore line is the one that matters.** Raising the alarm stream and
+leaving it raised would mean an operator's ping silently reconfigured the device
+— the next alarm the user set would go off at full volume, and nothing on the
+tablet or in the console would connect the two. It goes back to exactly the 11 it
+came from, on the timer *or* on the Stop button, whichever happens first.
+
+⚠️ **`STREAM_ALARM`, not the media or notification stream.** The tablet somebody
+is hunting for is the one that is silenced and in a bag; a notification tone is
+precisely what that device suppresses. The console says so beside the button,
+because an operator pressing it on a silenced tablet would otherwise doubt it
+worked.
+
+⚠️ **Bounded and stoppable, both.** 30 seconds on a timer, plus an overlay whose
+button ends it — a tablet ringing indefinitely in a drawer, unstoppable without
+the password, is worse than one that is merely lost. `AlertOverlay.show` gained an
+`onDismiss` callback for this, and it fires **once** (the button and the
+auto-dismiss timer both route through it; running the cleanup twice would restore
+a volume that had already been restored, over whatever the user had since chosen).
+It also fires when the overlay cannot be drawn at all — otherwise a device without
+the overlay permission would ring with no way to stop it.
+
+⚠️ **The action route is an allowlist, not a `CommandType` lookup.** These are
+form posts from a page an admin is already on; if the path segment named any
+command in the enum, `wipe` would be one crafted URL away from a button captioned
+"Play sound", and the request would look identical to a legitimate one in every
+log. `POST /devices/{id}/action/wipe` returns **404**, asserted for five commands.
+
+⚠️ **A ping expires in an hour — the shortest TTL in the table, asserted as
+such.** It answers "where is this thing while I am standing in the room".
+Delivered later it is a tablet shrieking in a bag with nobody nearby who knows
+why, answering a question the operator settled long ago. Every other command here
+is worth doing late; this one is not.
+
+**Lock needed no agent work at all** — `CommandType.LOCK` and
+`LockCommandHandler` already existed and were already registered; only the button
+was missing. The page says plainly that on a device with no password this is
+**only a swipe**, rather than implying a lost tablet has been secured.
+
+**No migration:** `command_type` is a plain `varchar(24)` with no CHECK
+constraint, so a new enum value needs none — confirmed against the live table
+rather than assumed.
+
+⚠️ **`lockNow()` on a device with no password is close to a no-op.** It drops to
+the lock screen, which a swipe dismisses. The button should say so rather than
+implying a device has been secured — the same honesty the geofence lock needed.
+
 ### ⏳ W106 — Location tracking, geofencing, and a map
 
 Operator, 2026-09-08: under **Tracking and fencing**, two sub-categories —

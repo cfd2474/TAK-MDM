@@ -62,18 +62,36 @@ object AlertOverlay {
      * @return true if the overlay was shown; false when the caller must rely on
      *   its notification alone.
      */
-    fun show(context: Context, title: String, message: String): Boolean {
+    fun show(
+        context: Context,
+        title: String,
+        message: String,
+        dismissLabel: String? = null,
+        onDismiss: (() -> Unit)? = null,
+    ): Boolean {
         if (!isAvailable(context)) {
             AgentLog.w(TAG, "overlay not permitted; falling back to the notification alone")
+            // ⚠️ Still run the callback. A ping whose overlay cannot be drawn must
+            // not leave the tablet ringing with no way to stop it — the caller's
+            // cleanup has to happen whether or not the window appeared.
+            onDismiss?.invoke()
             return false
         }
 
         // The tracker runs on a sync worker; window manipulation is main-thread only.
-        main.post { showOnMainThread(context.applicationContext, title, message) }
+        main.post {
+            showOnMainThread(context.applicationContext, title, message, dismissLabel, onDismiss)
+        }
         return true
     }
 
-    private fun showOnMainThread(context: Context, title: String, message: String) {
+    private fun showOnMainThread(
+        context: Context,
+        title: String,
+        message: String,
+        dismissLabel: String?,
+        onDismiss: (() -> Unit)?,
+    ) {
         val windows = context.getSystemService(WindowManager::class.java) ?: return
 
         val scrim = LinearLayout(context).apply {
@@ -128,14 +146,22 @@ object AlertOverlay {
         }
 
         // Added before the button so the click listener can capture it.
+        // ⚠️ Once. Both the button and the auto-dismiss timer call this, and a
+        // caller's cleanup running twice would, for a ping, restore the volume it
+        // had already restored - over whatever the user had since chosen.
+        var done = false
         val remove = {
-            runCatching { windows.removeView(scrim) }
-                .onFailure { AgentLog.w(TAG, "overlay already gone: ${it.message}") }
+            if (!done) {
+                done = true
+                runCatching { windows.removeView(scrim) }
+                    .onFailure { AgentLog.w(TAG, "overlay already gone: ${it.message}") }
+                onDismiss?.invoke()
+            }
             Unit
         }
 
         card.addView(Button(context).apply {
-            text = context.getString(R.string.alert_dismiss)
+            text = dismissLabel ?: context.getString(R.string.alert_dismiss)
             textSize = 17f
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,

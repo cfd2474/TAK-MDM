@@ -209,6 +209,64 @@
 </div>
 {% endif %}
 
+<h2 id="actions">Actions</h2>
+<div class="panel">
+  {#
+    One-shot actions (W107). Queued as commands, so a device that is asleep or
+    out of coverage takes them when it comes back rather than losing them —
+    except a ping, which expires after an hour on purpose: it answers "where is
+    this thing while I am standing in the room", and an hour later that question
+    has been settled one way or the other.
+  #}
+  {% set done = request.query_params.get('action') %}
+  {% if done == 'ping' %}
+    <div class="banner good">
+      Sounding the device — an alarm for 30 seconds, through silent mode. Whoever
+      finds it can stop it from the screen.
+    </div>
+  {% elif done == 'lock' %}
+    <div class="banner good">Locking the device screen.</div>
+  {% elif done == 'locate' %}
+    <div class="banner good">
+      Asked the device for its position. It appears under
+      <a href="#location">Location</a> once it reports.
+    </div>
+  {% endif %}
+
+  <div class="toolbar">
+    <form method="post" action="/devices/{{ device.id }}/action/ping" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit">Play sound</button>
+    </form>
+    <form method="post" action="/devices/{{ device.id }}/action/lock" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit">Lock screen</button>
+    </form>
+    <form method="post" action="/devices/{{ device.id }}/action/locate" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="ghost">Locate</button>
+    </form>
+  </div>
+
+  <p class="field-tip">
+    <strong>Play sound</strong> rings the device for 30 seconds on the alarm
+    channel, so it is audible even when the device is silenced &mdash; which is
+    usually the state of a device somebody is looking for. It vibrates as well,
+    and whoever finds it can stop it from the screen without unlocking.
+  </p>
+  <p class="field-tip">
+    {#
+      ⚠️ Said plainly rather than implying the device has been secured. lockNow()
+      on a device with no password drops to a lock screen a swipe dismisses —
+      the same honesty the geofence lock needed.
+    #}
+    <strong>Lock screen</strong> locks the device immediately. It asks for
+    whatever credential the device already has, so on a device with no PIN or
+    password set this is only a swipe &mdash; set a Password policy if it needs to
+    be more than that.
+  </p>
+</div>
+
 <h2 id="location">Location</h2>
 <div class="panel">
   {% if latest_location %}

@@ -28,6 +28,7 @@ import com.taksolutions.atlasmdm.command.CollectLogsCommandHandler
 import com.taksolutions.atlasmdm.command.CommandDispatcher
 import com.taksolutions.atlasmdm.command.LocateCommandHandler
 import com.taksolutions.atlasmdm.command.LockCommandHandler
+import com.taksolutions.atlasmdm.command.PingCommandHandler
 import com.taksolutions.atlasmdm.command.RebootCommandHandler
 import com.taksolutions.atlasmdm.command.ScreenshotCommandHandler
 import com.taksolutions.atlasmdm.command.WipeCommandHandler
@@ -103,6 +104,7 @@ class Reconciler(private val context: Context) {
     private val dispatcher = CommandDispatcher(
         listOf(
             LockCommandHandler(context),
+            PingCommandHandler(context),
             RebootCommandHandler(context),
             WipeCommandHandler(context),
             LocateCommandHandler(context),

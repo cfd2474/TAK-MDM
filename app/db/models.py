@@ -96,6 +96,12 @@ class CommandType(str, enum.Enum):
 
     REBOOT = "reboot"
     LOCK = "lock"
+    #: Make the device announce itself so a person can find it — the "find my
+    #: device" call. A command and not a policy for the reason the rest of this
+    #: enum exists: it is momentary, and a device offline for a week must not
+    #: start ringing when it comes back to answer a question somebody asked and
+    #: has long since resolved. See the TTL table in `services/commands.py`.
+    PING = "ping"
     WIPE = "wipe"
     LOCATE = "locate"
     SCREENSHOT = "screenshot"

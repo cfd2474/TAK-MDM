@@ -553,6 +553,45 @@ def _has_open_log_request(session: Session, device_id: uuid.UUID) -> bool:
     )
 
 
+#: The one-shot actions the device page offers, and what each is called there.
+#:
+#: ⚠️ An allowlist, not "any CommandType the caller names". These routes are
+#: reached by a form post from a page an admin is already on; letting the path
+#: segment select any command in the enum would put `wipe` one crafted URL away
+#: from a button that says "Play sound".
+_DEVICE_ACTIONS: dict[str, tuple[CommandType, str]] = {
+    "ping": (CommandType.PING, "The device will sound an alarm for 30 seconds."),
+    "lock": (CommandType.LOCK, "The device will lock its screen."),
+    "locate": (CommandType.LOCATE, "The device will report its position."),
+}
+
+
+@router.post("/devices/{device_id}/action/{action}")
+def device_action_form(
+    device_id: uuid.UUID,
+    action: str,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Queue one of the device page's one-shot actions (W107).
+
+    The doorbell (F3) wakes a parked device in the same second, so a ping is
+    normally sounding within a few seconds rather than at the next poll.
+    """
+    device = session.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
+
+    chosen = _DEVICE_ACTIONS.get(action)
+    if chosen is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown action")
+
+    command_type, _ = chosen
+    command_service.enqueue(session, device, command_type=command_type)
+    session.commit()
+    return _redirect(f"/devices/{device_id}?action={action}#actions")
+
+
 @router.post("/devices/{device_id}/collect-logs")
 def request_logs(
     device_id: uuid.UUID,

@@ -5,6 +5,15 @@
     <!-- Normal permission, granted at install. Required by WallpaperManager;
          Device Owner does not confer it. -->
     <uses-permission android:name="android.permission.SET_WALLPAPER" />
+    <!--
+      Find-my-device (W107). A `normal` permission, granted at install — no
+      runtime grant and nothing for the Device Owner to self-grant.
+      MODIFY_AUDIO_SETTINGS is what allows the alarm volume to be raised for the
+      duration of a ping and put back afterwards; without it the tablet stays
+      silent on exactly the device someone is hunting for.
+    -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

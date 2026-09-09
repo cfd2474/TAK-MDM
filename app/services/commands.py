@@ -41,6 +41,12 @@ from app.services import notifications
 # on a lost device stays worth executing for as long as the device might reappear.
 DEFAULT_TTL_HOURS: dict[CommandType, int] = {
     CommandType.LOCATE: 6,
+    # ⚠️ **The shortest TTL here, and deliberately shorter than a check-in cycle
+    # is long.** A ping answers "where is this thing, right now, while I am
+    # standing in the room". Delivered an hour later it is a tablet shrieking in
+    # a bag with nobody nearby who knows why — and the operator who asked has
+    # already found it, or given up and gone home.
+    CommandType.PING: 1,
     CommandType.SCREENSHOT: 6,
     CommandType.LOCK: 72,
     CommandType.REBOOT: 24,
