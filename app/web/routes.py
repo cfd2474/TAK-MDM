@@ -30,6 +30,7 @@ only the device endpoints.
 
 from __future__ import annotations
 
+import csv
 import io
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -125,6 +126,7 @@ from app.services import reports as report_service
 from app.services import settings_store
 from app.services import device_identity
 from app.services import device_logs as log_service
+from app.services import locations as location_service
 from app.services import effective_policy as eff
 from app.services import fleet as fleet_service
 from app.services import packages as package_service
@@ -300,6 +302,142 @@ def dashboard(
     )
 
 
+#: How far back the history page looks when nobody has said otherwise. Matches
+#: the reference portal, and is the window that answers "where has it been today".
+_DEFAULT_HISTORY_HOURS = 48
+
+
+def _parse_day(value: str | None) -> datetime | None:
+    """A `type=date` value at midnight UTC, or None if it is absent or malformed.
+
+    ⚠️ Malformed reads as absent rather than as an error. The field is a date
+    picker; anything else in it came from a hand-edited URL, and falling back to
+    the default window is more useful than a 422 on a read-only page.
+    """
+    if not value:
+        return None
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=timezone.utc)
+
+
+@router.get("/devices/{device_id}/location-history", response_class=HTMLResponse)
+def location_history(
+    device_id: uuid.UUID,
+    request: Request,
+    from_mode: str = "now",
+    from_date: str | None = None,
+    to_date: str | None = None,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
+    """Where a device has been, over a window that runs backwards from `From`."""
+    device = session.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
+
+    now = datetime.now(timezone.utc)
+    newest = now if from_mode != "date" else (_parse_day(from_date) or now)
+    oldest = _parse_day(to_date) or (now - timedelta(hours=_DEFAULT_HISTORY_HOURS))
+
+    range_error = None
+    if oldest > newest:
+        # ⚠️ Refused rather than quietly swapped. Swapping would show a window the
+        # operator did not ask for while the form kept displaying what they typed,
+        # and they would read the result as the answer to their question.
+        range_error = '"To" must be on or before "From".'
+        stored: list = []
+    else:
+        stored = location_service.history(session, device_id, newest=newest, oldest=oldest)
+
+    points = location_service.downsample(stored, now=now)
+
+    return _render(
+        request,
+        "location_history.html",
+        identity=identity,
+        device=device,
+        points=points,
+        total=len(stored),
+        thinned=len(points) < len(stored),
+        from_mode="date" if from_mode == "date" else "now",
+        from_date=(newest.strftime("%Y-%m-%d")),
+        to_date=oldest.strftime("%Y-%m-%d"),
+        range_error=range_error,
+        map_json=json.dumps(
+            {
+                **location_service.tile_config(session),
+                # Somewhere to point when there is nothing to show. The reference
+                # portal uses Denver; this uses the last known position when there
+                # is one, which is more useful and no more arbitrary.
+                "fallbackLat": points[0].latitude if points else 39.7392,
+                "fallbackLon": points[0].longitude if points else -104.9903,
+                "points": [
+                    {
+                        "number": p.number,
+                        "latitude": p.latitude,
+                        "longitude": p.longitude,
+                        "when": p.recorded_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    }
+                    for p in points
+                ],
+            }
+        ),
+    )
+
+
+@router.get("/devices/{device_id}/location-history.csv")
+def location_history_csv(
+    device_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> StreamingResponse:
+    """Every stored point for a device, unthinned.
+
+    ⚠️ **Deliberately ignores the range and the downsampling.** The map thins old
+    stretches so a year of track is legible; an export that did the same would
+    hand someone a file they believe is complete and is not. The button says "all
+    history" and this is what makes that true.
+    """
+    device = session.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
+
+    def rows():
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(
+            ["number", "recorded_at_utc", "received_at_utc", "latitude",
+             "longitude", "accuracy_m", "provider", "source"]
+        )
+        yield buffer.getvalue()
+
+        for index, point in enumerate(location_service.history(session, device_id), start=1):
+            buffer.seek(0)
+            buffer.truncate(0)
+            writer.writerow([
+                index,
+                point.recorded_at.strftime("%Y-%m-%d %H:%M:%S"),
+                point.received_at.strftime("%Y-%m-%d %H:%M:%S"),
+                f"{point.latitude:.6f}",
+                f"{point.longitude:.6f}",
+                "" if point.accuracy_m is None else f"{point.accuracy_m:.1f}",
+                point.provider or "",
+                point.source.value,
+            ])
+            yield buffer.getvalue()
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    name = f"location-history-{device.serial_number}-{stamp}.csv"
+    return StreamingResponse(
+        rows(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
 @router.get("/devices/{device_id}", response_class=HTMLResponse)
 def device_detail(
     device_id: uuid.UUID,
@@ -336,6 +474,7 @@ def device_detail(
         identifiers=device_identity.for_device(session, device_id),
         attributes=attribute_service.values_for_device(session, device_id),
         disenrolling=_disenroll_pending(session, device),
+        **_location_panel(session, device, payload.get("values", {})),
     )
 
 
@@ -345,6 +484,60 @@ def _disenroll_pending(session: Session, device: Device):
     from app.services import disenroll
 
     return disenroll.pending(session, device)
+
+
+def _describe_age(delta: timedelta) -> str:
+    """A fix's age in words. Rounded down, because a position is never fresher
+    than it is."""
+    seconds = int(delta.total_seconds())
+    if seconds < 90:
+        return "just now" if seconds < 30 else f"{seconds} seconds ago"
+    minutes = seconds // 60
+    if minutes < 90:
+        return f"{minutes} minutes ago"
+    hours = minutes // 60
+    if hours < 48:
+        return f"{hours} hours ago"
+    return f"{hours // 24} days ago"
+
+
+#: A fix older than this is called out on the page. Chosen against the check-in
+#: interval rather than picked: a device reporting normally delivers within a
+#: cycle or two, so beyond this something is off — tracking disabled, no GPS
+#: indoors, or a device that has stopped talking.
+_STALE_AFTER = timedelta(hours=1)
+
+
+def _location_panel(session: Session, device: Device, values: dict) -> dict:
+    """What the device page needs to draw a position, or explain its absence."""
+    latest = location_service.latest(session, device.id)
+    tracking = (values.get("TRACKING_FENCING") or {}).get("reporting_interval_minutes")
+
+    panel: dict[str, object] = {
+        "latest_location": latest,
+        "tracking_interval": tracking or 0,
+        "location_age": "",
+        "location_stale": False,
+        "latest_map_json": "{}",
+    }
+    if latest is None:
+        return panel
+
+    age = datetime.now(timezone.utc) - latest.recorded_at.replace(
+        tzinfo=latest.recorded_at.tzinfo or timezone.utc
+    )
+    panel["location_age"] = _describe_age(age)
+    panel["location_stale"] = age > _STALE_AFTER
+    panel["latest_map_json"] = json.dumps(
+        {
+            **location_service.tile_config(session),
+            "latitude": latest.latitude,
+            "longitude": latest.longitude,
+            "accuracyM": latest.accuracy_m,
+            "label": device.name or device.serial_number,
+        }
+    )
+    return panel
 
 
 def _has_open_log_request(session: Session, device_id: uuid.UUID) -> bool:

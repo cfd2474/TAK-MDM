@@ -2,6 +2,19 @@
 {% set nav = 'manage' %}
 {% block title %}{{ device.name or device.serial_number }} — ATLAS{% endblock %}
 
+{% block page_styles %}
+  <link rel="stylesheet" href="/static/vendor/leaflet.css?v={{ build.revision }}">
+{% endblock %}
+
+{% block page_scripts %}
+  {#
+    ⚠️ Both `defer`, so they run in order and Leaflet is parsed before the code
+    that uses it. `async` here would race and fail only sometimes.
+  #}
+  <script src="/static/vendor/leaflet.js?v={{ build.revision }}" defer></script>
+  <script src="/static/atlas-map.js?v={{ build.revision }}" defer></script>
+{% endblock %}
+
 {% block content %}
 <h1{% if not device.name %} class="mono"{% endif %}>{{ device.name or device.serial_number }}</h1>
 <p class="sub">
@@ -196,18 +209,83 @@
 </div>
 {% endif %}
 
-<h2 id="location">Location history</h2>
+<h2 id="location">Location</h2>
 <div class="panel">
-  {#
-    A placeholder, and it says so. The alternative — an empty map, or a panel
-    implying data is merely absent today — would have an operator waiting for
-    points that nothing is collecting (W104).
-  #}
-  <p class="muted">
-    Not collected yet. The agent has a <code>locate</code> command for finding a
-    device on request, but nothing records a history — so there is nothing here to
-    show rather than nothing to see.
-  </p>
+  {% if latest_location %}
+    <dl class="kv">
+      <dt>Coordinates</dt>
+      <dd class="mono">
+        {{ '%.5f'|format(latest_location.latitude) }},
+        {{ '%.5f'|format(latest_location.longitude) }}
+      </dd>
+
+      <dt>Accuracy</dt>
+      <dd>
+        {#
+          ⚠️ "The device did not say" is not "accurate to 0 m". Showing an
+          unreported accuracy as a number would invent precision the device
+          never claimed.
+        #}
+        {% if latest_location.accuracy_m is not none %}
+          &plusmn;{{ latest_location.accuracy_m|round|int }} m
+        {% else %}
+          <span class="muted">Not reported by device</span>
+        {% endif %}
+      </dd>
+
+      <dt>Fix taken</dt>
+      <dd>
+        {#
+          ⚠️ The age, not just the timestamp — and this is the whole reason the
+          agent reports last-known rather than a live fix. A position from
+          yesterday drawn on a map looks exactly like one from a minute ago.
+        #}
+        <span title="{{ latest_location.recorded_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}">
+          {{ location_age }}
+        </span>
+        {% if location_stale %}
+          <span class="location-stale">— this position may be out of date</span>
+        {% endif %}
+      </dd>
+
+      <dt>Source</dt>
+      <dd>
+        {% if latest_location.source.value == 'command' %}
+          Answer to a <code>locate</code> command
+        {% elif latest_location.source.value == 'periodic' %}
+          Reported on the tracking interval
+        {% else %}
+          {{ latest_location.source.value }}
+        {% endif %}
+      </dd>
+    </dl>
+
+    <div class="device-map" data-map-latest data-map='{{ latest_map_json }}'></div>
+
+    <p>
+      <a href="/devices/{{ device.id }}/location-history">Location history</a>
+    </p>
+  {% else %}
+    {#
+      Two different silences, and telling them apart is the point. "Nothing is
+      collecting" sends an operator to the policy; "collecting but nothing has
+      arrived" sends them to the device. A single "no data" message would send
+      them to neither.
+    #}
+    {% if tracking_interval %}
+      <p class="muted">
+        No position reported yet. Tracking is on at
+        <strong>{{ tracking_interval }} minute</strong>{{ '' if tracking_interval == 1 else 's' }};
+        the device reports at its next check-in after it has a fix.
+      </p>
+    {% else %}
+      <p class="muted">
+        No position recorded, and location tracking is not switched on for this
+        device. Add a <strong>Tracking and fencing</strong> policy with a reporting
+        interval, or send a <code>locate</code> command to record a single position.
+      </p>
+    {% endif %}
+  {% endif %}
 </div>
 
 <h2 id="lifecycle">Lifecycle</h2>

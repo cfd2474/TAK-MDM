@@ -82,6 +82,21 @@ GROUPS: dict[str, Group] = {
                   Field("sms.api_key", "API key", "password"),
                   Field("sms.from_number", "From number"),
               ]),
+        Group("location", "Location map",
+              "Where the console fetches map tiles. The default is OpenStreetMap's "
+              "public tile service, which means a browser showing a device's "
+              "position asks openstreetmap.org for the tiles around it — that "
+              "reveals roughly where an operator is looking to a third party. Point "
+              "these at an internal tile server to keep it in-house, or on a "
+              "deployment with no internet, where the default silently shows an "
+              "empty map.",
+              [
+                  Field("location.tile_url", "Tile URL template", "text",
+                        "Leaflet template, e.g. "
+                        "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"),
+                  Field("location.tile_attribution", "Tile attribution", "text",
+                        "Shown in the map corner. Most tile providers require it."),
+              ]),
         Group("geofencing", "Geofencing defaults",
               "Defaults a new geofence policy starts from (the policy type is a "
               "placeholder until its backend lands).",

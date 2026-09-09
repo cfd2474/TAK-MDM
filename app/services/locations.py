@@ -346,3 +346,137 @@ def record_locate_results(session: Session, device: Device, results: Sequence[An
 
     points = [p for p in (from_locate_result(row.result) for row in rows) if p is not None]
     return record(session, device, points, source=LocationSource.COMMAND)
+
+
+# --------------------------------------------------------------------------- #
+# Thinning a track for display (W106 C3)
+# --------------------------------------------------------------------------- #
+
+#: Age tiers, ported from `EUD_Remote_Assist_Portal`'s
+#: `server/src/services/locationHistory.ts` so the two portals draw a track the
+#: same way. Read as: up to this age, keep the newest point per bucket this wide.
+#:
+#: ⚠️ **This is a *display* decision and nothing else.** Every raw point stays in
+#: the table; an export reads them all. Confusing the two is what makes a thinned
+#: chart get mistaken for missing data.
+_TIERS: tuple[tuple[float, float], ...] = (
+    (360.0, 15.0),  # to 6 hours: quarter-hourly
+    (2880.0, 60.0),  # to 48 hours: hourly
+    (5760.0, 360.0),  # to 96 hours: six-hourly
+)
+
+#: Below this age every point is kept, however many there are. The recent end of
+#: a track is the part anyone is actually looking at.
+_KEEP_ALL_MINUTES = 120.0
+
+#: Beyond the last tier.
+_COARSEST_MINUTES = 1440.0
+
+
+def bucket_key(recorded_at: datetime, now: datetime) -> int | None:
+    """Which age bucket a point falls in, or None if it is in the future."""
+    age_minutes = (now - _as_utc(recorded_at)).total_seconds() / 60.0
+    if age_minutes < 0:
+        return None
+
+    offset = 0
+    previous = 0.0
+    for limit, width in _TIERS:
+        if age_minutes <= limit:
+            return offset + int((age_minutes - previous) // width)
+        offset += int((limit - previous) // width)
+        previous = limit
+
+    return offset + int((age_minutes - previous) // _COARSEST_MINUTES)
+
+
+@dataclass(frozen=True)
+class TrackPoint:
+    """One point as the console draws it."""
+
+    number: int
+    latitude: float
+    longitude: float
+    accuracy_m: float | None
+    recorded_at: datetime
+    source: str
+
+
+def downsample(
+    points: Sequence[DeviceLocation], now: datetime | None = None
+) -> list[TrackPoint]:
+    """Thin a newest-first track for drawing, keeping the newest per age bucket.
+
+    ⚠️ **Input must be newest-first**, which is what `history()` returns. Keeping
+    the *newest* of a bucket only means anything if the newest is seen first.
+
+    Numbering runs from the newest point, matching the reference portal: #1 is
+    where the device is now, and larger numbers walk back in time. That reads
+    oddly written down and correctly on a map, because the question being asked is
+    almost always "where is it, and where was it just before that".
+    """
+    moment = now or _utcnow()
+    seen: set[int] = set()
+    kept: list[DeviceLocation] = []
+
+    for point in points:
+        age_minutes = (moment - _as_utc(point.recorded_at)).total_seconds() / 60.0
+        if age_minutes < 0:
+            continue
+
+        key = bucket_key(point.recorded_at, moment)
+        if age_minutes <= _KEEP_ALL_MINUTES:
+            if key is not None:
+                # Registered even though the point is kept regardless, so an older
+                # point in the same bucket is not then kept a second time.
+                seen.add(key)
+            kept.append(point)
+            continue
+
+        if key is None or key in seen:
+            continue
+        seen.add(key)
+        kept.append(point)
+
+    return [
+        TrackPoint(
+            number=index + 1,
+            latitude=point.latitude,
+            longitude=point.longitude,
+            accuracy_m=point.accuracy_m,
+            recorded_at=_as_utc(point.recorded_at),
+            source=point.source.value if hasattr(point.source, "value") else str(point.source),
+        )
+        for index, point in enumerate(kept)
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# Where the tiles come from
+# --------------------------------------------------------------------------- #
+
+#: OpenStreetMap's public tiles, and the attribution its licence requires.
+#:
+#: ⚠️ **A default, not a recommendation.** Every tile fetched tells
+#: openstreetmap.org roughly where an operator is looking. For most deployments
+#: that is an acceptable trade for a map that works out of the box; for one whose
+#: device positions are the sensitive part, it is not, which is why this is a
+#: setting and why the admin page says so in as many words.
+DEFAULT_TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+DEFAULT_TILE_ATTRIBUTION = (
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+)
+
+
+def tile_config(session: Session) -> dict[str, str]:
+    """The map source for this deployment, falling back to OpenStreetMap."""
+    from app.services import settings_store
+
+    url = settings_store.get(session, "location.tile_url", "").strip()
+    attribution = settings_store.get(session, "location.tile_attribution", "").strip()
+    return {
+        "tileUrl": url or DEFAULT_TILE_URL,
+        # An operator who sets their own tile server may legitimately want no
+        # attribution; only fall back when they have not chosen a URL either.
+        "tileAttribution": attribution or (DEFAULT_TILE_ATTRIBUTION if not url else ""),
+    }

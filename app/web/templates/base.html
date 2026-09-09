@@ -12,6 +12,7 @@
     which is precisely the shape of the bug this was found alongside.
   #}
   <link rel="stylesheet" href="/static/atlas.css?v={{ build.revision }}">
+  {% block page_styles %}{% endblock %}
 </head>
 <body>
 {#
@@ -80,5 +81,15 @@
   <span class="mono" title="Source: {{ build.source }}">{{ build.label }}</span>
 </footer>
 <script src="/static/atlas.js?v={{ build.revision }}" defer></script>
+{#
+  Page-specific assets, opted into rather than loaded everywhere. Leaflet is
+  ~150 KB and only two pages draw a map; putting it in the common bundle would
+  make every other page pay for it (W106).
+
+  ⚠️ Both `defer` scripts, so ordering is preserved and Leaflet is parsed before
+  the page script that uses it. An `async` here would race and fail intermittently
+  — the worst kind of failure to reproduce.
+#}
+{% block page_scripts %}{% endblock %}
 </body>
 </html>

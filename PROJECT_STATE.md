@@ -670,6 +670,94 @@ rather than renaming either and breaking a released agent.
 **Not done, deliberately:** nothing purges yet. Retention is C5, and until it
 lands this table only grows.
 
+#### ✅ C3 — The map, and the history page
+
+Duplicating `EUD_Remote_Assist_Portal`'s display, which was read from its source
+rather than its README (the README does not cover it).
+
+1. **Vendor Leaflet** (1.9.4, BSD-2-Clause — compatible with Apache-2.0) into
+   `static/vendor/`. The reference loads it from unpkg; a console that stops
+   working when a CDN does is not what a fleet tool should be. Marker images are
+   avoided entirely by using `divIcon` for both maps, so there are no image assets
+   to vendor or to 404.
+2. **Port the downsampling tiers exactly**, as a pure function: all points under
+   2 h, then newest-per-15 min to 6 h, per-hour to 48 h, per-6 h to 96 h, per-day
+   beyond. Numbered oldest→newest the way the reference numbers them.
+3. **Device page**: replace the W104 placeholder with coordinates to 5 decimals,
+   accuracy as `±N m` or *"Not reported by device"*, the **fix age**, and a map of
+   the last position with an accuracy circle. A *Location history* link below it.
+4. **History page** `/devices/{id}/location-history`: the reference's inverted
+   range (**From is the newer bound**, `Now` or a date; **To is further back**),
+   defaulting to now → 48 h ago; numbered markers; a Records table where clicking a
+   row flies the map to that point; *Export all history* as CSV of the full
+   unsampled set.
+5. **Tile source as a setting**, defaulting to OpenStreetMap, so a deployment
+   without internet can point at its own tile server instead of showing a blank
+   map with no explanation.
+6. Tests, then deploy and check against the real track `SM-X520` is now laying
+   down.
+
+###### ✅ Complete (2026-09-08) — 1218 server tests, drawn against a real track
+
+**Leaflet 1.9.4 vendored** into `static/vendor/`, BSD-2-Clause (compatible with
+Apache-2.0), recorded in `NOTICE` with the licence text kept beside the files. The
+reference portal loads it from unpkg; a console that stops working when a CDN does
+is not what a fleet tool should be. Marker images are avoided by using `divIcon`
+for both maps — the icons are CSS — so nothing depends on Leaflet's image assets
+resolving, which is the usual way a vendored copy breaks quietly after a move.
+(The images are bundled anyway, for the rules we do not hit.)
+
+**The downsampling tiers are an exact port**, asserted against the original
+formula at every boundary rather than approximately: the operator asked for a
+duplication of that portal's display, so a tier that is nearly right is a wrong
+answer, not a near one.
+
+⚠️ **The page says when it is showing a thinned track.** A thinned stretch looks
+exactly like a device that was reporting less often, and an operator who mistakes
+one for the other concludes the agent is failing. The panel names both numbers,
+and the CSV export deliberately ignores both the range and the thinning — a button
+saying *"Export all history"* that quietly did neither would hand someone a file
+they believe is complete.
+
+⚠️ **A device with no position says *which* silence it is.** "Nothing is
+collecting" sends an operator to the policy; "collecting, nothing has arrived yet"
+sends them to the device. A single "no data" would send them to neither.
+
+⚠️ **The fix age is on the page, not just the timestamp**, and a stale one is
+called out. A position from yesterday drawn on a map is indistinguishable from one
+from a minute ago — which is the whole reason the agent reports last-known rather
+than pretending to a live fix. An unreported accuracy reads *"Not reported by
+device"*, never `±0 m`.
+
+⚠️ **A backwards range is refused, not silently swapped.** Swapping would answer
+a question the operator did not ask while the form went on showing the one they
+did, and the result would be read as the answer.
+
+**Deliberately not built: reverse geocoding.** The reference shows a street
+address above the map, fetched per view from `nominatim.openstreetmap.org` — so
+every time an operator opens a device page, that device's coordinates go to a
+third party. For a fleet whose positions are the sensitive thing, that is a
+disclosure decision rather than a convenience, and it is the operator's to make.
+Tiles raise the same question one step smaller, so the source is a setting
+(**Admin → Location map**) defaulting to OpenStreetMap, which also covers a
+deployment with no internet — where the default would otherwise show an empty map
+with no explanation.
+
+**Verified live** against the track `SM-X520` is laying down: assets 200, map
+present, `±5 m`, *"70 seconds ago"*, 9 history rows, and a CSV of real GPS fixes.
+
+⚠️ **No reverse geocoding.** The reference shows a street address above the map,
+fetched per view from `nominatim.openstreetmap.org` — which means every time an
+operator opens a device page, that device's coordinates go to a third party. For a
+fleet whose positions are the sensitive thing, that is a disclosure decision, not
+a convenience. The panel shows coordinates instead. If the operator wants
+addresses, it should be a setting that is off until switched on, and that is worth
+asking about rather than assuming.
+
+ Fetching tiles tells
+the tile server roughly where the operator is looking. OSM is the sane default and
+the setting exists so it need not be.
+
 #### ✅ C2 — The agent reports on the policy's interval
 
 1. Confirm `TRACKING_FENCING` actually reaches the device in the desired-state

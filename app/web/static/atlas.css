@@ -858,3 +858,68 @@ dl.kv dd { margin: 0; font-size: 13px; }
   opacity: .75;
 }
 .site-footer:hover { opacity: 1; }
+
+/* --------------------------------------------------------------------------
+   Location: the map, and the history page (W106)
+   -------------------------------------------------------------------------- */
+
+.device-map,
+.location-history-map {
+  height: 340px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  /* Leaflet positions tiles absolutely; without this they escape the corners. */
+  overflow: hidden;
+}
+
+.location-history-map { height: 460px; }
+
+/* ⚠️ Leaflet's panes sit at z-index 400-700 and will ride over a sticky header
+   or a modal unless the map is given a stacking context of its own. */
+.device-map, .location-history-map { position: relative; z-index: 0; }
+
+/* Numbered markers, as divIcons — no image assets to resolve. */
+.location-marker-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .4);
+  font: 600 12px/1 system-ui, sans-serif;
+}
+
+.location-marker-badge.selected {
+  background: var(--warn);
+  transform: scale(1.25);
+}
+
+/* The reported accuracy, drawn to scale. Deliberately faint: it is a caveat on
+   the marker, not a second thing to look at. */
+.location-accuracy {
+  stroke: var(--accent);
+  stroke-opacity: .5;
+  fill: var(--accent);
+  fill-opacity: .12;
+}
+
+.location-history-table-wrap { max-height: 460px; overflow: auto; }
+
+.location-history-row { cursor: pointer; }
+.location-history-row:hover { background: var(--panel-2); }
+.location-history-row.selected { background: var(--panel-2); font-weight: 600; }
+
+.location-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.location-filters label { display: flex; flex-direction: column; gap: 4px; }
+
+.location-stale { color: var(--warn); }

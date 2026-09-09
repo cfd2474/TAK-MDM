@@ -551,3 +551,267 @@ def test_tracking_switched_off_reaches_the_device_as_zero(
 
     section = body["desired_state"]["policy"]["TRACKING_FENCING"]
     assert section["reporting_interval_minutes"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Thinning a track for display (C3)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_tiers_match_the_reference_portal_exactly():
+    """⚠️ Ported arithmetic, checked against the original at every boundary.
+
+    `EUD_Remote_Assist_Portal`'s `locationHistoryBucketKey` is:
+
+        ageMin <= 360   -> floor(ageMin / 15)
+        ageMin <= 2880  -> 24 + floor((ageMin - 360) / 60)
+        ageMin <= 5760  -> 66 + floor((ageMin - 2880) / 360)
+        otherwise       -> 74 + floor((ageMin - 5760) / 1440)
+
+    The operator asked for a duplication of how that portal displays locations, so
+    a tier that is nearly right is a wrong answer rather than a near one.
+    """
+    now = _now()
+
+    def key(minutes: float) -> int:
+        return location_service.bucket_key(now - timedelta(minutes=minutes), now)
+
+    for minutes in (0, 10, 119, 121, 200, 359, 360, 361, 1000, 2879, 2880, 2881,
+                    5000, 5759, 5760, 5761, 10_000):
+        if minutes <= 360:
+            expected = int(minutes // 15)
+        elif minutes <= 2880:
+            expected = 24 + int((minutes - 360) // 60)
+        elif minutes <= 5760:
+            expected = 66 + int((minutes - 2880) // 360)
+        else:
+            expected = 74 + int((minutes - 5760) // 1440)
+        assert key(minutes) == expected, f"{minutes} minutes"
+
+
+def test_everything_in_the_last_two_hours_is_kept(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """The recent end of a track is the part anyone is actually looking at."""
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    checkin(client, headers, locations=[_report(m) for m in range(0, 120, 10)])
+
+    drawn = location_service.downsample(location_service.history(db, _device(db).id))
+
+    assert len(drawn) == 12, "no thinning inside two hours"
+
+
+def test_an_old_stretch_is_thinned_to_one_per_bucket(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """⚠️ Thinning is a *display* decision; every point is still stored."""
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    checkin(
+        client,
+        headers,
+        locations=[_report(minutes_ago=1440 + offset) for offset in (0, 10, 20, 30, 40)],
+    )
+
+    stored = location_service.history(db, _device(db).id)
+    drawn = location_service.downsample(stored)
+
+    assert len(stored) == 5, "all five are stored"
+    assert len(drawn) == 1, "one drawn for that hour"
+
+
+def test_the_newest_of_a_bucket_is_the_one_kept(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    checkin(
+        client,
+        headers,
+        locations=[
+            _report(1440 + 50, latitude=1.0),
+            _report(1440 + 5, latitude=2.0),
+            _report(1440 + 30, latitude=3.0),
+        ],
+    )
+
+    drawn = location_service.downsample(location_service.history(db, _device(db).id))
+
+    assert len(drawn) == 1
+    assert drawn[0].latitude == 2.0
+
+
+def test_numbering_starts_at_the_newest_point(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """#1 is where the device is now and larger numbers walk back, matching the
+    reference portal and the question people actually ask."""
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    checkin(client, headers, locations=[_report(60, latitude=1.0), _report(5, latitude=2.0)])
+
+    drawn = location_service.downsample(location_service.history(db, _device(db).id))
+
+    assert [p.number for p in drawn] == [1, 2]
+    assert drawn[0].latitude == 2.0, "number 1 is the newest"
+
+
+# --------------------------------------------------------------------------- #
+# The pages
+# --------------------------------------------------------------------------- #
+
+
+def test_the_device_page_draws_the_last_position(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    checkin(client, headers, locations=[_report(3)])
+
+    body = client.get(f"/devices/{result['device_id']}", headers=ADMIN_HEADERS).text
+
+    assert "data-map-latest" in body
+    assert "39.73920" in body, "coordinates to five places"
+    assert "leaflet.js" in body
+
+
+def test_a_device_with_no_position_says_which_silence_it_is(
+    client: TestClient, db, enrolled
+):
+    """⚠️ Nothing-is-collecting sends an operator to the policy; collecting-but-
+    nothing-arrived sends them to the device. One message would send them to
+    neither."""
+    result = enrolled()
+
+    body = client.get(f"/devices/{result['device_id']}", headers=ADMIN_HEADERS).text
+
+    assert "location tracking is not switched on" in body
+    assert "data-map-latest" not in body
+
+
+def test_an_unreported_accuracy_is_not_shown_as_zero(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """The device not saying is not the device claiming zero metres."""
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    checkin(client, headers, locations=[_report(3, accuracy_m=None)])
+
+    body = client.get(f"/devices/{result['device_id']}", headers=ADMIN_HEADERS).text
+
+    assert "Not reported by device" in body
+    assert "&plusmn;0 m" not in body
+
+
+def test_a_stale_fix_is_called_out(client: TestClient, db, enrolled, mtls_headers):
+    """⚠️ A position from yesterday drawn on a map looks exactly like one from a
+    minute ago. The age is the only thing that separates them."""
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    checkin(client, headers, locations=[_report(minutes_ago=60 * 30)])
+
+    body = client.get(f"/devices/{result['device_id']}", headers=ADMIN_HEADERS).text
+
+    assert "this position may be out of date" in body
+    # 30 hours reads as "30 hours ago", not "1 days ago" — the coarser unit is
+    # less informative, not more, until the number gets unwieldy.
+    assert "30 hours ago" in body
+
+
+def test_the_history_page_lists_points_newest_first(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    checkin(client, headers, locations=[_report(90), _report(10)])
+
+    body = client.get(
+        f"/devices/{result['device_id']}/location-history", headers=ADMIN_HEADERS
+    ).text
+
+    assert "data-map-history" in body
+    assert body.index('data-point="1"') < body.index('data-point="2"')
+
+
+def test_a_range_the_wrong_way_round_is_refused_not_swapped(
+    client: TestClient, db, enrolled
+):
+    """⚠️ Swapping would answer a question the operator did not ask, while the
+    form went on showing the one they did."""
+    result = enrolled()
+
+    body = client.get(
+        f"/devices/{result['device_id']}/location-history"
+        "?from_mode=date&from_date=2026-01-01&to_date=2026-06-01",
+        headers=ADMIN_HEADERS,
+    ).text
+
+    assert "must be on or before" in body
+
+
+def test_an_empty_range_says_so_rather_than_drawing_nothing(
+    client: TestClient, db, enrolled
+):
+    result = enrolled()
+
+    body = client.get(
+        f"/devices/{result['device_id']}/location-history", headers=ADMIN_HEADERS
+    ).text
+
+    assert "No location points in this range." in body
+    assert "no records" in body
+
+
+def test_the_export_ignores_the_range_and_the_thinning(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """⚠️ The button says all history. An export that thinned, or honoured the
+    window, would hand someone a file they believe is complete and is not."""
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    checkin(
+        client,
+        headers,
+        locations=[_report(minutes_ago=1440 + off) for off in (0, 10, 20, 30, 40)],
+    )
+
+    response = client.get(
+        f"/devices/{result['device_id']}/location-history.csv", headers=ADMIN_HEADERS
+    )
+
+    assert response.status_code == 200
+    assert "text/csv" in response.headers["content-type"]
+    rows = [line for line in response.text.strip().splitlines() if line]
+    assert len(rows) == 6, "header plus all five points"
+    assert rows[0].startswith("number,recorded_at_utc,received_at_utc")
+
+
+def test_the_export_is_named_for_the_device(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    checkin(client, headers, locations=[_report(5)])
+    serial = _device(db).serial_number
+
+    response = client.get(
+        f"/devices/{result['device_id']}/location-history.csv", headers=ADMIN_HEADERS
+    )
+
+    assert serial in response.headers["content-disposition"]
+
+
+def test_tiles_default_to_openstreetmap_and_can_be_replaced(client: TestClient, db):
+    """⚠️ A setting because it is a disclosure decision: every tile tells the tile
+    server roughly where an operator is looking."""
+    from app.services import settings_store
+
+    assert location_service.tile_config(db)["tileUrl"] == location_service.DEFAULT_TILE_URL
+
+    settings_store.put(db, "location.tile_url", "https://tiles.internal/{z}/{x}/{y}.png")
+    db.commit()
+
+    config = location_service.tile_config(db)
+    assert config["tileUrl"] == "https://tiles.internal/{z}/{x}/{y}.png"
+    assert config["tileAttribution"] == "", "no OSM credit on someone else's tiles"
