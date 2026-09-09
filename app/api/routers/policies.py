@@ -36,6 +36,7 @@ from app.api.schemas import (
     PolicyVersionRead,
 )
 from app.db.models import Policy, PolicyVersion
+from app.policies import fence_rules
 from app.policies.registry import PolicyTypeError, registry
 from app.security.admin_auth import AdminIdentity, admin_required
 from app.services import effective_policy as eff
@@ -51,9 +52,45 @@ def _validated_spec(policy_type: str, spec: dict) -> dict:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 
 
+def _refuse_stranded_fence(
+    policy_type: str, spec: dict, *, sibling_password: dict | None
+) -> None:
+    """A geofence may only demand a lock the operator has actually defined (W106).
+
+    ⚠️ **`sibling_password` is None for a standalone policy, and that refuses.**
+    A `PASSWORD` policy assigned separately to the same device would also reach it
+    — the resolver merges everything assigned — but it can be unassigned on its
+    own, leaving the fence still demanding a lock with no rule behind it. That is
+    the state this exists to prevent, so the two have to travel in one profile.
+    """
+    if policy_type != "TRACKING_FENCING":
+        return
+    refusal = fence_rules.violation(spec, sibling_password)
+    if refusal:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, refusal)
+
+
+def _sibling_password_spec(session: Session, policy: Policy) -> dict | None:
+    """The PASSWORD section of this policy's profile, if it belongs to one."""
+    if policy.profile_id is None:
+        return None
+    sibling = session.scalars(
+        select(Policy).where(
+            Policy.profile_id == policy.profile_id,
+            Policy.profile_section == fence_rules.PASSWORD_KEY,
+        )
+    ).first()
+    if sibling is None or sibling.latest_version is None:
+        return None
+    return sibling.latest_version.spec
+
+
 @router.post("", response_model=PolicyRead, status_code=status.HTTP_201_CREATED)
 def create_policy(payload: PolicyCreate, session: Session = Depends(get_db)) -> Policy:
     spec = _validated_spec(payload.policy_type, payload.spec)
+    # A policy being created belongs to no profile yet, so there is no Password
+    # section it could be travelling with.
+    _refuse_stranded_fence(payload.policy_type, spec, sibling_password=None)
 
     policy = Policy(
         name=payload.name,
@@ -109,6 +146,9 @@ def publish_version(
 ) -> PolicyVersion:
     policy: Policy = fetch_or_404(session, Policy, policy_id, "policy")
     spec = _validated_spec(policy.policy_type, payload.spec)
+    _refuse_stranded_fence(
+        policy.policy_type, spec, sibling_password=_sibling_password_spec(session, policy)
+    )
 
     latest = policy.latest_version
     version = PolicyVersion(

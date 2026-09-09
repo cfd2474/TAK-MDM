@@ -134,7 +134,10 @@ def remove_section(
     session: Session = Depends(get_db),
 ) -> PolicyProfile:
     profile = _get(session, profile_id)
-    profile_service.remove_section(session, profile, category_key)
+    try:
+        profile_service.remove_section(session, profile, category_key)
+    except profile_service.ProfileError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     session.commit()
     return profile
 

@@ -2571,3 +2571,70 @@ function atlasWireAppSource(panelName, searchUrl) {
 
 atlasWireAppSource("repo", "/apps/repo/search");
 atlasWireAppSource("play", "/apps/play/search");
+
+/*
+ * A geofence lock needs a password policy beside it (W106).
+ *
+ * ⚠️ **The select is greyed, never `disabled`.** A disabled select submits
+ * nothing, and these rows are paired by position — so disabling one would shift
+ * every later fence's password setting onto the wrong row. That is the same trap
+ * the kiosk favourites carry a note about, and it would arrive here as a fence
+ * demanding a lock that nobody set. Greying is a CSS state plus a forced value;
+ * the control keeps submitting.
+ *
+ * ⚠️ **This is a convenience, not the enforcement.** The server refuses the same
+ * combination on save, and has to: a greyed control is a suggestion to anyone
+ * with developer tools. The test below is deliberately the same one the server
+ * makes — "does the Password panel have any value at all" — because an untouched
+ * password section parses to an empty spec, which is exactly what the server
+ * treats as "no password policy".
+ */
+function atlasWireFenceLock() {
+  var selects = document.querySelectorAll('select[name$="__password_enforced"]');
+  if (!selects.length) return;
+
+  var panel = document.querySelector('[data-page-panel^="password:"]');
+  var note = document.querySelector("[data-fence-lock-note]");
+
+  function passwordPolicySet() {
+    // No Password panel on the page at all (editing a lone policy): there is
+    // nothing this fence could be travelling with.
+    if (!panel) return false;
+    var fields = panel.querySelectorAll("input, select, textarea");
+    for (var i = 0; i < fields.length; i++) {
+      var el = fields[i];
+      if (el.type === "hidden" || el.disabled) continue;
+      if ((el.value || "").trim() !== "") return true;
+    }
+    return false;
+  }
+
+  function refresh() {
+    var allowed = passwordPolicySet();
+    selects.forEach(function (select) {
+      select.classList.toggle("greyed", !allowed);
+      // Forced rather than left showing "Yes" against a rule that would refuse
+      // the save: the control should never display a state the server rejects.
+      if (!allowed) select.value = "no";
+    });
+    if (note) note.hidden = allowed;
+  }
+
+  if (panel) {
+    panel.addEventListener("input", refresh);
+    panel.addEventListener("change", refresh);
+  }
+  // New fence rows arrive from the rowset template already greyed or not.
+  document.addEventListener("click", function (event) {
+    if (event.target && event.target.hasAttribute("data-add-row")) {
+      window.setTimeout(function () {
+        selects = document.querySelectorAll('select[name$="__password_enforced"]');
+        refresh();
+      }, 0);
+    }
+  });
+
+  refresh();
+}
+
+atlasWireFenceLock();

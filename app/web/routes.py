@@ -1311,11 +1311,22 @@ def save_profile_form(
     form = _sync_form(request)
     who = None if identity.is_anonymous else identity.username
     try:
-        for category in creator_catalog.wired_categories():
-            parsed = form_parse.parse_form(category.policy_type, form)
+        # ⚠️ Every upsert first, then every removal — not category by category.
+        # Catalog order puts Password before Tracking and fencing, so a single
+        # save that both clears the Password section *and* releases the geofence
+        # that needed it would delete the section while the fence still demanded
+        # one, and refuse a change whose end state is perfectly legal. Writing
+        # what is kept before deleting what is not makes the check see the state
+        # the operator is actually asking for.
+        parsed_by_category = {
+            category: form_parse.parse_form(category.policy_type, form)
+            for category in creator_catalog.wired_categories()
+        }
+        for category, parsed in parsed_by_category.items():
             if parsed:
                 profile_service.upsert_section(session, profile, category.key, parsed, published_by=who)
-            else:
+        for category, parsed in parsed_by_category.items():
+            if not parsed:
                 profile_service.remove_section(session, profile, category.key)
         eff.invalidate_for_profile(session, profile.id)
         session.commit()
@@ -1369,8 +1380,15 @@ def remove_section_form(
     profile = profile_service.get_profile(session, profile_id)
     if profile is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "profile not found")
-    profile_service.remove_section(session, profile, category_key)
-    session.commit()
+    try:
+        profile_service.remove_section(session, profile, category_key)
+        session.commit()
+    except profile_service.ProfileError as exc:
+        # ⚠️ This is the button an operator uses to delete the Password tab, and
+        # it is the one path that did not report a refusal — it would have 500'd
+        # on the very check that exists to protect a geofence lock.
+        session.rollback()
+        return _redirect(f"/profiles/{profile_id}?error={_quote(str(exc))}#cat-{category_key}")
     return _redirect(f"/profiles/{profile_id}#cat-{category_key}")
 
 

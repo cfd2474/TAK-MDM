@@ -780,6 +780,65 @@ evaluating locally, so leaving the fence restores it — but a device that is
 switched off inside the fence and moved comes back with the radio off until it
 next gets a fix. Worth stating in the console next to the field.
 
+#### ✅ C4a — A geofence lock needs a password policy beside it
+
+Operator, 2026-09-08: *"can we mandate that it be tied to the password policy if
+enabled? as in it requires a password policy be set in the same policy before it
+allows the geofence lock? it could grey out the setting unless a password policy
+was set."*
+
+⚠️ **The hole this closes.** A fence's requirement is a *floor* — quality
+`SOMETHING`, "any lock at all". With a PASSWORD policy beside it, that floor is
+the operator's own rule. Without one it is the only thing in play, so the device
+asks whoever is holding it to invent a PIN — and what they invent becomes the
+fleet's password policy. The operator has enforced a lock and specified nothing
+about it.
+
+⚠️ **"The same policy" means the same profile**, and the strict reading is
+deliberate. A `PASSWORD` policy assigned separately would also reach the device —
+the resolver merges everything assigned — but it can be unassigned on its own,
+leaving the fence demanding a lock with no rule behind it. That is exactly the
+state being prevented, so the two travel together or not at all. A **standalone**
+`TRACKING_FENCING` policy therefore cannot carry a lock at all.
+
+Enforced at **six** points, having found two more while wiring the four planned:
+
+| Where | Why it is not redundant |
+|---|---|
+| `create_profile` | The obvious one. |
+| `upsert_section` | Judged against the profile as it *will* be — reading the section back from the database checks the previous version and lets the new one through. |
+| `remove_section` | ⚠️ The rule is satisfied once and then the Password tab is deleted. Fires from a different tab, minutes later, with the thing it protects nowhere on screen. |
+| `POST /api/v1/policies` | A standalone policy has no sibling. |
+| `POST /policies/{id}/versions` | Publishing a new version of an existing section — checked against its *actual* sibling, so a legitimate profile section is not falsely refused. |
+| `POST /profiles/{id}/sections/{key}/remove` | ⚠️ **The button an operator would actually use**, and the one path that did not catch `ProfileError` — it would have raised a 500 on the very check protecting the lock. |
+
+⚠️ **Upserts now run before removals in a whole-profile save.** Catalog order puts
+Password before Tracking and fencing, so one submission that both cleared the
+Password section *and* released the fence needing it would delete the section
+while the fence still demanded one — refusing a change whose end state is
+perfectly legal. Writing what is kept before deleting what is not makes the check
+see the state the operator is actually asking for.
+
+⚠️ **`section.latest_version` is stale immediately after `upsert_section`.**
+It reads the relationship collection, and `upsert_section` adds a `PolicyVersion`
+by id rather than appending to `child.versions`. So a fence released a moment
+earlier still read as demanding a lock, and removing the Password section was
+refused on the strength of a spec that was no longer current. The removal check
+queries the newest version directly. Found by the test that releases and then
+removes — not by reasoning about it.
+
+**Greyed, never `disabled`.** A disabled `<select>` submits nothing, and fence
+rows pair by position, so disabling one would shift every later fence's password
+setting onto the wrong row — the same trap the kiosk favourites carry a note
+about, arriving as a fence demanding a lock nobody set. The control is greyed by a
+CSS class and forced to *No*, and keeps submitting. The greying is a convenience;
+the server is the enforcement, because a greyed control is a suggestion to anyone
+with developer tools. The JS test is deliberately the server's test — "does the
+Password panel hold any value at all" — because an untouched password section
+parses to `{}`, which is what the server treats as no policy.
+
+**1250 server tests.**
+
 #### ✅ C5 — Retention: the table stops only growing
 
 Operator, 2026-09-08: *"default to 30 days, but have a setting in admin to adjust

@@ -202,6 +202,13 @@
     at once. On a device with no password set, Android will prompt whoever is
     holding it to create one.
   </p>
+  <p class="field-tip banner warn" data-fence-lock-note>
+    <strong>Password enforced needs a Password policy in this same profile</strong>,
+    and is unavailable until there is one. On its own, a geofence lock only tells
+    the device that <em>some</em> lock is required &mdash; whoever is holding it
+    then picks the PIN, and that becomes the rule. Fill in the
+    <strong>Password</strong> section and this becomes available.
+  </p>
 {% endmacro %}
 
 {% macro _package_list(f, items, name) %}

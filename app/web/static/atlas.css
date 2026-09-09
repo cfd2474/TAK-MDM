@@ -923,3 +923,11 @@ dl.kv dd { margin: 0; font-size: 13px; }
 .location-filters label { display: flex; flex-direction: column; gap: 4px; }
 
 .location-stale { color: var(--warn); }
+
+/* A control the operator may not use yet, without disabling it — a disabled
+   select submits nothing, and these rows are paired by position (W106). */
+.greyed {
+  opacity: .5;
+  pointer-events: none;
+  background: var(--panel-2);
+}

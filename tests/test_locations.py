@@ -23,7 +23,10 @@ timestamps keep meaning different things.
 from __future__ import annotations
 
 import math
+import pathlib
 from datetime import datetime, timedelta, timezone
+
+from urllib.parse import unquote
 
 from sqlalchemy import select
 
@@ -1127,7 +1130,6 @@ def test_a_geofence_policy_saves_and_reaches_the_device(
                         "radius_m": 150,
                         "trigger": "entry",
                         "wifi": "off",
-                        "password_enforced": True,
                     }
                 ],
             },
@@ -1149,7 +1151,6 @@ def test_a_geofence_policy_saves_and_reaches_the_device(
 
     assert section["geofences"][0]["name"] == "Vault"
     assert section["geofences"][0]["wifi"] == "off"
-    assert section["geofences"][0]["password_enforced"] is True
 
 
 def test_a_fence_tighter_than_a_gps_fix_is_refused(client: TestClient):
@@ -1210,3 +1211,330 @@ def test_the_editor_uses_a_select_so_every_row_submits(client: TestClient):
 
     assert 'name="geofences__password_enforced"' in panel
     assert 'value="yes"' in panel and 'value="no"' in panel
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ A geofence lock needs a password policy beside it
+# --------------------------------------------------------------------------- #
+#
+# Operator, 2026-09-08: "can we mandate that it be tied to the password policy if
+# enabled? as in it requires a password policy be set in the same policy before it
+# allows the geofence lock?"
+#
+# The hole it closes: a fence's requirement is a floor — "some lock". With a
+# PASSWORD policy beside it that floor is the operator's own rule. Without one it
+# is the only thing in play, so the device asks whoever is holding it to invent a
+# PIN, and what they invent becomes the fleet's password policy.
+
+
+def _fence(password: bool = True, name: str = "Vault") -> dict:
+    return {
+        "name": name,
+        "latitude": 33.6236,
+        "longitude": -117.127,
+        "radius_m": 150,
+        "trigger": "entry",
+        "password_enforced": password,
+    }
+
+
+def _profile(client: TestClient, name: str, sections: dict):
+    from starlette.datastructures import FormData
+
+    return sections  # sections are exercised through the service directly below
+
+
+def test_a_lone_fence_may_not_demand_a_lock(client: TestClient):
+    """⚠️ A standalone policy has nothing it travels with.
+
+    A PASSWORD policy assigned separately would also reach the device, but it can
+    be unassigned on its own — leaving the fence demanding a lock with no rule
+    behind it, which is the state being prevented.
+    """
+    response = client.post(
+        "/api/v1/policies",
+        json={
+            "name": "lone-fence",
+            "policy_type": "TRACKING_FENCING",
+            "spec": {"geofences": [_fence()]},
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Password policy" in response.text
+
+
+def test_the_same_fence_without_a_lock_is_fine(client: TestClient):
+    """The rule is about the lock, not about fences."""
+    response = client.post(
+        "/api/v1/policies",
+        json={
+            "name": "lone-fence-no-lock",
+            "policy_type": "TRACKING_FENCING",
+            "spec": {"geofences": [_fence(password=False)]},
+        },
+    )
+
+    assert response.status_code == 201
+
+
+def test_a_profile_with_both_sections_is_allowed(client: TestClient, db):
+    from app.services import profiles as profile_service
+
+    profile = profile_service.create_profile(
+        db,
+        name="fenced-and-locked",
+        description=None,
+        sections={
+            "password": {"quality": 4, "min_length": 6},
+            "tracking_fencing": {"geofences": [_fence()]},
+        },
+    )
+    db.commit()
+
+    assert profile_service.section_for(profile, "tracking_fencing") is not None
+    assert profile_service.section_for(profile, "password") is not None
+
+
+def test_a_profile_missing_the_password_section_is_refused(client: TestClient, db):
+    from app.services import profiles as profile_service
+
+    try:
+        profile_service.create_profile(
+            db,
+            name="fenced-only",
+            description=None,
+            sections={"tracking_fencing": {"geofences": [_fence()]}},
+        )
+        raise AssertionError("should have been refused")
+    except profile_service.ProfileError as exc:
+        assert "Password policy" in str(exc)
+        assert "Vault" in str(exc), "names the fence, so it can be found"
+
+
+def test_adding_a_locking_fence_to_a_profile_without_a_password_is_refused(
+    client: TestClient, db
+):
+    """⚠️ Judged against the profile as it *will* be. Reading the section back
+    from the database would check the previous version and let the new one
+    through."""
+    from app.services import profiles as profile_service
+
+    profile = profile_service.create_profile(
+        db, name="later-fence", description=None, sections={}
+    )
+    db.commit()
+
+    try:
+        profile_service.upsert_section(
+            db, profile, "tracking_fencing", {"geofences": [_fence()]}
+        )
+        raise AssertionError("should have been refused")
+    except profile_service.ProfileError as exc:
+        assert "Password policy" in str(exc)
+
+
+def test_removing_the_password_section_is_refused_while_a_fence_needs_it(
+    client: TestClient, db
+):
+    """⚠️ The check that looks unnecessary and is not.
+
+    Every other one runs while the operator is looking at geofences. This fires
+    from a different tab, minutes later, with the thing it protects nowhere on
+    screen — and without it the rule is satisfied once and then deleted.
+    """
+    from app.services import profiles as profile_service
+
+    profile = profile_service.create_profile(
+        db,
+        name="remove-me",
+        description=None,
+        sections={
+            "password": {"quality": 4, "min_length": 6},
+            "tracking_fencing": {"geofences": [_fence()]},
+        },
+    )
+    db.commit()
+
+    try:
+        profile_service.remove_section(db, profile, "password")
+        raise AssertionError("should have been refused")
+    except profile_service.ProfileError as exc:
+        assert "cannot be removed" in str(exc)
+
+
+def test_the_password_section_can_go_once_no_fence_needs_it(client: TestClient, db):
+    from app.services import profiles as profile_service
+
+    profile = profile_service.create_profile(
+        db,
+        name="release-then-remove",
+        description=None,
+        sections={
+            "password": {"quality": 4, "min_length": 6},
+            "tracking_fencing": {"geofences": [_fence()]},
+        },
+    )
+    db.commit()
+
+    profile_service.upsert_section(
+        db, profile, "tracking_fencing", {"geofences": [_fence(password=False)]}
+    )
+    profile_service.remove_section(db, profile, "password")
+    db.commit()
+
+    assert profile_service.section_for(profile, "password") is None
+
+
+def test_an_empty_password_section_does_not_count(client: TestClient, db):
+    """⚠️ A section that exists but says nothing defines exactly as little as no
+    section at all, which is the thing being guarded against."""
+    from app.policies import fence_rules
+
+    assert fence_rules.violation({"geofences": [_fence()]}, {}) is not None
+    assert fence_rules.violation({"geofences": [_fence()]}, None) is not None
+    assert fence_rules.violation({"geofences": [_fence()]}, {"quality": 4}) is None
+
+
+def test_a_string_true_from_the_form_counts_as_enforced():
+    """⚠️ Called on raw form output as well as validated specs. Reading "true" as
+    falsey would pass the check on a value the model then coerces to True."""
+    from app.policies import fence_rules
+
+    for raw in ("true", "yes", "1", "on", "True"):
+        assert fence_rules.password_fences(
+            {"geofences": [{"name": "x", "password_enforced": raw}]}
+        ) == ["x"]
+    for raw in ("false", "no", "0", ""):
+        assert fence_rules.password_fences(
+            {"geofences": [{"name": "x", "password_enforced": raw}]}
+        ) == []
+
+
+def test_the_console_says_why_the_lock_is_unavailable(client: TestClient):
+    body = client.get("/policies/new").text
+
+    assert "data-fence-lock-note" in body
+    assert "needs a Password policy in this same profile" in body
+
+
+def test_the_greyed_control_still_submits(client: TestClient):
+    """⚠️ Greyed, never `disabled` — a disabled select submits nothing, and these
+    rows pair by position, so one would shift every later fence's setting onto the
+    wrong row."""
+    script = (
+        pathlib.Path("app/web/static/atlas.js").read_text(encoding="utf-8")
+    )
+    fence_block = script[script.index("function atlasWireFenceLock"):]
+
+    assert 'classList.toggle("greyed"' in fence_block
+    assert ".disabled = true" not in fence_block
+
+
+def test_the_remove_button_reports_the_refusal_instead_of_failing(
+    client: TestClient, db
+):
+    """⚠️ The one path that did not catch it, and the one an operator would use.
+
+    The Remove button on the Password tab would have raised straight through the
+    route — a 500 on exactly the check that exists to protect the geofence lock.
+    """
+    from app.services import profiles as profile_service
+
+    profile = profile_service.create_profile(
+        db,
+        name="remove-via-button",
+        description=None,
+        sections={
+            "password": {"quality": 4, "min_length": 6},
+            "tracking_fencing": {"geofences": [_fence()]},
+        },
+    )
+    db.commit()
+
+    response = client.post(
+        f"/profiles/{profile.id}/sections/password/remove",
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+
+    assert response.status_code in (302, 303)
+    assert "cannot be removed" in unquote(response.headers["location"])
+    db.expire_all()
+    assert profile_service.section_for(
+        profile_service.get_profile(db, profile.id), "password"
+    ) is not None, "the section survived"
+
+
+def test_the_api_refuses_the_removal_with_a_status_not_a_traceback(
+    client: TestClient, db
+):
+    from app.services import profiles as profile_service
+
+    profile = profile_service.create_profile(
+        db,
+        name="remove-via-api",
+        description=None,
+        sections={
+            "password": {"quality": 4, "min_length": 6},
+            "tracking_fencing": {"geofences": [_fence()]},
+        },
+    )
+    db.commit()
+
+    response = client.delete(f"/api/v1/profiles/{profile.id}/sections/password")
+
+    assert response.status_code == 409
+    assert "cannot be removed" in response.text
+
+
+def test_clearing_both_in_one_save_is_allowed(client: TestClient, db):
+    """⚠️ Upserts before removals, or a legal end state gets refused.
+
+    Catalog order puts Password before Tracking and fencing, so a save that both
+    clears the Password section and releases the fence needing it would otherwise
+    delete the section while the fence still demanded one — refusing a change
+    whose result is perfectly valid.
+    """
+    from app.services import profiles as profile_service
+
+    profile = profile_service.create_profile(
+        db,
+        name="clear-both",
+        description=None,
+        sections={
+            "password": {"quality": 4, "min_length": 6},
+            "tracking_fencing": {"geofences": [_fence()]},
+        },
+    )
+    db.commit()
+
+    # The whole-profile save: the fence keeps existing but stops demanding a
+    # lock, and the Password section is emptied — both in one submission.
+    form = {
+        "geofences__name": "Vault",
+        "geofences__latitude": "33.6236",
+        "geofences__longitude": "-117.127",
+        "geofences__radius_m": "150",
+        "geofences__trigger": "entry",
+        "geofences__wifi": "unmanaged",
+        "geofences__bluetooth": "unmanaged",
+        "geofences__reporting_interval_override_minutes": "0",
+        "geofences__password_enforced": "no",
+    }
+    response = client.post(
+        f"/profiles/{profile.id}",
+        data=form,
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+
+    assert response.status_code in (302, 303)
+    assert "error" not in response.headers["location"], unquote(
+        response.headers["location"]
+    )
+
+    db.expire_all()
+    fresh = profile_service.get_profile(db, profile.id)
+    assert profile_service.section_for(fresh, "password") is None
+    assert profile_service.section_for(fresh, "tracking_fencing") is not None

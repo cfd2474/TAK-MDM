@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Policy, PolicyProfile, PolicyVersion, ProfileAssignment
 from app.policies import creator_catalog
+from app.policies import fence_rules
 from app.policies.registry import PolicyTypeError, registry
 from app.services import effective_policy as eff
 from app.services import policy_admin
@@ -66,6 +67,41 @@ def _validate(category: creator_catalog.Category, spec: dict) -> dict:
         raise ProfileError(f"{category.label}: {exc}") from exc
 
 
+def _latest_spec(session: Session, profile: PolicyProfile) -> dict | None:
+    """The tracking section's newest spec, read from the database.
+
+    ⚠️ **Not `section.latest_version`.** That reads the relationship collection,
+    which `upsert_section` does not refresh — it adds a `PolicyVersion` by id
+    rather than appending to `child.versions`. So immediately after an operator
+    releases a fence's password requirement, the relationship still reports the
+    previous version, and removing the Password section would be refused on the
+    strength of a spec that is no longer current. Found by the test that releases
+    and then removes.
+    """
+    tracking = section_for(profile, fence_rules.TRACKING_KEY)
+    if tracking is None:
+        return None
+    row = session.scalars(
+        select(PolicyVersion)
+        .where(PolicyVersion.policy_id == tracking.id)
+        .order_by(PolicyVersion.version.desc())
+        .limit(1)
+    ).first()
+    return row.spec if row else None
+
+
+def _sections_after(
+    profile: PolicyProfile, category_key: str, spec: dict
+) -> dict[str, dict]:
+    """The profile's sections with one replaced - what a save is about to make true."""
+    out: dict[str, dict] = {}
+    for section in profile.sections:
+        if section.profile_section and section.latest_version:
+            out[section.profile_section] = section.latest_version.spec
+    out[category_key] = spec
+    return out
+
+
 def create_profile(
     session: Session,
     *,
@@ -82,6 +118,12 @@ def create_profile(
     name = name.strip()
     if not name:
         raise ProfileError("a profile needs a name")
+
+    # ⚠️ Across sections, before any of them is written. A geofence may only
+    # demand a lock the operator has actually defined - see `fence_rules`.
+    refusal = fence_rules.check_sections(sections)
+    if refusal:
+        raise ProfileError(refusal)
 
     profile = PolicyProfile(name=name, description=(description or None), created_by=created_by)
     session.add(profile)
@@ -124,6 +166,13 @@ def upsert_section(
     if not spec:
         return None
 
+    # ⚠️ Judged against the profile as it *will* be, not as it is: this section
+    # is the one being changed, so reading it back from the database would check
+    # the previous version and let the new one through.
+    refusal = fence_rules.check_sections(_sections_after(profile, category_key, spec))
+    if refusal:
+        raise ProfileError(refusal)
+
     validated = _validate(category, spec)
     child = section_for(profile, category_key)
 
@@ -162,6 +211,15 @@ def remove_section(session: Session, profile: PolicyProfile, category_key: str) 
     child = section_for(profile, category_key)
     if child is None:
         return
+
+    # ⚠️ Removing the Password section can strand a geofence that requires one.
+    # This is the check that looks unnecessary and is not: every other one runs
+    # while the operator is looking at geofences, and this one fires from a
+    # different tab, with the thing it protects nowhere on screen.
+    if category_key == fence_rules.PASSWORD_KEY:
+        refusal = fence_rules.blocks_password_removal(_latest_spec(session, profile))
+        if refusal:
+            raise ProfileError(refusal)
     affected = eff.devices_affected_by_policy(session, child.id)
     profile.sections.remove(child)
     session.flush()
