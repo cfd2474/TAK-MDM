@@ -1417,6 +1417,41 @@ so that case has to cancel. See `AgentNotification.rest`.
 Both failures are silent, and both produce the *same* wrong picture, which is
 what made the second one look like the first one not being fixed.
 
+### ⚠️ `setKeyguardDisabled` cannot bypass a PIN that is already set (W111)
+
+📖 AOSP's own javadoc on `DevicePolicyManager.setKeyguardDisabled`, quoted in
+full because the sentence in the middle is the one that matters:
+
+> Called by a device owner or profile owner of secondary users that is affiliated
+> with the device to disable the keyguard altogether.
+>
+> Setting the keyguard to disabled has the same effect as choosing "None" as the
+> screen lock type. **However, this call has no effect if a password, pin or
+> pattern is currently set. If a password, pin or pattern is set after the
+> keyguard was disabled, the keyguard stops being disabled.**
+>
+> `@return` `false` if attempting to disable the keyguard while a lock password
+> was in place. `true` otherwise.
+
+⚠️ **So a "trusted area that turns the password off" is not buildable this way**,
+and the shortfall is invisible from the console: the policy applies, the device
+reports success, and the PIN is still there. What this API actually does is remove
+the *swipe* keyguard from a device that has **no** credential — useful on a kiosk
+tablet that should wake straight into its app, and nothing like Smart Lock's
+trusted places.
+
+⚠️ **It also un-disables itself.** Setting any PIN later silently re-enables the
+keyguard, so a device that was configured once cannot be assumed to have stayed
+that way.
+
+**It returns `false` rather than throwing** when refused — the same shape as
+`setWifiEnabled` (W72). Read the return value; a silent success is not one.
+
+The nearest thing that *would* clear a credential is `resetPasswordWithToken` with
+an empty password, and §6c already records why that is not a route: the token
+"activates immediately only if the device has no passcode. If one is already set,
+the user must complete a confirm-credential operation … this **cannot be forced**."
+
 ### ✅ A Device Owner *can* turn Wi-Fi on and off (W72) — verified on `SM-X520`
 
 `WifiManager.setWifiEnabled()` has returned false for ordinary apps since

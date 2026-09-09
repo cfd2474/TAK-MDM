@@ -254,3 +254,27 @@ either way.
 * [`RestrictionPolicy`](https://docs.samsungknox.com/devref/knox-sdk/reference/com/samsung/android/knox/restriction/RestrictionPolicy.html)
 * [`custom.SettingsManager`](https://docs.samsungknox.com/devref/knox-sdk/reference/com/samsung/android/knox/custom/SettingsManager.html)
 * [Knox SDK Agreement](https://seap.samsung.com/content/knox-sdk-agreement)
+
+## ❌ Knox cannot bypass a lock credential either (W111, 2026-09-09)
+
+**Question:** could Knox give us a "trusted area" where the screen lock is turned
+off inside a geofence, the way Smart Lock's trusted places once did for users?
+
+**Answer: no.** Checked three ways, and all three land in the same place.
+
+| Source | What it actually offers |
+|---|---|
+| AOSP `setKeyguardDisabled` | *"has no effect if a password, pin or pattern is currently set"* — removes only the swipe keyguard on a device with **no** credential |
+| Knox Manage, *Disable the lock screen in kiosk mode* | **Key Guard → Disallow** in an Android Enterprise kiosk policy. That is the AOSP call above, wearing a console label — same API, same limit |
+| Knox Manage, *Clear Screen Lock* | *"removes the user's lock and sets an automatically-generated temporary password as the new lock"* — still a lock, and an admin command rather than something a zone can trigger |
+| Knox SDK `PasswordPolicy` | Nothing that clears or bypasses a credential. `enforcePwdChange()` demands a new one, `lock()` locks, `deleteAllRestrictions()` removes *rules* about passwords, not the password |
+
+⚠️ **Smart Lock's trusted places was a user-facing feature, never an API a DPC
+could drive.** An operator cannot grant it to a fleet, and nothing in Knox exposes
+an equivalent.
+
+**What is therefore buildable:** a fence can remove the *swipe* keyguard on a
+tablet that has no PIN — real value on a kiosk device that should wake straight
+into ATAK — and can require a lock. It cannot relax a credential that exists. Any
+console offering "password off in this zone" must say which of those it means, or
+an operator will believe a tablet unlocks freely when it does not.
