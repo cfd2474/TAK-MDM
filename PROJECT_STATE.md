@@ -569,6 +569,43 @@ provided at no cost? i dont want anything hosted locally."*
 is its headline feature — which is precisely what Nominatim's usage policy
 forbids, and why W109 shipped a button instead.
 
+###### ⚠️ W110a — unreadable, and answering Nova Scotia (2026-09-09)
+
+A screenshot from the operator. Two faults, one of which no test could ever have
+caught and one of which every test had already been told about.
+
+**1. White text on a near-white panel.** The suggestion list was illegible. The
+global `button` rule sets `color: var(--accent-ink)` — white — for the filled blue
+buttons everywhere else; the new rule overrode the *background* to a pale panel
+and never touched the foreground. ⚠️ **A control that changes its background must
+set its foreground.** No test can see, so this could only ever arrive as a
+screenshot; there is now one asserting the rule sets both.
+
+**2. The suggestions really were answering with Nova Scotia**, exactly as W110
+documented and shipped anyway. Documenting a weakness is not the same as
+accepting it, and seeing it in front of the operator made that obvious.
+
+✅ **A bounding box fixes what the bias could not.** `lat`/`lon` bias left
+`"110 w upper d"` returning Nova Scotia at every `location_bias_scale` up to 5.
+The same query inside the visible map's box returns only southern California. The
+browser now sends `map.getBounds()` with every suggestion.
+
+⚠️ **And the box is dropped when it finds nothing.** Constraining to the visible
+map is right until somebody searches for a place they are not looking at:
+`"Berlin Germany"` inside a California box returns **exactly zero** from Photon —
+measured. A chooser that says "no matches" for a real city is worse than one that
+answers less locally. Verified live: Berlin still resolves while a California box
+is applied.
+
+⚠️ **I walked into my own trap again.** The first verification ran `curl` right
+after `docker compose up --build`, against a container still starting, and
+reported both fixes missing. W109a records this exact lesson three entries above.
+The deploy check now polls the endpoint until it answers `200` rather than
+checking that a file exists inside the image — a file being present is not a
+service being up.
+
+**1311 server tests.**
+
 #### ⚠️ Two services, because measurement said so
 
 Photon was tested against the operator's own address before being adopted:

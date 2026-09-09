@@ -501,3 +501,106 @@ def test_choosing_a_suggestion_creates_a_row_if_there_is_none(client: TestClient
     chooser = chooser[: chooser.index("function place")]
 
     assert "rowsEnsuringOne()" in chooser
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ Reported from the field (2026-09-09): unreadable, and answering Nova Scotia
+# --------------------------------------------------------------------------- #
+
+
+def test_the_suggestion_list_sets_its_own_text_colour(client: TestClient):
+    """⚠️ A control that changes its background must set its foreground.
+
+    The global `button` rule sets `color: var(--accent-ink)` — white — for the
+    filled blue buttons everywhere else. Overriding only the background here left
+    white text on a near-white panel: legible to nobody, and reported from a
+    screenshot rather than caught by any test, because no test can see.
+    """
+    css = pathlib.Path("app/web/static/atlas.css").read_text(encoding="utf-8")
+    block = css[css.index(".geofence-results button {"):]
+    block = block[: block.index("}")]
+
+    assert "color: var(--ink)" in block
+    assert "background: #fff" in block
+
+
+def test_suggestions_are_restricted_to_the_visible_map(client: TestClient, db):
+    """⚠️ The box does what the bias could not.
+
+    "110 w upper d" biased to southern California still returned roads in Nova
+    Scotia at every location_bias_scale up to 5. The same query inside a southern
+    California bounding box returns only southern California.
+    """
+    seen = {}
+
+    def capture(request):
+        seen.setdefault("urls", []).append(str(request.url))
+        return httpx.Response(200, json={"features": [
+            _feature(-117.58, 33.83, street="Upper Drive", city="Corona")
+        ]})
+
+    geocoding.suggest(
+        db, "110 w upper d",
+        near=(33.87, -117.57),
+        bbox=(-118.5, 33.4, -116.8, 34.3),
+        client=_client(capture),
+    )
+
+    assert "bbox=" in seen["urls"][0]
+    assert len(seen["urls"]) == 1, "one request when the box finds something"
+
+
+def test_a_box_that_finds_nothing_is_retried_without_it(client: TestClient, db):
+    """⚠️ Constraining to the visible map is right until somebody searches for a
+    place they are not looking at.
+
+    "Berlin Germany" inside a California box returns exactly zero from Photon —
+    measured, not assumed. A chooser that says "no matches" for a real city is
+    worse than one that answers less locally.
+    """
+    calls = []
+
+    def capture(request):
+        calls.append(str(request.url))
+        # Empty while the box is applied; a hit once it is dropped.
+        if "bbox=" in str(request.url):
+            return httpx.Response(200, json={"features": []})
+        return httpx.Response(200, json={"features": [
+            _feature(13.4050, 52.5200, name="Berlin", country="Germany")
+        ]})
+
+    places = geocoding.suggest(
+        db, "Berlin Germany",
+        bbox=(-118.5, 33.4, -116.8, 34.3),
+        client=_client(capture),
+    )
+
+    assert len(calls) == 2, "the box was tried, then dropped"
+    assert "bbox=" in calls[0] and "bbox=" not in calls[1]
+    assert places[0].label.startswith("Berlin")
+
+
+def test_the_browser_sends_the_map_bounds(client: TestClient):
+    picker = _picker_script()
+
+    assert "map.getBounds()" in picker
+    assert "&bbox=" in picker
+
+
+def test_a_malformed_box_is_dropped_rather_than_refused(client: TestClient, monkeypatch):
+    """This is called while somebody types; an unbounded search is a perfectly
+    good answer to give them."""
+    seen = {}
+
+    def fake(session, query, near=None, bbox=None, client=None):
+        seen["bbox"] = bbox
+        return []
+
+    monkeypatch.setattr(geocoding, "suggest", fake)
+
+    response = client.get(
+        "/policies/geocode/suggest?q=corona&bbox=not,a,real,box", headers=ADMIN_HEADERS
+    )
+
+    assert response.status_code == 200
+    assert seen["bbox"] is None

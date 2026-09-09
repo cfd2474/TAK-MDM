@@ -607,6 +607,7 @@ def geocode_suggest(
     q: str = "",
     lat: float | None = None,
     lon: float | None = None,
+    bbox: str = "",
     session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
 ) -> JSONResponse:
@@ -620,7 +621,19 @@ def geocode_suggest(
     difference between "Cor" meaning Corona, California and meaning a global list.
     """
     near = (lat, lon) if lat is not None and lon is not None else None
-    places = geocoding.suggest(session, q, near=near)
+
+    # A malformed box is dropped rather than refused. This is a convenience
+    # endpoint called while somebody types, and an unbounded search is a
+    # perfectly good answer to give them.
+    bounds = None
+    parts = [part for part in bbox.split(",") if part.strip()]
+    if len(parts) == 4:
+        try:
+            bounds = tuple(float(part) for part in parts)
+        except ValueError:
+            bounds = None
+
+    places = geocoding.suggest(session, q, near=near, bbox=bounds)
     return JSONResponse(
         {
             "results": [

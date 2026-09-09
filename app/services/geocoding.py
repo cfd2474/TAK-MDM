@@ -204,6 +204,7 @@ def suggest(
     query: str,
     *,
     near: tuple[float, float] | None = None,
+    bbox: tuple[float, float, float, float] | None = None,
     client: httpx.Client | None = None,
 ) -> list[Place]:
     """Address suggestions for a partial string, for a type-ahead box.
@@ -222,17 +223,22 @@ def suggest(
     So each is used where it is strong: Photon while typing, Nominatim on the
     press. A single service for both would be worse at one of the two jobs.
 
-    ``near`` biases results toward where the operator is looking, which is what
-    turns `"Cor"` from a global list into Corona, California.
+    ``bbox`` restricts results to what the map is showing, and ``near`` biases
+    toward its centre. **The box does the real work**: bias alone still answered
+    `"110 w upper d"` with roads in Nova Scotia at every `location_bias_scale` up
+    to 5, while the same query inside a southern California box returns only
+    southern California.
+
+    ⚠️ **A box that finds nothing is retried without it.** Constraining to the
+    visible map is right until somebody searches for a place they are not looking
+    at — `"Berlin Germany"` inside a California box returns exactly zero, and a
+    chooser that says "no matches" for a real city is worse than a less local one.
     """
     query = (query or "").strip()
     if len(query) < MIN_QUERY_LENGTH:
         return []
 
     url = suggest_endpoint(session)
-    params: dict[str, object] = {"q": query, "limit": MAX_SUGGESTIONS}
-    if near is not None:
-        params["lat"], params["lon"] = near
 
     key = f"suggest\n{url}\n{query.lower()}\n{near}"
     with _CACHE_LOCK:
@@ -243,9 +249,11 @@ def suggest(
     owned = client is None
     http = client or httpx.Client(timeout=TIMEOUT_SECONDS, follow_redirects=True)
     try:
-        response = http.get(url, params=params, headers={"User-Agent": USER_AGENT})
-        response.raise_for_status()
-        payload = response.json()
+        places = _ask_photon(http, url, query, near, bbox)
+        if not places and bbox is not None:
+            # The operator is searching for somewhere off-screen. Widen rather
+            # than answer "no matches" for a place that plainly exists.
+            places = _ask_photon(http, url, query, near, None)
     except (httpx.HTTPError, ValueError) as exc:
         # ⚠️ Suggestions fail *quietly*. This runs on almost every keystroke, and
         # an error banner per character would bury the form in complaints about a
@@ -257,12 +265,31 @@ def suggest(
         if owned:
             http.close()
 
-    places = _parse_photon(payload)
     with _CACHE_LOCK:
         if len(_CACHE) >= _CACHE_LIMIT:
             _CACHE.clear()
         _CACHE[key] = places
     return places
+
+
+def _ask_photon(
+    http: httpx.Client,
+    url: str,
+    query: str,
+    near: tuple[float, float] | None,
+    bbox: tuple[float, float, float, float] | None,
+) -> list[Place]:
+    """One request to Photon, with whatever narrowing we have."""
+    params: dict[str, object] = {"q": query, "limit": MAX_SUGGESTIONS}
+    if near is not None:
+        params["lat"], params["lon"] = near
+    if bbox is not None:
+        # Photon wants minLon,minLat,maxLon,maxLat.
+        params["bbox"] = ",".join(f"{value:.5f}" for value in bbox)
+
+    response = http.get(url, params=params, headers={"User-Agent": USER_AGENT})
+    response.raise_for_status()
+    return _parse_photon(response.json())
 
 
 def _parse_photon(payload: object) -> list[Place]:

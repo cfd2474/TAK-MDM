@@ -959,13 +959,28 @@ dl.kv dd { margin: 0; font-size: 13px; }
 
 /* Address candidates, when a search matches more than one place (W109a). */
 .geofence-results { margin: 6px 0 10px; display: flex; flex-direction: column; gap: 4px; }
+/* ⚠️ The colour is set explicitly, and that is the whole point of this rule.
+   The global `button` rule sets `color: var(--accent-ink)` — white — for the
+   filled blue buttons everywhere else. Overriding only the background here left
+   white text on a near-white panel: legible to nobody, and reported from the
+   field. A control that changes its background must set its foreground. */
 .geofence-results button {
   text-align: left;
-  background: var(--panel-2);
+  background: #fff;
+  color: var(--ink);
   border: 1px solid var(--line);
   border-radius: 4px;
-  padding: 6px 10px;
+  padding: 8px 10px;
   cursor: pointer;
   font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: normal;
 }
-.geofence-results button:hover { border-color: var(--accent); }
+
+.geofence-results button:hover,
+.geofence-results button:focus-visible {
+  border-color: var(--accent);
+  background: var(--panel-2);
+  color: var(--ink);
+}

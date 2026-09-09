@@ -452,9 +452,19 @@ function atlasWireGeofencePicker() {
     if (query.length < 3) { clearResults(); return; }
 
     var seq = ++suggestSeq;
+    // ⚠️ The visible bounds, not just the centre. A centre bias alone still
+    // answered "110 w upper d" with roads in Nova Scotia; the same query inside
+    // the box returns only what is on screen. The server widens the search by
+    // itself when the box finds nothing, so searching somewhere off-screen still
+    // works.
     var centre = map.getCenter();
+    var box = map.getBounds();
     var url = "/policies/geocode/suggest?q=" + encodeURIComponent(query) +
-      "&lat=" + centre.lat.toFixed(4) + "&lon=" + centre.lng.toFixed(4);
+      "&lat=" + centre.lat.toFixed(4) + "&lon=" + centre.lng.toFixed(4) +
+      "&bbox=" + [
+        box.getWest().toFixed(5), box.getSouth().toFixed(5),
+        box.getEast().toFixed(5), box.getNorth().toFixed(5),
+      ].join(",");
 
     fetch(url, { headers: { Accept: "application/json" } })
       .then(function (response) { return response.json(); })
