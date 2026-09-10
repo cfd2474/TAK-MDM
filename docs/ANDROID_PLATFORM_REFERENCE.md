@@ -1513,6 +1513,49 @@ Knox. The genuinely Knox-gated pieces are **URL-level web filtering** and
 DNS resolver; postpone-and-window scheduling) that are worth building first
 because they work on any device.
 
+### ⚠️ A client certificate without a *grant* is silently useless (W112 C2, 2026-09-09)
+
+📖 `installKeyPair` and `generateKeyPair` put a key in KeyChain. **Nothing can
+use it yet.** The javadoc for `grantKeyPairToApp` says what the grant replaces:
+
+> This is useful (in combination with `installKeyPair` or `generateKeyPair`) to
+> let an application call `KeyChain.getPrivateKey` **without having to call
+> `KeyChain.choosePrivateKeyAlias` first**.
+
+`choosePrivateKeyAlias` is a **user-facing chooser dialog**. On an unattended or
+kiosk tablet nobody taps it, so an ungranted certificate fails with no error
+anywhere: the console shows the policy applied and the certificate installed, and
+authentication simply never happens. This is the failure mode that ships
+undetected when there is no testbed — everything reports success.
+
+| Call | For |
+|---|---|
+| `grantKeyPairToWifiAuth(alias)` | Wi-Fi EAP authentication. Note: **no `admin` parameter** |
+| `grantKeyPairToApp(admin, alias, packageName)` | A named app — a VPN client, for example |
+| `isKeyPairGrantedToWifiAuth(alias)`, `getKeyPairGrants(alias)` | Read back, so a grant can be re-asserted like any other declarative state |
+
+⚠️ All of them **return `boolean` rather than throwing** on refusal — the same
+shape as `installCaCert` (above), `setWifiEnabled` (W72) and `setKeyguardDisabled`
+(W111). A caller ignoring the return value reports success on a grant that was
+never made.
+
+⚠️ `grantKeyPairToApp` throws `IllegalArgumentException` on API 34+ if the alias
+does not exist, and if `packageName` is not an installed package. **Order matters:**
+install the key before granting it, and install the VPN app before granting to it.
+
+⚠️ **There is nothing for the certificate to attach to yet.** `NetworksSpec`
+offers `none` / `wep` / `wpa_psk` / `wpa3_sae` only, and `applyNetworks` sets
+`allowedKeyManagement` from that enum — **no EAP of any kind**. EAP-TLS needs
+`WifiConfiguration.enterpriseConfig` (`WifiEnterpriseConfig`) carrying the EAP
+method, identity, CA certificate and the client alias. So "install a `.p12`" on
+its own reaches **no consumer**: the Wi-Fi enterprise config is the larger half of
+this work, not the certificate handling.
+
+**VPN stays out of reach beyond the grant.** §6d records that the only
+DO-supported VPN is `setAlwaysOnVpnPackage` pointing at an installed client, whose
+certificate configuration is that app's own business. ATLAS can grant the key; it
+cannot tell the app to use it.
+
 ### ⚠️ `setKeyguardDisabled` cannot bypass a PIN that is already set (W111)
 
 📖 AOSP's own javadoc on `DevicePolicyManager.setKeyguardDisabled`, quoted in

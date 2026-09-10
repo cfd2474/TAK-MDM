@@ -426,6 +426,71 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### 🚧 W113 — Remove Trusted certificates, SCEP, Global HTTP proxy
+
+Operator, 2026-09-09: *"lets just remove trusted certs, SCEP, global HTTP proxy"*.
+
+**Why**: W112 C2 established that a client certificate reaches no consumer on
+this fleet without EAP Wi-Fi support that does not exist, and the operator has no
+enterprise Wi-Fi or VPN to test against. The proxy is advisory by Android's own
+javadoc. Rather than carry three things that either do nothing or cannot be
+proven, they come out. **Web content filtering and OS updates stay** — both
+still wanted, and OS updates is the one with real value here.
+
+#### ⚠️ The order is forced, and getting it wrong strands a CA on a tablet
+
+`CertificateApplier`'s contract is **absent means removed**, and that is a
+security property: the agent removes an anchor when policy stops naming it. So
+the agent is the only thing that can clean up after this feature.
+
+**Policy `5064a51b` ("W112 trust check") is assigned to a device**, which is
+therefore trusting the test CA right now. Deleting the server spec *and* the
+agent applier together would leave that anchor installed with nothing left able
+to remove it — and if `DISALLOW_CONFIG_CREDENTIALS` were ever re-applied, not
+removable by hand either.
+
+**So: server first, verify the device drops it, agent second.** No live data is
+touched — dropping the server-side resolution makes the desired state carry
+`certificates: []`, and agent 0.54.0 (still deployed) removes what it installed
+on the next check-in, exactly as designed. The orphaned policy rows stay put and
+are ignored: `effective_policy` already skips unknown types
+(*"unknown type, e.g. a rolled-back deployment: ignore, don't crash"*), so there
+is no migration and nothing breaks.
+
+#### Chunk 1 — server
+
+1. Delete `app/policies/specs/certificates.py`; unregister from `registry.py`.
+2. `creator_catalog.py`: Security category loses its `CERTIFICATES` type (becomes
+   a stub-only category like Accounts); drop the `scep` and `global-http-proxy`
+   stubs; keep `web-content-filtering` and `os-updates` and drop their now-dangling
+   `after="trusted-certificates"`.
+3. `effective_policy.py` — drop `payload["certificates"] = …`; **keep
+   `desired_state.py` emitting `certificates: []`** deliberately, so the deployed
+   agent removes the anchor.
+4. `app/services/files.py` — remove `resolve_certificates`.
+5. Replace `tests/test_certificates.py` with a small removal-contract test: the
+   empty key still ships, and the type is no longer offered.
+6. Keep `allow_credential_configuration` under Restrictions — it blocks the
+   credentials screen and is useful independently — but drop its cross-reference
+   to the deleted page.
+7. Full test run, deploy.
+
+**Then verify on hardware that the test CA disappears from the tablet.** That
+verification is the gate on chunk 2.
+
+#### Chunk 2 — agent (only after that check)
+
+1. Delete `CertificateApplier.kt` and `CertificatePlan.kt`.
+2. Remove `caCertsInstalled` / `rememberCaCert` / `rememberedCaCert` /
+   `forgetCaCert` from `AgentConfig.kt`.
+3. Unwire from `Reconciler.kt`, including `downloadCertificateBytes`.
+4. Drop `certificates` from `desired_state.py` (safe in either order — a missing
+   key reads as an empty array in the old agent, so it still removes).
+5. Build, publish, verify a clean reconcile with `errors=0`.
+6. Update `ANDROID_PLATFORM_REFERENCE.md`, `ARCHITECTURE.md` and this file —
+   **keeping** the W112 platform findings, which stay true and cost nothing to
+   retain if this is ever revisited.
+
 ### ✅ W104 — Device details, and disenroll as a factory reset
 
 Operator, 2026-09-08: a details page per device — serial and device details,

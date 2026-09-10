@@ -412,7 +412,6 @@ def refresh(session: Session, device: Device) -> dict[str, Any]:
     payload["store"] = resolve_store_apps(session, payload["apps"])
     payload["files"] = files.resolve_files(session, payload["values"])
     payload["wallpaper"] = files.resolve_wallpaper(session, payload["values"])
-    payload["certificates"] = files.resolve_certificates(session, payload["values"])
 
     cache = session.get(EffectivePolicyCache, device.id)
     # A device that has never been computed starts from an empty desired state, not

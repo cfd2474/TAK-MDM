@@ -1,0 +1,149 @@
+# Copyright 2026 TAK-Solutions LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Trusted certificates, SCEP and the global HTTP proxy are gone (W113).
+
+⚠️ **Removing this feature is not the same as never having had it.** A device
+that was trusting a policy-installed CA has to be told to stop, and the only
+thing that can tell it is the agent — whose contract is *absent means removed*.
+So the empty key still ships, and that is what these tests defend.
+"""
+
+from __future__ import annotations
+
+import uuid
+
+from fastapi.testclient import TestClient
+
+from app.db.models import Assignment, AssignmentScope, Policy, PolicyVersion
+from tests.test_checkin import checkin
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ The cleanup contract
+# --------------------------------------------------------------------------- #
+
+
+def test_the_empty_key_still_ships_so_deployed_agents_clean_up(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """⚠️ The one thing that must not be tidied away with the feature.
+
+    `CertificateApplier` in agents <= 0.54.0 drives the installed set to exactly
+    what this list says. An empty list means "remove the anchors you installed";
+    dropping the key entirely would have been read the same way, but leaving the
+    key explicit is what makes that intentional rather than incidental.
+    """
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+
+    bundle = checkin(client, headers, force_full=True)["desired_state"]
+
+    assert bundle["certificates"] == []
+
+
+def test_an_orphaned_certificates_policy_does_not_break_resolution(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """⚠️ Rows for the deleted type outlive the code that understood them.
+
+    The live server still holds `5064a51b` ("W112 trust check"), assigned to a
+    device. The resolver skips unknown types on purpose — *"a rolled-back
+    deployment: ignore, don't crash"* — and this is the test that says so, since
+    the alternative is a tablet whose whole policy resolution fails.
+    """
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+
+    policy = Policy(name="stale trust check", policy_type="CERTIFICATES")
+    db.add(policy)
+    db.flush()
+    version = PolicyVersion(
+        policy_id=policy.id,
+        version=1,
+        spec={"trusted_ca_file_ids": [str(uuid.uuid4())]},
+    )
+    db.add(version)
+    db.add(
+        Assignment(
+            policy_id=policy.id,
+            scope=AssignmentScope.DEVICE,
+            device_id=uuid.UUID(result["device_id"]),
+            rank=1,
+        )
+    )
+    db.commit()
+
+    bundle = checkin(client, headers, force_full=True)["desired_state"]
+
+    assert bundle["certificates"] == []
+
+
+# --------------------------------------------------------------------------- #
+# The type is gone
+# --------------------------------------------------------------------------- #
+
+
+def test_the_policy_type_is_no_longer_offered(client: TestClient):
+    response = client.post(
+        "/api/v1/policies",
+        json={
+            "name": "trust",
+            "policy_type": "CERTIFICATES",
+            "spec": {"trusted_ca_file_ids": []},
+        },
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_the_removed_panels_are_not_in_the_creator(client: TestClient):
+    body = client.get("/policies/new").text
+
+    for slug in ("trusted-certificates", "scep", "global-http-proxy"):
+        assert f'data-page-panel="security:{slug}"' not in body, slug
+    assert "trusted_ca_file_ids" not in body
+
+
+def test_what_is_left_of_security_is_listed_as_unbuilt(client: TestClient):
+    """⚠️ Security has no wired policy type any more, so it becomes a placeholder
+    like Accounts and Knox rather than a category with panels.
+
+    The first attempt kept `stub_pages`, which render nothing for an unwired
+    category — the creator builds panels only for wired ones. Security would have
+    silently disappeared, reading as "it was deleted" rather than "it is unbuilt".
+    """
+    body = client.get("/policies/new").text
+
+    assert "Security" in body
+    assert "web content filtering" in body
+    assert "os updates" in body
+
+# --------------------------------------------------------------------------- #
+# What survives
+# --------------------------------------------------------------------------- #
+
+
+def test_the_credential_restriction_survives_on_its_own_merits(client: TestClient):
+    """It blocks the credentials screen — useful without a Certificates policy to
+    protect, so it stays. Only its cross-reference to the deleted page goes."""
+    from app.policies import form_schema
+
+    field = next(
+        f for f in form_schema.form_fields("RESTRICTIONS")
+        if f.name == "allow_credential_configuration"
+    )
+
+    assert "whole credentials screen" in field.help
+    assert "Certificates policy" not in field.help

@@ -21,7 +21,6 @@ means adding a module here and registering it — the resolver never changes (OC
 from app.policies.specs.app_catalog import AppCatalogSpec
 from app.policies.specs.atak_config import AtakConfigSpec
 from app.policies.specs.base import PolicySpec
-from app.policies.specs.certificates import CertificatesSpec
 from app.policies.specs.customizations import CustomizationsSpec
 from app.policies.specs.files import FilesSpec
 from app.policies.specs.kiosk import KioskSpec
@@ -35,7 +34,6 @@ from app.policies.specs.wallpaper import WallpaperSpec
 __all__ = [
     "AppCatalogSpec",
     "AtakConfigSpec",
-    "CertificatesSpec",
     "CustomizationsSpec",
     "FilesSpec",
     "KioskSpec",

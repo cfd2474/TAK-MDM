@@ -130,10 +130,13 @@ def build(
         # Both wallpaper slots when both are set: the device chooses by its own
         # screen (D46) and downloads only the one it uses.
         "wallpaper": payload.get("wallpaper", {}),
-        # Trust anchors, as sha256 references into the artifact store. The
-        # bundle is signed and carries the hash, so the bytes cannot be
-        # swapped without breaking one or the other (W112).
-        "certificates": payload.get("certificates", []),
+        # ⚠️ Kept deliberately after the trusted-certificate feature was
+        # removed (W113), and always empty now. `CertificateApplier` in agents
+        # <= 0.54.0 treats an empty list as "remove the anchors you installed",
+        # so this is what cleans up a device still trusting a CA from the
+        # deleted feature. Safe to drop once no such agent is in the fleet — a
+        # missing key reads as an empty array there too.
+        "certificates": [],
     }
 
 
