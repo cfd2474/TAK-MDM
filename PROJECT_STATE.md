@@ -426,6 +426,58 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W115 — Provisioning let the operator past ungranted permissions (2026-09-09, `eb34e9e`)
+
+Operator, after re-enrolling both devices: *"it allowed me to proceed with device
+provisioning without accepting all permissions. the proceed button should be
+blocked until all permissions have been granted"*.
+
+The button was labelled **"Continue without the rest"** — skipping was designed
+in, not a bug. But `PolicyComplianceActivity`'s own docstring says why that is
+wrong: *"This is the one moment the operator is already holding the device …
+Everything requiring a human tap is collected here, so a deployed tablet never
+later turns out to be silently missing a capability."* Skipping defeats the
+entire purpose of the screen.
+
+#### Blocked on the *required* set, not on everything
+
+`PermissionRequirement` already draws that line and the reasons hold:
+
+| Required — blocks | Optional — does not block |
+|---|---|
+| File access, Display over other apps, Unrestricted battery, Location | Background location, Notifications, ATLAS power menu |
+
+The power menu is optional *by design* on a device that will not be locked down,
+and blocking setup over it would strand provisioning for something nobody needs.
+
+#### ⚠️ The override stays, and deliberately contradicts the literal ask
+
+The operator asked for the button to be blocked until **all** permissions are
+granted. It is blocked, but there is still a way through, because
+`finishProvisioning`'s existing warning is load-bearing: **provisioning cannot be
+repeated without another factory reset.** A required permission that cannot be
+granted on some future OEM — a Settings screen that does not exist, an intent
+resolving to nothing — would otherwise trap the operator on a dead button with a
+factory reset as the only escape. That trade is worse than the one being fixed.
+
+So: a plain secondary button, hidden unless something required is missing, behind
+a dialog naming what will break, logging the decision. **Say the word and the
+override comes out** — it is a deliberate deviation, not an oversight.
+
+#### State
+
+Agent **0.56.0 (versionCode 101)** published; fleet pointer → 101.
+
+⚠️ **Only reachable during provisioning**, so upgrading does not exercise it and
+does not retroactively fix an already-enrolled device. Verifying needs a factory
+reset and a fresh enrol.
+
+✅ **Fleet is clean and needed no cleanup**: three devices, distinct serials, all
+`COMPLIANT` with no warnings — so whatever was skipped has since been granted.
+`R5GL40MMHRN` (SM-X520) re-attached to its **existing** record after the W114
+wipe rather than creating a duplicate, which answers the open question from that
+entry: D24 identity matching works, and there is no orphan row to remove.
+
 ### ✅ W114 — W104 disenroll never worked (2026-09-09, commit `9c6b2d1`)
 
 Operator: *"the disenrolled device did not factory reset. it now just says sync
