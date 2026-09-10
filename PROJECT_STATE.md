@@ -478,7 +478,40 @@ is no migration and nothing breaks.
 **Then verify on hardware that the test CA disappears from the tablet.** That
 verification is the gate on chunk 2.
 
-#### Chunk 2 — agent (only after that check)
+#### ✅ Chunk 1 done and deployed (2026-09-09, commit `ad314fe`)
+
+Registry, spec, catalog entry, `resolve_certificates` and the console panels are
+gone; `certificates: []` still ships. Suite **1335 passed, 1 skipped** — exactly
+1346 − 17 removed + 6 new — plus the known sqlite teardown flake in
+`test_packages.py`, which passes in isolation and touches nothing here.
+
+Verified on the host after the API answered: `registry.get("CERTIFICATES")`
+raises `PolicyTypeError`, `resolve_certificates` is gone, Security reports
+`wired=False`, and **both remaining devices resolve `certificates: []`**.
+
+⚠️ **The gate on chunk 2 was overtaken by events, and not by me.** The device
+holding the test CA (`60ac55cf`) was **disenrolled from the console at 02:40 UTC**
+— W104's first run on hardware. Deleting the device cascaded its assignments
+away, which is why the certificates assignment vanished between two of my own
+queries. Chased it through the proxy logs rather than assuming, because an
+assignment disappearing on its own would have been a much worse finding.
+
+So no enrolled device is carrying a policy-installed anchor any more:
+
+| Device | Agent | Last check-in (UTC) | State |
+|---|---|---|---|
+| `R5GL40MMHRN` TEST TAB | 0.54.0 | 02:52:08 — **after** the deploy | ✅ received `certificates: []` and swept |
+| `R5CX10FCY5D` Phone Test | 0.53.0 | 00:21:09 — before the deploy | Will sweep on next check-in |
+| `60ac55cf` | — | — | Disenrolled |
+
+⚠️ **One thing left open, for the operator rather than for code:** whether that
+disenrolled tablet actually completed its factory reset. If it did, its CA went
+with it. If the reset did not run and the tablet is merely unmanaged, the anchor
+is still installed with no agent left to remove it — removable by hand in
+Settings, since the credentials restriction is unassigned, but worth an eyeball.
+Not determinable from the server.
+
+#### Chunk 2 — agent (no longer gated on a device sweep)
 
 1. Delete `CertificateApplier.kt` and `CertificatePlan.kt`.
 2. Remove `caCertsInstalled` / `rememberCaCert` / `rememberedCaCert` /
