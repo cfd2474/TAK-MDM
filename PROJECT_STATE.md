@@ -426,6 +426,75 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W114 — W104 disenroll never worked (2026-09-09, commit `9c6b2d1`)
+
+Operator: *"the disenrolled device did not factory reset. it now just says sync
+failed, certificate is not known"*.
+
+**Diagnosed from the proxy log, not assumed** — the API container's logs had been
+destroyed by my own W113 deploy an hour earlier, so the evidence came from the
+proxy, which survived:
+
+| 02:40:42 | `wait?state_version=20` → 200 | state changed |
+| 02:40:42 | `checkin` → 200 (501 b) | wipe command delivered |
+| 02:40:43 | `checkin` → 200 (293 b) | **the agent acknowledged** |
+| 02:40:43 → | everything → **401** | certificate revoked, record removed |
+
+So the server did its half exactly as designed. The agent acked and then failed
+to wipe.
+
+**Root cause**: `wipeData(int, CharSequence)` throws `IllegalStateException` for
+an app targeting `UPSIDE_DOWN_CAKE`+ calling from the primary user, and names
+`wipeDevice` as the replacement. We are a Device Owner on the primary user at
+`targetSdk 36` — so this was **every wipe on every device**. W104 had never once
+worked; it had simply never been run on hardware until tonight.
+
+The comment being replaced asserted `wipeDevice` was **API 37** and unavailable
+against `compileSdk 36`, and kept the throwing call on that basis. `javap`
+against the installed stubs says it is present in android-34, -35 and -36. Full
+contract in `ANDROID_PLATFORM_REFERENCE.md`, including that the two halves key
+off *different* SDK levels — `wipeData`'s throw off **our `targetSdk`**,
+`wipeDevice`'s existence off **the device's API**.
+
+Fixed in agent **0.55.0 (versionCode 100)**, published; fleet pointer → 100.
+⚠️ **Not verified on hardware** — the only proof of a wipe is a real wipe.
+
+#### ⚠️ Open risk: a deferred effect cannot report its own failure
+
+This is the part worth more than the one-line fix. The throw landed in
+`runCatching` inside a **deferred** effect, which by design runs only *after* the
+acknowledgement reaches the server — and the server revokes the certificate on
+that acknowledgement. The single component that knew the wipe had failed had, by
+that moment, permanently lost the ability to say so.
+
+The W104 docstring anticipated the state (*"recoverable only by a manual factory
+reset at the device"*) but treated it as a rare hardware failure rather than the
+guaranteed outcome it was.
+
+**A deferred effect whose failure is unreportable needs its precondition checked
+*before* the acknowledgement, not after.** Left as a design question for the
+operator rather than redesigned unilaterally.
+
+#### The orphaned tablet
+
+Device Owner still installed, certificate revoked, `deps.py` answering
+*"certificate is not known"*. Two ways back:
+
+* **Manual factory reset at the device** — Settings → General management →
+  Reset, or recovery mode (Vol Up + Power). ⚠️ Factory Reset Protection may then
+  demand the Google account that was previously signed in. Certain, and wipes.
+* **Re-admit its certificate** — nginx already accepts the cert at the TLS layer
+  (signed by our CA, unexpired); only the `device_certificate` serial lookup
+  rejects it. Re-creating the `Device` + `DeviceCertificate` rows would bring the
+  tablet back with no data loss. Needs the serial, capturable by adding
+  `$ssl_client_serial` to the nginx log format. ⚠️ Deliberately re-admitting a
+  revoked certificate is a security-relevant live mutation — operator's call, not
+  taken unilaterally.
+
+**Verifying the fix does not depend on recovering that tablet**: any device on
+0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
+due a reset anyway.
+
 ### 🚧 W113 — Remove Trusted certificates, SCEP, Global HTTP proxy
 
 Operator, 2026-09-09: *"lets just remove trusted certs, SCEP, global HTTP proxy"*.
