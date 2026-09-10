@@ -309,13 +309,20 @@ class PrimaryEnrollmentQrIssued(BaseModel):
 class BypassPinRequest(BaseModel):
     """A device asking whether the operator typed this install's bypass PIN.
 
-    ⚠️ The enrollment token is what authorizes the question. Without it this is
-    an unauthenticated oracle for a six-digit secret; with it, guessing is
-    limited to people already holding a credential an admin minted, and capped
-    per token.
+    ⚠️ **`secret` is optional because only one of the two paths needs it.**
+    Before enrolment the enrollment token is what authorizes the question —
+    without it that endpoint would be an unauthenticated oracle for a six-digit
+    secret. After enrolment the client certificate identifies the caller and the
+    token no longer exists, so the agent sends `{"pin": ...}` alone.
+
+    It was required, and the enrolled agent's body was therefore rejected with a
+    422 that surfaced on the tablet as "could not reach the server". The
+    server-side test passed throughout because it sent `secret: ""` — a body the
+    agent never produces. A test that constructs its own request can only ever
+    check the server against the author's idea of the client.
     """
 
-    secret: str
+    secret: str = ""
     pin: str
 
 

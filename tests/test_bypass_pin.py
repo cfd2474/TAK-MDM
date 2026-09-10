@@ -342,7 +342,7 @@ def test_an_enrolled_device_can_check_the_pin_over_mtls(
     db.commit()
 
     response = client.post(
-        "/api/v1/device/bypass-pin", json={"secret": "", "pin": pin}, headers=headers
+        "/api/v1/device/bypass-pin", json={"pin": pin}, headers=headers
     )
 
     assert response.status_code == 200, response.text
@@ -359,7 +359,7 @@ def test_the_enrolled_path_still_refuses_a_wrong_pin(
     wrong = "111111" if pin != "111111" else "222222"
 
     body = client.post(
-        "/api/v1/device/bypass-pin", json={"secret": "", "pin": wrong}, headers=headers
+        "/api/v1/device/bypass-pin", json={"pin": wrong}, headers=headers
     ).json()
 
     assert body["accepted"] is False
@@ -372,7 +372,7 @@ def test_the_enrolled_path_needs_a_client_certificate(client: TestClient, db):
     bypass_pin.get_or_create(db)
     db.commit()
 
-    response = client.post("/api/v1/device/bypass-pin", json={"secret": "", "pin": "123456"})
+    response = client.post("/api/v1/device/bypass-pin", json={"pin": "123456"})
 
     assert response.status_code in (401, 403), response.status_code
 
@@ -392,7 +392,7 @@ def test_the_device_counter_is_separate_from_the_token_counter(
     for _ in range(bypass_pin.MAX_ATTEMPTS):
         client.post(
             "/api/v1/device/bypass-pin",
-            json={"secret": "", "pin": wrong},
+            json={"pin": wrong},
             headers=headers,
         )
 
@@ -414,3 +414,59 @@ def test_the_console_no_longer_blames_a_missing_server_for_a_missing_token():
     tail = guard[guard.rindex("if ("):]
     assert "serverUrl" in tail
     assert "enrollmentToken" not in tail
+
+
+def test_the_enrolled_body_is_exactly_what_the_agent_sends(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """⚠️ The bug this file failed to catch, and why.
+
+    `secret` was required, so the enrolled agent's `{"pin": ...}` was rejected
+    with a 422 that reached the operator as "could not reach the server". Every
+    test here passed anyway, because they all sent `secret: ""` — a body the
+    agent never produces.
+
+    So this one builds its request from the agent source rather than from the
+    author's memory of it: the keys asserted below are read out of
+    `ApiClient.kt`. A hand-written body can only ever check the server against
+    what the person writing the test imagined the client does.
+    """
+    import pathlib
+    import re
+
+    api = pathlib.Path(
+        "agent/app/src/main/java/com/taksolutions/atlasmdm/net/ApiClient.kt"
+    ).read_text(encoding="utf-8")
+    body = api[api.index("fun checkBypassPin("):]
+    body = body[: body.index("\n    fun ")]
+
+    # What the enrolled branch actually puts in the JSON object, in source order.
+    enrolled_branch = body[: body.index('body.put("secret"')]
+    keys = re.findall(r'\.put\("(\w+)"', enrolled_branch)
+    assert keys == ["pin"], keys
+
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    pin = bypass_pin.get_or_create(db)
+    db.commit()
+
+    response = client.post(
+        "/api/v1/device/bypass-pin",
+        json={k: pin for k in keys},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["accepted"] is True
+
+
+def test_the_unenrolled_path_still_requires_its_token(client: TestClient, db):
+    """⚠️ Making `secret` optional must not turn the pre-enrolment endpoint into
+    an open oracle. It is optional in the *schema*; that endpoint still resolves
+    it and 404s when it is not a live token."""
+    bypass_pin.get_or_create(db)
+    db.commit()
+
+    response = client.post("/api/v1/provisioning/bypass-pin", json={"pin": "123456"})
+
+    assert response.status_code == 404
