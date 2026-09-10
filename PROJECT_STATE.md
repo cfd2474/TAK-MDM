@@ -563,7 +563,7 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
-### 🚧 W113 — Remove Trusted certificates, SCEP, Global HTTP proxy
+### ✅ W113 — Remove Trusted certificates, SCEP, Global HTTP proxy
 
 Operator, 2026-09-09: *"lets just remove trusted certs, SCEP, global HTTP proxy"*.
 
@@ -648,18 +648,42 @@ is still installed with no agent left to remove it — removable by hand in
 Settings, since the credentials restriction is unassigned, but worth an eyeball.
 Not determinable from the server.
 
-#### Chunk 2 — agent (no longer gated on a device sweep)
+#### ✅ Chunk 2 done (2026-09-09) — W113 complete
 
-1. Delete `CertificateApplier.kt` and `CertificatePlan.kt`.
-2. Remove `caCertsInstalled` / `rememberCaCert` / `rememberedCaCert` /
-   `forgetCaCert` from `AgentConfig.kt`.
-3. Unwire from `Reconciler.kt`, including `downloadCertificateBytes`.
-4. Drop `certificates` from `desired_state.py` (safe in either order — a missing
-   key reads as an empty array in the old agent, so it still removes).
-5. Build, publish, verify a clean reconcile with `errors=0`.
-6. Update `ANDROID_PLATFORM_REFERENCE.md`, `ARCHITECTURE.md` and this file —
-   **keeping** the W112 platform findings, which stay true and cost nothing to
-   retain if this is ever revisited.
+`CertificateApplier.kt` and `CertificatePlan.kt` deleted; `caCertsInstalled`,
+`rememberCaCert`, `rememberedCaCert`, `forgetCaCert` and their two preference
+keys removed from `AgentConfig`; the applier call and `downloadCertificateBytes`
+unwired from `Reconciler`; and the server stopped sending `certificates`
+entirely.
+
+**Dropping the key was safe in either order**, which is why it could wait a
+chunk: an agent still carrying the applier reads a missing key as
+`optJSONArray("certificates") ?: JSONArray()` — an empty array — which means
+"remove the anchors you installed". An old agent meeting a new server still
+cleans up rather than holding a stale anchor for ever.
+
+Nothing needed cleaning up in the field regardless: the only device that ever
+held a policy-installed anchor was `SM-X828U`, which has since been factory
+reset, and no other device was ever assigned the policy.
+
+Server suite **1336 passed, 1 skipped** (1335 + one new test asserting the agent
+code is really gone — a *half*-removal is the bad state, an agent still sweeping
+anchors against a key the server no longer sends). The `test_packages.py` sqlite
+teardown flake did not recur.
+
+Agent **0.57.0 (versionCode 102)**.
+
+⚠️ **The W112 platform findings are kept**, in `ANDROID_PLATFORM_REFERENCE.md`,
+with a note at the top saying the feature is gone so nobody hunts for
+`CertificateApplier`. They were verified on hardware and are exactly what a
+future attempt would otherwise have to rediscover — `installCaCert` returning
+`false` rather than throwing, `uninstallCaCert` identifying a certificate by its
+content, `uninstallAllUserCaCerts` being the trap, and a user being able to
+delete a policy-installed anchor.
+
+A side effect worth noting: `reconcileWallpaper`'s docstring had been stranded
+two functions above it, separated by the certificate one. Removing the
+certificate block put it back on its own function.
 
 ### ✅ W104 — Device details, and disenroll as a factory reset
 

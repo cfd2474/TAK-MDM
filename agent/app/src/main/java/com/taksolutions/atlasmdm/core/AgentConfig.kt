@@ -432,36 +432,6 @@ class AgentConfig(context: Context) {
         set(value) = prefs.edit { putString(KEY_FENCE_PASSWORD, value) }
 
     /**
-     * sha256 of every CA certificate **this agent** installed (W112).
-     *
-     * ⚠️ Recorded, never inferred. `uninstallAllUserCaCerts` would remove every
-     * user-installed anchor including ones a person added themselves, and
-     * "everything currently trusted" is not the same set as "everything we
-     * trusted" — the rule `hiddenByPolicy` already follows for packages.
-     */
-    var caCertsInstalled: Set<String>
-        get() = prefs.getStringSet(KEY_CA_INSTALLED, emptySet()) ?: emptySet()
-        set(value) = prefs.edit { putStringSet(KEY_CA_INSTALLED, value) }
-
-    /**
-     * The bytes of an anchor we installed, kept so it can be removed again.
-     *
-     * ⚠️ `uninstallCaCert` names the certificate **by its content**, so without
-     * the original bytes there is no way to remove one specific anchor — only the
-     * API that removes everybody's. A few kilobytes per certificate is the price
-     * of being able to undo exactly what was done.
-     */
-    fun rememberCaCert(sha256: String, bytes: ByteArray) = prefs.edit {
-        putString(KEY_CA_BYTES_PREFIX + sha256, Base64.encodeToString(bytes, Base64.NO_WRAP))
-    }
-
-    fun rememberedCaCert(sha256: String): ByteArray? =
-        prefs.getString(KEY_CA_BYTES_PREFIX + sha256, null)
-            ?.let { runCatching { Base64.decode(it, Base64.NO_WRAP) }.getOrNull() }
-
-    fun forgetCaCert(sha256: String) = prefs.edit { remove(KEY_CA_BYTES_PREFIX + sha256) }
-
-    /**
      * The geofence list as the policy delivered it, so fences can be evaluated on
      * sync iterations where no bundle was fetched — including every iteration of
      * an outage, which is when a fence most needs to still work.
@@ -589,8 +559,6 @@ class AgentConfig(context: Context) {
         private const val KEY_FENCE_BT_RESTORE = "geofence_bluetooth_restore"
         private const val KEY_FENCE_PASSWORD = "geofence_password_enforced"
         private const val KEY_FENCE_ACTIVE = "geofence_active"
-        private const val KEY_CA_INSTALLED = "ca_certs_installed"
-        private const val KEY_CA_BYTES_PREFIX = "ca_cert_bytes:"
         private const val KEY_FENCES = "geofences_json"
         private const val KEY_FENCE_INTERVAL = "geofence_interval_override"
 

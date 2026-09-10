@@ -14,14 +14,19 @@
 
 """Trusted certificates, SCEP and the global HTTP proxy are gone (W113).
 
-⚠️ **Removing this feature is not the same as never having had it.** A device
-that was trusting a policy-installed CA has to be told to stop, and the only
-thing that can tell it is the agent — whose contract is *absent means removed*.
-So the empty key still ships, and that is what these tests defend.
+⚠️ **Removing this feature was not the same as never having had it.** A device
+trusting a policy-installed CA had to be told to stop, and the only thing that
+could tell it was the agent — whose contract is *absent means removed*. So
+chunk 1 kept shipping an empty `certificates` list purely to drive that cleanup.
+
+Chunk 2 removed the applier, and with it the last reader, so the key is gone
+too. These tests now defend the *end* state and the reason the intermediate one
+existed, which is the part a future reader would otherwise have to guess at.
 """
 
 from __future__ import annotations
 
+import pathlib
 import uuid
 
 from fastapi.testclient import TestClient
@@ -35,22 +40,21 @@ from tests.test_checkin import checkin
 # --------------------------------------------------------------------------- #
 
 
-def test_the_empty_key_still_ships_so_deployed_agents_clean_up(
-    client: TestClient, db, enrolled, mtls_headers
-):
-    """⚠️ The one thing that must not be tidied away with the feature.
+def test_the_certificates_key_is_gone(client: TestClient, db, enrolled, mtls_headers):
+    """The key outlived the feature by one chunk, on purpose, and is now gone.
 
-    `CertificateApplier` in agents <= 0.54.0 drives the installed set to exactly
-    what this list says. An empty list means "remove the anchors you installed";
-    dropping the key entirely would have been read the same way, but leaving the
-    key explicit is what makes that intentional rather than incidental.
+    ⚠️ Dropping it is safe in either order, which is why it could wait: an agent
+    still carrying `CertificateApplier` reads a missing key as `JSONArray()` —
+    `optJSONArray("certificates") ?: JSONArray()` — and an empty array means
+    "remove the anchors you installed". So an old agent meeting a new server
+    still cleans up rather than holding a stale anchor for ever.
     """
     result = enrolled()
     headers = mtls_headers(result["certificate_pem"])
 
     bundle = checkin(client, headers, force_full=True)["desired_state"]
 
-    assert bundle["certificates"] == []
+    assert "certificates" not in bundle
 
 
 def test_an_orphaned_certificates_policy_does_not_break_resolution(
@@ -87,7 +91,10 @@ def test_an_orphaned_certificates_policy_does_not_break_resolution(
 
     bundle = checkin(client, headers, force_full=True)["desired_state"]
 
-    assert bundle["certificates"] == []
+    assert "certificates" not in bundle
+    # The point is that a bundle was produced at all: an unknown policy type must
+    # not take the device's whole desired state down with it.
+    assert "apps" in bundle
 
 
 # --------------------------------------------------------------------------- #
@@ -147,3 +154,24 @@ def test_the_credential_restriction_survives_on_its_own_merits(client: TestClien
 
     assert "whole credentials screen" in field.help
     assert "Certificates policy" not in field.help
+
+
+def test_the_agent_no_longer_carries_the_certificate_code(client: TestClient):
+    """Chunk 2: the applier, its plan, and the config that remembered anchor
+    bytes are all gone.
+
+    Asserted rather than assumed, because a half-removal is the bad state: an
+    agent still sweeping anchors against a key the server no longer sends.
+    """
+    agent = pathlib.Path("agent/app/src/main/java/com/taksolutions/atlasmdm")
+
+    assert not (agent / "policy/CertificateApplier.kt").exists()
+    assert not (agent / "policy/CertificatePlan.kt").exists()
+
+    reconciler = (agent / "sync/Reconciler.kt").read_text(encoding="utf-8")
+    assert "CertificateApplier" not in reconciler
+    assert "downloadCertificateBytes" not in reconciler
+
+    config = (agent / "core/AgentConfig.kt").read_text(encoding="utf-8")
+    for gone in ("caCertsInstalled", "rememberCaCert", "forgetCaCert"):
+        assert gone not in config, gone

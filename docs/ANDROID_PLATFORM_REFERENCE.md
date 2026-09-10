@@ -1419,6 +1419,14 @@ what made the second one look like the first one not being fixed.
 
 ### ✅ A Device Owner installs and removes trust anchors (W112) — verified on `SM-X828U`
 
+> ⚠️ **The feature this section describes was removed in W113** (2026-09-09), so
+> `CertificateApplier`, `CertificatePlan` and the `certificates` key no longer
+> exist — do not go looking for them. **Everything below is still true of the
+> platform** and is kept deliberately: it was verified on hardware, and it is
+> exactly what a future attempt would otherwise have to rediscover. See the W113
+> entry in `PROJECT_STATE.md` for why it came out — briefly, a client certificate
+> reaches no consumer here without EAP Wi-Fi support that does not exist.
+
 Both directions, on hardware, from the device's own log:
 
 ```

@@ -45,7 +45,6 @@ import com.taksolutions.atlasmdm.net.DeviceIdentity
 import com.taksolutions.atlasmdm.permissions.PermissionRequirement
 import com.taksolutions.atlasmdm.policy.AllowlistPlan
 import com.taksolutions.atlasmdm.policy.AppUpdatePlan
-import com.taksolutions.atlasmdm.policy.CertificateApplier
 import com.taksolutions.atlasmdm.policy.DataUsageTracker
 import com.taksolutions.atlasmdm.policy.ArtifactSweepPlan
 import com.taksolutions.atlasmdm.policy.InstallerCachePlan
@@ -623,13 +622,6 @@ class Reconciler(private val context: Context) {
             policy.optJSONObject("KIOSK") ?: JSONObject(),
             desired.optJSONArray("apps") ?: JSONArray(),
         )
-        // ⚠️ Runs unconditionally, like the trackers below: an absent section has
-        // to *remove* the anchors this agent installed, not merely stop adding
-        // to them. A trust anchor left behind by a policy that no longer applies
-        // is a device still trusting a CA the operator revoked (W112).
-        errors += CertificateApplier(context, ::downloadCertificateBytes)
-            .apply(desired.optJSONArray("certificates") ?: JSONArray())
-
         errors += reconcileFiles(desired.optJSONObject("files") ?: JSONObject())
         errors += reconcileWallpaper(desired.optJSONObject("wallpaper") ?: JSONObject())
         // Last, and reading-only: usage thresholds describe what the device has
@@ -652,31 +644,6 @@ class Reconciler(private val context: Context) {
      * The choice happens here rather than on the server (D46) — only sha256
      * references travel, and the chosen image alone is downloaded.
      */
-    /**
-     * Fetch a certificate's bytes from the artifact store.
-     *
-     * ⚠️ `downloadArtifact` verifies the sha256 itself, and that is the whole
-     * integrity story for a trust anchor: the desired-state bundle is signed, the
-     * bundle carries the hash, and the download is refused unless the bytes match
-     * it. A certificate cannot be swapped in transit without breaking one or the
-     * other — which matters more here than for any other file this agent
-     * downloads, because the payload decides what the device will trust.
-     *
-     * Written to the cache directory and deleted straight after: an anchor is a
-     * few kilobytes, and leaving copies around is untidy at best.
-     */
-    private fun downloadCertificateBytes(sha256: String): ByteArray? {
-        val file = File(context.cacheDir, "ca-$sha256")
-        return try {
-            if (!api.downloadArtifact(sha256, file)) null else file.readBytes()
-        } catch (e: Exception) {
-            AgentLog.w(TAG, "could not fetch certificate $sha256: ${e.message}")
-            null
-        } finally {
-            runCatching { file.delete() }
-        }
-    }
-
     private fun reconcileWallpaper(wallpaper: JSONObject): List<String> {
         val tablet = wallpaper.optJSONObject("tablet")
         val phone = wallpaper.optJSONObject("phone")
