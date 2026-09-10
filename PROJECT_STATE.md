@@ -606,6 +606,53 @@ consumer. **We would ship a feature whose output nothing on the network accepts.
 | **PKCS#12 upload** | Works with any existing CA today | ⚠️ Private key material transits and rests on this server — R8 multiplied by every certificate |
 | **Our CA** | Useful only for services we control | Small, and currently nothing consumes it |
 
+**Operator chose PKCS#12** (2026-09-09), knowing the key-handling cost: their
+certificates come from a TAK admin as `.p12` files, not from a CA that speaks
+SCEP.
+
+#### ⚠️ A PKCS#12 must not go through the artifact store
+
+The artifact endpoint's own docstring says why it is safe, and the reasoning does
+not survive contact with a private key:
+
+> Any enrolled device may fetch any known artifact. The digest is unguessable and
+> the content is **an installable an operator chose to publish**, so the useful
+> boundary is enrollment rather than per-device authorization.
+
+That is right for an APK or a wallpaper and wrong for key material. Any enrolled
+device — or anyone who compromises one — could fetch another device's private key
+given the digest, and digests travel in bundles. **So certificates get their own
+per-device path**, checked against that device's effective policy, rather than
+riding the shared store.
+
+Nor does it belong inline in the desired-state bundle: the agent *caches* the
+bundle (`cachedDesiredState`), so the key would sit in the agent's preferences
+long after it was installed into the keystore where it belongs.
+
+#### The design
+
+1. **At rest**: the `.p12` is sealed with `TokenVault` (Fernet), the same
+   mechanism protecting enrollment token secrets (D74) — and inheriting R12's
+   caveat, that `pki/token_vault.key` plus a database dump opens both.
+2. **The password is sealed separately** and never stored beside the blob in
+   plaintext.
+3. **Delivery**: `GET /api/v1/device/certificates/{id}` — mTLS, and the server
+   confirms *this* device's resolved policy actually names that certificate. The
+   agent fetches, installs, and keeps nothing.
+4. **On the device**: `installKeyPair(admin, privateKey, chain, alias, …)` — the
+   one place `installKeyPair` is the right call rather than
+   `setKeyPairCertificate`, because here the key really does arrive from outside.
+5. **Removal**: `removeKeyPair` for aliases this agent installed, driven
+   declaratively like the trust anchors, and re-asserted with `hasKeyPair` for the
+   reason C1 learned on hardware — the user can undo it.
+
+⚠️ **This is the largest new exposure in the system**, and it is worth stating
+plainly rather than burying: before this, the only private keys here were the
+CA's and each device's own, generated on the device and never transmitted. This
+puts operator-supplied keys on the server. The mitigations above are real, but
+the honest summary is that **R8's blast radius now includes every uploaded
+certificate**, and SCEP remains the version of this that has no such cost.
+
 ✅ **SCEP is the same key-safety story as C2 against a CA that actually matters**,
 and it was already the next sub-topic. **Recommendation: make SCEP the client
 certificate story and drop "our CA" from the plan.** Raised before building
