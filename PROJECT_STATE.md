@@ -578,11 +578,39 @@ trust nothing so it can remove what it installed; a missing section would read a
 "no instruction" and leave a revoked authority in place. The applier therefore
 runs on every reconcile, like the trackers.
 
-**Still to do — C2:** client certificates. `generateKeyPair` on the device, CSR to
-the existing CA, `installKeyPair` back — the private key never leaving the tablet,
-reusing what `DeviceIdentity.kt` already does. **PKCS#12 upload stays a separate
-decision**: it would put private key material on this server, which is R8
-multiplied by every certificate an operator uploads.
+#### ⚠️ C2 as scoped would build something nothing accepts (2026-09-09)
+
+The mechanism is sound and mostly assembly — `generateKeyPair` under a policy
+alias, a CSR from the existing `createCsrPem` helper, `setKeyPairCertificate` to
+install the issued chain against the key that never left the device. All four APIs
+confirmed present, and `installKeyPair` is not even needed.
+
+**The problem is the issuer, not the mechanism.** A certificate signed by *our*
+CA is meaningless to the things that ask a device for one:
+
+* **Wi-Fi EAP** wants a certificate the RADIUS server's CA issued.
+* **A corporate service** wants one its own CA issued.
+* **ATAK** reads `.p12` files from disk, not the Android keystore — so even a
+  perfect keystore certificate is invisible to it (`ARCHITECTURE.md`).
+
+Our CA authenticates devices *to this server*, and a policy-issued certificate
+would not even do that: `deps.py` looks the serial up in `device_certificate` and
+rejects anything unregistered, so there is no privilege leak — but equally, no
+consumer. **We would ship a feature whose output nothing on the network accepts.**
+
+**The three real options, and only one of them is new work worth doing:**
+
+| | What it gives | Cost |
+|---|---|---|
+| **SCEP** | Enrols against the **operator's own** CA, key generated on the device and never leaving it | A SCEP client in the agent — it is HTTP, and the CSR half already exists |
+| **PKCS#12 upload** | Works with any existing CA today | ⚠️ Private key material transits and rests on this server — R8 multiplied by every certificate |
+| **Our CA** | Useful only for services we control | Small, and currently nothing consumes it |
+
+✅ **SCEP is the same key-safety story as C2 against a CA that actually matters**,
+and it was already the next sub-topic. **Recommendation: make SCEP the client
+certificate story and drop "our CA" from the plan.** Raised before building
+rather than after, because the mechanism working says nothing about anyone
+accepting the result.
 
 ✅ **Verified on hardware (`SM-X828U`, agent 0.52.0), install *and* removal.** A
 throwaway CA was generated — private key held in memory and never written, so the
