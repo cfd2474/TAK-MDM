@@ -1513,6 +1513,53 @@ Knox. The genuinely Knox-gated pieces are **URL-level web filtering** and
 DNS resolver; postpone-and-window scheduling) that are worth building first
 because they work on any device.
 
+### ⚠️ `wipeData` cannot factory reset this fleet, and never could (W114, 2026-09-09)
+
+📖 `DevicePolicyManager.wipeData(int, CharSequence)`, quoted from AOSP:
+
+> Calling this method from the primary user will only work if the calling app is
+> targeting SDK level `TIRAMISU` or below, in which case it will cause the device
+> to reboot, erasing all device data … **If an app targeting SDK level
+> `UPSIDE_DOWN_CAKE` and above is calling this method from the primary user or
+> last full user, `IllegalStateException` will be thrown.**
+>
+> If an app wants to wipe the entire device irrespective of which user they are
+> from, they should use `wipeDevice` instead.
+
+The agent is a Device Owner on the primary user at `targetSdk 36`. That is not an
+edge case — it is **every wipe on every device**, so W104 disenroll had never once
+worked.
+
+⚠️ **The rule keys off two different SDK levels, and conflating them is the trap.**
+Whether `wipeData` throws depends on **this app's `targetSdk`**; whether
+`wipeDevice` exists depends on **the device's API level**. With `minSdk 33` both
+matter, so the call branches on `Build.VERSION.SDK_INT`.
+
+✅ **`wipeDevice(int)` is present in android-34, -35 and -36** — verified with
+`javap` against each installed `android.jar`, not recalled. The android-33 stubs
+are not installed on this workstation, so its absence there is **inferred, not
+verified**; the `SDK_INT >= UPSIDE_DOWN_CAKE` branch is written so that
+correctness does not depend on that inference either way.
+
+⚠️ **An earlier comment in `DeviceCommandHandlers.kt` asserted `wipeDevice` was
+API 37** — "against `compileSdk 36` it does not exist to call" — and on that basis
+kept the call that always throws. It was written from recollection, which is the
+thing this document exists to prevent. `wipeDevice(int)` also takes **no reason
+string**; the user-facing wipe message is not available on this path.
+
+⚠️ **The failure mode is what made this expensive, not the wrong call.** The throw
+landed inside `runCatching` in a *deferred* effect, which by design runs only
+**after** the acknowledgement reaches the server — and the server revokes the
+device's certificate on that acknowledgement. So the one component that knew the
+wipe had failed was, by that moment, unable to tell anyone. Observed on
+`SM-X828U`: the console reported the device disenrolled and removed, while the
+tablet sat still owned by the agent, unmanaged, showing *"sync failed, certificate
+is not known"* — `deps.py` rejecting a serial no longer in `device_certificate`.
+
+**A deferred effect that cannot report its own failure needs its precondition
+checked before the acknowledgement, not after.** Recorded as an open risk rather
+than silently redesigned.
+
 ### ⚠️ A client certificate without a *grant* is silently useless (W112 C2, 2026-09-09)
 
 📖 `installKeyPair` and `generateKeyPair` put a key in KeyChain. **Nothing can

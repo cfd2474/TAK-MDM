@@ -22,6 +22,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
+import android.os.Build
 import androidx.core.content.ContextCompat
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -111,6 +112,31 @@ class RebootCommandHandler(context: Context) : DeviceOwnerCommandHandler(context
 /**
  * `wipe` — deferred for the same reason as reboot, and more sharply: there is no
  * "next check-in" after a factory reset in which to report anything.
+ *
+ * ⚠️ **`wipeData` cannot do this job and never could.** Its javadoc:
+ *
+ * > Calling this method from the primary user will only work if the calling app is
+ * > targeting SDK level `TIRAMISU` or below … If an app targeting SDK level
+ * > `UPSIDE_DOWN_CAKE` and above is calling this method from the primary user or
+ * > last full user, `IllegalStateException` will be thrown.
+ * >
+ * > If an app wants to wipe the entire device irrespective of which user they are
+ * > from, they should use `wipeDevice` instead.
+ *
+ * We are a Device Owner on the primary user at `targetSdk 36`, so that is
+ * *every* wipe on *every* device. W104 disenroll had never once worked, and it
+ * failed in the least visible way available: the throw landed in `runCatching`
+ * inside a deferred effect, on a device whose certificate the server had already
+ * revoked on receipt of the acknowledgement — so nothing could report it. The
+ * console said "disenrolled"; the tablet sat there owned, unmanaged, and
+ * showing *"sync failed, certificate is not known"* (2026-09-09, `SM-X828U`).
+ *
+ * ⚠️ **`wipeDevice` is API 34, not API 37.** The comment this replaces asserted
+ * the latter from recollection and settled on the call that throws. Verified by
+ * `javap` against the real stubs: absent in android-33, present in android-34,
+ * -35 and -36. That is why `minSdk 33` still needs the branch below — the
+ * platform rule keys off *this app's* `targetSdk`, but the replacement API keys
+ * off the *device's* level.
  */
 class WipeCommandHandler(context: Context) : DeviceOwnerCommandHandler(context) {
     override val type = "wipe"
@@ -125,11 +151,16 @@ class WipeCommandHandler(context: Context) : DeviceOwnerCommandHandler(context) 
 
         return CommandOutcome.okAfterReporting {
             AgentLog.i(TAG, "wiping device on operator command (external=$wipeExternal)")
-            // `wipeData(int, CharSequence)`, API 26 and current. Not `wipeData(int)`,
-            // which is deprecated, and not `wipeDevice(int)` — that is **API 37**,
-            // so against `compileSdk 36` it does not exist to call. A version branch
-            // on it was written here from recollection and would not have compiled.
-            dpm.wipeData(flags, WIPE_REASON)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                // The only call that works for a Device Owner on the primary user
+                // at targetSdk >= 34. Takes no reason string — the platform stopped
+                // offering one on this path, so WIPE_REASON is unused here.
+                dpm.wipeDevice(flags)
+            } else {
+                // API 33: wipeDevice does not exist yet, and the targetSdk rule that
+                // makes wipeData throw is not enforced by this platform version.
+                dpm.wipeData(flags, WIPE_REASON)
+            }
         }
     }
 
