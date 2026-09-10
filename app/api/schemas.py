@@ -306,6 +306,24 @@ class PrimaryEnrollmentQrIssued(BaseModel):
     provisioning: dict[str, Any]
 
 
+class BypassPinRequest(BaseModel):
+    """A device asking whether the operator typed this install's bypass PIN.
+
+    ⚠️ The enrollment token is what authorizes the question. Without it this is
+    an unauthenticated oracle for a six-digit secret; with it, guessing is
+    limited to people already holding a credential an admin minted, and capped
+    per token.
+    """
+
+    secret: str
+    pin: str
+
+
+class BypassPinResult(BaseModel):
+    accepted: bool
+    attempts_remaining: int
+
+
 class ProvisioningRequest(BaseModel):
     """Re-render provisioning payloads for a secret the operator already holds."""
 

@@ -514,6 +514,11 @@ class EnrollmentToken(Base):
     # machinery, unchanged; a primary is just a token nobody types in by hand.
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # Failed guesses at the provisioning bypass PIN (W117). Per token rather than
+    # global: one global counter would let anyone holding a token lock every
+    # other operator out of provisioning.
+    bypass_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
     groups: Mapped[list[DeviceGroup]] = relationship(
         secondary=enrollment_token_group, lazy="selectin"
     )

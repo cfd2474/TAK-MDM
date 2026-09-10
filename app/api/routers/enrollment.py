@@ -36,6 +36,8 @@ from app.api.deps import (
 )
 from app.artifacts.storage import ArtifactStorage
 from app.api.schemas import (
+    BypassPinRequest,
+    BypassPinResult,
     EnrollmentTokenCreate,
     EnrollmentTokenCreated,
     EnrollmentTokenRead,
@@ -52,6 +54,7 @@ from app.security.bundle import BundleSigner
 from app.security.enrollment_qr import EnrollmentQrGuard
 from app.security.token_vault import TokenVault
 from app.security.ca import CertificateAuthority, CertificateError
+from app.services import bypass_pin
 from app.services import packages as package_service
 from app.services import provisioning
 from app.services.enrollment import (
@@ -261,6 +264,43 @@ def render_provisioning_payloads(
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
     return _provisioning_bundle(settings, payload.secret, payload.wifi)
+
+
+@device_router.post("/provisioning/bypass-pin", response_model=BypassPinResult)
+def check_bypass_pin(
+    payload: BypassPinRequest,
+    session: Session = Depends(get_db),
+    guard: EnrollmentQrGuard = Depends(get_enrollment_qr_guard),
+) -> BypassPinResult:
+    """Answer whether a typed PIN matches this install's provisioning bypass code.
+
+    ⚠️ **Token-authenticated, not open.** The PIN is six digits, so an endpoint
+    anyone could call would be an oracle a script exhausts in minutes. Requiring
+    a live enrollment token limits guessing to whoever an admin already trusted
+    to provision a device — the same credential, and the same audience, as
+    enrollment itself.
+
+    ⚠️ **The device is told only yes or no**, never the PIN. That is the whole
+    reason this is a round trip rather than a value shipped in the provisioning
+    extras: a six-digit secret inside a QR code that gets photographed is not a
+    secret. `attempts_remaining` is returned so the operator can be told they are
+    running out rather than discovering a dead token by surprise.
+
+    A `200` with `accepted: false` rather than a `401`: the caller is a setup
+    wizard on a tablet, and the interesting distinction for it is "wrong code"
+    versus "could not reach the server", which an HTTP error muddles.
+    """
+    try:
+        token = resolve_token(session, payload.secret, qr_guard=guard)
+    except EnrollmentError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+    accepted = bypass_pin.verify(session, token, payload.pin)
+    session.commit()
+    return BypassPinResult(
+        accepted=accepted,
+        attempts_remaining=bypass_pin.attempts_remaining(token),
+    )
 
 
 @device_router.get("/provisioning/agent.apk")

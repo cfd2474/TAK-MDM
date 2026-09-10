@@ -110,6 +110,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from app.artifacts import dted
 from app.artifacts import mission_package
 from app.services import atak_compat
+from app.services import bypass_pin
 from app.services import atak_config
 from app.services import data_packages as data_package_service
 from app.services import import_jobs
@@ -3360,6 +3361,7 @@ def admin_page(
         }
         for key, group in settings_store.GROUPS.items()
     ]
+    bypass_pin_value = bypass_pin.get_or_create(session)
     env_settings = {
         "TAKMDM_SERVER_URL": settings.server_url,
         "TAKMDM_ADMIN_AUTH_MODE": settings.admin_auth_mode,
@@ -3379,6 +3381,8 @@ def admin_page(
         },
         setting_groups=groups,
         env_settings=env_settings,
+        bypass_pin=bypass_pin_value,
+        bypass_attempts_max=bypass_pin.MAX_ATTEMPTS,
         agent=_agent_update_panel(session, settings),
         takgov=_takgov_panel(session),
         googleplay=_googleplay_panel(session),

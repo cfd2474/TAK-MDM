@@ -470,6 +470,31 @@
 
   <div class="tab-panel" data-tab-panel="environment" hidden>
     <div class="panel">
+      <h2>Provisioning bypass code</h2>
+      <p class="sub">
+        <strong>This is a master bypass code used to skip the permissions step
+        during provisioning.</strong> Enter it on the device when setup is
+        blocked because a required permission has not been granted.
+      </p>
+      <p class="mono" style="font-size:28px; letter-spacing:6px; padding:8px 0;">
+        {{ bypass_pin }}
+      </p>
+      <p class="field-tip">
+        Generated once for this server and fixed thereafter — every install has a
+        different one. It is checked by this server, so the device needs to reach
+        it; the code is never sent to a device or embedded in an enrollment QR.
+      </p>
+      <p class="field-tip">
+        ⚠️ What it does <em>not</em> do: it grants no access to this server and no
+        control over an enrolled device. It only lets whoever already holds a
+        valid enrollment token finish provisioning a tablet without granting the
+        required permissions — producing a device that reports as DEGRADED and is
+        offered no agent updates until they are granted. Guessing is limited to
+        {{ bypass_attempts_max }} tries per enrollment token.
+      </p>
+    </div>
+
+    <div class="panel">
       <h2>Environment settings</h2>
       <p class="sub">
         Set in the deployment environment, not here — they are load-bearing for
