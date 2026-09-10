@@ -147,10 +147,25 @@ class WipeCommandHandler(context: Context) : DeviceOwnerCommandHandler(context) 
         // Samsung devices with an external card treat these as separate acts; a lost
         // device wipe that leaves the card readable is not a wipe.
         val wipeExternal = command.params.optBoolean("wipe_external_storage", false)
-        val flags = if (wipeExternal) DevicePolicyManager.WIPE_EXTERNAL_STORAGE else 0
+        // ⚠️ **Read from params, not inferred from the disenroll marker.** The
+        // agent has no business knowing what "disenroll" means; the server decides
+        // whether Factory Reset Protection should survive and says so in a flag,
+        // exactly as it already does for external storage. An older agent that
+        // does not know this key simply leaves FRP armed, which is the safe
+        // direction to fail.
+        val clearFrp = command.params.optBoolean("wipe_reset_protection", false)
+        var flags = 0
+        if (wipeExternal) flags = flags or DevicePolicyManager.WIPE_EXTERNAL_STORAGE
+        // Device-owner only: "if it is set by other admins a SecurityException
+        // will be thrown". We are one, and requireDeviceOwner() above proved it.
+        if (clearFrp) flags = flags or DevicePolicyManager.WIPE_RESET_PROTECTION_DATA
 
         return CommandOutcome.okAfterReporting {
-            AgentLog.i(TAG, "wiping device on operator command (external=$wipeExternal)")
+            AgentLog.i(
+                TAG,
+                "wiping device on operator command " +
+                    "(external=$wipeExternal, clearFrp=$clearFrp)"
+            )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 // The only call that works for a Device Owner on the primary user
                 // at targetSdk >= 34. Takes no reason string — the platform stopped

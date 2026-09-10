@@ -29,7 +29,23 @@ the only signal that will ever arrive.
 
 ⚠️ **A disenroll wipe is marked as one.** An ordinary `wipe` — a lost device, say —
 must not silently delete the record an operator may still need; only a wipe
-carrying [DISENROLL] removes anything.
+carrying [DISENROLL] removes anything. Both are reachable: the console offers
+only disenroll, but `POST /api/v1/devices/{id}/commands` takes any command type.
+
+⚠️ **The two differ in Factory Reset Protection as well as bookkeeping** (W116).
+Disenroll clears it; a lost-device wipe leaves it armed. FRP gates the next setup
+on the Google account signed in before the wipe, so:
+
+* **handing a device back** — clearing it is the point. Otherwise the recipient
+  meets a login screen demanding credentials belonging to whoever held the device
+  last, and the only people who can pass it no longer own it.
+* **a lost device** — leaving it armed is the point. Clearing it would hand a
+  thief a clean, resellable tablet.
+
+The flag travels in the command params rather than being inferred by the agent
+from [DISENROLL]: whether the protection survives is this server's decision, and
+an older agent that does not know the key leaves FRP in place, which is the safe
+direction to fail.
 """
 
 from __future__ import annotations
@@ -94,6 +110,14 @@ def request(session: Session, device: Device) -> DeviceCommand:
             # readable is not one, and this device is being handed back — the
             # console says so before the button is pressed.
             "wipe_external_storage": True,
+            # ⚠️ **Only on the disenroll path, never on an ordinary wipe.**
+            # Factory Reset Protection gates the next setup on the Google account
+            # that was signed in before the wipe. For a *lost* device that gate is
+            # the entire point and must survive. For a device being handed back it
+            # is a fault: the recipient meets a login screen demanding credentials
+            # belonging to whoever held it last, and the only people who can pass
+            # it are the ones who no longer own the device (W116).
+            "wipe_reset_protection": True,
         },
     )
 

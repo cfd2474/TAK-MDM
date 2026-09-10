@@ -1581,6 +1581,34 @@ together**, which is what a real disenroll would test.
 checked before the acknowledgement, not after.** Recorded as an open risk rather
 than silently redesigned.
 
+#### ⚠️ `WIPE_RESET_PROTECTION_DATA`, and why it is not the default (W116)
+
+📖 AOSP, on the flag:
+
+> Flag for `wipeData(int)`: also erase the factory reset protection data.
+>
+> **This flag may only be set by device owner admins**; if it is set by other
+> admins a `SecurityException` will be thrown.
+
+`wipeDevice(int)`'s javadoc lists it among its supported flags, so it applies on
+the API 34+ path too.
+
+⚠️ **It is correct on exactly one of the two wipes we send.** Factory Reset
+Protection gates the next setup on the Google account signed in before the wipe:
+
+| Wipe | FRP | Why |
+|---|---|---|
+| **Disenroll** — handing the device back | **cleared** | Otherwise the recipient meets a login screen demanding credentials belonging to whoever held it last, and the only people who can pass it no longer own the device |
+| **Ordinary wipe** — a lost device | **left armed** | Clearing it would hand a thief a clean, resellable tablet |
+
+The flag therefore travels in the command params rather than being inferred by
+the agent from the disenroll marker: the server owns the decision, and an agent
+that does not know the key leaves FRP armed — failing in the safe direction.
+
+⚠️ **Not verified on hardware.** FRP behaviour is partly OEM territory, so
+whether Samsung honours the flag as AOSP describes is unproven here. The next
+disenroll run is the test.
+
 ### ⚠️ A client certificate without a *grant* is silently useless (W112 C2, 2026-09-09)
 
 📖 `installKeyPair` and `generateKeyPair` put a key in KeyChain. **Nothing can

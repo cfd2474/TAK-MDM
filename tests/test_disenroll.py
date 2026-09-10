@@ -28,7 +28,7 @@ from sqlalchemy import select
 
 from fastapi.testclient import TestClient
 
-from app.db.models import CommandType, Device, DeviceCertificate
+from app.db.models import CommandType, Device, DeviceCertificate, DeviceCommand
 from tests.conftest import ADMIN_HEADERS
 from tests.test_checkin import checkin, enqueue
 
@@ -204,3 +204,72 @@ def test_the_response_to_the_acknowledgement_is_answerable(
     assert body["device_id"] == result["device_id"]
     assert body["commands"] == []
     assert body["desired_state"] is None
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ Factory Reset Protection (W116)
+# --------------------------------------------------------------------------- #
+
+
+def test_disenroll_clears_factory_reset_protection(client: TestClient, db, enrolled):
+    """⚠️ Otherwise the device is handed back locked to the previous holder.
+
+    FRP gates the next setup on the Google account signed in before the wipe. The
+    people who can pass that gate are precisely the ones who no longer own the
+    device, so on a hand-back it is a fault rather than a protection. Observed
+    the hard way: a manually reset tablet came up demanding an account.
+    """
+    result = enrolled()
+    _disenroll(client, result["device_id"], _device(db).serial_number)
+
+    command = db.scalar(
+        select(DeviceCommand).where(DeviceCommand.command_type == CommandType.WIPE)
+    )
+
+    assert command.params["wipe_reset_protection"] is True
+
+
+def test_an_ordinary_wipe_leaves_that_protection_armed(client: TestClient, db, enrolled):
+    """⚠️ The other half, and the reason this is a flag rather than a default.
+
+    A wipe sent to a *lost* device must leave FRP in place — clearing it would
+    hand a thief a clean, resellable tablet. Only the disenroll path, which means
+    "I am giving this device to someone else", turns it off.
+    """
+    result = enrolled()
+    enqueue(client, result["device_id"], "wipe")
+
+    command = db.scalar(
+        select(DeviceCommand).where(DeviceCommand.command_type == CommandType.WIPE)
+    )
+
+    assert not command.params.get("wipe_reset_protection")
+    assert not command.params.get("disenroll")
+
+
+def test_the_console_says_the_protection_is_cleared(client: TestClient, db, enrolled):
+    """An operator handing a device back needs to know this happens, and one
+    reading the same screen for a lost device needs to know it does not."""
+    result = enrolled()
+
+    body = client.get(f"/devices/{result['device_id']}", headers=ADMIN_HEADERS).text
+
+    assert "Factory Reset Protection is cleared" in body
+
+
+def test_the_agent_reads_the_flag_rather_than_inferring_it(client: TestClient):
+    """⚠️ The agent must not decide this from the `disenroll` marker.
+
+    Whether FRP survives is the server's call, and the agent honours a flag the
+    same way it already does for external storage. An older agent that does not
+    know the key leaves FRP armed — failing in the safe direction.
+    """
+    import pathlib
+
+    handler = pathlib.Path(
+        "agent/app/src/main/java/com/taksolutions/atlasmdm/command/"
+        "DeviceCommandHandlers.kt"
+    ).read_text(encoding="utf-8")
+
+    assert 'optBoolean("wipe_reset_protection", false)' in handler
+    assert "WIPE_RESET_PROTECTION_DATA" in handler
