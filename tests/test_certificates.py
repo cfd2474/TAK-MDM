@@ -292,3 +292,41 @@ def test_the_console_does_not_claim_trust_is_enforced(client: TestClient):
 
     assert "A user can delete these from the device" in panel
     assert "maintained rather than enforced" in panel
+
+
+def test_denying_credential_configuration_is_offered(client: TestClient):
+    """⚠️ The answer to "can a user delete these" is a user restriction, not Knox.
+
+    `DISALLOW_CONFIG_CREDENTIALS` blocks the credentials screen outright. Without
+    it ATLAS only *restores* a deleted anchor at the next check-in, which narrows
+    the window rather than closing it.
+    """
+    from app.policies import form_schema
+
+    names = [f.name for f in form_schema.form_fields("RESTRICTIONS")]
+    assert "allow_credential_configuration" in names
+
+
+def test_the_certificates_page_points_at_that_restriction(client: TestClient):
+    """An operator asking "can I stop them deleting it" is looking at Certificates,
+    and the answer lives under Restrictions."""
+    body = client.get("/policies/new").text
+    panel = body[body.index('data-page-panel="security:trusted-certificates"'):]
+    panel = panel[: panel.index("</section>")]
+
+    assert "Credential configuration" in panel
+
+
+def test_the_restriction_says_it_is_broader_than_our_certificates(client: TestClient):
+    """⚠️ It is not "lock this CA" — it blocks the whole credentials screen, so the
+    user cannot manage their own certificates either. An operator who reads it as
+    the narrow thing will be surprised by a support call."""
+    from app.policies import form_schema
+
+    field = next(
+        f for f in form_schema.form_fields("RESTRICTIONS")
+        if f.name == "allow_credential_configuration"
+    )
+
+    assert "their own certificates" in field.help
+    assert "whole credentials screen" in field.help

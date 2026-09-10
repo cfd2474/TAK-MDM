@@ -610,6 +610,22 @@ same reason — the platform gives the user a way to undo it. The console now sa
 trust is **maintained rather than enforced**, and that a device can be without an
 anchor for up to a check-in cycle.
 
+✅ **The self-heal is confirmed on hardware.** The operator deleted the CA from
+Settings and it came back on the next check-in.
+
+✅ **And the window can be closed outright, without Knox.**
+`DISALLOW_CONFIG_CREDENTIALS` is an ordinary Device Owner user restriction —
+*"Specifies if a user is disallowed from configuring user credentials"* — now
+exposed as **Restrictions ▸ Credential configuration** (agent 0.54.0). Denying it
+stops the user reaching the credentials screen at all, so a policy anchor cannot
+be deleted rather than merely being restored a cycle later.
+
+⚠️ **It is not a per-certificate lock**, and the field says so: it blocks the
+whole credentials screen, so the user cannot manage their own certificates
+either. The Certificates page points at it rather than duplicating the control —
+an operator asking "can I stop them deleting it" is looking at Certificates, and
+the answer lives under Restrictions.
+
 ⚠️ **Left installed for the operator to inspect**, labelled *"Delete me after
 testing"* and expiring in two days regardless. Policy `5064a51b`, file
 `d1bf9815`. What still needs a human's eyes: whether Android shows a

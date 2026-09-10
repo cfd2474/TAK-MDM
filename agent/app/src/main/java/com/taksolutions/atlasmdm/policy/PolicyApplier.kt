@@ -422,6 +422,10 @@ class PolicyApplier(private val context: Context) {
      */
     private val restrictionMap = mapOf(
         "allow_usb_file_transfer" to UserManager.DISALLOW_USB_FILE_TRANSFER,
+        // ⚠️ What actually stops a user deleting a policy-installed CA (W112).
+        // The applier restores a deleted anchor at the next check-in; this
+        // closes the window instead of narrowing it.
+        "allow_credential_configuration" to UserManager.DISALLOW_CONFIG_CREDENTIALS,
         "allow_factory_reset" to UserManager.DISALLOW_FACTORY_RESET,
         "allow_safe_mode" to UserManager.DISALLOW_SAFE_BOOT,
         "allow_developer_options" to UserManager.DISALLOW_DEBUGGING_FEATURES,

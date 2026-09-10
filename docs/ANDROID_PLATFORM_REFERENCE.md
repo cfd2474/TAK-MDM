@@ -1436,9 +1436,19 @@ certificate is removable by hand from **Settings › Encryption & credentials �
 Trusted credentials › User**. A Device Owner does **not** get an anchor the user
 cannot touch.
 
-So device trust is **maintained, not enforced**. The only answer is to re-assert
-it: check `hasCaCertInstalled` against the device on every reconcile and put back
-what has gone, rather than trusting the agent's own record of what it installed.
+So device trust is **maintained, not enforced** by the certificate APIs alone.
+Two answers, and they compose:
+
+1. **Re-assert it** — check `hasCaCertInstalled` against the device on every
+   reconcile and put back what has gone, rather than trusting the agent's own
+   record of what it installed. ✅ Verified: the operator deleted the anchor in
+   Settings and it returned on the next check-in.
+2. ✅ **Close the window entirely with `DISALLOW_CONFIG_CREDENTIALS`** — a plain
+   Device Owner user restriction, **no Knox required**: *"Specifies if a user is
+   disallowed from configuring user credentials."* ⚠️ It blocks the whole
+   credentials screen, so the user also cannot add or remove certificates of
+   their own — it is not a per-certificate lock, and a console that implies
+   otherwise will produce a support call.
 An applier that skips anything it believes it already installed leaves a deleted
 anchor gone for ever — and the console would show a policy that says "trust this"
 while the device does not. A device can therefore be without a policy anchor for

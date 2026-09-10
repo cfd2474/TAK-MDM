@@ -81,6 +81,16 @@ class RestrictionsSpec(PolicySpec):
         "MTP/PTP access to device storage over USB.",
     )
 
+    allow_credential_configuration: Annotated[bool | None, _DENY_WINS] = _allow(
+        "Credential configuration", "Network & communication",
+        "Whether the user may manage certificates in Settings. ⚠️ Denying this "
+        "is what stops someone deleting a CA a Certificates policy installed — "
+        "without it ATLAS only puts the certificate back at the next check-in, "
+        "leaving a window where the device does not trust it. ⚠️ It blocks the "
+        "whole credentials screen, so the user also cannot add or remove their "
+        "own certificates.",
+    )
+
     screen_timeout_seconds: Annotated[int | None, Merge(MergeStrategy.MIN)] = Field(
         default=None,
         ge=15,
