@@ -38,10 +38,16 @@
     <string name="compliance_blocked">Grant the required permissions to continue</string>
     <string name="compliance_required_intro">%1$d required permission(s) still missing. Tap each one, allow it, then come back here. Setup cannot continue until they are granted.</string>
     <string name="compliance_override">Continue anyway</string>
-    <string name="compliance_override_title">Continue without required permissions?</string>
-    <string name="compliance_override_body">Missing: %1$s.\n\nThe device will enrol and report as DEGRADED, and the agent update channel will not offer it anything until these are granted. Some cannot be granted later if the device is locked into kiosk mode.</string>
+    <string name="compliance_override_title">Bypass code</string>
+    <string name="compliance_override_body">Missing: %1$s.\n\nEnter the 6-digit bypass code from the ATLAS admin console to continue anyway. The device will enrol and report as DEGRADED, and the agent update channel will not offer it anything until these permissions are granted. Some cannot be granted later if the device is locked into kiosk mode.</string>
     <string name="compliance_override_confirm">Continue anyway</string>
     <string name="compliance_override_cancel">Go back</string>
+    <string name="compliance_override_hint">6-digit code</string>
+    <string name="compliance_override_checking">Checking the code…</string>
+    <string name="compliance_override_wrong">That code is not correct. %1$d attempt(s) left before this enrollment token is locked out.</string>
+    <string name="compliance_override_locked">This enrollment token has no bypass attempts left. Use a new enrollment token, or grant the permissions.</string>
+    <string name="compliance_override_unreachable">Could not reach the server to check the code. The bypass needs a connection; the permissions above do not.</string>
+    <string name="compliance_override_no_server">No server is configured, so the code cannot be checked.</string>
     <string name="action_review_permissions">Review permissions</string>
 
     <!-- W19: DPC console -->

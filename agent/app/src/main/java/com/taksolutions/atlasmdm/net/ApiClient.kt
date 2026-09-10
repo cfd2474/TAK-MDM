@@ -169,6 +169,42 @@ class ApiClient(private val config: AgentConfig) {
         return enrollClient.newCall(request).execute().readJson()
     }
 
+    /**
+     * Ask the server whether [pin] is this install's provisioning bypass code.
+     *
+     * ⚠️ **`enrollClient`, not `mtlsClient`.** This is called from the setup
+     * wizard, before the device has any identity — the same position
+     * [enroll] is in, and for the same reason the enrollment token is what
+     * authorizes it.
+     *
+     * ⚠️ **The PIN is never stored, cached or logged**, here or anywhere else.
+     * It is a fixed per-install secret, so a copy left in an agent preference
+     * file or a log bundle outlives the one moment it was needed.
+     *
+     * Returns null when the server could not be reached or did not answer
+     * usefully — a distinct outcome from "wrong code", because the operator can
+     * do something about one and not the other.
+     */
+    fun checkBypassPin(token: String, pin: String): BypassPinAnswer? {
+        val body = JSONObject().put("secret", token).put("pin", pin)
+        val request = Request.Builder()
+            .url("$baseUrl/api/v1/provisioning/bypass-pin")
+            .post(body.toString().toRequestBody(JSON))
+            .build()
+        return try {
+            val json = enrollClient.newCall(request).execute().readJson()
+            BypassPinAnswer(
+                accepted = json.optBoolean("accepted", false),
+                attemptsRemaining = json.optInt("attempts_remaining", -1),
+            )
+        } catch (e: Exception) {
+            // Includes a 404 for an unusable enrollment token, which is not
+            // "wrong PIN" either — the operator needs to know the difference.
+            AgentLog.w(TAG, "bypass PIN check could not be completed: ${e.message}")
+            null
+        }
+    }
+
     fun checkin(payload: JSONObject): JSONObject {
         val request = Request.Builder()
             .url("$baseUrl/api/v1/device/checkin")
@@ -376,6 +412,9 @@ class ApiClient(private val config: AgentConfig) {
         if (!isSuccessful) throw ApiException(code, text.ifBlank { message })
         if (text.isBlank()) JSONObject() else JSONObject(text)
     }
+
+    /** What the server said about a typed bypass PIN. */
+    data class BypassPinAnswer(val accepted: Boolean, val attemptsRemaining: Int)
 
     companion object {
         private const val TAG = "ApiClient"

@@ -23,7 +23,10 @@ import android.os.PersistableBundle
 import com.taksolutions.atlasmdm.diag.AgentLog
 import android.view.View
 import android.app.AlertDialog
+import android.text.InputFilter
+import android.text.InputType
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -33,6 +36,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.taksolutions.atlasmdm.R
 import com.taksolutions.atlasmdm.core.AgentConfig
+import com.taksolutions.atlasmdm.net.ApiClient
 import com.taksolutions.atlasmdm.permissions.PermissionRequirement
 import com.taksolutions.atlasmdm.policy.PolicyApplier
 import com.taksolutions.atlasmdm.sync.Reconciler
@@ -161,24 +165,117 @@ class PolicyComplianceActivity : AppCompatActivity() {
         }
     }
 
-    /** Name what breaks before letting the operator past the block. */
+    /**
+     * Ask for the master bypass code, and let the operator past only if the
+     * server agrees (W117).
+     *
+     * ⚠️ **The code is checked by the server, never here.** It is six digits and
+     * fixed for the life of an install, so anything shipped to the device —
+     * the code itself, or a hash of it in the provisioning extras — would be
+     * brute-forced the moment a QR was photographed or a tablet was read. What
+     * this activity holds is the enrollment token, which is what authorizes the
+     * question.
+     *
+     * ⚠️ **Three outcomes, deliberately distinguished.** "Wrong code" and "could
+     * not reach the server" look identical if both are reported as failure, and
+     * the operator can act on one and not the other. Anything but an explicit
+     * `accepted` leaves the block in place.
+     */
     private fun confirmOverride() {
         val missing = PermissionRequirement.outstanding(this)
         if (missing.isEmpty()) {
             finishProvisioning()
             return
         }
-        AlertDialog.Builder(this)
+
+        val token = config.enrollmentToken
+        val server = config.serverUrl
+        if (token.isNullOrBlank() || server.isNullOrBlank()) {
+            // Nothing to ask, and nobody to ask. Say so rather than showing a
+            // code box that can never succeed.
+            AlertDialog.Builder(this)
+                .setTitle(R.string.compliance_override_title)
+                .setMessage(R.string.compliance_override_no_server)
+                .setPositiveButton(R.string.compliance_override_cancel, null)
+                .show()
+            return
+        }
+
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            filters = arrayOf(InputFilter.LengthFilter(BYPASS_PIN_LENGTH))
+            hint = getString(R.string.compliance_override_hint)
+        }
+
+        val dialog = AlertDialog.Builder(this)
             .setTitle(R.string.compliance_override_title)
             .setMessage(
                 getString(R.string.compliance_override_body, missing.joinToString(", "))
             )
-            .setPositiveButton(R.string.compliance_override_confirm) { _, _ ->
-                AgentLog.w(TAG, "operator overrode the permission block: missing $missing")
-                finishProvisioning()
-            }
+            .setView(input)
+            .setPositiveButton(R.string.compliance_override_confirm, null)
             .setNegativeButton(R.string.compliance_override_cancel, null)
-            .show()
+            .create()
+
+        // The click listener is attached after show() so a wrong code can leave
+        // the dialog open; the Builder's own listener always dismisses.
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                submitBypassPin(dialog, input, token, missing)
+            }
+        }
+        dialog.show()
+    }
+
+    private fun submitBypassPin(
+        dialog: AlertDialog,
+        input: EditText,
+        token: String,
+        missing: List<String>,
+    ) {
+        val pin = input.text.toString().trim()
+        if (pin.length != BYPASS_PIN_LENGTH) {
+            input.error = getString(R.string.compliance_override_hint)
+            return
+        }
+
+        val positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        positive.isEnabled = false
+        status.setText(R.string.compliance_override_checking)
+
+        lifecycleScope.launch {
+            val answer = withContext(Dispatchers.IO) {
+                ApiClient(config).checkBypassPin(token, pin)
+            }
+            positive.isEnabled = true
+
+            when {
+                answer == null -> {
+                    // Could not ask. Not the same as being told no.
+                    input.error = getString(R.string.compliance_override_unreachable)
+                    renderSteps()
+                }
+                answer.accepted -> {
+                    AgentLog.w(
+                        TAG,
+                        "bypass code accepted; continuing without: $missing"
+                    )
+                    dialog.dismiss()
+                    finishProvisioning()
+                }
+                answer.attemptsRemaining <= 0 -> {
+                    input.error = getString(R.string.compliance_override_locked)
+                    renderSteps()
+                }
+                else -> {
+                    AgentLog.w(TAG, "bypass code rejected by the server")
+                    input.error = getString(
+                        R.string.compliance_override_wrong, answer.attemptsRemaining
+                    )
+                    renderSteps()
+                }
+            }
+        }
     }
 
     private fun buildRow(requirement: PermissionRequirement): View {
@@ -251,5 +348,8 @@ class PolicyComplianceActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "PolicyCompliance"
+
+        /** Matches `bypass_pin.DIGITS` on the server. */
+        private const val BYPASS_PIN_LENGTH = 6
     }
 }

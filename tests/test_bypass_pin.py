@@ -224,3 +224,101 @@ def test_the_admin_page_says_what_it_does_not_grant(client: TestClient, db):
     body = client.get("/admin", headers=ADMIN_HEADERS).text
 
     assert "grants no access to this server" in body
+
+
+# --------------------------------------------------------------------------- #
+# The agent side (chunk 2)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_agent_asks_the_server_without_a_client_certificate():
+    """⚠️ `enrollClient`, not `mtlsClient`.
+
+    The check happens in the setup wizard, before the device has any identity —
+    the same position `enroll` is in. Using the mTLS client would fail every
+    time on the one screen this exists for.
+    """
+    import pathlib
+
+    api = pathlib.Path(
+        "agent/app/src/main/java/com/taksolutions/atlasmdm/net/ApiClient.kt"
+    ).read_text(encoding="utf-8")
+
+    body = api[api.index("fun checkBypassPin("):]
+    body = body[: body.index("\n    fun ")]
+    assert "enrollClient" in body
+    assert "mtlsClient" not in body
+
+
+def test_the_agent_never_stores_the_pin():
+    """⚠️ It is a fixed per-install secret, so a copy in a preference file or a
+    log bundle outlives the moment it was needed."""
+    import pathlib
+
+    agent = pathlib.Path("agent/app/src/main/java/com/taksolutions/atlasmdm")
+    api = (agent / "net/ApiClient.kt").read_text(encoding="utf-8")
+    activity = (agent / "admin/PolicyComplianceActivity.kt").read_text(encoding="utf-8")
+    config = (agent / "core/AgentConfig.kt").read_text(encoding="utf-8")
+
+    # Never persisted.
+    assert "bypassPin" not in config and "bypass_pin" not in config
+
+    # ⚠️ Never *interpolated* into a log line. Asserting the absence of the word
+    # "pin" was the first version of this test and it failed immediately on
+    # `"bypass PIN check could not be completed"` — a log line that mentions the
+    # PIN without containing it. The thing that matters is the value, so this
+    # looks for the variable being substituted in, not the topic being named.
+    for source in (api, activity):
+        for line in source.splitlines():
+            if "AgentLog" not in line:
+                continue
+            assert "$pin" not in line and "${pin}" not in line, line
+
+
+def test_the_agent_separates_refused_from_unreachable():
+    """⚠️ The two look identical if both are reported as failure, and the
+    operator can do something about one and not the other."""
+    import pathlib
+
+    activity = pathlib.Path(
+        "agent/app/src/main/java/com/taksolutions/atlasmdm/admin/"
+        "PolicyComplianceActivity.kt"
+    ).read_text(encoding="utf-8")
+
+    assert "compliance_override_unreachable" in activity
+    assert "compliance_override_wrong" in activity
+    assert "compliance_override_locked" in activity
+
+
+def test_only_an_accepted_answer_lets_setup_continue():
+    """⚠️ Anything else — refused, locked out, unreachable, a malformed body —
+    must leave the block in place. `finishProvisioning` is reachable from the
+    override path exactly once, under `answer.accepted`."""
+    import pathlib
+
+    activity = pathlib.Path(
+        "agent/app/src/main/java/com/taksolutions/atlasmdm/admin/"
+        "PolicyComplianceActivity.kt"
+    ).read_text(encoding="utf-8")
+
+    # Bounded to the function. Running to end-of-file also caught
+    # `private fun finishProvisioning() {` — its own definition — and counted 2.
+    start = activity.index("private fun submitBypassPin(")
+    end = activity.index("\n    private fun ", start + 1)
+    submit = activity[start:end]
+
+    assert submit.count("finishProvisioning()") == 1
+    assert submit.index("answer.accepted") < submit.index("finishProvisioning()")
+
+
+def test_the_pin_length_matches_the_server():
+    """A four-digit box against a six-digit code fails in a way that reads as a
+    wrong code rather than a wrong app."""
+    import pathlib
+
+    activity = pathlib.Path(
+        "agent/app/src/main/java/com/taksolutions/atlasmdm/admin/"
+        "PolicyComplianceActivity.kt"
+    ).read_text(encoding="utf-8")
+
+    assert f"BYPASS_PIN_LENGTH = {bypass_pin.DIGITS}" in activity

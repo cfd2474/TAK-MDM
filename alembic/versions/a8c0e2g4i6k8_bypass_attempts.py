@@ -26,7 +26,7 @@ Non-nullable with a server-side default of 0: existing tokens start with a full
 allowance, and the counter is never "unknown".
 
 Revision ID: a8c0e2g4i6k8
-Revises: z6b8d0f2h4j6
+Revises: h4j6l8n0p2r4
 Create Date: 2026-09-10
 """
 
@@ -36,7 +36,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "a8c0e2g4i6k8"
-down_revision = "z6b8d0f2h4j6"
+down_revision = "h4j6l8n0p2r4"
 branch_labels = None
 depends_on = None
 
