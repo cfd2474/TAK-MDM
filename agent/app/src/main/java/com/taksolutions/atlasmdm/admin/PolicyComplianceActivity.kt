@@ -22,6 +22,7 @@ import android.os.Bundle
 import android.os.PersistableBundle
 import com.taksolutions.atlasmdm.diag.AgentLog
 import android.view.View
+import android.app.AlertDialog
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -59,6 +60,7 @@ class PolicyComplianceActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private lateinit var steps: LinearLayout
     private lateinit var continueButton: Button
+    private lateinit var overrideButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,6 +70,7 @@ class PolicyComplianceActivity : AppCompatActivity() {
         status = findViewById(R.id.compliance_status)
         steps = findViewById(R.id.permission_steps)
         continueButton = findViewById(R.id.compliance_continue)
+        overrideButton = findViewById(R.id.compliance_override)
 
         val extras = intent.getParcelableExtra(
             DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE,
@@ -85,6 +88,7 @@ class PolicyComplianceActivity : AppCompatActivity() {
         grantWhatWeCan()
 
         continueButton.setOnClickListener { finishProvisioning() }
+        overrideButton.setOnClickListener { confirmOverride() }
     }
 
     override fun onResume() {
@@ -106,23 +110,75 @@ class PolicyComplianceActivity : AppCompatActivity() {
         failures.forEach { AgentLog.w(TAG, "self-grant: $it") }
     }
 
+    /**
+     * ⚠️ **The continue button is blocked while a *required* permission is
+     * missing** (operator, 2026-09-09: a device was provisioned without granting
+     * everything, and nothing stopped it).
+     *
+     * Blocked on the required set only, not on everything. `PermissionRequirement`
+     * already draws that line and the reasons hold here: background location and
+     * notifications are genuinely optional, and the power menu is optional *by
+     * design* on a device that will not be locked down. Blocking on those would
+     * strand setup over something nobody needs.
+     *
+     * ⚠️ **There is still a way through, because there has to be.** Provisioning
+     * cannot be repeated without another factory reset, so a required permission
+     * that cannot be granted on some future OEM — a missing Settings screen, an
+     * intent that resolves to nothing — must not trap the operator on this screen
+     * with a dead button and no recourse. The override is secondary, plain, and
+     * behind a dialog that names what will break.
+     */
     private fun renderSteps() {
         steps.removeAllViews()
         val outstanding = PermissionRequirement.needingUserAction(this)
+        val missingRequired = PermissionRequirement.outstanding(this)
 
         if (outstanding.isEmpty()) {
             status.setText(R.string.compliance_all_set)
             continueButton.setText(R.string.compliance_finish)
+            continueButton.isEnabled = true
+            overrideButton.visibility = View.GONE
             return
         }
 
-        status.setText(R.string.compliance_grant_intro)
-        continueButton.setText(R.string.compliance_skip_rest)
+        if (missingRequired.isEmpty()) {
+            // Only optional ones left. Proceeding here is a legitimate choice, so
+            // it stays a plain enabled button rather than something to argue with.
+            status.setText(R.string.compliance_grant_intro)
+            continueButton.setText(R.string.compliance_skip_rest)
+            continueButton.isEnabled = true
+            overrideButton.visibility = View.GONE
+        } else {
+            status.text = getString(R.string.compliance_required_intro, missingRequired.size)
+            continueButton.setText(R.string.compliance_blocked)
+            continueButton.isEnabled = false
+            overrideButton.visibility = View.VISIBLE
+        }
 
         for (requirement in PermissionRequirement.ALL) {
             if (requirement.grantIntent(this) == null) continue  // granted silently
             steps.addView(buildRow(requirement))
         }
+    }
+
+    /** Name what breaks before letting the operator past the block. */
+    private fun confirmOverride() {
+        val missing = PermissionRequirement.outstanding(this)
+        if (missing.isEmpty()) {
+            finishProvisioning()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.compliance_override_title)
+            .setMessage(
+                getString(R.string.compliance_override_body, missing.joinToString(", "))
+            )
+            .setPositiveButton(R.string.compliance_override_confirm) { _, _ ->
+                AgentLog.w(TAG, "operator overrode the permission block: missing $missing")
+                finishProvisioning()
+            }
+            .setNegativeButton(R.string.compliance_override_cancel, null)
+            .show()
     }
 
     private fun buildRow(requirement: PermissionRequirement): View {
@@ -162,6 +218,7 @@ class PolicyComplianceActivity : AppCompatActivity() {
      */
     private fun finishProvisioning() {
         continueButton.isEnabled = false
+        overrideButton.visibility = View.GONE
         val missing = PermissionRequirement.outstanding(this)
         if (missing.isNotEmpty()) AgentLog.w(TAG, "continuing without: $missing")
 

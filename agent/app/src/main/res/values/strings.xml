@@ -35,6 +35,13 @@
     <string name="compliance_granted">Granted</string>
     <string name="compliance_finish">Finish setup</string>
     <string name="compliance_skip_rest">Continue without the rest</string>
+    <string name="compliance_blocked">Grant the required permissions to continue</string>
+    <string name="compliance_required_intro">%1$d required permission(s) still missing. Tap each one, allow it, then come back here. Setup cannot continue until they are granted.</string>
+    <string name="compliance_override">Continue anyway</string>
+    <string name="compliance_override_title">Continue without required permissions?</string>
+    <string name="compliance_override_body">Missing: %1$s.\n\nThe device will enrol and report as DEGRADED, and the agent update channel will not offer it anything until these are granted. Some cannot be granted later if the device is locked into kiosk mode.</string>
+    <string name="compliance_override_confirm">Continue anyway</string>
+    <string name="compliance_override_cancel">Go back</string>
     <string name="action_review_permissions">Review permissions</string>
 
     <!-- W19: DPC console -->

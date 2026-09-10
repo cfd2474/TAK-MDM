@@ -37,4 +37,18 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="20dp" />
+
+    <!-- The escape hatch, hidden unless a required permission is missing.
+         Deliberately plain and secondary: provisioning cannot be repeated
+         without another factory reset, so there must always be a way off this
+         screen, but it should not be the obvious one. -->
+    <Button
+        android:id="@+id/compliance_override"
+        style="?android:attr/borderlessButtonStyle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:textSize="13sp"
+        android:visibility="gone"
+        android:text="@string/compliance_override" />
 </LinearLayout>
