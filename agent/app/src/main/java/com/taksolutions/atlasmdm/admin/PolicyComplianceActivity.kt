@@ -188,11 +188,14 @@ class PolicyComplianceActivity : AppCompatActivity() {
             return
         }
 
-        val token = config.enrollmentToken
-        val server = config.serverUrl
-        if (token.isNullOrBlank() || server.isNullOrBlank()) {
-            // Nothing to ask, and nobody to ask. Say so rather than showing a
-            // code box that can never succeed.
+        // ⚠️ Only "no server" is checked here now. The first version also
+        // required an enrollment token and reported a *missing token* as "no
+        // server is configured" — which is what the operator saw on
+        // `SM-X828U`, on a device that had a perfectly good server URL and had
+        // simply already enrolled. Whether a usable credential exists is
+        // `ApiClient`'s business, since it is the thing that knows which one
+        // each path needs.
+        if (config.serverUrl.isNullOrBlank()) {
             AlertDialog.Builder(this)
                 .setTitle(R.string.compliance_override_title)
                 .setMessage(R.string.compliance_override_no_server)
@@ -221,7 +224,7 @@ class PolicyComplianceActivity : AppCompatActivity() {
         // the dialog open; the Builder's own listener always dismisses.
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                submitBypassPin(dialog, input, token, missing)
+                submitBypassPin(dialog, input, missing)
             }
         }
         dialog.show()
@@ -230,7 +233,6 @@ class PolicyComplianceActivity : AppCompatActivity() {
     private fun submitBypassPin(
         dialog: AlertDialog,
         input: EditText,
-        token: String,
         missing: List<String>,
     ) {
         val pin = input.text.toString().trim()
@@ -245,7 +247,7 @@ class PolicyComplianceActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             val answer = withContext(Dispatchers.IO) {
-                ApiClient(config).checkBypassPin(token, pin)
+                ApiClient(config).checkBypassPin(pin)
             }
             positive.isEnabled = true
 

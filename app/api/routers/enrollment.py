@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
+    authenticated_device,
     fetch_or_404,
     get_bundle_signer,
     get_ca,
@@ -48,7 +49,7 @@ from app.api.schemas import (
     ProvisioningRequest,
 )
 from app.config import Settings, get_settings
-from app.db.models import AppPackage, EnrollmentToken, PartRole
+from app.db.models import AppPackage, Device, EnrollmentToken, PartRole
 from app.security.admin_auth import AdminIdentity, admin_required
 from app.security.bundle import BundleSigner
 from app.security.enrollment_qr import EnrollmentQrGuard
@@ -295,11 +296,41 @@ def check_bypass_pin(
     except EnrollmentError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
-    accepted = bypass_pin.verify(session, token, payload.pin)
+    accepted = bypass_pin.verify(
+        session, token, payload.pin, label=f"token {token.prefix}"
+    )
     session.commit()
     return BypassPinResult(
         accepted=accepted,
         attempts_remaining=bypass_pin.attempts_remaining(token),
+    )
+
+
+@device_router.post("/device/bypass-pin", response_model=BypassPinResult)
+def check_bypass_pin_enrolled(
+    payload: BypassPinRequest,
+    session: Session = Depends(get_db),
+    device: Device = Depends(authenticated_device),
+) -> BypassPinResult:
+    """The same check, for a device that has already enrolled.
+
+    ⚠️ **Two endpoints because the credential changes mid-provisioning**, which
+    the first version of this feature missed. The enrollment token is destroyed
+    the moment enrolment succeeds — deliberately — and the permission screen is
+    normally reached *after* that, so the token-authenticated endpoint had no
+    credential to offer and the operator was told the code could not be checked.
+
+    Here the client certificate is the credential, and the attempt counter lives
+    on the device rather than on a token that no longer exists. `secret` is
+    ignored: mTLS already established who is asking.
+    """
+    accepted = bypass_pin.verify(
+        session, device, payload.pin, label=f"device {device.serial_number}"
+    )
+    session.commit()
+    return BypassPinResult(
+        accepted=accepted,
+        attempts_remaining=bypass_pin.attempts_remaining(device),
     )
 
 

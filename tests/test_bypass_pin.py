@@ -231,12 +231,15 @@ def test_the_admin_page_says_what_it_does_not_grant(client: TestClient, db):
 # --------------------------------------------------------------------------- #
 
 
-def test_the_agent_asks_the_server_without_a_client_certificate():
-    """⚠️ `enrollClient`, not `mtlsClient`.
+def test_the_agent_picks_the_credential_it_actually_has():
+    """⚠️ The bug the operator found on `SM-X828U`.
 
-    The check happens in the setup wizard, before the device has any identity —
-    the same position `enroll` is in. Using the mTLS client would fail every
-    time on the one screen this exists for.
+    Before enrolment the device holds only the enrollment token. The moment
+    enrolment succeeds that token is deleted — deliberately, so a usable
+    enrollment credential is not left on the tablet — and the device has a
+    client certificate instead. The permission screen is normally reached
+    *after* enrolment, so keying the check on the token alone meant the common
+    case had no credential and reported "the code cannot be checked".
     """
     import pathlib
 
@@ -246,8 +249,12 @@ def test_the_agent_asks_the_server_without_a_client_certificate():
 
     body = api[api.index("fun checkBypassPin("):]
     body = body[: body.index("\n    fun ")]
-    assert "enrollClient" in body
-    assert "mtlsClient" not in body
+
+    assert "config.isEnrolled" in body
+    # Both paths, each with the client that matches its endpoint.
+    assert "enrollClient" in body and "mtlsClient" in body
+    assert "/api/v1/device/bypass-pin" in body
+    assert "/api/v1/provisioning/bypass-pin" in body
 
 
 def test_the_agent_never_stores_the_pin():
@@ -322,3 +329,88 @@ def test_the_pin_length_matches_the_server():
     ).read_text(encoding="utf-8")
 
     assert f"BYPASS_PIN_LENGTH = {bypass_pin.DIGITS}" in activity
+
+
+def test_an_enrolled_device_can_check_the_pin_over_mtls(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """⚠️ The path that was missing. An enrolled device has no enrollment token
+    left, so this is the only one it can use."""
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    pin = bypass_pin.get_or_create(db)
+    db.commit()
+
+    response = client.post(
+        "/api/v1/device/bypass-pin", json={"secret": "", "pin": pin}, headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["accepted"] is True
+
+
+def test_the_enrolled_path_still_refuses_a_wrong_pin(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    pin = bypass_pin.get_or_create(db)
+    db.commit()
+    wrong = "111111" if pin != "111111" else "222222"
+
+    body = client.post(
+        "/api/v1/device/bypass-pin", json={"secret": "", "pin": wrong}, headers=headers
+    ).json()
+
+    assert body["accepted"] is False
+    assert body["attempts_remaining"] == bypass_pin.MAX_ATTEMPTS - 1
+
+
+def test_the_enrolled_path_needs_a_client_certificate(client: TestClient, db):
+    """⚠️ Without mTLS this would be an open oracle, exactly what the token
+    requirement exists to prevent on the other endpoint."""
+    bypass_pin.get_or_create(db)
+    db.commit()
+
+    response = client.post("/api/v1/device/bypass-pin", json={"secret": "", "pin": "123456"})
+
+    assert response.status_code in (401, 403), response.status_code
+
+
+def test_the_device_counter_is_separate_from_the_token_counter(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """Two identities, two allowances. Burning one must not spend the other —
+    the same reasoning that made the token counter per-token."""
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    secret = _token(client)
+    pin = bypass_pin.get_or_create(db)
+    db.commit()
+    wrong = "111111" if pin != "111111" else "222222"
+
+    for _ in range(bypass_pin.MAX_ATTEMPTS):
+        client.post(
+            "/api/v1/device/bypass-pin",
+            json={"secret": "", "pin": wrong},
+            headers=headers,
+        )
+
+    assert _check(client, secret, pin).json()["accepted"] is True
+
+
+def test_the_console_no_longer_blames_a_missing_server_for_a_missing_token():
+    """⚠️ The operator was told "no server is configured" on a device whose
+    server URL was fine and which had simply already enrolled. Only the server
+    URL may raise that message now."""
+    import pathlib
+
+    activity = pathlib.Path(
+        "agent/app/src/main/java/com/taksolutions/atlasmdm/admin/"
+        "PolicyComplianceActivity.kt"
+    ).read_text(encoding="utf-8")
+
+    guard = activity[: activity.index("compliance_override_no_server")]
+    tail = guard[guard.rindex("if ("):]
+    assert "serverUrl" in tail
+    assert "enrollmentToken" not in tail

@@ -49,10 +49,28 @@ import hmac
 import logging
 import secrets
 
+from typing import Protocol
+
 from sqlalchemy.orm import Session
 
-from app.db.models import EnrollmentToken
 from app.services import settings_store
+
+
+class AttemptSubject(Protocol):
+    """Whatever is being rate-limited: an enrollment token, or a device.
+
+    ⚠️ **Both exist because the credential changes halfway through provisioning.**
+    The first version authorized this check with the enrollment token alone, and
+    that token is deliberately destroyed the moment the device enrols
+    (`Reconciler.kt`: *"keeping it would leave a usable enrollment credential on
+    the device"*). An operator who reached the permission screen after enrolment
+    — which is the normal case, not an edge case — had no credential left and
+    was told the code could not be checked. So an enrolled device authenticates
+    with its client certificate instead, and the counter follows whichever
+    identity was used.
+    """
+
+    bypass_attempts: int
 
 logger = logging.getLogger(__name__)
 
@@ -92,37 +110,42 @@ def get_or_create(session: Session) -> str:
     return pin
 
 
-def verify(session: Session, token: EnrollmentToken, candidate: str) -> bool:
+def verify(session: Session, subject: AttemptSubject, candidate: str, *,
+           label: str = "") -> bool:
     """Check `candidate` against this install's PIN, counting failures.
 
     ⚠️ The attempt counter is spent **before** the comparison and only reset on
     success, so a crash or a dropped connection mid-check cannot be used to get a
     free guess.
+
+    `subject` is the identity being rate-limited — an enrollment token before the
+    device enrols, the device itself afterwards. See `AttemptSubject`.
     """
-    if token.bypass_attempts >= MAX_ATTEMPTS:
+    who = label or type(subject).__name__
+
+    if subject.bypass_attempts >= MAX_ATTEMPTS:
         logger.warning(
-            "bypass PIN refused: token %s has spent its %d attempts",
-            token.prefix, MAX_ATTEMPTS,
+            "bypass PIN refused: %s has spent its %d attempts", who, MAX_ATTEMPTS
         )
         return False
 
-    token.bypass_attempts += 1
+    subject.bypass_attempts += 1
     session.flush()
 
     # compare_digest, not ==: the timing leak is tiny over a network and the
     # correct call costs nothing.
     if not hmac.compare_digest(get_or_create(session), (candidate or "").strip()):
         logger.warning(
-            "bypass PIN rejected for token %s (attempt %d of %d)",
-            token.prefix, token.bypass_attempts, MAX_ATTEMPTS,
+            "bypass PIN rejected for %s (attempt %d of %d)",
+            who, subject.bypass_attempts, MAX_ATTEMPTS,
         )
         return False
 
-    token.bypass_attempts = 0
+    subject.bypass_attempts = 0
     session.flush()
-    logger.info("bypass PIN accepted for token %s", token.prefix)
+    logger.info("bypass PIN accepted for %s", who)
     return True
 
 
-def attempts_remaining(token: EnrollmentToken) -> int:
-    return max(0, MAX_ATTEMPTS - token.bypass_attempts)
+def attempts_remaining(subject: AttemptSubject) -> int:
+    return max(0, MAX_ATTEMPTS - subject.bypass_attempts)

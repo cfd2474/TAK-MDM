@@ -145,6 +145,11 @@ class Device(Base):
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     serial_number: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # Failed guesses at the provisioning bypass PIN, once this device has an
+    # identity of its own (W117). The enrollment token's counter covers the
+    # pre-enrolment case; the token is destroyed at enrolment, so the counter has
+    # to follow whichever credential the check actually used.
+    bypass_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     # An operator-assigned friendly name. Optional: a freshly enrolled device has
     # only the identity it reported. The console falls back to the serial for
     # display when this is unset.

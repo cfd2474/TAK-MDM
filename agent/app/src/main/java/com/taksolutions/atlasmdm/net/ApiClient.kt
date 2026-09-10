@@ -185,14 +185,37 @@ class ApiClient(private val config: AgentConfig) {
      * usefully — a distinct outcome from "wrong code", because the operator can
      * do something about one and not the other.
      */
-    fun checkBypassPin(token: String, pin: String): BypassPinAnswer? {
-        val body = JSONObject().put("secret", token).put("pin", pin)
+    fun checkBypassPin(pin: String): BypassPinAnswer? {
+        // ⚠️ **Which credential exists depends on when this is asked**, and the
+        // first version got it wrong. Before enrolment the device has only the
+        // enrollment token; the moment enrolment succeeds that token is deleted
+        // — deliberately, so a usable enrollment credential is not left on the
+        // tablet — and the device has a client certificate instead. The
+        // permission screen is normally reached *after* enrolment, so keying
+        // this on the token alone meant the common case had no credential at
+        // all and reported "the code cannot be checked".
+        val enrolled = config.isEnrolled
+        val token = config.enrollmentToken
+        if (!enrolled && token.isNullOrBlank()) {
+            AgentLog.w(TAG, "no credential to authorize a bypass check")
+            return null
+        }
+
+        val body = JSONObject().put("pin", pin)
+        val url = if (enrolled) {
+            "$baseUrl/api/v1/device/bypass-pin"
+        } else {
+            body.put("secret", token)
+            "$baseUrl/api/v1/provisioning/bypass-pin"
+        }
+        val client = if (enrolled) mtlsClient else enrollClient
+
         val request = Request.Builder()
-            .url("$baseUrl/api/v1/provisioning/bypass-pin")
+            .url(url)
             .post(body.toString().toRequestBody(JSON))
             .build()
         return try {
-            val json = enrollClient.newCall(request).execute().readJson()
+            val json = client.newCall(request).execute().readJson()
             BypassPinAnswer(
                 accepted = json.optBoolean("accepted", false),
                 attemptsRemaining = json.optInt("attempts_remaining", -1),
