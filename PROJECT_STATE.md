@@ -457,7 +457,23 @@ off *different* SDK levels — `wipeData`'s throw off **our `targetSdk`**,
 `wipeDevice`'s existence off **the device's API**.
 
 Fixed in agent **0.55.0 (versionCode 100)**, published; fleet pointer → 100.
-⚠️ **Not verified on hardware** — the only proof of a wipe is a real wipe.
+
+✅ **Verified on `SM-X520`, 2026-09-09.** Tested with a *plain* wipe rather than a
+disenroll: identical params (`wipe_external_storage: True`), so the same
+`WipeCommandHandler` and the same `wipeDevice` call, but with no `disenroll`
+marker — `disenroll.acknowledged()` therefore did not match, `complete()` was
+never reached, and the record and certificate survived. The point being that a
+second failure would have been *reportable* instead of orphaning the tablet
+again.
+
+Command acknowledged `SUCCEEDED` on attempt 1; the tablet factory reset,
+confirmed by the operator at the device and corroborated by check-ins stopping
+dead (113 → 233 s since contact, from a device polling every ~60 s).
+
+⚠️ **The full disenroll flow has still not been run end to end.** Both halves are
+proven separately — the server's ack → revoke → remove worked correctly on
+2026-09-09 even while the wipe was failing, and the wipe works now — but not
+together.
 
 #### ⚠️ Open risk: a deferred effect cannot report its own failure
 

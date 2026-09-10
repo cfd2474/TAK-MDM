@@ -1556,6 +1556,19 @@ wipe had failed was, by that moment, unable to tell anyone. Observed on
 tablet sat still owned by the agent, unmanaged, showing *"sync failed, certificate
 is not known"* — `deps.py` rejecting a serial no longer in `device_certificate`.
 
+✅ **`wipeDevice` verified on `SM-X520` (agent 0.55.0), 2026-09-09.** A plain
+wipe — identical params to disenroll, but without the `disenroll` marker, so the
+record and certificate survived to report a failure if there was one — was
+acknowledged (`SUCCEEDED`, one attempt) and the tablet factory reset. Confirmed
+by the operator at the device, and corroborated server-side by check-ins simply
+stopping: 113 s, 137 s, 160 s, 185 s, 209 s, 233 s since last contact from a
+device that had been checking in every ~60 s.
+
+So the two halves are each proven, on hardware, separately: the server's
+ack → revoke → remove path on 2026-09-09 (which worked correctly even while the
+wipe was failing), and the wipe itself now. **They have not yet been run
+together**, which is what a real disenroll would test.
+
 **A deferred effect that cannot report its own failure needs its precondition
 checked before the acknowledgement, not after.** Recorded as an open risk rather
 than silently redesigned.
