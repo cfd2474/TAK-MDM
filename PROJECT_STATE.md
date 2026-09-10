@@ -689,8 +689,55 @@ moment it was needed.
 
 Server suite **1358 passed, 1 skipped**.
 
-⚠️ **Not verified on hardware.** The screen only appears during provisioning, so
-proving it needs a fresh enrol — planned on `R5GL80RJYHK`.
+#### ⚠️ Two bugs found on hardware, both mine (2026-09-10)
+
+**1. The credential does not survive enrolment.** The check was authorized by the
+enrollment token, and `Reconciler.kt` deletes that token the instant enrolment
+succeeds — *"keeping it would leave a usable enrollment credential on the
+device"*. The permission screen is normally reached **after** enrolment, so the
+common case had no credential and the operator saw *"no server is configured"*
+on a device whose server URL was fine. Fixed by giving an enrolled device its own
+path, `POST /api/v1/device/bypass-pin`, authenticated by the client certificate,
+with `device.bypass_attempts` alongside the token's counter. The agent chooses on
+`config.isEnrolled`.
+
+**2. The agent's body did not match the schema.** `secret` was required; the
+enrolled path has none, so the agent sent `{"pin": …}` and got a **422**, which
+the agent reports as "could not reach the server". Found in one line of the proxy
+log, not from the device.
+
+⚠️ **23 tests passed through bug 2**, because every one of them sent
+`secret: ""` — the body *I imagined* the agent sends. **A test that constructs
+its own request only checks the server against the author's idea of the client**,
+which is exactly the disagreement that was wrong here. The replacement reads the
+JSON keys out of `ApiClient.kt` and builds its body from those, and it was
+checked against the old schema to confirm it actually fails.
+
+#### ✅ Verified on hardware — `SM-X828U` / `R5GL80RJYHK`, 2026-09-10
+
+A real provisioning run with three required permissions ungranted:
+
+* the block held, and the code box appeared;
+* **`478416` was accepted** — `POST /api/v1/provisioning/bypass-pin → 200`,
+  `bypass PIN accepted for token gymodM4x`;
+* the device enrolled and now reports exactly what the admin page promised —
+  `DEGRADED`, detail *"missing permission: all_files_access; …
+  display_over_other_apps; … battery_exemption"*, so `agent_update` will offer
+  it nothing until they are granted;
+* the optional `power_menu` sits in `compliance_warnings` and does **not** touch
+  the status, which is the invariant `PermissionRequirement` insists on.
+
+⚠️ **The path that was actually exercised is the pre-enrolment one**, because
+this run reached the screen before enrolling. **The mTLS path — the one bug 1 was
+about — is covered by tests but has not run on hardware.** It will be exercised
+by any run that enrols first, which is what happened on the *previous* attempt.
+
+#### Follow-up worth doing
+
+The agent reports every non-200 as "could not reach the server", which turned a
+422 into a network story and cost a round trip to diagnose. **A response that
+arrived is not a connection failure**, and saying so on the device would have
+made bug 2 self-evident.
 
 ### ✅ W113 — Remove Trusted certificates, SCEP, Global HTTP proxy
 
