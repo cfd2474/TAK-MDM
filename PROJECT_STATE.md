@@ -624,7 +624,7 @@ version of the route deleted the assignment and committed — and the device wen
 on serving a **stale cached effective policy**. The row vanished from the table
 and nothing reached the tablet. The API delete does three things and I had done
 one: resolve the affected devices *before* the row is gone, delete, then
-.
+`eff.invalidate`.
 
 The test that caught it asserts the **desired state changes**, not that the row
 disappeared. Asserting the row would have passed against the broken version, and
