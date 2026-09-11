@@ -2509,7 +2509,14 @@ function atlasWireAppSource(panelName, searchUrl) {
   // --- import --------------------------------------------------------------
 
   function startImport(app, version) {
-    modalBody.innerHTML = "<p>Importing " + app.name + " " + version.version_code + "…</p>" +
+    // ⚠️ Google Play publishes no versionCode until the file has been
+    // downloaded and read, so this was rendering "Importing Google Chrome
+    // null…" for every Play import (W124). The version is decoration here —
+    // the operator already knows what they clicked — so it is omitted rather
+    // than faked.
+    var label = version.version_code || version.version_name || "";
+    modalBody.innerHTML =
+      "<p>Importing " + app.name + (label ? " " + label : "") + "…</p>" +
       // The stylesheet's .progress expects a <span> child; reused rather than
       // inventing a second bar style.
       "<div class='progress'><span data-repo-bar></span></div>" +

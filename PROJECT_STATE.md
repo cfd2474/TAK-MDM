@@ -563,6 +563,41 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W124 — A held import has to look imported
+
+Operator, 2026-09-11, after importing Chrome from Google Play: *"it shows no
+versions in the list, download says imported and held, but says not imported."*
+
+#### The import was fine; the console lied about it twice
+
+Checked first: `com.android.chrome`, version_code **797708204**, version_name
+**152.0.7977.82**, four splits, `published=False`. Exactly what "imported and
+held" means. Two separate reporting faults made it read as a failure.
+
+**1. `Importing Google Chrome null…`** — `atlas.js` interpolated
+`version.version_code`, and **Google Play publishes no version code before the
+download**. The source returns a single placeholder (`version_code=None`,
+`version_name="latest"`) because Play cannot enumerate versions; both fields are
+read from the file once it arrives. So the `—` / `latest` / `not stated` row in
+the picker is correct and stays — only the progress line was wrong.
+
+**2. `none published`, and nothing else.** That phrase is equally true of a
+package holding four freshly imported splits and of one containing nothing. The
+row now names what is held (`797708204 (152.0.7977.82) held`). The "versions in
+the library" link was also gated on `> 1` version, so the **first** import of
+any app had no way through to it at all.
+
+#### ⚠️ Third time for the same test mistake
+
+The library-link assertion failed because my markup wrapped the line between
+`{{ n }}` and `version`, rendering `1
+   version in the library`. That is the
+same line-wrapped-template-breaks-the-assertion trap as twice before. Fixed in
+the template rather than by loosening the test, since the wrap was also wrong
+for the output.
+
+Suite **1407 passed, 1 skipped**. No agent change.
+
 ### ✅ W123 — Remove tags
 
 Operator, 2026-09-11: *"Lets remove tags all together"* — one day after the Tags

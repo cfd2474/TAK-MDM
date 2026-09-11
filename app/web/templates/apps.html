@@ -119,10 +119,22 @@
                 {{ deployed.version_code }}{% if deployed.version_name %} ({{ deployed.version_name }}){% endif %}
               {% else %}
                 <span class="pill warn">none published</span>
+                {# ⚠️ Say what *is* there. "none published" is true of a package
+                   with nothing in it and of one holding four freshly imported
+                   splits, and an operator who has just watched an import
+                   succeed reads the first meaning (W124). #}
+                {% set held = p.versions | sort(attribute='version_code') | last %}
+                {% if held %}
+                  <div class="muted" style="font-size:11px">
+                    {{ held.version_code }}{% if held.version_name %} ({{ held.version_name }}){% endif %}
+                    held
+                  </div>
+                {% endif %}
               {% endif %}
-              {% if (p.versions | length) > 1 %}
+              {% if p.versions %}
                 <div class="muted" style="font-size:11px">
-                  <a href="?versions={{ p.id }}#tab-local">{{ p.versions | length }} versions in the library</a>
+                  {% set n = p.versions | length %}
+                  <a href="?versions={{ p.id }}#tab-local">{{ n }} version{{ '' if n == 1 else 's' }} in the library</a>
                 </div>
               {% endif %}
             </td>
@@ -267,6 +279,17 @@
                 {{ deployed.version_code }}{% if deployed.version_name %} ({{ deployed.version_name }}){% endif %}
               {% else %}
                 <span class="pill warn">none published</span>
+                {# ⚠️ Say what *is* there. "none published" is true of a package
+                   with nothing in it and of one holding four freshly imported
+                   splits, and an operator who has just watched an import
+                   succeed reads the first meaning (W124). #}
+                {% set held = p.versions | sort(attribute='version_code') | last %}
+                {% if held %}
+                  <div class="muted" style="font-size:11px">
+                    {{ held.version_code }}{% if held.version_name %} ({{ held.version_name }}){% endif %}
+                    held
+                  </div>
+                {% endif %}
               {% endif %}
             </td>
             <td class="muted">
