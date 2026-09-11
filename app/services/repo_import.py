@@ -157,9 +157,10 @@ def import_version(
     version: SourceVersion,
     *,
     label: str | None = None,
+    progress=None,
 ) -> AppPackageVersion:
     """Fetch one build and catalogue it, held."""
-    downloaded = source.download(version)
+    downloaded = source.download(version, progress)
 
     result = package_service.ingest(
         session,

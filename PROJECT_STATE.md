@@ -563,6 +563,93 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W127 — Real download progress, and drop the held pill
+
+Operator, 2026-09-11: *"can we query the download size so we get an accurate
+download status? it currently stays blank. also, get rid of the bubble (held —
+publish to deploy)."*
+
+#### Why it is blank: nothing reports progress at all
+
+`_run_repo` sets `total=version.size or 0` and then calls
+`repo_import.import_version`, which calls `source.download(version)` — a single
+blocking call that returns the finished bytes. **`downloaded` is never updated
+until the job ends**, when it is set to `total` in one jump. No source streams:
+F-Droid does `response.content`, Play shells out to `apkeep`.
+
+So the bar has never moved for any repo import. Play is simply the case where it
+is most obvious, because Play states no size either, leaving `total=0` and the
+text at *"downloading…"*.
+
+#### ⚠️ Play can report bytes, but not a percentage — and that is the honest answer
+
+Play downloads run through `apkeep`, which writes into a temp directory and
+prints nothing this code can rely on. There is no HTTP response to read a
+`Content-Length` from. **Watching the temp directory gives real bytes
+downloaded; the total remains genuinely unknown.**
+
+So Play gets *"12.7 MB so far"* rather than a percentage — which is exactly what
+the tak.gov importer already does when a server omits `Content-Length`
+(*"Downloading — size unknown"*). Inventing a denominator to make the bar move
+would be a worse answer than no bar.
+
+HTTP sources do better: streaming gives a real percentage, and
+`Content-Length` supplies a total even when the catalogue omitted the size.
+
+#### ⚠️ The held pill: the stated reason is not quite right
+
+*"we dont execute that behavior on any other app download"* — we do.
+`repo_import` never publishes **any** import: F-Droid, APKPure, third-party
+repos and tak.gov plugins are all held exactly like Play. The pill only ever
+appeared when a package had nothing published, which until now meant a
+freshly imported one.
+
+Removing the bubble is still the operator's call and it goes. But the column is
+headed *latest version* and means **the build devices are offered**, so a held
+build rendered identically to a published one would misreport what the fleet
+gets. It keeps a plain muted *held* after the version — no badge, no colour.
+
+**If the real intent is for imports to publish automatically, that is a
+different change** and worth saying out loud rather than approximating: it
+would aim every device asking for "latest" at whatever was just downloaded.
+
+#### Chunk 1
+
+1. Optional `progress(downloaded, total)` on the `AppSource.download` contract,
+   defaulting to nothing so a source that cannot report stays valid.
+2. F-Droid and APKPure stream, reporting bytes and adopting `Content-Length` as
+   the total when the catalogue gave none.
+3. Play watches its temp directory and reports bytes with no total.
+4. `import_version` and `_run_repo` thread the callback into the job.
+5. Console: show *"N MB so far"* when the total is unknown, mirroring the plugin
+   importer, instead of a bare "downloading…".
+6. Drop the pill; keep a muted *held*.
+
+#### ✅ Done (2026-09-11)
+
+Suite **1420 passed, 1 skipped**.
+
+`AppSource.download` now takes an optional `progress(downloaded, total)`.
+F-Droid streams and adopts `Content-Length` as a total the catalogue may not
+have stated; the two apkeep sources (Play, APKPure) run a watcher thread over
+their temp directory and report bytes with **no** total, because there is no
+stream to count and nothing dependable on apkeep's stdout.
+
+⚠️ **A zero total never overwrites a known one.** The catalogue can state a
+size the download cannot confirm mid-stream, and letting apkeep's 0 land would
+turn a working percentage into a byte counter halfway through.
+
+The console now shows `12.7 MB so far — size unknown` where it used to freeze
+on "downloading…", and the bar simply does not move for a source that cannot
+state a size — an honest answer rather than a fabricated denominator.
+
+⚠️ **Two of my own test mistakes, both the same shape as before.** One asserted
+`"downloading…"` was absent from the whole script, which fails on the comment
+explaining its removal *and* on other importers that legitimately use it — now
+scoped to the watcher and to the assignment rather than the word. The other
+raised inside a fake downloader without catching it. Fixed rather than
+loosened.
+
 ### ✅ W126 — One import, one success message
 
 Operator, 2026-09-11, with both dialogs side by side: *"This should just be an

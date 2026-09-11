@@ -46,11 +46,14 @@ import hashlib
 import re
 import shutil
 import subprocess
+import threading
 import tempfile
 from pathlib import Path
 
 from app.services.app_sources.base import (
     Downloaded,
+    Progress,
+    watch_directory,
     collect_output,
     SourceApp,
     SourceError,
@@ -172,22 +175,42 @@ class ApkPureSource:
             for name in list(reversed(names))[:limit]
         ]
 
-    def download(self, version: SourceVersion) -> Downloaded:
+    def download(
+        self, version: SourceVersion, progress: Progress | None = None
+    ) -> Downloaded:
         package_name = version.package_name
         if not _PACKAGE.match(package_name):
             raise SourceError(f"{package_name!r} is not a valid Android package id")
 
         with tempfile.TemporaryDirectory() as tmp:
-            result = self._run(
-                [
-                    "-a",
-                    f"{package_name}@{version.version_key}",
-                    "-o",
-                    f"arch={self._arch}",
-                    ".",
-                ],
-                cwd=tmp,
-            )
+            # ⚠️ The only progress an apkeep source can offer. There is no
+            # stream to count and nothing dependable on its stdout, so the
+            # bytes on disk are the measurement, and the total stays unknown
+            # (W127).
+            stop = threading.Event()
+            watcher = None
+            if progress is not None:
+                watcher = threading.Thread(
+                    target=watch_directory,
+                    args=(Path(tmp), progress, stop),
+                    daemon=True,
+                )
+                watcher.start()
+            try:
+                result = self._run(
+                    [
+                        "-a",
+                        f"{package_name}@{version.version_key}",
+                        "-o",
+                        f"arch={self._arch}",
+                        ".",
+                    ],
+                    cwd=tmp,
+                )
+            finally:
+                stop.set()
+                if watcher is not None:
+                    watcher.join(timeout=2)
             if result.returncode != 0:
                 raise SourceError(
                     f"apkeep could not download {package_name}@{version.version_key} "

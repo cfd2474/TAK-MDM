@@ -2600,9 +2600,18 @@ function atlasWireAppSource(panelName, searchUrl) {
           var headline = modalBody.querySelector("[data-repo-headline]");
           if (bar && job.total) bar.style.width = job.percent + "%";
           if (text) {
-            text.textContent = job.total
-              ? job.percent + "% of " + Math.round(job.total / 1048576) + " MB"
-              : "downloading…";
+            // ⚠️ A source that cannot state a size still reports bytes, so the
+            // operator sees movement rather than a frozen "downloading…".
+            // apkeep offers no total at all, and inventing a denominator to
+            // make the bar advance would be a worse answer than no bar (W127).
+            var mb = function (n) { return (n / 1048576).toFixed(1) + " MB"; };
+            if (job.total) {
+              text.textContent = job.percent + "% of " + mb(job.total);
+            } else if (job.downloaded) {
+              text.textContent = mb(job.downloaded) + " so far — size unknown";
+            } else {
+              text.textContent = "starting…";
+            }
           }
           if (job.state === "done") {
             clearInterval(poll); poll = null;

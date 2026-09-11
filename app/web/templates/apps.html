@@ -127,10 +127,12 @@
                    really is a warning. #}
                 {% set held = p.versions | sort(attribute='version_code') | last %}
                 {% if held %}
-                  <span class="pill">held — publish to deploy</span>
-                  <div class="muted" style="font-size:11px">
-                    {{ held.version_code }}{% if held.version_name %} ({{ held.version_name }}){% endif %}
-                  </div>
+                  {# ⚠️ No badge (operator, W127) — but this column means the
+                     build devices are offered, so a held one rendered exactly
+                     like a published one would misreport what the fleet gets.
+                     A plain muted word keeps the distinction without the
+                     bubble. #}
+                  <span class="muted">{{ held.version_code }}{% if held.version_name %} ({{ held.version_name }}){% endif %} · held</span>
                 {% else %}
                   <span class="pill warn">nothing uploaded</span>
                 {% endif %}
@@ -291,10 +293,12 @@
                    really is a warning. #}
                 {% set held = p.versions | sort(attribute='version_code') | last %}
                 {% if held %}
-                  <span class="pill">held — publish to deploy</span>
-                  <div class="muted" style="font-size:11px">
-                    {{ held.version_code }}{% if held.version_name %} ({{ held.version_name }}){% endif %}
-                  </div>
+                  {# ⚠️ No badge (operator, W127) — but this column means the
+                     build devices are offered, so a held one rendered exactly
+                     like a published one would misreport what the fleet gets.
+                     A plain muted word keeps the distinction without the
+                     bubble. #}
+                  <span class="muted">{{ held.version_code }}{% if held.version_name %} ({{ held.version_name }}){% endif %} · held</span>
                 {% else %}
                   <span class="pill warn">nothing uploaded</span>
                 {% endif %}

@@ -37,6 +37,9 @@ from the file, not from the listing.
 
 from __future__ import annotations
 
+import threading
+from collections.abc import Callable
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -124,6 +127,38 @@ class Downloaded:
     source_url: str = ""
 
 
+#: Called during a download with (bytes so far, total or 0 when unknown).
+#:
+#: ⚠️ **Zero means "not known", never "nothing to download".** Play cannot state
+#: a size — its downloads run through `apkeep`, which offers no HTTP response to
+#: read a `Content-Length` from — so the console shows bytes rather than
+#: inventing a denominator to make a bar move (W127).
+Progress = Callable[[int, int], None]
+
+
+def watch_directory(
+    directory: Path, progress: Progress, stop: threading.Event
+) -> None:
+    """Report the bytes an out-of-process downloader has written so far.
+
+    ⚠️ **The only progress available for an `apkeep` source.** There is no
+    stream to count and nothing parseable on its stdout, so the size on disk is
+    the measurement. Total stays 0: the files appear one at a time and their
+    eventual count is unknown, so any denominator here would be a guess.
+
+    Errors are swallowed deliberately — a download must not fail because a
+    progress poll lost a race with a file being renamed.
+    """
+    while not stop.wait(0.5):
+        try:
+            written = sum(
+                f.stat().st_size for f in directory.rglob("*") if f.is_file()
+            )
+        except OSError:
+            continue
+        progress(written, 0)
+
+
 def collect_output(directory: "Path") -> bytes:
     """Everything a fetch produced, as one artifact the library can ingest (W99).
 
@@ -192,7 +227,9 @@ class AppSource(Protocol):
 
     def versions(self, package_name: str, *, limit: int = 25) -> list[SourceVersion]: ...
 
-    def download(self, version: SourceVersion) -> Downloaded: ...
+    def download(
+        self, version: SourceVersion, progress: Progress | None = None
+    ) -> Downloaded: ...
 
 
 _REGISTRY: dict[str, AppSource] = {}

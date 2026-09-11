@@ -52,6 +52,7 @@ import httpx
 
 from app.services.app_sources.base import (
     Downloaded,
+    Progress,
     SourceApp,
     SourceError,
     SourceVersion,
@@ -116,6 +117,32 @@ class FDroidSource:
     # ----------------------------------------------------------------- #
     # The index
     # ----------------------------------------------------------------- #
+
+    def _get_streamed(self, url: str, progress) -> bytes:
+        """Read a download in chunks, reporting as it goes."""
+        if progress is None:
+            return self._get(url).content
+
+        client = self._client or httpx.Client(timeout=_TIMEOUT, follow_redirects=True)
+        chunks: list[bytes] = []
+        try:
+            with client.stream("GET", url) as response:
+                if response.status_code != 200:
+                    raise SourceError(
+                        f"F-Droid returned {response.status_code} for {url}"
+                    )
+                total = int(response.headers.get("content-length") or 0)
+                written = 0
+                for chunk in response.iter_bytes():
+                    chunks.append(chunk)
+                    written += len(chunk)
+                    progress(written, total)
+        except httpx.HTTPError as exc:
+            raise SourceError(f"could not reach F-Droid ({exc})") from exc
+        finally:
+            if self._client is None:
+                client.close()
+        return b"".join(chunks)
 
     def _get(self, url: str) -> httpx.Response:
         client = self._client or httpx.Client(timeout=_TIMEOUT, follow_redirects=True)
@@ -294,9 +321,13 @@ class FDroidSource:
         out.sort(key=lambda v: v.version_code, reverse=True)
         return out[:limit]
 
-    def download(self, version: SourceVersion) -> Downloaded:
-        response = self._get(version.download_url)
-        data = response.content
+    def download(
+        self, version: SourceVersion, progress: Progress | None = None
+    ) -> Downloaded:
+        # ⚠️ Streamed so the bar can move. `Content-Length` also supplies a
+        # total when the catalogue omitted the size, which is the difference
+        # between a real percentage and a byte counter (W127).
+        data = self._get_streamed(version.download_url, progress)
         digest = hashlib.sha256(data).hexdigest()
 
         if version.sha256 and digest != version.sha256:

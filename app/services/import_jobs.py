@@ -193,10 +193,19 @@ def start_repo(
 def _run_repo(job, session_factory, storage, source, version) -> None:
     from app.services import repo_import
 
+    def progress(written: int, total: int) -> None:
+        job.downloaded = written
+        # ⚠️ Only ever widen what is known. The catalogue may have stated a
+        # size the source cannot confirm mid-stream (apkeep reports no total at
+        # all), and letting a 0 overwrite a real figure would turn a working
+        # percentage into a byte counter halfway through (W127).
+        if total:
+            job.total = total
+
     session = session_factory()
     try:
         imported = repo_import.import_version(
-            session, storage, source, version, label=job.label
+            session, storage, source, version, label=job.label, progress=progress
         )
         session.commit()
         job.package_name = imported.package.package_name

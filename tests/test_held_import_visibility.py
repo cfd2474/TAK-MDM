@@ -205,7 +205,11 @@ def test_the_hold_is_explained_where_it_is_acted_on_not_in_the_receipt():
     apps = pathlib.Path("app/web/templates/apps.html").read_text(encoding="utf-8")
 
     assert "imported and <strong>held</strong>" not in js
-    assert "held — publish to deploy" in apps
+    # W127 dropped the badge at the operator's request but kept the word: the
+    # column means the build devices are offered, so a held one that rendered
+    # identically to a published one would misreport what the fleet gets.
+    assert "· held" in apps
+    assert "pill" not in apps.split("{% if held %}")[1].split("{% else %}")[0]
 
 
 def test_the_progress_bar_survives_the_success():
@@ -230,3 +234,83 @@ def test_the_app_name_is_set_as_text_not_interpolated():
 
     assert '"<p data-repo-headline></p>"' in body
     assert "headline]\").textContent" in body or "textContent =" in body
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ Download progress (W127)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_job_records_bytes_as_they_arrive(tmp_path):
+    """⚠️ Nothing reported progress before: `import_version` called
+    `source.download` once and the job jumped from 0 to done."""
+    from app.services import import_jobs
+
+    seen = []
+
+    class Fake:
+        name = "fake"
+
+        def download(self, version, progress=None):
+            progress(500, 1000)
+            progress(1000, 1000)
+            seen.append("downloaded")
+
+    job = import_jobs.ImportJob(id="x", identifier="fake:pkg", label="Fake")
+
+    def progress(written, total):
+        job.downloaded = written
+        if total:
+            job.total = total
+
+    Fake().download(None, progress)
+
+    assert seen == ["downloaded"]
+    assert job.downloaded == 1000 and job.total == 1000
+    assert job.percent == 100
+
+
+def test_a_zero_total_never_overwrites_a_known_one():
+    """⚠️ apkeep reports no total at all. Letting that 0 land would turn a
+    working percentage into a byte counter halfway through a download."""
+    import inspect
+    from app.services import import_jobs
+
+    src = inspect.getsource(import_jobs._run_repo)
+
+    assert "if total:" in src
+    assert "job.total = total" in src
+
+
+def test_every_source_accepts_a_progress_callback():
+    """⚠️ The contract is optional so a source that cannot report stays valid,
+    but all three must *accept* it or the import raises on the call."""
+    import inspect
+    from app.services.app_sources import apkpure, fdroid, googleplay
+
+    for module, cls in (
+        (googleplay, "GooglePlaySource"),
+        (apkpure, "ApkPureSource"),
+        (fdroid, "FDroidSource"),
+    ):
+        download = getattr(module, cls).download
+        params = inspect.signature(download).parameters
+        assert "progress" in params, cls
+        assert params["progress"].default is None, cls
+
+
+def test_the_console_shows_bytes_when_the_size_is_unknown():
+    """The honest fallback: movement without a fabricated denominator."""
+    js = pathlib.Path("app/web/static/atlas.js").read_text(encoding="utf-8")
+
+    # ⚠️ Scoped to the repo watcher. The word appears elsewhere in the file for
+    # other importers, and asserting its absence across the whole script is the
+    # over-broad-ban mistake this project has made before.
+    watch = js[js.index("function watch(jobId)") :]
+    watch = watch[: watch.index("}, 1000);")]
+
+    assert "so far — size unknown" in watch
+    # The *assignment*, not the word: the word survives in the comment
+    # explaining why it went, and banning it outright fails on that.
+    assert ': "downloading…"' not in watch
+    assert '= "downloading…"' not in watch
