@@ -340,8 +340,34 @@ def test_the_applied_key_includes_the_name():
     body = reconciler[reconciler.index("private fun reconcileWallpaper") :]
     body = body[: body.index("// Commands")]
 
-    assert 'label?.let { "label:' in body
+    assert 'label?.let { "label:" + it }' in body
     assert "config.appliedWallpaperSha == identity" in body
+
+
+def test_the_identity_actually_interpolates():
+    """⚠️ The assertion above passed against a broken version, and that is the
+    lesson worth keeping.
+
+    A generator wrote Kotlin's *literal-dollar* escape into the source, so the
+    identity string was the constant text `${context...}` rather than the
+    screen size, and `label:$it` was the literal `$it` rather than the name.
+    The key never varied, so a rename would have redrawn nothing — while a test
+    matching source text sat there green.
+    """
+    reconciler = _agent("sync/Reconciler.kt")
+
+    assert "${'$'}" not in reconciler, (
+        "a literal-dollar escape makes a Kotlin template a constant string"
+    )
+
+
+def test_existing_devices_are_forced_to_redraw():
+    """⚠️ A device already carrying a label drawn with the old geometry matches
+    on image, name and screen. Without a version marker in the key the
+    reconcile decides it has nothing to do and the broken placement stays."""
+    reconciler = _agent("sync/Reconciler.kt")
+
+    assert '"v2:"' in reconciler
 
 
 def test_the_label_is_never_drawn_over_the_live_wallpaper():
@@ -360,7 +386,41 @@ def test_the_text_scales_with_the_screen():
     label = _agent("policy/DeviceIdLabel.kt")
 
     assert "TEXT_FRACTION" in label
-    assert "minOf(width, height)" in label
+    # W131 made the canvas square, so the text scales off its side rather than
+    # off whichever screen edge happened to be shorter at the time.
+    assert "side * TEXT_FRACTION" in label
+
+
+def test_the_canvas_is_square_so_rotation_cannot_move_the_label():
+    """⚠️ The rotation bug (W131). One wallpaper bitmap serves both
+    orientations and the system re-crops it, so a label placed against the
+    *current* display was off-centre or gone after a rotate. A square is
+    treated identically either way."""
+    label = _agent("policy/DeviceIdLabel.kt")
+
+    assert "Bitmap.createBitmap(side, side" in label
+    assert "maxOf(screenWidth, screenHeight, desiredWidth, desiredHeight)" in label
+
+
+def test_the_label_stays_inside_the_band_both_orientations_can_see():
+    """⚠️ Filling a W×H screen from a square crops the long axis, leaving only
+    the central min/max of it visible. A label outside that band is on the
+    bitmap and off the screen."""
+    label = _agent("policy/DeviceIdLabel.kt")
+
+    assert "visibleFraction" in label
+    assert "bandTop + bandHeight * BAND_POSITION" in label
+
+
+def test_the_desired_minimums_are_honoured():
+    """📖 WallpaperManager: callers "should check this value beforehand to make
+    sure the supplied wallpaper respects the desired minimum width". It is
+    routinely wider than the screen so a launcher can pan, and a bitmap
+    narrower than it is positioned rather than centred."""
+    reconciler = _agent("sync/Reconciler.kt")
+
+    assert "desiredMinimumWidth" in reconciler
+    assert "desiredMinimumHeight" in reconciler
 
 
 def test_a_long_name_shrinks_rather_than_truncating():

@@ -40,68 +40,131 @@ import java.io.File
  * drawing over the last until the screen was a pile of names. The base is the
  * policy image, or a plain background when the policy names none.
  *
+ * ⚠️ **The canvas is square, and that is the whole of the rotation fix (W131).**
+ * A first version drew onto a bitmap the size of the *current* display. One
+ * wallpaper bitmap serves both orientations — the system re-crops it — so a
+ * label placed against portrait pixels was off-centre in landscape and, in the
+ * other direction, cropped off the screen entirely. Observed on `SM-X828U`.
+ *
+ * 📖 `WallpaperManager.getDesiredMinimumWidth`:
+ *
+ * > Callers of `setBitmap` or `setStream` **should check this value beforehand**
+ * > to make sure the supplied wallpaper respects the desired minimum width. If
+ * > the returned value is <= 0, the caller should use the width of the default
+ * > display instead.
+ *
+ * That minimum is routinely *wider than the screen*, so that a launcher can pan.
+ * A screen-sized bitmap is therefore positioned rather than centred, which is
+ * where the sideways shift came from. A square whose side satisfies every
+ * minimum is symmetric: whatever the system does to it, it does the same thing
+ * in both orientations.
+ *
+ * ⚠️ **Only the middle of that square is guaranteed to be on screen.** Filling a
+ * W×H screen from an S×S bitmap crops the long axis, leaving the central
+ * `min(W,H) / max(W,H)` of it visible — about 56% on a 16:9 phone. The label
+ * sits inside that band, which is why it is near the middle of the picture
+ * rather than at the top where it would read better and vanish on rotation.
+ *
  * ⚠️ **Sized as a fraction of the image, not in fixed points.** A 26sp label is
  * legible on a phone held at arm's length and invisible on a tablet across a
  * store room, which is the job this exists for.
  */
 object DeviceIdLabel {
 
-    /** Cap height as a fraction of the shorter edge. Tuned to read across a room. */
-    private const val TEXT_FRACTION = 0.085f
+    /** Cap height as a fraction of the square's side. Tuned to read across a room. */
+    private const val TEXT_FRACTION = 0.06f
 
     /** Padding around the text inside its backing plate, as a fraction of the text. */
     private const val PAD_FRACTION = 0.45f
 
-    /** How far down the image the plate sits, as a fraction of the height. */
-    private const val TOP_FRACTION = 0.12f
+    /**
+     * Where the label sits inside the guaranteed-visible band, 0 being its top
+     * edge and 1 its bottom. Above the middle so it clears the dock and the
+     * lock-screen clock, without leaving the band.
+     */
+    private const val BAND_POSITION = 0.28f
 
     /** Fallback background when the policy names no image. */
     private const val BACKGROUND = 0xFF101418.toInt()
 
     /**
-     * Render [name] onto [source], or onto a plain [width] x [height] background
-     * when [source] is null. Returns the bitmap, or null if nothing could be
-     * decoded — never a half-drawn image.
+     * Render [name] over [source], or over a plain background when [source] is
+     * null, onto a square canvas that works in both orientations.
+     *
+     * [screenWidth] and [screenHeight] are the display; [desiredWidth] and
+     * [desiredHeight] are what `WallpaperManager` asked for, or 0 when it
+     * stated nothing. Returns null if nothing could be decoded — never a
+     * half-drawn image.
      */
-    fun render(source: File?, name: String, width: Int, height: Int): Bitmap? {
-        val base: Bitmap = when {
-            source != null -> {
-                // inMutable so the label can be drawn straight onto it; a decode
-                // that fails returns null rather than throwing.
-                val options = BitmapFactory.Options().apply { inMutable = true }
-                BitmapFactory.decodeFile(source.absolutePath, options) ?: return null
-            }
-            width > 0 && height > 0 ->
-                Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
-                    eraseColor(BACKGROUND)
-                }
-            else -> return null
+    fun render(
+        source: File?,
+        name: String,
+        screenWidth: Int,
+        screenHeight: Int,
+        desiredWidth: Int = 0,
+        desiredHeight: Int = 0,
+    ): Bitmap? {
+        // Square, and large enough for every minimum the system stated. Using
+        // the largest of them means neither orientation has to upscale.
+        val side = maxOf(screenWidth, screenHeight, desiredWidth, desiredHeight)
+        if (side <= 0) return null
+
+        val canvasBitmap = Bitmap.createBitmap(side, side, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(canvasBitmap)
+        canvas.drawColor(BACKGROUND)
+
+        if (source != null) {
+            val decoded = BitmapFactory.decodeFile(source.absolutePath)
+                ?: run { canvasBitmap.recycle(); return null }
+            // Cover, not fit: letterboxing an operator's photograph behind bars
+            // of flat colour looks like a fault rather than a choice.
+            val scale = maxOf(side.toFloat() / decoded.width, side.toFloat() / decoded.height)
+            val drawWidth = decoded.width * scale
+            val drawHeight = decoded.height * scale
+            canvas.drawBitmap(
+                decoded,
+                null,
+                RectF(
+                    (side - drawWidth) / 2f,
+                    (side - drawHeight) / 2f,
+                    (side + drawWidth) / 2f,
+                    (side + drawHeight) / 2f,
+                ),
+                Paint(Paint.FILTER_BITMAP_FLAG),
+            )
+            decoded.recycle()
         }
 
-        // A decoded file may be immutable even with inMutable set — some formats
-        // ignore it — so copy rather than risk an IllegalStateException on draw.
-        val canvas = Bitmap.createBitmap(base.width, base.height, Bitmap.Config.ARGB_8888)
-        Canvas(canvas).apply {
-            drawBitmap(base, 0f, 0f, null)
-            draw(this, name, base.width, base.height)
-        }
-        if (base !== canvas) base.recycle()
-        return canvas
+        draw(canvas, name, side, visibleFraction(screenWidth, screenHeight))
+        return canvasBitmap
     }
 
-    private fun draw(canvas: Canvas, name: String, width: Int, height: Int) {
-        val shorter = minOf(width, height).toFloat()
+    /**
+     * How much of the square survives the crop, along whichever axis is cropped.
+     *
+     * Filling a W×H screen from an S×S bitmap scales by `max(W,H)/S` and throws
+     * away the rest, leaving `min(W,H)/max(W,H)` of the square on screen.
+     */
+    internal fun visibleFraction(screenWidth: Int, screenHeight: Int): Float {
+        val longer = maxOf(screenWidth, screenHeight)
+        if (longer <= 0) return 1f
+        return minOf(screenWidth, screenHeight).toFloat() / longer
+    }
+
+    private fun draw(canvas: Canvas, name: String, side: Int, visible: Float) {
         val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            textSize = shorter * TEXT_FRACTION
+            textSize = side * TEXT_FRACTION
             textAlign = Paint.Align.CENTER
         }
 
         // ⚠️ Shrink to fit rather than truncate. A name clipped to "Field Tab…"
         // is a worse identifier than a smaller one that reads in full, and the
-        // whole point is telling two tablets apart.
-        val maxWidth = width * 0.9f
+        // whole point is telling two tablets apart. Measured against the band,
+        // not the square, or a long name would run off the sides in the
+        // narrower orientation.
+        val maxWidth = side * visible * 0.9f
         while (text.measureText(name) > maxWidth && text.textSize > 8f) {
             text.textSize -= 2f
         }
@@ -109,12 +172,18 @@ object DeviceIdLabel {
         val metrics = text.fontMetrics
         val textHeight = metrics.descent - metrics.ascent
         val pad = textHeight * PAD_FRACTION
-        val centreX = width / 2f
-        val plateTop = height * TOP_FRACTION
+        val centreX = side / 2f
+
+        // The band both orientations can see, and a position inside it.
+        val bandTop = side * (1f - visible) / 2f
+        val bandHeight = side * visible
+        val plateTop = bandTop + bandHeight * BAND_POSITION
+
+        val halfText = text.measureText(name) / 2f
         val plate = RectF(
-            centreX - text.measureText(name) / 2f - pad,
+            centreX - halfText - pad,
             plateTop,
-            centreX + text.measureText(name) / 2f + pad,
+            centreX + halfText + pad,
             plateTop + textHeight + pad,
         )
 

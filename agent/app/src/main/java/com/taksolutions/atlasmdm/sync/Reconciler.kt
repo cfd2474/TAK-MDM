@@ -718,9 +718,13 @@ class Reconciler(private val context: Context) {
         // (W129). Keyed on the sha alone, renaming a device in the console would
         // redraw nothing — the image is unchanged, so the reconcile would decide
         // it had nothing to do and the tablet would keep the old name for ever.
-        val screen = "${'$'}{context.resources.displayMetrics.widthPixels}x" +
-            "${'$'}{context.resources.displayMetrics.heightPixels}"
-        val identity = listOfNotNull(sha ?: "none", label?.let { "label:${'$'}it" }, screen)
+        // ⚠️ "v2" because the geometry changed (W131). A device already carrying
+        // a label drawn the old way matches on image, name and screen, so
+        // without this the reconcile would decide there was nothing to do and
+        // leave the broken placement on screen for ever.
+        val metrics = context.resources.displayMetrics
+        val screen = "v2:" + metrics.widthPixels + "x" + metrics.heightPixels
+        val identity = listOfNotNull(sha ?: "none", label?.let { "label:" + it }, screen)
             .joinToString("|")
 
         // Re-setting a wallpaper is visible to the user as a flicker, so an
@@ -731,18 +735,26 @@ class Reconciler(private val context: Context) {
         if (sha != null) {
             val file = File(cacheDir, sha)
             if (!downloadArtifact(sha, file)) {
-                return errors + "wallpaper: download of ${'$'}sha failed verification"
+                return errors + "wallpaper: download of " + sha + " failed verification"
             }
             target = file
         }
 
         if (label != null) {
             val metrics = context.resources.displayMetrics
+            // ⚠️ The system's desired minimums, not just the screen (W131).
+            // getDesiredMinimumWidth is routinely wider than the display so a
+            // launcher can pan, and a bitmap narrower than it is positioned
+            // rather than centred — which is where the sideways shift on
+            // rotation came from.
+            val manager = android.app.WallpaperManager.getInstance(context)
             val composed = DeviceIdLabel.render(
                 source = target,
                 name = label,
-                width = metrics.widthPixels,
-                height = metrics.heightPixels,
+                screenWidth = metrics.widthPixels,
+                screenHeight = metrics.heightPixels,
+                desiredWidth = runCatching { manager.desiredMinimumWidth }.getOrDefault(0),
+                desiredHeight = runCatching { manager.desiredMinimumHeight }.getOrDefault(0),
             ) ?: return errors + "wallpaper: could not draw the device ID label"
 
             val out = File(cacheDir, "labelled.png")
@@ -758,8 +770,8 @@ class Reconciler(private val context: Context) {
 
         AgentLog.i(
             TAG,
-            "applying ${'$'}choice wallpaper (smallestScreenWidthDp=${'$'}width)" +
-                (if (sha != null) " from ${'$'}{sha.take(12)}…" else " (generated)") +
+            "applying " + choice + " wallpaper (smallestScreenWidthDp=" + width + ")" +
+                (if (sha != null) " from " + sha.take(12) + "…" else " (generated)") +
                 (if (label != null) " with device ID label" else "")
         )
         val applied = policyApplier.setWallpaper(
@@ -767,7 +779,7 @@ class Reconciler(private val context: Context) {
             alsoLockScreen = wallpaper.optBoolean("lock_screen", false),
             preventUserChange = wallpaper.optBoolean("prevent_user_change", false),
         )
-        if (applied != null) return errors + "wallpaper: ${'$'}applied"
+        if (applied != null) return errors + "wallpaper: " + applied
 
         config.appliedWallpaperSha = identity
         return errors

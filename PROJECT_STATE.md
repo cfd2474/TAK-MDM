@@ -563,6 +563,54 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W131 — The label survives rotation
+
+Operator, 2026-09-11: *"when I rotate the screen, it is no longer in position…
+applied in landscape, rotating to portrait puts it significantly to the left,
+mostly cut off. Applied in portrait, rotating removes it from the screen
+altogether."*
+
+#### My geometry was wrong in two ways
+
+**One bitmap serves both orientations** — the system re-crops it — and I drew
+onto a canvas the size of the *current* display. Anything not at the centre
+moves or leaves the screen when the device turns.
+
+📖 `WallpaperManager.getDesiredMinimumWidth`: callers *"should check this value
+beforehand to make sure the supplied wallpaper respects the desired minimum
+width"*. It is routinely **wider than the display** so a launcher can pan, and
+I ignored it — a bitmap narrower than the minimum is *positioned* rather than
+centred, which is exactly the sideways shift.
+
+Now: a **square** canvas whose side satisfies every stated minimum. A square is
+symmetric, so whatever the system does to it, it does the same in both
+orientations. The label sits inside the central `min(W,H)/max(W,H)` band — the
+only region guaranteed on screen either way, which is why it is nearer the
+middle than reads ideally.
+
+#### ⚠️ A generator wrote Kotlin's literal-dollar escape into the source
+
+`"${'$'}{context…}"` is Kotlin for the *literal text* `${context…}`, not the
+value. So the identity string was a constant, and `label:${'$'}it` was the
+literal `$it` — **the name never entered the key at all**, meaning the
+rename-redraw claimed in W129 never worked.
+
+⚠️ **A test asserted `'label?.let { "label:'` and passed against that.** Source-text
+assertions cannot tell a template from a constant. There is now a test that
+fails on any literal-dollar escape in the file, which is the property that was
+actually broken.
+
+#### Existing devices are forced to redraw
+
+The key carries `v2:`. A device already labelled with the old geometry matches
+on image, name and screen, so without it the reconcile would decide there was
+nothing to do and leave the broken placement on screen for ever.
+
+Suite **1445 passed, 1 skipped**. Agent **0.64.0 (versionCode 109)**.
+
+⚠️ Still unverified on hardware, and rotation is precisely what a test cannot
+judge — the whole point of this round.
+
 ### ✅ W129 — Device ID label on the wallpaper
 
 Operator, 2026-09-11: *"can we add 'Device ID Label' that when selected, would
