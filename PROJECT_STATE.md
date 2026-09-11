@@ -563,6 +563,75 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W119 — Device groups in the console
+
+Operator, 2026-09-11: *"in the manage section, i want to be able to create
+groups. I should be able to create the group, then go to the group details and
+associate devices."*
+
+#### The backend already exists; this is console-only
+
+`DeviceGroup`, the `device_group_member` join, group-scoped `Assignment`s and
+group scoping on enrollment tokens have all been there since early on, and the
+API has `POST /api/v1/groups`, `GET /api/v1/groups` and
+`PUT /api/v1/groups/{id}/devices`. **Nothing in the console ever exposed them**,
+so every group in this deployment was made by hand or by test code.
+
+✅ **`_apply_membership` already invalidates both the previous and the new member
+sets** — the exact mistake W118 made an hour ago, already handled here. Reusing
+it rather than writing membership code is the whole reason this is small.
+
+#### ⚠️ Membership is *replace*, not add
+
+`PUT /groups/{id}/devices` sets `container.devices = devices` wholesale. A
+checkbox list of the fleet with one Save button maps onto that honestly — what
+you see ticked is what the group will contain. An "Add device" button would
+imply incremental semantics the endpoint does not have, and would silently drop
+members if a second operator was editing at the same time.
+
+⚠️ At fleet scale a checkbox list stops being reasonable. Fine for three
+devices; noted so nobody is surprised later.
+
+#### This is where W118 sends people
+
+W118 put *"via group Field Tablets"* on the device page for policies an operator
+cannot remove there. That text is only useful if the group has a page to go to,
+and it does not yet. The group detail page therefore shows **which policies are
+assigned to the group and how many devices they reach** — read-only for now, so
+the loop is closed informationally without adding a second fleet-wide delete
+button in the same day.
+
+#### Chunk 1
+
+1. `GET /groups` — list with member counts, and a create form.
+2. `GET /groups/{id}` — name, description, membership checkboxes, and the
+   group's policy assignments with the number of devices each reaches.
+3. `POST /groups` and `POST /groups/{id}/devices`, both CSRF-guarded, delegating
+   to the same service the API uses so cache invalidation cannot diverge.
+4. Link it from the Fleet page, under the Manage nav.
+5. Tests: create; membership replaces rather than appends; a group assignment
+   starts reaching a newly added device's desired state; the device page's
+   *"via group"* note now links somewhere real.
+6. Deploy.
+
+**Not in scope, deliberately:** deleting a group, and editing group assignments
+from this page. Both are worth having and neither was asked for.
+
+#### ✅ Done (2026-09-11)
+
+Suite **1386 passed, 1 skipped**. `/groups` (list + create), `/groups/{id}`
+(membership checkboxes + the group's assignments), linked from Fleet.
+
+The membership POST delegates to the API's own `_apply_membership` rather than
+setting the relationship itself, so the cache invalidation cannot drift between
+the two entry points — the W118 mistake made structurally hard to repeat.
+
+Two tests earn their keep beyond the obvious:
+`test_joining_a_group_brings_its_policies_to_the_device` and its inverse assert
+the **desired state** changes, not that a checkbox ticked. The reverse direction
+is the one that depends on invalidating the *previous* members, which is the
+half easiest to forget.
+
 ### ✅ W118 — Unassign a policy from the device page
 
 Operator, 2026-09-11: *"I want the ability to remove policies from device

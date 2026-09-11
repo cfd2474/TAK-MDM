@@ -6,6 +6,12 @@
 {% block content %}
 {{ page_header('Fleet', 'Enrolled devices, the policies reaching each one, and whether they have actually converged.') }}
 
+<p class="sub">
+  <a href="/groups">Device groups &rarr;</a>
+  &mdash; assign a policy once to many devices, and let an enrollment token drop
+  a new tablet straight into its policy stack.
+</p>
+
 <div class="panel stat">
   <div><span>{{ counts.devices }}</span><small>devices</small></div>
   <div><span>{{ counts.policies }}</span><small>policies</small></div>

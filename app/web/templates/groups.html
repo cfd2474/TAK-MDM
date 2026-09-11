@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% set nav = 'manage' %}
+{% block title %}Groups — ATLAS{% endblock %}
+
+{% block content %}
+{{ page_header('Device groups', 'A group is how one policy reaches many devices, and how an enrollment token can drop a device straight into its policy stack.') }}
+
+<p class="sub">
+  <a href="/fleet">&larr; Fleet</a>
+</p>
+
+<div class="panel">
+  <h2>Create a group</h2>
+  <form method="post" action="/groups" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="row">
+      <label for="group-name">Name</label>
+      <input type="text" id="group-name" name="name" maxlength="128"
+             required autocomplete="off" style="min-width:260px">
+    </div>
+    <div class="row">
+      <label for="group-desc">Description</label>
+      <input type="text" id="group-desc" name="description" maxlength="500"
+             autocomplete="off" style="min-width:360px">
+    </div>
+    <div>
+      <button type="submit">Create group</button>
+    </div>
+    <p class="field-tip">
+      You will land on the group's page, where devices are added.
+    </p>
+  </form>
+</div>
+
+<div class="panel">
+  <h2>Groups</h2>
+  {% if not rows %}
+    <p class="muted">
+      No groups yet. A group is worth creating as soon as two devices should get
+      the same policy — assign it once to the group rather than once per device.
+    </p>
+  {% else %}
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Description</th><th>Devices</th><th>Policies</th></tr>
+    </thead>
+    <tbody>
+    {% for row in rows %}
+      <tr>
+        <td><a href="/groups/{{ row.group.id }}">{{ row.group.name }}</a></td>
+        <td class="muted">{{ row.group.description or '—' }}</td>
+        <td class="mono">{{ row.device_count }}</td>
+        <td class="mono">{{ row.policy_count }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endblock %}

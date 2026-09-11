@@ -63,7 +63,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
@@ -836,6 +836,141 @@ def _profile_origin(session: Session, assignment_id: str) -> str:
         return "from a profile"
     profile = session.get(PolicyProfile, pa.profile_id)
     return f"section of profile {profile.name}" if profile else "from a profile"
+
+
+@router.get("/groups", response_class=HTMLResponse)
+def groups_page(
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
+    """Device groups: what exists, how many devices in each (W119).
+
+    Groups have been in the model since early on — group-scoped assignments and
+    group-scoped enrollment tokens both depend on them — but nothing in the
+    console ever created one, so every group in a deployment had to be made
+    through the API by hand.
+    """
+    groups = list(session.scalars(select(DeviceGroup).order_by(DeviceGroup.name)))
+    rows = [
+        {
+            "group": g,
+            "device_count": len(g.devices),
+            "policy_count": session.scalar(
+                select(func.count())
+                .select_from(Assignment)
+                .where(Assignment.group_id == g.id)
+            ) or 0,
+        }
+        for g in groups
+    ]
+    return _render(request, "groups.html", identity=identity, rows=rows)
+
+
+@router.post("/groups")
+def create_group_form(
+    name: str = Form(...),
+    description: str = Form(default=""),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    label = name.strip()
+    if not label:
+        return _redirect("/groups?error=" + _quote("a group needs a name"))
+
+    existing = session.scalar(select(DeviceGroup).where(DeviceGroup.name == label))
+    if existing is not None:
+        # The column is unique, so this would be an IntegrityError and a 500.
+        return _redirect(
+            "/groups?error=" + _quote(f"a group called {label} already exists")
+        )
+
+    group = DeviceGroup(name=label, description=description.strip() or None)
+    session.add(group)
+    session.commit()
+    return _redirect(f"/groups/{group.id}")
+
+
+@router.get("/groups/{group_id}", response_class=HTMLResponse)
+def group_detail_page(
+    group_id: uuid.UUID,
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
+    """One group: its devices, and what its membership actually buys them.
+
+    ⚠️ **The policy list is the point, not decoration.** W118 tells an operator
+    that a policy reaching a device comes *"via group Field Tablets"* and cannot
+    be removed from the device page. That is only useful advice if the group has
+    somewhere to go, and this is it.
+    """
+    group = session.get(DeviceGroup, group_id)
+    if group is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "group not found")
+
+    member_ids = {d.id for d in group.devices}
+    devices = list(session.scalars(select(Device).order_by(Device.serial_number)))
+
+    assignments = list(
+        session.scalars(
+            select(Assignment)
+            .where(Assignment.group_id == group.id)
+            .order_by(Assignment.rank.desc())
+        )
+    )
+
+    return _render(
+        request,
+        "group_detail.html",
+        identity=identity,
+        group=group,
+        devices=[{"device": d, "member": d.id in member_ids} for d in devices],
+        member_count=len(member_ids),
+        assignments=[
+            {
+                "assignment": a,
+                "policy": a.policy,
+                "version": a.pinned_version.version if a.pinned_version
+                else (a.policy.latest_version.version if a.policy and a.policy.latest_version else None),
+            }
+            for a in assignments
+        ],
+    )
+
+
+@router.post("/groups/{group_id}/devices")
+def set_group_devices_form(
+    group_id: uuid.UUID,
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Replace this group's membership with exactly what was ticked.
+
+    ⚠️ **Replace, not add** — `PUT /groups/{id}/devices` sets the whole list, and
+    the form mirrors that: what is ticked is what the group will contain. An
+    "Add device" button would imply incremental semantics the endpoint does not
+    have.
+
+    Delegates to the same `_apply_membership` the API uses, which invalidates
+    the effective-policy cache for **both** the devices leaving and the ones
+    joining — the mistake W118 made by hand a day earlier.
+    """
+    from app.api.routers.inventory import _apply_membership
+
+    group = session.get(DeviceGroup, group_id)
+    if group is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "group not found")
+
+    form = _sync_form(request)
+    ids: list[uuid.UUID] = []
+    for raw in form.getlist("device_ids"):
+        with suppress(ValueError):
+            ids.append(uuid.UUID(raw))
+
+    _apply_membership(session, group, ids)
+    return _redirect(f"/groups/{group_id}?saved=1")
 
 
 @router.post("/devices/{device_id}/assignments/{assignment_id}/remove")

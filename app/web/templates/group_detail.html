@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% set nav = 'manage' %}
+{% block title %}{{ group.name }} — ATLAS{% endblock %}
+
+{% block content %}
+{{ page_header(group.name, group.description or 'A device group.') }}
+
+<p class="sub">
+  <a href="/groups">&larr; Groups</a>
+</p>
+
+{% if request.query_params.get('saved') %}
+  <div class="banner good">
+    Membership saved. Devices added or removed converge on their next check-in.
+  </div>
+{% endif %}
+
+<h2>Devices in this group</h2>
+<div class="panel">
+  {% if not devices %}
+    <p class="muted">No devices are enrolled yet, so there is nothing to add.</p>
+  {% else %}
+  <form method="post" action="/groups/{{ group.id }}/devices" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <table>
+      <thead>
+        <tr><th></th><th>Name</th><th>Serial</th><th>Model</th></tr>
+      </thead>
+      <tbody>
+      {% for row in devices %}
+        <tr>
+          <td>
+            <input type="checkbox" name="device_ids" value="{{ row.device.id }}"
+                   id="dev-{{ row.device.id }}"
+                   {% if row.member %}checked{% endif %}>
+          </td>
+          <td>
+            <label for="dev-{{ row.device.id }}">
+              {{ row.device.name or row.device.serial_number }}
+            </label>
+          </td>
+          <td class="mono">
+            <a href="/devices/{{ row.device.id }}">{{ row.device.serial_number }}</a>
+          </td>
+          <td class="muted">{{ row.device.model or '—' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <div>
+      <button type="submit">Save membership</button>
+    </div>
+    {# ⚠️ The endpoint replaces the whole list rather than appending, and the
+       form says so plainly. Presenting this as "add a device" would imply
+       incremental semantics it does not have, and would quietly drop anyone
+       another operator ticked in the meantime. #}
+    <p class="field-tip">
+      Saving sets the membership to exactly what is ticked — unticking removes a
+      device from the group. Currently {{ member_count }} of {{ devices|length }}.
+    </p>
+  </form>
+  {% endif %}
+</div>
+
+<h2>Policies assigned to this group</h2>
+<div class="panel">
+  {% if not assignments %}
+    <p class="muted">
+      Nothing assigned to this group yet. A policy assigned here reaches every
+      device in it, which is the reason to have a group at all.
+    </p>
+  {% else %}
+  <p class="sub">
+    Each of these reaches all {{ member_count }} device{{ '' if member_count == 1 else 's' }}
+    in the group.
+  </p>
+  <table>
+    <thead><tr><th>Policy</th><th>Type</th><th>Version</th><th>Rank</th></tr></thead>
+    <tbody>
+    {% for row in assignments %}
+      <tr>
+        <td>
+          {% if row.policy %}
+            <a href="/policies/{{ row.policy.id }}">{{ row.policy.name }}</a>
+          {% else %}<span class="muted">(removed)</span>{% endif %}
+        </td>
+        <td class="mono">{{ row.policy.policy_type if row.policy else '—' }}</td>
+        <td class="mono">{% if row.version %}v{{ row.version }}{% else %}—{% endif %}</td>
+        <td class="mono">{{ row.assignment.rank }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="field-tip">
+    ⚠️ These are the assignments a device page cannot remove — it shows them as
+    "via group {{ group.name }}" precisely because removing one here would
+    change every device above, not just the one being looked at.
+  </p>
+  {% endif %}
+</div>
+{% endblock %}
