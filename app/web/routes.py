@@ -34,6 +34,9 @@ from contextlib import suppress
 
 import csv
 import io
+import shutil
+import os
+import zipfile
 import json
 from concurrent.futures import ThreadPoolExecutor
 import tempfile
@@ -41,6 +44,7 @@ import uuid
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from collections.abc import Iterator
 from typing import Any
 
 import qrcode
@@ -2492,6 +2496,98 @@ def _qr_svg(text: str) -> str:
 # --------------------------------------------------------------------------- #
 # Apps — local packages, the ATLAS store, app groups (W5)
 # --------------------------------------------------------------------------- #
+
+
+@router.get("/apps/versions/{version_id}/download")
+def download_app_version(
+    version_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    storage: ArtifactStorage = Depends(get_storage),
+    identity: AdminIdentity = Depends(admin_required),
+) -> Response:
+    """Hand the operator the bytes this version is made of (W128).
+
+    ⚠️ **A version is not always one file.** A split app is several — Chrome
+    arrives from Play as four — and serving only the base would hand back
+    something Android refuses to install as `INSTALL_FAILED_MISSING_SPLIT`,
+    while looking like a successful download. So one part is served as the APK
+    it is, and several are zipped into the `.xapk` shape `inspect_bundle`
+    already reads on the way back in. What comes out can be uploaded again.
+
+    ⚠️ **Streamed from the artifact store, not read into memory.** These run to
+    hundreds of megabytes; `collect_output` builds bundles in memory during an
+    import because it must hash them, but a download has no such excuse.
+    """
+    version = session.get(AppPackageVersion, version_id)
+    if version is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "version not found")
+
+    package = session.get(AppPackage, version.package_id)
+    stem = f"{package.package_name}-{version.version_code}" if package else str(version_id)
+    parts = sorted(version.files, key=lambda f: (f.role is not PartRole.BASE, f.file_name))
+
+    if not parts:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "this version has no stored files"
+        )
+
+    if len(parts) == 1:
+        part = parts[0]
+        try:
+            handle = storage.open(part.artifact_sha256)
+        except Exception as exc:  # ArtifactNotFound and friends
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, "the stored file is missing"
+            ) from exc
+        return StreamingResponse(
+            handle,
+            media_type="application/vnd.android.package-archive",
+            headers={
+                "Content-Disposition": f'attachment; filename="{stem}.apk"',
+                "Content-Length": str(part.artifact.size_bytes)
+                if part.artifact and part.artifact.size_bytes
+                else "",
+            },
+        )
+
+    # ⚠️ Assembled on disk, not streamed out of a BytesIO that gets truncated
+    # between parts. A first version did exactly that, and `zipfile` records
+    # member offsets from `fp.tell()` — resetting the buffer made every offset
+    # in the central directory wrong. The archive still listed its names, so it
+    # looked fine; it only failed when something tried to *read* a member back.
+    # Caught by the round-trip test rather than by the one that opened it.
+    #
+    # ZIP_STORED because every part is already a compressed archive: deflating
+    # again costs CPU over hundreds of megabytes and saves close to nothing.
+    spool = tempfile.NamedTemporaryFile(suffix=".xapk", delete=False)
+    try:
+        with zipfile.ZipFile(spool, "w", zipfile.ZIP_STORED) as archive:
+            for part in parts:
+                with storage.open(part.artifact_sha256) as handle:
+                    with archive.open(part.file_name, "w") as member:
+                        shutil.copyfileobj(handle, member)
+        spool.close()
+    except Exception:
+        spool.close()
+        os.unlink(spool.name)
+        raise
+
+    def stream() -> Iterator[bytes]:
+        try:
+            with open(spool.name, "rb") as handle:
+                while chunk := handle.read(1024 * 1024):
+                    yield chunk
+        finally:
+            os.unlink(spool.name)
+
+    return StreamingResponse(
+        stream(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{stem}.xapk"',
+            "Content-Length": str(os.path.getsize(spool.name)),
+        },
+    )
 
 
 @router.get("/apps", response_class=HTMLResponse)

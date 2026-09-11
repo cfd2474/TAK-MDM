@@ -563,6 +563,47 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W128 — Download a stored build from the console
+
+Operator, 2026-09-11: *"In the local apps section, give me a download button
+next to each app that would allow me to download the apk/xapk from the
+browser."*
+
+`GET /apps/versions/{id}/download`, admin-authenticated, with a button on every
+app row (its latest build) and on every row of the versions drill-down.
+
+#### ⚠️ A version is not always one file
+
+A split app is several — Chrome arrives from Play as four. Serving only the base
+would hand back something Android refuses as `INSTALL_FAILED_MISSING_SPLIT`
+while looking like a perfectly good download. So one part is served as the APK
+it is, and several are zipped into the **`.xapk` shape `inspect_bundle` already
+reads on the way in** — what comes out can go back in.
+
+#### ⚠️ The bug the round-trip test caught and the other test did not
+
+The first version streamed the zip out of a `BytesIO` that was truncated
+between parts, to avoid holding hundreds of megabytes in memory. But `zipfile`
+records member offsets from `fp.tell()`, so resetting the buffer made **every
+offset in the central directory wrong**. The archive still listed its names —
+`test_a_split_build_comes_back_whole` passed — and only failed when something
+tried to *read* a member back out.
+
+Assembled on a temp file now, streamed in 1 MB chunks, unlinked after. Memory
+stays bounded and the offsets are real.
+
+**`namelist()` is not proof an archive works.** The test that mattered was the
+one that fed the download back into `ingest`.
+
+#### A test expectation of mine that was simply wrong
+
+Re-ingesting is *refused* — "already uploaded; bump versionCode" — and I had
+asserted it would succeed. The refusal is the stronger proof: ingest can only
+name the package and versionCode by opening the archive and reading the
+manifest out of the base APK inside it.
+
+Suite **1426 passed, 1 skipped**. No agent change.
+
 ### ✅ W127 — Real download progress, and drop the held pill
 
 Operator, 2026-09-11: *"can we query the download size so we get an accurate

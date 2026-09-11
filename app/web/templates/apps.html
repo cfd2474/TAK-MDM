@@ -151,6 +151,10 @@
               {% endif %}
             </td>
             <td>
+              {% if p.latest_version %}
+                <a class="btn ghost" href="/apps/versions/{{ p.latest_version.id }}/download"
+                   title="Download this build — several parts arrive as one .xapk">Download</a>
+              {% endif %}
               <form method="post" action="/apps/{{ p.id }}/store" style="margin:0">
                 {{ csrf_field(csrf_token) }}
                 <input type="hidden" name="listed" value="{{ 'false' if p.store_listed else 'true' }}">
@@ -212,6 +216,10 @@
                         <input type="hidden" name="published" value="{{ 'false' if v.published else 'true' }}">
                         <button type="submit" class="ghost">{{ 'Hold' if v.published else 'Publish' }}</button>
                       </form>
+                      {# A split app comes back as .xapk, which is the shape
+                         this console reads on the way back in (W128). #}
+                      <a class="btn ghost" style="margin-left:6px"
+                         href="/apps/versions/{{ v.id }}/download">Download</a>
                     </td>
                   </tr>
                 {% endfor %}
