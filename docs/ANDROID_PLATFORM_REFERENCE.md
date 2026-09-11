@@ -1605,9 +1605,25 @@ The flag therefore travels in the command params rather than being inferred by
 the agent from the disenroll marker: the server owns the decision, and an agent
 that does not know the key leaves FRP armed — failing in the safe direction.
 
-⚠️ **Not verified on hardware.** FRP behaviour is partly OEM territory, so
-whether Samsung honours the flag as AOSP describes is unproven here. The next
-disenroll run is the test.
+✅ **`wipeDevice` accepts the combined flag mask on Samsung** — `SM-X828U`
+(One UI 8 / Android 16, agent 0.60.0), 2026-09-11. A disenroll carrying
+`WIPE_EXTERNAL_STORAGE | WIPE_RESET_PROTECTION_DATA` was acknowledged and the
+tablet reset. So the call does not reject the flag, which is the half of the
+contract that *can* be observed from a single run.
+
+❌ **Whether the FRP data was actually cleared is still unproven, and the run
+that looked like a pass was a no-op.** The tablet came up with no Google account
+challenge — but it had no Google account signed in, so Factory Reset Protection
+was never armed and there was nothing for the flag to clear.
+
+⚠️ **This test's pass condition and its no-op condition are identical from the
+outside**, which is the whole difficulty with it: "setup asked for nothing" is
+what you see whether the flag worked or whether FRP was never on. **A valid run
+needs a Google account signed in on the device before the wipe.** Recorded so
+nobody reads "tested, no prompt" as evidence.
+
+⚠️ FRP behaviour is partly OEM territory, so Samsung honouring the flag as AOSP
+describes remains an open question.
 
 ### ⚠️ A client certificate without a *grant* is silently useless (W112 C2, 2026-09-09)
 

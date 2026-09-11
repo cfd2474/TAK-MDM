@@ -563,6 +563,36 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### 🚧 W116 — Disenroll clears Factory Reset Protection (inconclusive)
+
+Built and deployed in agent 0.58.0 (`42b6ea9`); the disenroll path sends
+`wipe_reset_protection`, an ordinary lost-device wipe does not.
+
+#### ✅ What the 2026-09-11 run on `SM-X828U` did prove
+
+* **W114 again, on a current agent.** Command delivered, acknowledged and the
+  record removed inside one second — and the tablet then actually reset. That
+  ack-plus-wipe pairing is exactly what failed the first time disenroll was ever
+  run, so seeing both on 0.60.0 matters.
+* **`wipeDevice` accepts the combined mask.**
+  `WIPE_EXTERNAL_STORAGE | WIPE_RESET_PROTECTION_DATA` was not rejected.
+
+#### ❌ What it did not prove, and why the result looked like a pass
+
+The tablet came up with **no Google account challenge** — but **no Google account
+was signed in**, so FRP was never armed and the flag had nothing to clear.
+
+⚠️ **The pass condition and the no-op condition are indistinguishable from the
+outside.** "Setup asked for nothing" is what you see whether the flag worked or
+whether the protection was never on. The precondition was flagged twice before
+the run and not confirmed until after, which is the process lesson: **for a test
+whose failure mode is invisible, confirm the precondition before firing, not
+after.**
+
+**A valid run needs a Google account signed in on the device before the
+disenroll.** Redoing it costs a provisioning cycle, and the tablet has to be
+re-provisioned anyway.
+
 ### ✅ W117 — A master bypass PIN for the provisioning permission block
 
 Operator, 2026-09-10: *"let's build in a bypass button that requires a pin code.
