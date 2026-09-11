@@ -61,6 +61,19 @@ class AgentConfig(context: Context) {
      * every check-in so the on-device console can show it. Null until the first
      * check-in after enrolment, or when the operator has not named the device.
      */
+    /**
+     * The identity this device enrolled under — its serial, or the ANDROID_ID
+     * fallback when `Build.getSerial()` was refused.
+     *
+     * ⚠️ Cached rather than recomputed. `serialNumber()` logs a warning every
+     * time it takes the fallback, and the device ID label asks for an identity
+     * on **every** reconcile — without this the log would fill with the same
+     * warning on any device lacking `READ_PHONE_STATE` (W130).
+     */
+    var deviceSerial: String?
+        get() = prefs.getString(KEY_DEVICE_SERIAL, null)
+        set(value) = prefs.edit { putString(KEY_DEVICE_SERIAL, value) }
+
     var deviceName: String?
         get() = prefs.getString(KEY_DEVICE_NAME, null)
         set(value) = prefs.edit { putString(KEY_DEVICE_NAME, value) }
@@ -521,6 +534,7 @@ class AgentConfig(context: Context) {
         private const val KEY_SERVER_CA = "server_ca_pem"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_DEVICE_NAME = "device_name"
+        private const val KEY_DEVICE_SERIAL = "device_serial"
         private const val KEY_POLICY_NAMES = "policy_names"
         private const val KEY_BUNDLE_KEY = "bundle_key"
         private const val KEY_RESET_PW_TOKEN = "reset_password_token"

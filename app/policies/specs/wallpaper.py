@@ -80,9 +80,10 @@ class WallpaperSpec(PolicySpec):
         title="Device ID label",
         description=(
             "Draw this device's name, as set on its device page, over the "
-            "wallpaper — large enough to read across a room. Works with no "
-            "image selected: the agent draws a plain background instead. "
-            "Renaming the device redraws it on the next check-in."
+            "wallpaper — large enough to read across a room. A device with no "
+            "name shows its serial number instead, so the label always "
+            "identifies something. Works with no image selected: the agent "
+            "draws a plain background. Renaming redraws on the next check-in."
         ),
         json_schema_extra={"ui_group": "Images"},
     )

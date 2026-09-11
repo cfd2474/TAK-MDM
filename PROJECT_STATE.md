@@ -643,9 +643,17 @@ image underneath is an operator's photograph and may be white, busy or both.
 identifier than smaller text that reads in full, and telling two tablets apart
 is the entire point.
 
-⚠️ **An unnamed device reports an error rather than drawing a placeholder.** A
-wallpaper reading "unnamed" on every tablet is worse than none, and the fix is
-to name the device.
+⚠️ **An unnamed device falls back to its serial** (operator, W130). The first
+version reported an error, on the reasoning that "unnamed" on every tablet is
+worse than nothing. The operator's correction is the better call and the
+reasoning was simply misapplied: **a serial is not a placeholder.** It is
+unique, so it does the exact job the label exists for — telling two tablets
+apart. Only a value identical on every device would have been worth refusing.
+
+⚠️ That identity is **cached in `AgentConfig.deviceSerial`**. `serialNumber()`
+logs a warning every time it takes the ANDROID_ID fallback, and the label asks
+for an identity on every reconcile — uncached, the log fills with the same line
+on any device lacking `READ_PHONE_STATE`.
 
 ⚠️ Not yet verified on hardware — the bitmap work is the part a test cannot
 judge. Worth a look at legibility and placement on the SM-X520 before trusting

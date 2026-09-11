@@ -249,6 +249,11 @@ class Reconciler(private val context: Context) {
      * fixed.
      */
     private fun serialNumber(): String {
+        config.deviceSerial?.takeIf { it.isNotBlank() }?.let { return it }
+        return computeSerialNumber().also { config.deviceSerial = it }
+    }
+
+    private fun computeSerialNumber(): String {
         val real = runCatching { Build.getSerial() }
             .onFailure { AgentLog.w(TAG, "Build.getSerial() refused: ${it.message}") }
             .getOrNull()
@@ -698,12 +703,15 @@ class Reconciler(private val context: Context) {
             return errors + "wallpaper: the chosen image has no artifact"
         }
 
-        val label = if (wantsLabel) config.deviceName?.takeIf { it.isNotBlank() } else null
-        if (wantsLabel && label == null) {
-            // Reported rather than drawn as "unnamed": a wallpaper reading
-            // "unnamed" on every tablet is worse than none, and the fix is to
-            // name the device.
-            errors += "wallpaper: the device ID label is on but this device has no name"
+        // ⚠️ Falls back to the device's own identity, not to a placeholder
+        // (operator, W130). The first version reported an error when no name was
+        // set, on the reasoning that "unnamed" on every tablet is worse than
+        // nothing — but a **serial** is not a placeholder. It is unique, so it
+        // does the job the label exists for, which is telling two tablets apart.
+        val label = if (wantsLabel) {
+            config.deviceName?.takeIf { it.isNotBlank() } ?: serialNumber()
+        } else {
+            null
         }
 
         // ⚠️ The identity of what is on screen, not of the file it came from

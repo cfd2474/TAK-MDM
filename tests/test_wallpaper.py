@@ -371,9 +371,39 @@ def test_a_long_name_shrinks_rather_than_truncating():
     assert "measureText(name) > maxWidth" in label
 
 
-def test_an_unnamed_device_reports_rather_than_drawing_a_placeholder():
-    """A wallpaper reading "unnamed" on every tablet is worse than none, and
-    the fix is to name the device."""
+def test_an_unnamed_device_falls_back_to_its_serial():
+    """⚠️ Operator, W130. The first version reported an error instead, on the
+    reasoning that "unnamed" on every tablet is worse than nothing — but a
+    serial is not a placeholder. It is unique, so it does the job the label
+    exists for: telling two tablets apart."""
     reconciler = _agent("sync/Reconciler.kt")
 
-    assert "the device ID label is on but this device has no name" in reconciler
+    body = reconciler[reconciler.index("private fun reconcileWallpaper") :]
+    body = body[: body.index("// Commands")]
+
+    assert "config.deviceName?.takeIf { it.isNotBlank() } ?: serialNumber()" in body
+    assert "this device has no name" not in body
+
+
+def test_the_identity_is_cached_rather_than_recomputed():
+    """⚠️ `serialNumber()` logs a warning every time it takes the ANDROID_ID
+    fallback, and the label asks for an identity on every reconcile. Without a
+    cache the log fills with the same line on any device lacking
+    READ_PHONE_STATE."""
+    reconciler = _agent("sync/Reconciler.kt")
+    config = _agent("core/AgentConfig.kt")
+
+    assert "config.deviceSerial?.takeIf" in reconciler
+    assert "deviceSerial" in config
+
+
+def test_the_console_says_what_an_unnamed_device_shows():
+    """An operator turning this on for a fleet needs to know it degrades to a
+    serial rather than failing."""
+    from app.policies import form_schema
+
+    field = next(
+        f for f in form_schema.form_fields("WALLPAPER") if f.name == "device_id_label"
+    )
+
+    assert "serial number" in field.help
