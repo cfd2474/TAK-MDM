@@ -79,11 +79,12 @@ class WallpaperSpec(PolicySpec):
         default=None,
         title="Device ID label",
         description=(
-            "Draw this device's name, as set on its device page, over the "
-            "wallpaper — large enough to read across a room. A device with no "
-            "name shows its serial number instead, so the label always "
-            "identifies something. Works with no image selected: the agent "
-            "draws a plain background. Renaming redraws on the next check-in."
+            "Show this device's name, as set on its device page, in a small "
+            "panel at the top of the screen — over the launcher and over apps, "
+            "staying put through rotation. A device with no name shows its "
+            "serial instead, so the label always identifies something. Needs "
+            "no wallpaper image. Renaming updates it on the next check-in. "
+            "⚠️ Not shown on the lock screen: the panel sits below the keyguard."
         ),
         json_schema_extra={"ui_group": "Images"},
     )

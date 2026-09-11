@@ -563,6 +563,44 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W133 — Drop the drawn label, keep the widget
+
+Operator, 2026-09-11: *"that worked, now remove the wallpaper version, keeping
+the widget version."*
+
+`DeviceIdLabel.kt` is gone, along with the composition step, the temp PNG and
+the label's place in the wallpaper's identity key.
+
+#### The two features stop being tangled
+
+While the name was *drawn into* the bitmap, the label had to reach into the
+wallpaper logic in three places: `shouldClear` had to treat a label-only policy
+as "names an image" or it would wipe the screen instead of labelling it; the
+identity key had to carry the device name or a rename redrew nothing; and the
+composition had to run between download and apply. All three are now gone —
+they exist only because one feature was implemented inside another.
+
+⚠️ **One test is inverted on purpose.** `test_the_label_alone_does_not_clear_the_wallpaper`
+asserted the opposite of what is now correct. A policy naming no image *should*
+restore the default wallpaper; the label is a window and shows regardless.
+
+#### ⚠️ The lock screen is given up, knowingly
+
+`TYPE_APPLICATION_OVERLAY` sits below the keyguard, so **a locked tablet now
+shows no label at all**. That was the drawn version's only remaining
+justification, and the operator weighed it against a label the system kept
+moving. The policy help says so plainly, since it is the one limit an operator
+cannot discover by looking at an unlocked device.
+
+#### Devices clean themselves up
+
+A device still carrying a labelled bitmap has an identity key that cannot match
+the plain sha, so it redraws the clean image once. A label-only policy now
+trips `shouldClear` and restores the default wallpaper. Neither needed a
+migration.
+
+Suite **1443 passed, 1 skipped**. Agent **0.66.0 (versionCode 111)**.
+
 ### ✅ W132 — The label becomes an overlay, like the clock
 
 Operator, 2026-09-11, after two attempts at wallpaper geometry: *"a bit better,

@@ -17,7 +17,6 @@
 package com.taksolutions.atlasmdm.sync
 
 import android.content.Context
-import android.graphics.Bitmap
 import android.os.Build
 import java.io.File
 import org.json.JSONArray
@@ -57,7 +56,6 @@ import com.taksolutions.atlasmdm.policy.LocationTracker
 import com.taksolutions.atlasmdm.policy.PolicyApplier
 import com.taksolutions.atlasmdm.ui.DeviceIdOverlay
 import com.taksolutions.atlasmdm.ui.InstallNotifier
-import com.taksolutions.atlasmdm.policy.DeviceIdLabel
 import com.taksolutions.atlasmdm.policy.WallpaperPlan
 
 /** Outcome of one reconciliation pass. */
@@ -655,34 +653,51 @@ class Reconciler(private val context: Context) {
     private fun reconcileWallpaper(wallpaper: JSONObject): List<String> {
         val tablet = wallpaper.optJSONObject("tablet")
         val phone = wallpaper.optJSONObject("phone")
-        // ⚠️ The label is an instruction in its own right (W129). A policy that
-        // asks only for it names no image, and treating that as "no wallpaper
-        // policy" would clear the screen instead of labelling it.
         val wantsLabel = wallpaper.optBoolean("device_id_label", false)
+
+        // ⚠️ The label is settled first and independently (W133). It used to be
+        // drawn into the wallpaper bitmap as well as shown as a window, which
+        // tangled the two: a label-only policy had to be kept out of
+        // `shouldClear`, and the wallpaper's identity key had to carry the
+        // device name. The drawn half is gone — the system placed it wherever
+        // it liked and no geometry fixed that — so the two are simply separate
+        // features that happen to share a policy section.
+        //
+        // ⚠️ Above every early return below. The wallpaper shortcuts exist to
+        // avoid rewriting an unchanged bitmap, and a window has nothing to do
+        // with that; behind one of them, a device would lose its label after a
+        // process restart.
+        val idLabel = if (wantsLabel) {
+            // ⚠️ Falls back to the device's own identity, not to a placeholder
+            // (operator, W130). A serial is unique, so it does the job the
+            // label exists for: telling two tablets apart.
+            config.deviceName?.takeIf { it.isNotBlank() } ?: serialNumber()
+        } else {
+            null
+        }
+        DeviceIdOverlay.set(context, idLabel)
 
         // Handled before the early return, and reached because the section is
         // applied even when absent — the same lesson as R14/R19: "no policy says
         // anything" is a state to converge on, not an absence of work.
         if (WallpaperPlan.shouldClear(
-                policyNamesAnyImage = tablet != null || phone != null || wantsLabel,
+                policyNamesAnyImage = tablet != null || phone != null,
                 previouslyApplied = config.appliedWallpaperSha != null,
             )
         ) {
             AgentLog.i(TAG, "no policy sets a wallpaper; restoring the device default")
-            DeviceIdOverlay.remove(context)
             val failure = policyApplier.clearWallpaper()
                 ?: run { config.appliedWallpaperSha = null; return emptyList() }
             return listOf("wallpaper: could not restore the default — $failure")
         }
-        if (!wantsLabel) DeviceIdOverlay.remove(context)
-        if (tablet == null && phone == null && !wantsLabel) return emptyList()
+        if (tablet == null && phone == null) return emptyList()
 
         val errors = mutableListOf<String>()
         // A slot pointing at a file that has left the library. Reported rather than
         // treated as "no image", so a broken policy looks broken.
-        for ((label, slot) in listOf("tablet" to tablet, "phone" to phone)) {
+        for ((slotName, slot) in listOf("tablet" to tablet, "phone" to phone)) {
             if (slot != null && !slot.optBoolean("available", false)) {
-                errors += "wallpaper: the $label image is no longer in the library"
+                errors += "wallpaper: the $slotName image is no longer in the library"
             }
         }
 
@@ -698,100 +713,39 @@ class Reconciler(private val context: Context) {
             WallpaperPlan.Choice.TABLET -> usableTablet
             WallpaperPlan.Choice.PHONE -> usablePhone
             WallpaperPlan.Choice.NONE -> null
-        }
-        if (chosen == null && !wantsLabel) return errors
+        } ?: return errors
 
-        val sha = chosen?.optString("sha256")?.takeIf { it.isNotBlank() }
-        if (chosen != null && sha == null) {
-            return errors + "wallpaper: the chosen image has no artifact"
-        }
+        val sha = chosen.optString("sha256").takeIf { it.isNotBlank() }
+            ?: return errors + "wallpaper: the chosen image has no artifact"
 
-        // ⚠️ Falls back to the device's own identity, not to a placeholder
-        // (operator, W130). The first version reported an error when no name was
-        // set, on the reasoning that "unnamed" on every tablet is worse than
-        // nothing — but a **serial** is not a placeholder. It is unique, so it
-        // does the job the label exists for, which is telling two tablets apart.
-        val label = if (wantsLabel) {
-            config.deviceName?.takeIf { it.isNotBlank() } ?: serialNumber()
-        } else {
-            null
-        }
-
-        // ⚠️ The identity of what is on screen, not of the file it came from
-        // (W129). Keyed on the sha alone, renaming a device in the console would
-        // redraw nothing — the image is unchanged, so the reconcile would decide
-        // it had nothing to do and the tablet would keep the old name for ever.
-        // ⚠️ Driven here, above every early return below (W132). The overlay is
-        // a *window*, so it has nothing to do with whether the wallpaper bitmap
-        // needs rewriting — and the idempotence check a few lines down exists
-        // precisely to skip that work. Placed after it, an unchanged wallpaper
-        // would mean no label at all after a process restart.
-        DeviceIdOverlay.set(context, label)
-
-        // ⚠️ "v2" because the geometry changed (W131). A device already carrying
-        // a label drawn the old way matches on image, name and screen, so
-        // without this the reconcile would decide there was nothing to do and
-        // leave the broken placement on screen for ever.
-        val metrics = context.resources.displayMetrics
-        val screen = "v2:" + metrics.widthPixels + "x" + metrics.heightPixels
-        val identity = listOfNotNull(sha ?: "none", label?.let { "label:" + it }, screen)
-            .joinToString("|")
-
+        // ⚠️ Back to the plain sha (W133). While the name was drawn into the
+        // image the key had to include it, or a rename redrew nothing. It no
+        // longer is, so the image alone decides — and a device still carrying a
+        // labelled bitmap has a key that cannot match this one, which is what
+        // makes it redraw the clean image once.
+        //
         // Re-setting a wallpaper is visible to the user as a flicker, so an
         // idempotent reconcile must genuinely do nothing.
-        if (config.appliedWallpaperSha == identity) return errors
+        if (config.appliedWallpaperSha == sha) return errors
 
-        var target: File? = null
-        if (sha != null) {
-            val file = File(cacheDir, sha)
-            if (!downloadArtifact(sha, file)) {
-                return errors + "wallpaper: download of " + sha + " failed verification"
-            }
-            target = file
+        val target = File(cacheDir, sha)
+        if (!downloadArtifact(sha, target)) {
+            return errors + "wallpaper: download of " + sha + " failed verification"
         }
-
-        if (label != null) {
-            val metrics = context.resources.displayMetrics
-            // ⚠️ The system's desired minimums, not just the screen (W131).
-            // getDesiredMinimumWidth is routinely wider than the display so a
-            // launcher can pan, and a bitmap narrower than it is positioned
-            // rather than centred — which is where the sideways shift on
-            // rotation came from.
-            val manager = android.app.WallpaperManager.getInstance(context)
-            val composed = DeviceIdLabel.render(
-                source = target,
-                name = label,
-                screenWidth = metrics.widthPixels,
-                screenHeight = metrics.heightPixels,
-                desiredWidth = runCatching { manager.desiredMinimumWidth }.getOrDefault(0),
-                desiredHeight = runCatching { manager.desiredMinimumHeight }.getOrDefault(0),
-            ) ?: return errors + "wallpaper: could not draw the device ID label"
-
-            val out = File(cacheDir, "labelled.png")
-            val written = runCatching {
-                out.outputStream().use { composed.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            }.isSuccess
-            composed.recycle()
-            if (!written) return errors + "wallpaper: could not write the labelled image"
-            target = out
-        }
-
-        val image = target ?: return errors
 
         AgentLog.i(
             TAG,
             "applying " + choice + " wallpaper (smallestScreenWidthDp=" + width + ")" +
-                (if (sha != null) " from " + sha.take(12) + "…" else " (generated)") +
-                (if (label != null) " with device ID label" else "")
+                " from " + sha.take(12) + "…"
         )
         val applied = policyApplier.setWallpaper(
-            image = image,
+            image = target,
             alsoLockScreen = wallpaper.optBoolean("lock_screen", false),
             preventUserChange = wallpaper.optBoolean("prevent_user_change", false),
         )
         if (applied != null) return errors + "wallpaper: " + applied
 
-        config.appliedWallpaperSha = identity
+        config.appliedWallpaperSha = sha
         return errors
     }
 

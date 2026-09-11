@@ -322,26 +322,31 @@ def _agent(name: str) -> str:
     ).read_text(encoding="utf-8")
 
 
-def test_the_label_alone_does_not_clear_the_wallpaper():
-    """⚠️ The failure this would have had. `shouldClear` fires when the policy
-    names no image, and a label-only policy names none — so the agent would
-    have restored the factory wallpaper instead of drawing the name."""
+def test_the_label_no_longer_touches_the_wallpaper_decision():
+    """⚠️ Inverted deliberately (W133). While the name was *drawn into* the
+    bitmap, a label-only policy had to be kept out of `shouldClear` or it would
+    have wiped the screen instead of labelling it. The drawn half is gone, so
+    the two are independent: a policy naming no image restores the default
+    wallpaper, and the label still shows as a window."""
     reconciler = _agent("sync/Reconciler.kt")
 
-    assert "tablet != null || phone != null || wantsLabel" in reconciler
+    assert "policyNamesAnyImage = tablet != null || phone != null," in reconciler
+    assert "|| wantsLabel" not in reconciler
 
 
-def test_the_applied_key_includes_the_name():
-    """⚠️ Keyed on the image sha alone, renaming a device would redraw nothing:
-    the image is unchanged, so the reconcile decides it has nothing to do and
-    the tablet keeps the old name for ever."""
+def test_the_label_is_settled_before_any_wallpaper_shortcut():
+    """⚠️ The wallpaper paths return early all over the place — an unchanged
+    image, no image, a broken slot. Every one of them would leave a device
+    without its label after a process restart if the overlay were driven
+    further down."""
     reconciler = _agent("sync/Reconciler.kt")
 
     body = reconciler[reconciler.index("private fun reconcileWallpaper") :]
     body = body[: body.index("// Commands")]
 
-    assert 'label?.let { "label:" + it }' in body
-    assert "config.appliedWallpaperSha == identity" in body
+    assert body.index("DeviceIdOverlay.set(context, idLabel)") < body.index(
+        "WallpaperPlan.shouldClear"
+    )
 
 
 def test_the_identity_actually_interpolates():
@@ -360,75 +365,6 @@ def test_the_identity_actually_interpolates():
         "a literal-dollar escape makes a Kotlin template a constant string"
     )
 
-
-def test_existing_devices_are_forced_to_redraw():
-    """⚠️ A device already carrying a label drawn with the old geometry matches
-    on image, name and screen. Without a version marker in the key the
-    reconcile decides it has nothing to do and the broken placement stays."""
-    reconciler = _agent("sync/Reconciler.kt")
-
-    assert '"v2:"' in reconciler
-
-
-def test_the_label_is_never_drawn_over_the_live_wallpaper():
-    """⚠️ The compounding trap. Reading what is on screen and drawing on it
-    would stack a label every reconcile. The base is the policy image or a
-    generated background — never the current wallpaper."""
-    label = _agent("policy/DeviceIdLabel.kt")
-
-    assert "getDrawable" not in label
-    assert "getWallpaper" not in label
-
-
-def test_the_text_scales_with_the_screen():
-    """A fixed point size is legible on a phone at arm's length and useless on
-    a tablet across a room, which is the job this exists for."""
-    label = _agent("policy/DeviceIdLabel.kt")
-
-    assert "TEXT_FRACTION" in label
-    # W131 made the canvas square, so the text scales off its side rather than
-    # off whichever screen edge happened to be shorter at the time.
-    assert "side * TEXT_FRACTION" in label
-
-
-def test_the_canvas_is_square_so_rotation_cannot_move_the_label():
-    """⚠️ The rotation bug (W131). One wallpaper bitmap serves both
-    orientations and the system re-crops it, so a label placed against the
-    *current* display was off-centre or gone after a rotate. A square is
-    treated identically either way."""
-    label = _agent("policy/DeviceIdLabel.kt")
-
-    assert "Bitmap.createBitmap(side, side" in label
-    assert "maxOf(screenWidth, screenHeight, desiredWidth, desiredHeight)" in label
-
-
-def test_the_label_stays_inside_the_band_both_orientations_can_see():
-    """⚠️ Filling a W×H screen from a square crops the long axis, leaving only
-    the central min/max of it visible. A label outside that band is on the
-    bitmap and off the screen."""
-    label = _agent("policy/DeviceIdLabel.kt")
-
-    assert "visibleFraction" in label
-    assert "bandTop + bandHeight * BAND_POSITION" in label
-
-
-def test_the_desired_minimums_are_honoured():
-    """📖 WallpaperManager: callers "should check this value beforehand to make
-    sure the supplied wallpaper respects the desired minimum width". It is
-    routinely wider than the screen so a launcher can pan, and a bitmap
-    narrower than it is positioned rather than centred."""
-    reconciler = _agent("sync/Reconciler.kt")
-
-    assert "desiredMinimumWidth" in reconciler
-    assert "desiredMinimumHeight" in reconciler
-
-
-def test_a_long_name_shrinks_rather_than_truncating():
-    """⚠️ "Field Tab…" is a worse identifier than smaller text that reads in
-    full, and telling two tablets apart is the entire point."""
-    label = _agent("policy/DeviceIdLabel.kt")
-
-    assert "measureText(name) > maxWidth" in label
 
 
 def test_an_unnamed_device_falls_back_to_its_serial():
@@ -466,7 +402,10 @@ def test_the_console_says_what_an_unnamed_device_shows():
         f for f in form_schema.form_fields("WALLPAPER") if f.name == "device_id_label"
     )
 
-    assert "serial number" in field.help
+    assert "serial" in field.help
+    # The lock-screen limit is the one thing an operator cannot discover by
+    # looking at a device that happens to be unlocked.
+    assert "lock screen" in field.help
 
 
 # --------------------------------------------------------------------------- #
@@ -510,35 +449,13 @@ def test_a_rename_retexts_rather_than_recreating():
     assert "it.text = name" in overlay
 
 
-def test_the_overlay_is_driven_before_the_wallpaper_shortcut():
-    """⚠️ The bug this ordering avoids. The idempotence check below it exists to
-    skip rewriting an unchanged bitmap — and the overlay is a window, with
-    nothing to do with that. Placed after it, a device whose wallpaper had not
-    changed would have no label at all once the process restarted."""
-    reconciler = _agent("sync/Reconciler.kt")
 
-    body = reconciler[reconciler.index("private fun reconcileWallpaper") :]
-    body = body[: body.index("// Commands")]
-
-    assert body.index("DeviceIdOverlay.set(context, label)") < body.index(
-        "config.appliedWallpaperSha == identity"
-    )
-
-
-def test_the_overlay_goes_when_the_policy_stops_asking():
-    """Both ways out: no wallpaper policy at all, and a policy that no longer
-    wants the label."""
-    reconciler = _agent("sync/Reconciler.kt")
-
-    assert reconciler.count("DeviceIdOverlay.remove(context)") == 2
-
-
-def test_the_wallpaper_label_is_kept_for_the_lock_screen():
-    """⚠️ `TYPE_APPLICATION_OVERLAY` sits below the keyguard, so the overlay
-    cannot identify a *locked* tablet. Deleting the drawn label as redundant
-    would lose the only surface that can."""
+def test_the_label_goes_when_the_policy_stops_asking():
+    """One call handles show, rename and remove: `set(context, null)` takes it
+    away, so there is no second path that can be forgotten."""
     reconciler = _agent("sync/Reconciler.kt")
     overlay = _agent("ui/DeviceIdOverlay.kt")
 
-    assert "DeviceIdLabel.render(" in reconciler
-    assert "below the keyguard" in overlay
+    assert "DeviceIdOverlay.set(context, idLabel)" in reconciler
+    assert "if (name.isNullOrBlank())" in overlay
+    assert "removeOnMainThread(app)" in overlay
