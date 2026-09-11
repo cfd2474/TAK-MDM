@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% from "_macros.html" import page_header %}
 {% set nav = 'manage' %}
-{% block title %}{{ group.name }} — ATLAS{% endblock %}
+{% block title %}{{ container.name }} — ATLAS{% endblock %}
 
 {% block content %}
-{{ page_header(group.name, group.description or 'A device group.') }}
+{{ page_header(container.name, description or ('A device ' ~ label ~ '.')) }}
 
 <p class="sub">
-  <a href="/groups">&larr; Groups</a>
+  <a href="/fleet#tab-{{ tab }}">&larr; {{ label|capitalize }}s</a>
 </p>
 
 {% if request.query_params.get('saved') %}
@@ -17,21 +17,21 @@
 {% endif %}
 {% if request.query_params.get('assigned') %}
   <div class="banner good">
-    Policy assigned. It reaches all {{ member_count }} device{{ '' if member_count == 1 else 's' }} in this group.
+    Policy assigned. It reaches all {{ member_count }} device{{ '' if member_count == 1 else 's' }} in this {{ label }}.
   </div>
 {% endif %}
 {% if request.query_params.get('unassigned') %}
   <div class="banner good">
-    Removed <strong>{{ request.query_params.get('unassigned') }}</strong> from this group.
+    Removed <strong>{{ request.query_params.get('unassigned') }}</strong> from this {{ label }}.
   </div>
 {% endif %}
 
-<h2>Devices in this group</h2>
+<h2>Devices in this {{ label }}</h2>
 <div class="panel">
   {% if not devices %}
     <p class="muted">No devices are enrolled yet, so there is nothing to add.</p>
   {% else %}
-  <form method="post" action="/groups/{{ group.id }}/devices" class="stack">
+  <form method="post" action="{{ prefix }}/{{ container.id }}/devices" class="stack">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <table>
       <thead>
@@ -67,23 +67,23 @@
        another operator ticked in the meantime. #}
     <p class="field-tip">
       Saving sets the membership to exactly what is ticked — unticking removes a
-      device from the group. Currently {{ member_count }} of {{ devices|length }}.
+      device from the {{ label }}. Currently {{ member_count }} of {{ devices|length }}.
     </p>
   </form>
   {% endif %}
 </div>
 
-<h2>Policies assigned to this group</h2>
+<h2>Policies assigned to this {{ label }}</h2>
 <div class="panel">
   {% if not assignments %}
     <p class="muted">
-      Nothing assigned to this group yet. A policy assigned here reaches every
-      device in it, which is the reason to have a group at all.
+      Nothing assigned to this {{ label }} yet. A policy assigned here reaches every
+      device in it, which is the reason to have a {{ label }} at all.
     </p>
   {% else %}
   <p class="sub">
     Each of these reaches all {{ member_count }} device{{ '' if member_count == 1 else 's' }}
-    in the group.
+    in the {{ label }}.
   </p>
   <table>
     <thead><tr><th>Policy</th><th>Type</th><th>Version</th><th>Rank</th><th></th></tr></thead>
@@ -104,7 +104,7 @@
              makes that obvious. The label carries the count so the scale is
              visible at the moment of the click. #}
           <form method="post"
-                action="/groups/{{ group.id }}/assignments/{{ row.assignment.id }}/remove"
+                action="{{ prefix }}/{{ container.id }}/assignments/{{ row.assignment.id }}/remove"
                 class="inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="linklike">
@@ -117,19 +117,19 @@
     </tbody>
   </table>
   <p class="field-tip">
-    ⚠️ A device page shows these as "via group {{ group.name }}" and will not
+    ⚠️ A device page shows these as "via {{ label }} {{ container.name }}" and will not
     remove them, because there the same click would change every device above
     rather than the one being looked at. Here it is what you mean.
   </p>
   {% endif %}
 
   <hr>
-  <h3>Assign a policy to this group</h3>
+  <h3>Assign a policy to this {{ label }}</h3>
   {% if not assignable %}
     <p class="muted">No policies exist yet. Create one on the
       <a href="/policies">Policies</a> page.</p>
   {% else %}
-  <form method="post" action="/groups/{{ group.id }}/assignments" class="stack">
+  <form method="post" action="{{ prefix }}/{{ container.id }}/assignments" class="stack">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="row">
       <label for="assign-policy">Policy</label>
@@ -144,15 +144,15 @@
       <input type="number" id="assign-rank" name="rank" value="0" style="width:90px">
       <span class="field-tip">Higher wins when two policies set the same field.</span>
     </div>
-    <div><button type="submit">Assign to group</button></div>
+    <div><button type="submit">Assign to {{ label }}</button></div>
   </form>
   {% endif %}
 </div>
 
-<h2>Delete this group</h2>
+<h2>Delete this {{ label }}</h2>
 <div class="panel">
   <p>
-    <strong>Deleting {{ group.name }} removes more than the group.</strong>
+    <strong>Deleting {{ container.name }} removes more than the {{ label }}.</strong>
     Its {{ assignments|length }} policy assignment{{ '' if assignments|length == 1 else 's' }}
     go with it, so the
     {{ member_count }} device{{ '' if member_count == 1 else 's' }} in it stop
@@ -162,21 +162,21 @@
   {% if token_count %}
   <p class="banner warn">
     ⚠️ {{ token_count }} enrollment token{{ '' if token_count == 1 else 's' }}
-    {{ 'is' if token_count == 1 else 'are' }} scoped to this group. Deleting it
+    {{ 'is' if token_count == 1 else 'are' }} scoped to this {{ label }}. Deleting it
     does <strong>not</strong> revoke {{ 'that token' if token_count == 1 else 'those tokens' }} —
     {{ 'it' if token_count == 1 else 'they' }} keep working and simply stop placing
-    devices in this group, so a tablet enrolled afterwards arrives without this
+    devices in this {{ label }}, so a tablet enrolled afterwards arrives without this
     policy stack and nothing on the device says why.
   </p>
   {% endif %}
-  <form method="post" action="/groups/{{ group.id }}/delete" class="stack">
+  <form method="post" action="{{ prefix }}/{{ container.id }}/delete" class="stack">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label for="group-confirm">Type the group name to confirm</label>
-    <input type="text" id="group-confirm" name="confirm" class="field-full"
+    <label for="container-confirm">Type the {{ label }} name to confirm</label>
+    <input type="text" id="container-confirm" name="confirm" class="field-full"
            autocomplete="off">
-    <div><button type="submit" class="danger">Delete group</button></div>
+    <div><button type="submit" class="danger">Delete {{ label }}</button></div>
     <p class="field-tip">
-      The devices themselves are untouched — they leave the group, they are not
+      The devices themselves are untouched — they leave the {{ label }}, they are not
       unenrolled.
     </p>
   </form>

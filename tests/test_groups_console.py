@@ -108,10 +108,21 @@ def test_the_groups_page_lists_it_with_counts(client: TestClient, db, enrolled):
     assert f"/groups/{group.id}" in body
 
 
-def test_the_fleet_page_links_to_groups(client: TestClient):
+def test_the_fleet_page_has_a_groups_tab(client: TestClient):
+    """W122 moved the list onto the Manage page rather than linking out to it."""
     body = client.get("/fleet", headers=ADMIN_HEADERS).text
 
-    assert 'href="/groups"' in body
+    assert 'data-tab="groups"' in body
+    assert 'data-tab-panel="groups"' in body
+
+
+def test_the_old_groups_url_still_lands_on_the_tab(client: TestClient):
+    """⚠️ Fleet, the detail page and W121's QR page all linked to /groups. It
+    redirects rather than 404s, and the tab bar reads `#tab-<name>`."""
+    response = client.get("/groups", headers=ADMIN_HEADERS, follow_redirects=False)
+
+    assert response.status_code in (302, 303)
+    assert response.headers["location"] == "/fleet#tab-groups"
 
 
 # --------------------------------------------------------------------------- #

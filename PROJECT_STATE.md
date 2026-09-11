@@ -563,6 +563,82 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W122 — Manage tabs: Devices, Groups, Tags
+
+Operator, 2026-09-11: *"On the manage page, I want tabs for devices, groups, and
+tags."*
+
+#### ⚠️ Two of the three tabs have somewhere to go; the third has nothing at all
+
+Devices is the existing `/fleet` table. Groups got its pages in W119/W120. **Tags
+have no console surface whatsoever** — the model, the API (`POST /api/v1/tags`,
+`PUT /api/v1/tags/{id}/devices`) and tag-scoped `Assignment`s have all existed
+from early on, and nothing has ever exposed them.
+
+So a Tags tab is not a tab. Listing tags that cannot be created, populated or
+assigned to would be a dead end, and a visibly empty third tab is worse than
+none. **Tags reach parity with groups in this chunk** — that is what the tab
+has to contain to mean anything.
+
+#### One implementation, parameterised, rather than a second copy
+
+The group routes and the tag routes differ only in a model class and the string
+`"group"` / `"tag"`. The service layer is *already* general:
+`_apply_membership` is typed `DeviceGroup | Tag`, and `create_assignment` takes
+the scope as a parameter. Duplicating the console half would leave two copies to
+drift — which is exactly how W118 shipped a cache bug. A small descriptor
+(model, scope, url prefix, label) drives both.
+
+⚠️ `Tag` has **no `description`**, unlike `DeviceGroup`. The shared template has
+to tolerate that rather than assume the richer shape.
+
+#### Existing links must keep working
+
+`/groups` is linked from Fleet and from the group detail page, and W121's QR
+page points at it too. It redirects to `/fleet#tab-groups` rather than 404ing —
+the tab bar already reads `#tab-<name>` from the hash, so a deep link lands on
+the right tab.
+
+#### Chunk 1
+
+1. Descriptor + shared handlers for group/tag detail, membership, assignment
+   add/remove and delete.
+2. `/fleet` gains the three tabs; Groups and Tags panels hold their create forms
+   and lists.
+3. `/tags/{id}` detail, mirroring the group page.
+4. `/groups` and `/groups/{id}` keep working — the list redirects to the tab, the
+   detail page stays.
+5. Tests: the tabs exist; a tag can be created, populated, and its assignment
+   reaches a member's desired state; W119/W120's group tests still pass
+   unchanged, which is what proves the parameterisation did not quietly alter
+   the group behaviour.
+6. Deploy.
+
+#### ✅ Done (2026-09-11)
+
+Suite **1414 passed, 1 skipped**. The five group handlers became
+`_render_container_detail` / `_set_container_devices` /
+`_assign_policy_to_container` / `_remove_container_assignment` /
+`_delete_container`, driven by a `_CONTAINERS` descriptor; the group and tag
+routes are now thin wrappers, and `group_detail.html` became
+`container_detail.html`.
+
+✅ **Every W119/W120 group test passed unchanged through the refactor**, which
+is the only reason a rewrite of just-shipped code was reasonable to attempt.
+
+One assertion did change, correctly: Fleet no longer *links* to `/groups`
+because the list is a tab on the page. `/groups` redirects to
+`/fleet#tab-groups` rather than 404ing, and there is now a test for that
+redirect — Fleet, the detail page and W121's QR page all pointed at it.
+
+⚠️ **The tag tests assert the desired state, not the rows.** Everything here
+shares code with groups, so the plausible failure is a tag page quietly writing
+`group_id`; `test_the_assignment_is_scoped_to_the_tag_not_a_group` and the
+check-in assertions are what would catch it. Two negative tests keep the shared
+template honest about `Tag`'s thinner shape: no description field, and no
+enrollment-token warning, since only a group can scope a token and a caution
+that is never true trains the reader to skip the ones that are.
+
 ### ✅ W121 — Pick a group when generating the provisioning QR
 
 Operator, 2026-09-11: *"I want to be able to assign a group during the
