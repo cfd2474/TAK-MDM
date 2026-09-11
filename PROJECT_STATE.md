@@ -563,6 +563,52 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W134 — The device name on the lock screen, via a token
+
+Operator, 2026-09-11: *"lets find a way to add the device name as a lock screen
+message"* — recovering the surface W133 gave up.
+
+#### ⚠️ There is exactly one lock-screen slot, and it was already taken
+
+`setDeviceOwnerLockScreenInfo` is the only way to put text there, and
+CUSTOMIZATIONS' **`lock_screen_message` already owns it**. A separate "show the
+device name on the lock screen" switch would have been two features writing to
+one field: whichever applied last would win, and neither would say so.
+
+So it is a **token inside the existing field**. Write `{device}` anywhere in the
+message and each device substitutes its own name — or its serial if unnamed,
+the same fallback the on-screen label uses. One policy labels a whole fleet,
+and the operator writes the line rather than accepting ours.
+
+The same token works in the two support messages, because special-casing one
+field would be the surprise.
+
+#### ⚠️ Substituted on the device, not on the server
+
+Renaming a device **does not invalidate its cached effective policy** —
+`rename_device_form` just sets the name and commits. A name baked in
+server-side would therefore stay stale until something unrelated happened to
+change the policy. The agent is told its name on every check-in. There is a
+test that fails if `{device}` ever appears under `app/services`.
+
+#### ⚠️ An unresolved token is left visible rather than blanked
+
+Substituting an empty string would turn *"Property of {device}"* into
+*"Property of "*, which reads as a bug on a device nobody has named yet. The
+token stays, and says what it is.
+
+The blank rule still governs: an operator who empties the box gets the field
+cleared, not a lock screen reading `{device}`.
+
+#### Tested where it can actually run
+
+Five new cases in `CustomizationsPlanTest` — **10 tests, 0 failures** in
+`testReleaseUnitTest`. `CustomizationsPlan.message` is pure, so these execute
+the substitution rather than grepping for it, which is the difference that
+caught the literal-dollar bug in W131 only after hardware did.
+
+Suite **1446 passed, 1 skipped**. Agent **0.67.0 (versionCode 112)**.
+
 ### ✅ W133 — Drop the drawn label, keep the widget
 
 Operator, 2026-09-11: *"that worked, now remove the wallpaper version, keeping

@@ -42,9 +42,31 @@ import org.json.JSONObject
  */
 object CustomizationsPlan {
 
-    /** The text to push for [key], or null meaning "clear it / stop managing it". */
-    fun message(spec: JSONObject, key: String): String? {
+    /**
+     * Stands for this device's name in any operator-authored message (W134).
+     *
+     * ⚠️ **A token inside the existing field, not a second feature.** Android
+     * has exactly one lock-screen slot — `setDeviceOwnerLockScreenInfo` — and
+     * the CUSTOMIZATIONS policy already owns it. A separate "show the device
+     * name on the lock screen" switch would have been two features writing to
+     * one slot, where whichever ran last won and neither said so. The operator
+     * writes the whole line and decides where the name sits in it.
+     */
+    const val DEVICE_TOKEN = "{device}"
+
+    /**
+     * The text to push for [key], or null meaning "clear it / stop managing it".
+     *
+     * [deviceId] replaces [DEVICE_TOKEN] wherever it appears. Substituting here
+     * rather than on the server is deliberate: renaming a device does **not**
+     * invalidate its cached effective policy, so a name baked in server-side
+     * would stay stale until something else happened to change the policy. The
+     * agent is told its name on every check-in.
+     */
+    fun message(spec: JSONObject, key: String, deviceId: String? = null): String? {
         if (spec.isNull(key)) return null
-        return spec.optString(key).takeIf { it.isNotBlank() }
+        val raw = spec.optString(key).takeIf { it.isNotBlank() } ?: return null
+        if (deviceId.isNullOrBlank()) return raw
+        return raw.replace(DEVICE_TOKEN, deviceId)
     }
 }

@@ -87,7 +87,10 @@ class CustomizationsSpec(PolicySpec):
             "Shown on the lock screen, before anyone unlocks the device — good for "
             "ownership or return-if-found text, bad for anything sensitive. While "
             "this is set the user cannot change the lock screen owner info "
-            "themselves; clearing it hands that back to them."
+            "themselves; clearing it hands that back to them. "
+            "Write {device} anywhere in the text and each device substitutes its "
+            "own name — or its serial, if it has not been named — so one policy "
+            "labels a whole fleet. The same token works in the support messages."
         ),
         json_schema_extra={"ui_group": _LOCK_SCREEN, "ui_control": "text"},
     )

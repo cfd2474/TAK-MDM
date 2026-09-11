@@ -61,4 +61,59 @@ class CustomizationsPlanTest {
         val spec = JSONObject().put("k", "Line one.\nLine two.")
         assertEquals("Line one.\nLine two.", CustomizationsPlan.message(spec, "k"))
     }
+
+    // ----------------------------------------------------------------------- //
+    // {device} substitution (W134)
+    // ----------------------------------------------------------------------- //
+
+    @Test
+    fun `the device token is replaced with the name`() {
+        val spec = JSONObject().put("lock_screen_message", "Property of 3rd Bde — {device}")
+        assertEquals(
+            "Property of 3rd Bde — TEST TAB",
+            CustomizationsPlan.message(spec, "lock_screen_message", "TEST TAB"),
+        )
+    }
+
+    @Test
+    fun `the token can appear more than once`() {
+        val spec = JSONObject().put("lock_screen_message", "{device} — return to depot — {device}")
+        assertEquals(
+            "R5GL40MMHRN — return to depot — R5GL40MMHRN",
+            CustomizationsPlan.message(spec, "lock_screen_message", "R5GL40MMHRN"),
+        )
+    }
+
+    @Test
+    fun `a message without the token is untouched`() {
+        val spec = JSONObject().put("lock_screen_message", "Property of 3rd Bde.")
+        assertEquals(
+            "Property of 3rd Bde.",
+            CustomizationsPlan.message(spec, "lock_screen_message", "TEST TAB"),
+        )
+    }
+
+    @Test
+    fun `an unknown identity leaves the token alone rather than blanking it`() {
+        // ⚠️ Substituting an empty string would turn "Property of {device}" into
+        // "Property of ", which reads as a bug on the lock screen of a device
+        // nobody has named yet. The unresolved token at least says what it is.
+        val spec = JSONObject().put("lock_screen_message", "Property of {device}")
+        assertEquals(
+            "Property of {device}",
+            CustomizationsPlan.message(spec, "lock_screen_message", null),
+        )
+        assertEquals(
+            "Property of {device}",
+            CustomizationsPlan.message(spec, "lock_screen_message", "  "),
+        )
+    }
+
+    @Test
+    fun `a token-only message still clears when the field is emptied`() {
+        // The blank rule still governs: an operator who deletes the box has not
+        // asked for a lock screen reading "{device}".
+        assertNull(CustomizationsPlan.message(JSONObject().put("lock_screen_message", "  "),
+            "lock_screen_message", "TEST TAB"))
+    }
 }

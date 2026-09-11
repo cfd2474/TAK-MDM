@@ -184,24 +184,40 @@ class PolicyApplier(private val context: Context) {
      * that rule lives and is tested, because for the lock screen the two are
      * genuinely different instructions to the platform.
      */
+    /**
+     * This device's name for `{device}` substitution, falling back to its
+     * serial (W134).
+     *
+     * ⚠️ The same fallback the on-screen label uses, and for the same reason: a
+     * serial is unique, so it identifies, where a shared placeholder would not.
+     * Resolved once per apply rather than per message.
+     */
+    private fun deviceId(): String? =
+        config.deviceName?.takeIf { it.isNotBlank() }
+            ?: config.deviceSerial?.takeIf { it.isNotBlank() }
+
     private fun applyCustomizations(spec: JSONObject): List<String> {
         val failures = mutableListOf<String>()
+        val deviceId = deviceId()
 
         runCatching {
             dpm.setShortSupportMessage(
-                admin, CustomizationsPlan.message(spec, "disabled_setting_message")
+                admin,
+                CustomizationsPlan.message(spec, "disabled_setting_message", deviceId)
             )
         }.onFailure { failures += "disabled setting message: ${it.message}" }
 
         runCatching {
             dpm.setLongSupportMessage(
-                admin, CustomizationsPlan.message(spec, "admin_app_description")
+                admin,
+                CustomizationsPlan.message(spec, "admin_app_description", deviceId)
             )
         }.onFailure { failures += "admin app description: ${it.message}" }
 
         runCatching {
             dpm.setDeviceOwnerLockScreenInfo(
-                admin, CustomizationsPlan.message(spec, "lock_screen_message")
+                admin,
+                CustomizationsPlan.message(spec, "lock_screen_message", deviceId)
             )
         }.onFailure { failures += "lock screen message: ${it.message}" }
 

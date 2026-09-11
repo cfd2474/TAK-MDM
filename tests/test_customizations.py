@@ -167,3 +167,48 @@ def test_a_narrow_policy_stacks_onto_a_broad_one():
     values = resolved.values["CUSTOMIZATIONS"]
     assert values["lock_screen_message"] == "Bde HQ."
     assert values["disabled_setting_message"] == "Ask the S6."
+
+
+# --------------------------------------------------------------------------- #
+# The {device} token (W134)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_lock_screen_field_documents_the_token():
+    """⚠️ Undocumented, nobody would ever type it. The whole feature is an
+    operator knowing the token exists."""
+    from app.policies import form_schema
+
+    field = next(
+        f for f in form_schema.form_fields("CUSTOMIZATIONS")
+        if f.name == "lock_screen_message"
+    )
+
+    assert "{device}" in field.help
+    assert "serial" in field.help
+
+
+def test_the_token_is_not_a_second_lock_screen_feature():
+    """⚠️ Android has exactly one lock-screen slot and CUSTOMIZATIONS already
+    owns it. A separate "show the device name" switch would have been two
+    features writing to one field, whichever ran last winning, neither saying
+    so. The token lets the operator write the whole line instead.
+    """
+    from app.policies import form_schema
+
+    names = [f.name for f in form_schema.form_fields("CUSTOMIZATIONS")]
+
+    assert names.count("lock_screen_message") == 1
+    assert not any("device_id" in n or "device_name" in n for n in names)
+
+
+def test_the_server_does_not_substitute_it():
+    """⚠️ Renaming a device does **not** invalidate its cached effective policy,
+    so a name baked in here would stay stale until something unrelated changed
+    the policy. The agent is told its name on every check-in and substitutes at
+    apply time."""
+    import pathlib
+
+    services = pathlib.Path("app/services").rglob("*.py")
+    for path in services:
+        assert "{device}" not in path.read_text(encoding="utf-8"), path
