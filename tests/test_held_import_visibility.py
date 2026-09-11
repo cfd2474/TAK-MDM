@@ -45,18 +45,41 @@ def _held(db, artifact_storage, package: str = "org.example.held", code: int = 4
     return db.scalar(select(AppPackage).where(AppPackage.package_name == package))
 
 
-def test_a_held_version_is_named_on_the_apps_page(
+def test_a_held_version_is_named_and_not_flagged_as_a_fault(
     client: TestClient, db, artifact_storage
 ):
-    """⚠️ The bug the operator hit. `none published` alone is true of an empty
-    package and of one holding a freshly imported build."""
+    """⚠️ The bug the operator hit, twice over.
+
+    `none published` alone is true of an empty package and of one holding a
+    freshly imported build, and it was rendered in warning orange — so a
+    successful import was reported as a fault. Imports never publish by design
+    (`repo_import`: publishing aims every device asking for "latest" at a
+    build), which makes "held" the normal outcome, not an exception.
+    """
     package = _held(db, artifact_storage)
 
     body = client.get("/apps", headers=ADMIN_HEADERS).text
     row = body[body.index(package.package_name) :][:1200]
 
-    assert "none published" in row
-    assert "42" in row and "held" in row
+    assert "held" in row and "42" in row
+    assert "pill warn" not in row
+
+
+def test_a_package_with_nothing_in_it_is_still_a_warning(
+    client: TestClient, db, artifact_storage
+):
+    """⚠️ The distinction the fix rests on. Softening *both* cases would hide a
+    package that really has nothing to install."""
+    from app.db.models import AppPackage
+
+    package = AppPackage(package_name="org.example.empty", label="Empty")
+    db.add(package)
+    db.commit()
+
+    body = client.get("/apps", headers=ADMIN_HEADERS).text
+    row = body[body.index("org.example.empty") :][:1200]
+
+    assert "nothing uploaded" in row
 
 
 def test_a_single_held_version_still_links_to_the_library(
@@ -103,3 +126,49 @@ def test_the_import_progress_does_not_interpolate_a_missing_version():
 
     assert '"Importing " + app.name + " " + version.version_code' not in body
     assert "version.version_code || version.version_name" in body
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ A source that cannot enumerate versions should not offer a picker (W125)
+# --------------------------------------------------------------------------- #
+
+
+def test_google_play_search_says_it_cannot_pick_a_version(client: TestClient):
+    """The flag the client needs, sent explicitly rather than inferred.
+
+    Play returns one placeholder with no code, name or architecture, so a
+    version picker there asks the operator to choose from a single blank row.
+    """
+    routes = pathlib.Path("app/web/routes.py").read_text(encoding="utf-8")
+
+    play = routes[routes.index('"source_label": "Google Play"') :][:800]
+    assert '"picks_version": False' in play
+
+
+def test_the_other_sources_declare_that_they_can(client: TestClient):
+    """⚠️ Stated, not omitted. If the key were absent for enumerating sources,
+    a new one would silently lose its version picker the day it was added."""
+    routes = pathlib.Path("app/web/routes.py").read_text(encoding="utf-8")
+
+    assert routes.count('"picks_version"') == 2
+    assert '"picks_version": True' in routes
+
+
+def test_the_search_row_imports_directly_when_it_cannot_pick(client: TestClient):
+    js = pathlib.Path("app/web/static/atlas.js").read_text(encoding="utf-8")
+
+    assert "app.picks_version === false" in js
+    assert "importLatest(app)" in js
+
+
+def test_the_direct_import_still_asks_the_server_for_the_version(client: TestClient):
+    """⚠️ It does not fabricate one. The placeholder carries the download URL
+    the import endpoint needs, and inventing that on the client would put a
+    server-side URL scheme into the browser."""
+    js = pathlib.Path("app/web/static/atlas.js").read_text(encoding="utf-8")
+
+    body = js[js.index("function importLatest(") :]
+    body = body[: body.index("function openVersions(")]
+
+    assert "/apps/repo/versions?source=" in body
+    assert "startImport(app, versions[0])" in body

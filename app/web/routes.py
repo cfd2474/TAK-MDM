@@ -2790,6 +2790,7 @@ def repo_search(
                     "source": spec.name,
                     "source_label": spec.label,
                     "verifiable": spec.kind != "apkpure",
+                    "picks_version": True,
                 }
             )
 
@@ -2868,6 +2869,12 @@ def play_search(
                     # Play publishes no digest through this path, so a download is
                     # checked by reading the file rather than by comparison.
                     "verifiable": False,
+                    # ⚠️ Play cannot enumerate versions at all — the source
+                    # returns one placeholder whose code and name are only known
+                    # once the file is read. Offering a "Versions" button that
+                    # opens a list of one blank row is worse than offering
+                    # nothing, so the client imports straight from here (W125).
+                    "picks_version": False,
                 }
                 for a in apps
             ],

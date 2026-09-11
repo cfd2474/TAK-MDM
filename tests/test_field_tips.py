@@ -78,6 +78,10 @@ def test_the_script_does_not_reintroduce_hints():
         for line in script.splitlines()
         if "placeholder" in line
         and "//" not in line.split("placeholder")[0]
+        # ⚠️ Block comments too. The check knew only about `//`, so a JSDoc line
+        # that merely used the word "placeholder" in prose was reported as a
+        # field without a tip (W125).
+        and not line.strip().startswith("*")
         and not any(keep in line for keep in STATE)
         and "default" not in line
     ]

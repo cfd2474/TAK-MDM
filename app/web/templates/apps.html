@@ -118,17 +118,21 @@
               {% if deployed %}
                 {{ deployed.version_code }}{% if deployed.version_name %} ({{ deployed.version_name }}){% endif %}
               {% else %}
-                <span class="pill warn">none published</span>
-                {# ⚠️ Say what *is* there. "none published" is true of a package
-                   with nothing in it and of one holding four freshly imported
-                   splits, and an operator who has just watched an import
-                   succeed reads the first meaning (W124). #}
+                {# ⚠️ Two different situations, and only one of them is a
+                   problem. A package holding a freshly imported build is doing
+                   exactly what an import does — repo imports never publish, so
+                   that every device asking for "latest" is aimed at a build by
+                   an operator's deliberate act. Flagging that in warning orange
+                   reports a success as a fault (W124, W125). An empty package
+                   really is a warning. #}
                 {% set held = p.versions | sort(attribute='version_code') | last %}
                 {% if held %}
+                  <span class="pill">held — publish to deploy</span>
                   <div class="muted" style="font-size:11px">
                     {{ held.version_code }}{% if held.version_name %} ({{ held.version_name }}){% endif %}
-                    held
                   </div>
+                {% else %}
+                  <span class="pill warn">nothing uploaded</span>
                 {% endif %}
               {% endif %}
               {% if p.versions %}
@@ -278,17 +282,21 @@
               {% if deployed %}
                 {{ deployed.version_code }}{% if deployed.version_name %} ({{ deployed.version_name }}){% endif %}
               {% else %}
-                <span class="pill warn">none published</span>
-                {# ⚠️ Say what *is* there. "none published" is true of a package
-                   with nothing in it and of one holding four freshly imported
-                   splits, and an operator who has just watched an import
-                   succeed reads the first meaning (W124). #}
+                {# ⚠️ Two different situations, and only one of them is a
+                   problem. A package holding a freshly imported build is doing
+                   exactly what an import does — repo imports never publish, so
+                   that every device asking for "latest" is aimed at a build by
+                   an operator's deliberate act. Flagging that in warning orange
+                   reports a success as a fault (W124, W125). An empty package
+                   really is a warning. #}
                 {% set held = p.versions | sort(attribute='version_code') | last %}
                 {% if held %}
+                  <span class="pill">held — publish to deploy</span>
                   <div class="muted" style="font-size:11px">
                     {{ held.version_code }}{% if held.version_name %} ({{ held.version_name }}){% endif %}
-                    held
                   </div>
+                {% else %}
+                  <span class="pill warn">nothing uploaded</span>
                 {% endif %}
               {% endif %}
             </td>

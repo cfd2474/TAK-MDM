@@ -2396,8 +2396,17 @@ function atlasWireAppSource(panelName, searchUrl) {
           var button = document.createElement("button");
           button.type = "button";
           button.className = "ghost";
-          button.textContent = "Versions";
-          button.addEventListener("click", function () { openVersions(app); });
+          // ⚠️ A source that cannot enumerate versions (Google Play) gets a
+          // straight Import. Its "version list" is a single placeholder with no
+          // code, no name and no architecture, so a picker there asks the
+          // operator to choose from one blank row (W125).
+          if (app.picks_version === false) {
+            button.textContent = "Import";
+            button.addEventListener("click", function () { importLatest(app); });
+          } else {
+            button.textContent = "Versions";
+            button.addEventListener("click", function () { openVersions(app); });
+          }
           act.appendChild(button);
           row.appendChild(name); row.appendChild(pkg); row.appendChild(src); row.appendChild(act);
           body.appendChild(row);
@@ -2421,6 +2430,37 @@ function atlasWireAppSource(panelName, searchUrl) {
     if (version.abis === null) return "<span class='muted'>not stated</span>";
     if (!version.abis.length) return "<span class='pill good'>any</span>";
     return "<span class='mono'>" + version.abis.join(", ") + "</span>";
+  }
+
+  /**
+   * Import from a source that has only one thing to offer (W125).
+   *
+   * Still asks the server for the version rather than inventing one: the
+   * placeholder carries the download URL and the source name the import
+   * endpoint needs, and fabricating those on the client would put knowledge of
+   * a server-side URL scheme into the browser.
+   */
+  function importLatest(app) {
+    modalTitle.textContent = app.name + " — " + (app.source_label || app.source);
+    modalBody.innerHTML = "<p class='muted'>Starting…</p>";
+    modal.hidden = false;
+
+    fetch("/apps/repo/versions?source=" + encodeURIComponent(app.source) +
+          "&package=" + encodeURIComponent(app.package_name))
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+      .then(function (res) {
+        var versions = (res.body && res.body.versions) || [];
+        if (!res.ok || !versions.length) {
+          modalBody.innerHTML = "<p style='color:var(--bad)'></p>";
+          modalBody.querySelector("p").textContent =
+            (res.body && res.body.error) || "nothing to download";
+          return;
+        }
+        startImport(app, versions[0]);
+      })
+      .catch(function () {
+        modalBody.innerHTML = "<p style='color:var(--bad)'>could not reach the source</p>";
+      });
   }
 
   function openVersions(app) {

@@ -563,6 +563,51 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W125 — Play imports go straight in, and "held" is not a fault
+
+Operator, 2026-09-11: *"there is no sense in showing a version button and then
+showing a list with no version. It should be a straight download. also, its
+showing in my list as 'none published' still."*
+
+#### A picker over one blank row
+
+Play cannot enumerate versions — the source returns a single placeholder whose
+code, name and architecture are all unknown until the file is read. So the
+Versions button opened a table with one empty row and an Import button in it.
+The search row now shows **Import** for such a source and skips the dialog.
+
+⚠️ **The client is told, not left to guess.** `picks_version` is sent explicitly
+by *both* kinds of source rather than inferred from a missing key — otherwise
+the next source added would silently lose its version picker.
+
+⚠️ **The direct import still asks the server for the version** rather than
+fabricating one. The placeholder carries the download URL and source name the
+import endpoint needs, and inventing those in the browser would put a
+server-side URL scheme into the client.
+
+#### "none published" was reporting a success as a fault
+
+Held is the *designed* outcome of an import: `repo_import` never publishes,
+because publishing aims every device asking for "latest" at a build and that has
+to be an operator's deliberate act. Rendering it in warning orange said the
+opposite. Now a package with a held build shows a neutral **held — publish to
+deploy** with the version, and only a package with *nothing in it* warns
+(**nothing uploaded**) — a distinction with its own test, since softening both
+would hide a package that really has nothing to install.
+
+**The behaviour is unchanged**: imports are still held. Only the reporting of it
+is fixed.
+
+#### A guard that could not read block comments
+
+`test_the_script_does_not_reintroduce_hints` flags `placeholder` in
+script-built fields, skipping `//` comments. A JSDoc line using the word in
+prose was therefore reported as a field missing its tip. Fixed in the guard —
+it now skips `*` continuation lines too — rather than by rewording around it,
+because the gap would have caught the next person the same way.
+
+Suite **1412 passed, 1 skipped**. No agent change.
+
 ### ✅ W124 — A held import has to look imported
 
 Operator, 2026-09-11, after importing Chrome from Google Play: *"it shows no
