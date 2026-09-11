@@ -563,7 +563,7 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
-### 🚧 W123 — Remove tags
+### ✅ W123 — Remove tags
 
 Operator, 2026-09-11: *"Lets remove tags all together"* — one day after the Tags
 tab was built, having seen what it actually offers.
@@ -654,6 +654,28 @@ policies stack across scopes.
    `profile_assignment.tag_id`, `AssignmentScope.TAG`, and the resolver's `tag`
    specificity tier; rewrite the CHECK constraint; migration with `alembic
    heads` checked first.
+
+#### ✅ Chunk 2 done (2026-09-11) — `c0e2g4i6k8m0`
+
+Operator: *"no one has deployed yet, so there are no effects on others at this
+time"* — which removes the only argument for keeping the schema.
+
+Suite **1403 passed, 1 skipped**. `alembic heads` checked before writing the
+revision, per the lesson that cost an API outage the day before.
+
+⚠️ **Two orderings inside the migration are load-bearing.** Tag-scoped rows are
+deleted *before* `AssignmentScope.TAG` leaves the model, because `scope` is
+mapped through that enum and a surviving `"tag"` row would become unloadable —
+a 500 in the resolver, not a tidy absence. And
+`ck_assignment_single_target` is **rewritten rather than dropped**: it enforces
+"exactly one target", so removing it would let an assignment point at nothing,
+which the resolver would silently skip. SQLite needs batch mode for that.
+
+One thing the earlier grep missed and the type checker would not have caught:
+`fleet.py` still iterated `device.tags` after the relationship was gone. Found
+by reading the leftovers rather than by a test, because the fleet page is
+rendered in tests that were passing for unrelated reasons — worth remembering
+that "imports OK" is not "works".
 
 ### ✅ W122 — Manage tabs: Devices, Groups, Tags
 

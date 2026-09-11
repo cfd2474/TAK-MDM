@@ -30,7 +30,7 @@ from app.api.schemas import (
     PolicyTargets,
     PolicyTargetsResult,
 )
-from app.db.models import Assignment, AssignmentScope, Device, DeviceGroup, Policy, Tag
+from app.db.models import Assignment, AssignmentScope, Device, DeviceGroup, Policy
 from app.services import effective_policy as eff
 
 router = APIRouter(prefix="/api/v1/assignments", tags=["assignments"])
@@ -38,7 +38,6 @@ router = APIRouter(prefix="/api/v1/assignments", tags=["assignments"])
 _TARGET_MODELS = {
     AssignmentScope.DEVICE: (Device, "device", "device_id"),
     AssignmentScope.GROUP: (DeviceGroup, "group", "group_id"),
-    AssignmentScope.TAG: (Tag, "tag", "tag_id"),
 }
 
 
@@ -57,7 +56,7 @@ def _reject_template(policy: Policy) -> None:
 
 
 def _to_read(assignment: Assignment) -> AssignmentRead:
-    target_id = assignment.device_id or assignment.group_id or assignment.tag_id
+    target_id = assignment.device_id or assignment.group_id
     return AssignmentRead(
         id=assignment.id,
         policy_id=assignment.policy_id,
@@ -155,7 +154,7 @@ def set_policy_targets(
             requested.add((scope, target_id))
 
     existing = {
-        (a.scope, a.device_id or a.group_id or a.tag_id): a
+        (a.scope, a.device_id or a.group_id): a
         for a in session.scalars(
             select(Assignment).where(Assignment.policy_id == policy.id)
         )

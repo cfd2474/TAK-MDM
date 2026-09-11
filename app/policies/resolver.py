@@ -42,7 +42,7 @@ from app.policies.strategies import (
     apply_strategy,
 )
 
-_SCOPE_SPECIFICITY = {"device": 3, "group": 2, "tag": 1}
+_SCOPE_SPECIFICITY = {"device": 2, "group": 1}
 
 
 @dataclass(frozen=True)

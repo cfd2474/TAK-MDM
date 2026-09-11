@@ -80,14 +80,11 @@ def _effective_version(assignment: Assignment) -> PolicyVersion | None:
 
 
 def gather_assignments(session: Session, device: Device) -> list[AssignmentInput]:
-    """Every enabled assignment reaching this device, via device, group, or tag."""
+    """Every enabled assignment reaching this device, directly or via a group."""
     targets = [Assignment.device_id == device.id]
     group_ids = [g.id for g in device.groups]
-    tag_ids = [t.id for t in device.tags]
     if group_ids:
         targets.append(Assignment.group_id.in_(group_ids))
-    if tag_ids:
-        targets.append(Assignment.tag_id.in_(tag_ids))
 
     rows = session.scalars(
         select(Assignment).where(Assignment.enabled.is_(True), or_(*targets))
@@ -116,7 +113,7 @@ def gather_assignments(session: Session, device: Device) -> list[AssignmentInput
             )
         )
 
-    inputs.extend(_gather_profile_assignments(session, device, group_ids, tag_ids))
+    inputs.extend(_gather_profile_assignments(session, device, group_ids))
     return inputs
 
 
@@ -124,15 +121,12 @@ def _gather_profile_assignments(
     session: Session,
     device: Device,
     group_ids: list[uuid.UUID],
-    tag_ids: list[uuid.UUID],
 ) -> list[AssignmentInput]:
     """Expand every profile assignment reaching this device into one input per
     section the profile owns, all at the profile assignment's rank and scope."""
     targets = [ProfileAssignment.device_id == device.id]
     if group_ids:
         targets.append(ProfileAssignment.group_id.in_(group_ids))
-    if tag_ids:
-        targets.append(ProfileAssignment.tag_id.in_(tag_ids))
 
     rows = session.scalars(
         select(ProfileAssignment).where(
@@ -551,14 +545,12 @@ def invalidate_all(session: Session) -> None:
 
 
 def devices_targeted_by(session: Session, assignment: Assignment) -> set[uuid.UUID]:
-    """Devices an assignment reaches, resolved through group/tag membership."""
+    """Devices an assignment reaches, resolved through group membership."""
     if assignment.scope is AssignmentScope.DEVICE:
         return {assignment.device_id} if assignment.device_id else set()
 
     if assignment.scope is AssignmentScope.GROUP:
         stmt = select(Device).where(Device.groups.any(id=assignment.group_id))
-    else:
-        stmt = select(Device).where(Device.tags.any(id=assignment.tag_id))
     return {d.id for d in session.scalars(stmt)}
 
 
@@ -569,8 +561,6 @@ def devices_targeted_by_profile_assignment(
         return {pa.device_id} if pa.device_id else set()
     if pa.scope is AssignmentScope.GROUP:
         stmt = select(Device).where(Device.groups.any(id=pa.group_id))
-    else:
-        stmt = select(Device).where(Device.tags.any(id=pa.tag_id))
     return {d.id for d in session.scalars(stmt)}
 
 

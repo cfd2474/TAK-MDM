@@ -101,7 +101,6 @@ from app.db.models import (
     PolicyProfile,
     PolicyVersion,
     ProfileAssignment,
-    Tag,
     TakGovLinkStatus,
 )
 from app.policies import creator_catalog
@@ -816,10 +815,6 @@ def _annotate_removability(
             group = session.get(DeviceGroup, assignment.group_id)
             row["removable"] = False
             row["origin"] = f"via group {group.name}" if group else "via a group"
-        elif assignment.tag_id is not None:
-            tag = session.get(Tag, assignment.tag_id)
-            row["removable"] = False
-            row["origin"] = f"via tag {tag.name}" if tag else "via a tag"
         else:
             row["removable"] = False
             row["origin"] = ""
@@ -1810,7 +1805,6 @@ def profile_detail(
     assigned = {
         "device": {a.device_id for a in pas if a.scope is AssignmentScope.DEVICE},
         "group": {a.group_id for a in pas if a.scope is AssignmentScope.GROUP},
-        "tag": {a.tag_id for a in pas if a.scope is AssignmentScope.TAG},
     }
     return _render(
         request,
@@ -1863,7 +1857,6 @@ def set_profile_targets_form(
     column = {
         AssignmentScope.DEVICE: "device_id",
         AssignmentScope.GROUP: "group_id",
-        AssignmentScope.TAG: "tag_id",
     }
     for scope, target_id in requested:
         if (scope, target_id) in existing:
@@ -2171,7 +2164,6 @@ def policy_detail(
     assigned = {
         "device": {a.device_id for a in assignments if a.scope is AssignmentScope.DEVICE},
         "group": {a.group_id for a in assignments if a.scope is AssignmentScope.GROUP},
-        "tag": {a.tag_id for a in assignments if a.scope is AssignmentScope.TAG},
     }
 
     current_spec = policy.latest_version.spec if policy.latest_version else {}
@@ -2260,7 +2252,6 @@ def set_targets(
     column = {
         AssignmentScope.DEVICE: "device_id",
         AssignmentScope.GROUP: "group_id",
-        AssignmentScope.TAG: "tag_id",
     }
     for scope, target_id in requested:
         if (scope, target_id) in existing:

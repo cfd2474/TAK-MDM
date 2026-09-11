@@ -19,7 +19,7 @@ Two invariants drive the shape of this schema:
 * Published policy versions are **immutable** (D2). Editing a policy creates a new
   ``PolicyVersion``; nothing ever mutates ``PolicyVersion.spec``. This is what lets
   us answer "what was actually on that device in March".
-* An ``Assignment`` targets exactly one of device / group / tag, enforced by a CHECK
+* An ``Assignment`` targets exactly one of device / group, enforced by a CHECK
   constraint rather than convention, so the database itself rejects a malformed row.
 """
 
@@ -73,7 +73,6 @@ class AssignmentScope(str, enum.Enum):
 
     DEVICE = "device"
     GROUP = "group"
-    TAG = "tag"
 
 
 class ComplianceStatus(str, enum.Enum):
@@ -130,13 +129,6 @@ device_group_member = Table(
     Base.metadata,
     Column("device_id", Uuid, ForeignKey("device.id", ondelete="CASCADE"), primary_key=True),
     Column("group_id", Uuid, ForeignKey("device_group.id", ondelete="CASCADE"), primary_key=True),
-)
-
-device_tag_member = Table(
-    "device_tag_member",
-    Base.metadata,
-    Column("device_id", Uuid, ForeignKey("device.id", ondelete="CASCADE"), primary_key=True),
-    Column("tag_id", Uuid, ForeignKey("tag.id", ondelete="CASCADE"), primary_key=True),
 )
 
 
@@ -226,9 +218,6 @@ class Device(Base):
     groups: Mapped[list[DeviceGroup]] = relationship(
         secondary=device_group_member, back_populates="devices", lazy="selectin"
     )
-    tags: Mapped[list[Tag]] = relationship(
-        secondary=device_tag_member, back_populates="devices", lazy="selectin"
-    )
 
 
 class DeviceGroup(Base):
@@ -241,18 +230,6 @@ class DeviceGroup(Base):
 
     devices: Mapped[list[Device]] = relationship(
         secondary=device_group_member, back_populates="groups"
-    )
-
-
-class Tag(Base):
-    __tablename__ = "tag"
-
-    id: Mapped[uuid.UUID] = _uuid_pk()
-    name: Mapped[str] = mapped_column(String(64), unique=True)
-    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
-
-    devices: Mapped[list[Device]] = relationship(
-        secondary=device_tag_member, back_populates="tags"
     )
 
 
@@ -354,14 +331,13 @@ class PolicyVersion(Base):
 
 
 class Assignment(Base):
-    """Binds a policy to a device, group, or tag at a given rank."""
+    """Binds a policy to a device or a group at a given rank."""
 
     __tablename__ = "assignment"
     __table_args__ = (
         CheckConstraint(
             "(CASE WHEN device_id IS NOT NULL THEN 1 ELSE 0 END) "
-            "+ (CASE WHEN group_id IS NOT NULL THEN 1 ELSE 0 END) "
-            "+ (CASE WHEN tag_id IS NOT NULL THEN 1 ELSE 0 END) = 1",
+            "+ (CASE WHEN group_id IS NOT NULL THEN 1 ELSE 0 END) = 1",
             name="ck_assignment_single_target",
         ),
     )
@@ -384,9 +360,6 @@ class Assignment(Base):
     group_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("device_group.id", ondelete="CASCADE"), default=None, index=True
     )
-    tag_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("tag.id", ondelete="CASCADE"), default=None, index=True
-    )
 
     # Higher rank wins. Authoritative over scope specificity, which only breaks ties.
     rank: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -398,7 +371,7 @@ class Assignment(Base):
 
 
 class ProfileAssignment(Base):
-    """Binds a whole profile to a device, group, or tag at a given rank.
+    """Binds a whole profile to a device or a group at a given rank.
 
     The resolver expands one of these into an assignment of every section the
     profile owns, so a profile stacks against standalone policies exactly as its
@@ -409,8 +382,7 @@ class ProfileAssignment(Base):
     __table_args__ = (
         CheckConstraint(
             "(CASE WHEN device_id IS NOT NULL THEN 1 ELSE 0 END) "
-            "+ (CASE WHEN group_id IS NOT NULL THEN 1 ELSE 0 END) "
-            "+ (CASE WHEN tag_id IS NOT NULL THEN 1 ELSE 0 END) = 1",
+            "+ (CASE WHEN group_id IS NOT NULL THEN 1 ELSE 0 END) = 1",
             name="ck_profile_assignment_single_target",
         ),
     )
@@ -427,9 +399,6 @@ class ProfileAssignment(Base):
     )
     group_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("device_group.id", ondelete="CASCADE"), default=None, index=True
-    )
-    tag_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("tag.id", ondelete="CASCADE"), default=None, index=True
     )
     rank: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -451,15 +420,6 @@ enrollment_token_group = Table(
     Column("group_id", Uuid, ForeignKey("device_group.id", ondelete="CASCADE"), primary_key=True),
 )
 
-enrollment_token_tag = Table(
-    "enrollment_token_tag",
-    Base.metadata,
-    Column(
-        "token_id", Uuid, ForeignKey("enrollment_token.id", ondelete="CASCADE"), primary_key=True
-    ),
-    Column("tag_id", Uuid, ForeignKey("tag.id", ondelete="CASCADE"), primary_key=True),
-)
-
 
 class EnrollmentToken(Base):
     """A short-lived credential that authorizes one or more devices to enroll.
@@ -467,7 +427,7 @@ class EnrollmentToken(Base):
     Only a hash of the secret is stored, so a database dump does not yield usable
     enrollment credentials. The plaintext is returned exactly once, at creation.
 
-    Group and tag scoping is what makes enrollment a single step: a device that
+    Group scoping is what makes enrollment a single step: a device that
     enrolls with the "Field Tablets" token lands in that group and immediately
     inherits its policy stack, with no second manual assignment.
     """
@@ -527,7 +487,6 @@ class EnrollmentToken(Base):
     groups: Mapped[list[DeviceGroup]] = relationship(
         secondary=enrollment_token_group, lazy="selectin"
     )
-    tags: Mapped[list[Tag]] = relationship(secondary=enrollment_token_tag, lazy="selectin")
 
     def is_usable(self, *, now: datetime) -> bool:
         if self.revoked_at is not None or now >= self.expires_at:

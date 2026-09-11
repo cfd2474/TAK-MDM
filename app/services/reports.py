@@ -101,7 +101,7 @@ def _convergence_and_compliance(session: Session) -> Rows:
 
 
 def _policy_deployment(session: Session) -> Rows:
-    columns = ["Policy", "Kind", "Latest version", "Device targets", "Group targets", "Tag targets"]
+    columns = ["Policy", "Kind", "Latest version", "Device targets", "Group targets"]
     rows: list[list[object]] = []
 
     for p in session.scalars(

@@ -50,7 +50,7 @@ class FleetRow:
 
 def policy_names_for_device(session: Session, device: Device) -> list[str]:
     """The names of every non-archived policy reaching this device — directly, or
-    through one of its groups or tags. Matches what the resolver applies."""
+    through one of its groups. Matches what the resolver applies."""
     names: set[str] = set()
 
     direct = session.execute(
@@ -71,12 +71,10 @@ def policy_names_for_device(session: Session, device: Device) -> list[str]:
     ).all()
 
     group_ids = {g.id for g in device.groups}
-    tag_ids = {t.id for t in device.tags}
     for assignment, name in (*direct, *profiles):
         if (
             (assignment.scope is AssignmentScope.DEVICE and assignment.device_id == device.id)
             or (assignment.scope is AssignmentScope.GROUP and assignment.group_id in group_ids)
-            or (assignment.scope is AssignmentScope.TAG and assignment.tag_id in tag_ids)
         ):
             names.add(name)
     return sorted(names)
@@ -93,7 +91,6 @@ def fleet_rows(session: Session) -> list[FleetRow]:
 
     by_device: dict[object, set[str]] = {}
     by_group: dict[object, set[str]] = {}
-    by_tag: dict[object, set[str]] = {}
 
     rows = session.execute(
         select(Assignment, Policy.name)
@@ -110,8 +107,6 @@ def fleet_rows(session: Session) -> list[FleetRow]:
             by_device.setdefault(assignment.device_id, set()).add(policy_name)
         elif assignment.scope is AssignmentScope.GROUP:
             by_group.setdefault(assignment.group_id, set()).add(policy_name)
-        elif assignment.scope is AssignmentScope.TAG:
-            by_tag.setdefault(assignment.tag_id, set()).add(policy_name)
 
     # Profile assignments contribute the profile's name (not each section's).
     profile_rows = session.execute(
@@ -126,15 +121,11 @@ def fleet_rows(session: Session) -> list[FleetRow]:
             by_device.setdefault(assignment.device_id, set()).add(profile_name)
         elif assignment.scope is AssignmentScope.GROUP:
             by_group.setdefault(assignment.group_id, set()).add(profile_name)
-        elif assignment.scope is AssignmentScope.TAG:
-            by_tag.setdefault(assignment.tag_id, set()).add(profile_name)
 
     result: list[FleetRow] = []
     for device in devices:
         names: set[str] = set(by_device.get(device.id, set()))
         for group in device.groups:
             names |= by_group.get(group.id, set())
-        for tag in device.tags:
-            names |= by_tag.get(tag.id, set())
         result.append(FleetRow(device=device, policy_names=sorted(names)))
     return result

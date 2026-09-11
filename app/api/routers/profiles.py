@@ -42,7 +42,6 @@ from app.db.models import (
     DeviceGroup,
     PolicyProfile,
     ProfileAssignment,
-    Tag,
 )
 from app.security.admin_auth import AdminIdentity, admin_required
 from app.services import effective_policy as eff
@@ -53,7 +52,6 @@ router = APIRouter(prefix="/api/v1/profiles", tags=["profiles"])
 _TARGET_MODELS = {
     AssignmentScope.DEVICE: (Device, "device", "device_id"),
     AssignmentScope.GROUP: (DeviceGroup, "group", "group_id"),
-    AssignmentScope.TAG: (Tag, "tag", "tag_id"),
 }
 
 
@@ -166,7 +164,7 @@ def set_profile_targets(
             requested.add((scope, target_id))
 
     existing = {
-        (a.scope, a.device_id or a.group_id or a.tag_id): a
+        (a.scope, a.device_id or a.group_id): a
         for a in session.scalars(
             select(ProfileAssignment).where(ProfileAssignment.profile_id == profile.id)
         )
