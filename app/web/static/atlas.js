@@ -2556,11 +2556,15 @@ function atlasWireAppSource(panelName, searchUrl) {
     // than faked.
     var label = version.version_code || version.version_name || "";
     modalBody.innerHTML =
-      "<p>Importing " + app.name + (label ? " " + label : "") + "…</p>" +
+      "<p data-repo-headline></p>" +
       // The stylesheet's .progress expects a <span> child; reused rather than
       // inventing a second bar style.
       "<div class='progress'><span data-repo-bar></span></div>" +
       "<p class='muted' data-repo-progress></p>";
+    // textContent, not interpolation: an app name is whatever the source says
+    // it is, and this one arrives from a search result.
+    modalBody.querySelector("[data-repo-headline]").textContent =
+      "Importing " + app.name + (label ? " " + label : "") + "…";
 
     var body = new FormData();
     body.append("csrf_token", csrf());
@@ -2593,6 +2597,7 @@ function atlasWireAppSource(panelName, searchUrl) {
           // Scoped to this panel's modal, so two open tabs cannot cross wires.
           var bar = modalBody.querySelector("[data-repo-bar]");
           var text = modalBody.querySelector("[data-repo-progress]");
+          var headline = modalBody.querySelector("[data-repo-headline]");
           if (bar && job.total) bar.style.width = job.percent + "%";
           if (text) {
             text.textContent = job.total
@@ -2601,10 +2606,22 @@ function atlasWireAppSource(panelName, searchUrl) {
           }
           if (job.state === "done") {
             clearInterval(poll); poll = null;
-            modalBody.innerHTML =
-              "<p><strong></strong> imported and <strong>held</strong>. " +
-              "Publish it from Local apps when you want devices to install it.</p>";
-            modalBody.querySelector("strong").textContent = job.package_name || job.label;
+            // ⚠️ Reads exactly like the tak.gov plugin importer's success
+            // (W126). That one says "Imported" / "<pkg> is in the local
+            // library" and leaves the bar full; this one announced the *hold*
+            // in the title position and threw the bar away, so the same
+            // outcome looked like two different things depending on which tab
+            // the operator came from. Holding is the normal result of every
+            // import — it belongs on the Apps page, which now states it, not
+            // in the one line confirming the download worked.
+            modalTitle.textContent = "Imported";
+            if (bar) bar.style.width = "100%";
+            if (text) text.textContent = "";
+            if (headline) {
+              headline.textContent =
+                (job.package_name || job.label || "The package") +
+                " is in the local library.";
+            }
           } else if (job.state === "failed") {
             clearInterval(poll); poll = null;
             modalBody.innerHTML = "<p style='color:var(--bad)'></p>";

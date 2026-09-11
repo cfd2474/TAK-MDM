@@ -172,3 +172,61 @@ def test_the_direct_import_still_asks_the_server_for_the_version(client: TestCli
 
     assert "/apps/repo/versions?source=" in body
     assert "startImport(app, versions[0])" in body
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ One import, one success message (W126)
+# --------------------------------------------------------------------------- #
+
+
+def _js() -> str:
+    return pathlib.Path("app/web/static/atlas.js").read_text(encoding="utf-8")
+
+
+def test_both_importers_announce_success_the_same_way():
+    """⚠️ The same outcome looked like two different things.
+
+    The tak.gov plugin importer finishes with "Imported" and "<pkg> is in the
+    local library". The repo/Play one announced the *hold* instead, so an
+    operator coming from the Play tab saw a caveat where the plugin tab showed
+    a confirmation — for identical behaviour, since every import is held.
+    """
+    js = _js()
+
+    assert js.count('" is in the local library."') == 2
+    assert js.count('"Imported"') >= 2
+
+
+def test_the_hold_is_explained_where_it_is_acted_on_not_in_the_receipt():
+    """Holding is the normal result of every import, so it belongs on the page
+    where an operator publishes — which W125 made say so — rather than in the
+    line confirming the download worked."""
+    js = _js()
+    apps = pathlib.Path("app/web/templates/apps.html").read_text(encoding="utf-8")
+
+    assert "imported and <strong>held</strong>" not in js
+    assert "held — publish to deploy" in apps
+
+
+def test_the_progress_bar_survives_the_success():
+    """⚠️ The plugin importer leaves the bar full; this one replaced the whole
+    body, so the bar vanished at the moment it should have read 100%."""
+    js = _js()
+
+    watch = js[js.index("function watch(jobId)") :]
+    watch = watch[: watch.index("}, 1000);")]
+
+    assert 'bar.style.width = "100%"' in watch
+    assert "modalBody.innerHTML" not in watch.split('job.state === "failed"')[0]
+
+
+def test_the_app_name_is_set_as_text_not_interpolated():
+    """⚠️ It arrives from a third-party search result. Interpolating it into
+    innerHTML would put whatever the source called the app into the DOM."""
+    js = _js()
+
+    start = js.index("function startImport(")
+    body = js[start : js.index("function watch(", start)]
+
+    assert '"<p data-repo-headline></p>"' in body
+    assert "headline]\").textContent" in body or "textContent =" in body

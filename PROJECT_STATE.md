@@ -563,6 +563,34 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W126 — One import, one success message
+
+Operator, 2026-09-11, with both dialogs side by side: *"This should just be an
+import success, and should mimic the tpc plugins behavior upon success."*
+
+The tak.gov plugin importer finishes with **Imported** / *"…is in the local
+library"* and a full progress bar. The repo/Play one announced the **hold**
+instead, and replaced the whole modal body so the bar vanished at the moment it
+should have read 100%. Identical behaviour — every import is held — reported as
+a confirmation on one tab and a caveat on the other.
+
+⚠️ **The hold belongs where it is acted on.** It is the normal result of every
+import, not a qualification on this one, so it is stated on the Apps page
+(W125's *held — publish to deploy*) rather than in the line confirming the
+download worked.
+
+⚠️ **The app name is now set with `textContent`**, not interpolated into
+`innerHTML`. It arrives from a third-party search result, so whatever the source
+chose to call the app was going into the DOM.
+
+⚠️ **Deliberately *not* copied: the plugin importer's `location.reload()` on
+close.** That list is server-rendered, so a reload is how a row gains its
+"imported" pill. A repo search is ephemeral — reloading would throw away results
+the operator may still be importing from. Say the word if the refresh matters
+more than the results.
+
+Suite **1416 passed, 1 skipped**. No agent change.
+
 ### ✅ W125 — Play imports go straight in, and "held" is not a fault
 
 Operator, 2026-09-11: *"there is no sense in showing a version button and then
