@@ -37,6 +37,13 @@
   </form>
 </div>
 
+{% if request.query_params.get('unassigned') %}
+  <div class="banner good">
+    Removed <strong>{{ request.query_params.get('unassigned') }}</strong> from this device.
+    It converges on the next check-in.
+  </div>
+{% endif %}
+
 {% set ci = request.query_params.get('checkin') %}
 {% if ci == 'now' %}
   <div class="banner good">Ringing the device — it will check in within a second.</div>
@@ -86,7 +93,7 @@
     In resolution order — highest precedence first. Rank decides; scope only breaks ties.
   </p>
   <table>
-    <thead><tr><th>#</th><th>Policy</th><th>Version</th><th>Scope</th><th>Rank</th></tr></thead>
+    <thead><tr><th>#</th><th>Policy</th><th>Version</th><th>Scope</th><th>Rank</th><th></th></tr></thead>
     <tbody>
     {% for source in considered %}
       <tr>
@@ -95,10 +102,32 @@
         <td class="mono">v{{ source.policy_version }}</td>
         <td><span class="pill">{{ source.scope }}</span></td>
         <td class="mono">{{ source.rank }}</td>
+        <td>
+          {# ⚠️ A button only where removing it means *this device* (W118). A
+             group or tag assignment belongs to the group or the tag, so the
+             same click would unassign the policy from every device sharing it.
+             Those rows say where they come from instead, because that is what
+             the operator needs in order to go and change it. #}
+          {% if source.removable %}
+            <form method="post"
+                  action="/devices/{{ device.id }}/assignments/{{ source.assignment_id }}/remove"
+                  class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="linklike">Remove</button>
+            </form>
+          {% elif source.origin %}
+            <span class="muted">{{ source.origin }}</span>
+          {% endif %}
+        </td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
+  <p class="field-tip">
+    Only policies assigned directly to this device can be removed here. One
+    inherited from a group or a tag is shown with where it comes from — removing
+    it there would change every device that shares it.
+  </p>
   {% endif %}
 </div>
 

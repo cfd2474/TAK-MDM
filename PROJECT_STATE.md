@@ -563,6 +563,74 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W118 — Unassign a policy from the device page
+
+Operator, 2026-09-11: *"I want the ability to remove policies from device
+management section in the device info page. listed policies should be able to be
+unassigned to the device with a simple click"*.
+
+#### ⚠️ Only some of those rows *can* be unassigned here, and that is the design
+
+"Policies reaching this device" lists everything the resolver considered, and
+they arrive by four different routes. A single Remove button on every row would
+be wrong in three of the four cases:
+
+| Row | Removable here? | Why |
+|---|---|---|
+| **Device-scoped assignment** | ✅ yes | It exists solely to bind this policy to this device. Deleting it affects nothing else. |
+| **Group assignment** | ❌ no | The assignment belongs to the *group*. Deleting it would silently unassign the policy from **every device in that group** — a one-click fleet change dressed up as a per-device tidy-up. |
+| **Tag assignment** | ❌ no | Same, for every device carrying the tag. |
+| **Profile section** | ❌ no | Not an `Assignment` row at all: its id is the synthetic `profile:{pa.id}:{section.id}`. There is nothing to delete, and detaching the profile is a different act. |
+
+So the button appears **only on device-scoped rows**, and the other three say
+where the policy comes from instead — which is the actionable information, since
+the operator's real next step is to edit the group, the tag, or the profile.
+
+⚠️ **The server must enforce this, not just the template.** A hidden button is
+not a control: the route re-checks that the assignment it is about to delete is
+device-scoped *and* targets **this** device, for the same reason
+`_DEVICE_ACTIONS` is an allowlist — *"letting the path segment select any
+command in the enum would put `wipe` one crafted URL away from a button that
+says Play sound"*. Here the equivalent mistake would unassign a policy from a
+whole group via a hand-edited URL.
+
+#### "Simple click" — no confirmation dialog
+
+Deliberate, and the opposite of the disenroll button two sections down. Removing
+an assignment is **reversible** — re-assign it and the device converges back on
+the next check-in — so a confirmation step would be friction without a payoff.
+Disenroll types the serial because a factory reset is not reversible. Different
+risk, different ceremony.
+
+#### Chunk 1
+
+1. Enrich the `considered` rows in the device route with: whether this row is a
+   device-scoped `Assignment`, and a human origin ("via group *Field Tablets*",
+   "section of profile *Standard*") for the ones that are not.
+2. `POST /devices/{id}/assignments/{assignment_id}/remove` — CSRF, re-checks
+   scope and target server-side, deletes, redirects with a banner.
+3. Template: a Remove button on removable rows; the origin text on the rest.
+4. Tests: a device assignment goes; a **group** assignment is refused even when
+   the id is posted directly; a profile id is refused; the device's effective
+   policy actually changes afterwards.
+5. Deploy.
+
+#### ✅ Done (2026-09-11)
+
+Suite **1373 passed, 1 skipped**.
+
+⚠️ **One bug the tests caught that a simpler test would not have.** The first
+version of the route deleted the assignment and committed — and the device went
+on serving a **stale cached effective policy**. The row vanished from the table
+and nothing reached the tablet. The API delete does three things and I had done
+one: resolve the affected devices *before* the row is gone, delete, then
+.
+
+The test that caught it asserts the **desired state changes**, not that the row
+disappeared. Asserting the row would have passed against the broken version, and
+the feature would have shipped looking like it worked — the same shape of
+mistake as W112 C2 (a mechanism that works reaching nothing that consumes it).
+
 ### ✅ W116 — Disenroll clears Factory Reset Protection
 
 Built and deployed in agent 0.58.0 (`42b6ea9`); the disenroll path sends

@@ -30,6 +30,8 @@ only the device endpoints.
 
 from __future__ import annotations
 
+from contextlib import suppress
+
 import csv
 import io
 import json
@@ -95,6 +97,7 @@ from app.db.models import (
     ManagedFile,
     PartRole,
     Policy,
+    PolicyProfile,
     PolicyVersion,
     ProfileAssignment,
     Tag,
@@ -457,7 +460,7 @@ def device_detail(
 
     # Ordered exactly as the resolver ordered them, so the page shows real
     # precedence rather than a plausible-looking guess at it.
-    considered = payload.get("considered", [])
+    considered = _annotate_removability(session, device, payload.get("considered", []))
 
     return _render(
         request,
@@ -751,6 +754,151 @@ def retire_device_form(
     revoke_device_certificates(session, device, reason="device retired")
     session.commit()
     return _redirect(f"/devices/{device_id}")
+
+
+def _annotate_removability(
+    session: Session, device: Device, considered: list[dict]
+) -> list[dict]:
+    """Mark which rows this page may unassign, and say where the rest come from.
+
+    ⚠️ **Only a device-scoped assignment is removable here** (W118). A group or
+    tag assignment belongs to the group or the tag, so deleting it would
+    unassign the policy from **every device** sharing it — a fleet-wide change
+    behind a button that looks like a per-device tidy-up. A profile section is
+    not an `Assignment` at all; its id is the synthetic
+    `profile:{pa.id}:{section.id}`.
+
+    The other three get an origin string instead, because "where does this come
+    from" is what the operator actually needs in order to go and change it.
+    """
+    ids = []
+    for row in considered:
+        raw = str(row.get("assignment_id", ""))
+        if not raw.startswith("profile:"):
+            with suppress(ValueError):
+                ids.append(uuid.UUID(raw))
+
+    assignments = {}
+    if ids:
+        assignments = {
+            str(a.id): a
+            for a in session.scalars(select(Assignment).where(Assignment.id.in_(ids)))
+        }
+
+    out = []
+    for row in considered:
+        row = dict(row)
+        raw = str(row.get("assignment_id", ""))
+
+        if raw.startswith("profile:"):
+            row["removable"] = False
+            row["origin"] = _profile_origin(session, raw)
+            out.append(row)
+            continue
+
+        assignment = assignments.get(raw)
+        if assignment is None:
+            # Resolved from something this lookup cannot see. Never offer to
+            # delete a row we could not confirm.
+            row["removable"] = False
+            row["origin"] = ""
+            out.append(row)
+            continue
+
+        if assignment.device_id == device.id:
+            row["removable"] = True
+            row["origin"] = ""
+        elif assignment.group_id is not None:
+            group = session.get(DeviceGroup, assignment.group_id)
+            row["removable"] = False
+            row["origin"] = f"via group {group.name}" if group else "via a group"
+        elif assignment.tag_id is not None:
+            tag = session.get(Tag, assignment.tag_id)
+            row["removable"] = False
+            row["origin"] = f"via tag {tag.name}" if tag else "via a tag"
+        else:
+            row["removable"] = False
+            row["origin"] = ""
+        out.append(row)
+    return out
+
+
+def _profile_origin(session: Session, assignment_id: str) -> str:
+    """"section of profile X" for a `profile:{pa.id}:{section.id}` row."""
+    parts = assignment_id.split(":")
+    if len(parts) != 3:
+        return "from a profile"
+    try:
+        pa = session.get(ProfileAssignment, uuid.UUID(parts[1]))
+    except ValueError:
+        return "from a profile"
+    if pa is None:
+        return "from a profile"
+    profile = session.get(PolicyProfile, pa.profile_id)
+    return f"section of profile {profile.name}" if profile else "from a profile"
+
+
+@router.post("/devices/{device_id}/assignments/{assignment_id}/remove")
+def remove_device_assignment(
+    device_id: uuid.UUID,
+    assignment_id: str,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Unassign one policy from this device (W118).
+
+    ⚠️ **The scope check is here, not only in the template.** A hidden button is
+    not a control. This refuses anything that is not a device-scoped assignment
+    pointing at *this* device, for the reason `_DEVICE_ACTIONS` is an allowlist:
+    otherwise a hand-edited URL could delete a **group** assignment from here and
+    silently unassign the policy across every device in that group.
+
+    No confirmation step, deliberately — unlike disenroll two sections down.
+    Re-assigning restores it and the device converges on the next check-in, so
+    ceremony here would be friction without a payoff.
+    """
+    device = session.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
+
+    try:
+        parsed = uuid.UUID(assignment_id)
+    except ValueError:
+        # A profile section id, or junk. Neither names a row we may delete.
+        return _redirect(
+            f"/devices/{device_id}?error="
+            + _quote("that policy does not come from a direct assignment")
+        )
+
+    assignment = session.get(Assignment, parsed)
+    if assignment is None:
+        return _redirect(
+            f"/devices/{device_id}?error=" + _quote("that assignment no longer exists")
+        )
+
+    if assignment.device_id != device.id:
+        return _redirect(
+            f"/devices/{device_id}?error="
+            + _quote(
+                "that policy is inherited from a group or tag; "
+                "change it there rather than on this device"
+            )
+        )
+
+    name = assignment.policy.name if assignment.policy else "the policy"
+
+    # ⚠️ Resolve the affected devices *before* the row is gone, then invalidate —
+    # the same three steps the API's delete takes. A first version deleted the
+    # row and committed, and the device went on serving a stale cached effective
+    # policy: the row vanished from this table and nothing reached the tablet.
+    # Caught by the test that checks the desired state changes rather than
+    # checking the row disappeared.
+    affected = eff.devices_targeted_by(session, assignment)
+    session.delete(assignment)
+    session.flush()
+    eff.invalidate(session, affected)
+    session.commit()
+    return _redirect(f"/devices/{device_id}?unassigned=" + _quote(name))
 
 
 @router.post("/devices/{device_id}/disenroll")
