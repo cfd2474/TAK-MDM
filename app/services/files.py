@@ -382,8 +382,13 @@ def resolve_wallpaper(session: Session, values: Mapping[str, Any]) -> dict[str, 
         except (ValueError, TypeError):
             continue
 
+    # ⚠️ The label travels even with no image at all (W129). Returning {} here
+    # would make a label-only policy indistinguishable from no wallpaper policy,
+    # and the agent would clear the wallpaper instead of drawing the name.
+    label = bool(spec.get("device_id_label"))
+
     if not wanted:
-        return {}
+        return {"device_id_label": True} if label else {}
 
     catalog = {
         managed.id: managed
@@ -411,4 +416,6 @@ def resolve_wallpaper(session: Session, values: Mapping[str, Any]) -> dict[str, 
     for key in ("lock_screen", "prevent_user_change"):
         if spec.get(key) is not None:
             resolved[key] = bool(spec[key])
+    if label:
+        resolved["device_id_label"] = True
     return resolved

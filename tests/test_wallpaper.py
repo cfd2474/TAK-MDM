@@ -249,3 +249,61 @@ def test_the_enrollment_page_prompts_for_a_network_name(client: TestClient):
     assert "The network a device joins during provisioning." in body
     assert 'placeholder="Enter Network Name"' not in body
     assert "TAK-Field" not in body
+
+
+# --------------------------------------------------------------------------- #
+# Device ID label (W129)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_label_only_policy_is_valid():
+    """⚠️ The validator demanded an image, on the good reasoning that an empty
+    wallpaper policy is inert. A label-only policy is not inert — the agent
+    draws a background — so the rule is "an image **or** the label"."""
+    spec = registry.validate_spec("WALLPAPER", {"device_id_label": True})
+
+    assert spec["device_id_label"] is True
+
+
+def test_a_policy_that_sets_nothing_is_still_refused():
+    """The original reasoning survives, and the message has to name the new way
+    out or an operator reads it as "you must upload an image"."""
+    try:
+        registry.validate_spec("WALLPAPER", {})
+    except PolicyTypeError as exc:
+        assert "device ID label" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("an empty wallpaper policy should not validate")
+
+
+def test_the_label_resolves_with_no_image_at_all(db):
+    """⚠️ The case the operator asked for, and the one the resolver would have
+    dropped: with no file ids it returned `{}`, which the agent reads as "no
+    wallpaper policy" and acts on by *clearing* the wallpaper."""
+    assert resolve(db, {"WALLPAPER": {"device_id_label": True}}) == {
+        "device_id_label": True
+    }
+
+
+def test_the_label_resolves_alongside_an_image(db):
+    resolved = resolve(
+        db,
+        {"WALLPAPER": {"tablet_file_id": str(uuid.uuid4()), "device_id_label": True}},
+    )
+
+    assert resolved["device_id_label"] is True
+    assert "tablet" in resolved
+
+
+def test_the_label_is_absent_rather_than_false_when_off(db):
+    """Absent, not `false`: the agent reads a missing key as off, and an
+    explicit false on every wallpaper payload would be noise."""
+    resolved = resolve(db, {"WALLPAPER": {"tablet_file_id": str(uuid.uuid4())}})
+
+    assert "device_id_label" not in resolved
+
+
+def test_no_wallpaper_policy_still_resolves_to_nothing(db):
+    """⚠️ The distinction the agent depends on. An empty result means "clear the
+    wallpaper"; the label-only case must not look like that."""
+    assert resolve(db, {}) == {}

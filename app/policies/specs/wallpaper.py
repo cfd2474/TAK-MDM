@@ -75,17 +75,39 @@ class WallpaperSpec(PolicySpec):
         json_schema_extra={"ui_group": "Images"},
     )
 
+    device_id_label: Annotated[bool | None, Merge(MergeStrategy.MOST_RESTRICTIVE)] = Field(
+        default=None,
+        title="Device ID label",
+        description=(
+            "Draw this device's name, as set on its device page, over the "
+            "wallpaper — large enough to read across a room. Works with no "
+            "image selected: the agent draws a plain background instead. "
+            "Renaming the device redraws it on the next check-in."
+        ),
+        json_schema_extra={"ui_group": "Images"},
+    )
+
     @model_validator(mode="after")
-    def _at_least_one_image(self):
-        """A policy with neither slot filled does nothing at all.
+    def _does_something(self):
+        """A policy that sets nothing at all does nothing at all.
 
         Rejected rather than accepted-and-inert: an operator who saves an empty
         wallpaper policy, assigns it, and sees no change would have no way to tell
         that from a policy that failed to apply.
+
+        ⚠️ **The label counts as doing something** (W129). It is drawn over a
+        generated background when no image is chosen, so a label-only policy is
+        a real instruction rather than an empty one — the rule is "an image or
+        the label", not "an image".
         """
-        if self.tablet_file_id is None and self.phone_file_id is None:
+        if (
+            self.tablet_file_id is None
+            and self.phone_file_id is None
+            and not self.device_id_label
+        ):
             raise ValueError(
-                "a wallpaper policy needs at least one image — upload a tablet "
-                "image, a phone image, or both"
+                "a wallpaper policy needs at least one image or the device ID "
+                "label — upload a tablet image, a phone image, or turn the "
+                "label on"
             )
         return self

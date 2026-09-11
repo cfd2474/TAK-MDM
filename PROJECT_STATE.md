@@ -563,6 +563,72 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### 🚧 W129 — Device ID label on the wallpaper
+
+Operator, 2026-09-11: *"can we add 'Device ID Label' that when selected, would
+overlay the Device Name/friendly name from the web portal onto the wallpaper?
+Even if a custom wallpaper isn't selected. This could be a scalable widget, but
+it needs to be large enough to serve as a clear device identifier."*
+
+#### ✅ The foundation is already there
+
+The agent receives the operator-assigned name on **every check-in**
+(`Reconciler.kt:403`, stored as `config.deviceName`), so a rename in the portal
+already reaches the device. Nothing new is needed to know what to draw.
+
+#### ⚠️ Drawn on the device, not on the server
+
+The obvious implementation — composite the text server-side and ship the
+result — quietly destroys the wallpaper's sharing. Images live in a
+**content-addressed** store: one file, one sha, fetched by every device that
+needs it. A name burned in per device turns that into **one artifact per
+device**, each downloaded separately.
+
+The agent has the name, knows its own screen, and already downloads the image.
+It composes locally.
+
+#### ⚠️ Never compose from the wallpaper currently on screen
+
+Reading the live wallpaper and drawing on it would stack a label every
+reconcile, each pass drawing over the last. The base is always either the
+**policy image** or a **generated background** — never what is already set.
+
+#### ⚠️ The idempotence key has to include the name
+
+`reconcileWallpaper` skips the write when `config.appliedWallpaperSha == sha`,
+because re-setting a wallpaper flickers. With a label the applied identity is
+*(image sha, label text, screen size)* — keyed on the sha alone, **a rename
+would never reach the screen**.
+
+#### ⚠️ The spec currently refuses a policy with no image
+
+`_at_least_one_image` rejects an empty wallpaper policy, on the good reasoning
+that it would be inert. A label-only policy is *not* inert, so the rule becomes
+"at least one image **or** the label", and the message has to say so.
+
+#### On "scalable widget"
+
+Taken as **text scaled to the screen**, not an Android `AppWidget`. A real
+widget is placed by the user, can be dragged off, and needs launcher support —
+it would not be a dependable identifier. A wallpaper overlay appears on every
+launcher and cannot be removed without changing the policy. Say the word if an
+actual widget is wanted; it is a different build.
+
+#### Chunk 1 — server
+
+1. `device_id_label` on `WallpaperSpec`; relax `_at_least_one_image`.
+2. `resolve_wallpaper` carries the flag even when no slot is filled.
+3. Console copy that says what it draws and that it needs no image.
+4. Tests: a label-only policy validates and reaches the device; an empty one is
+   still refused; the flag survives with and without images.
+
+#### Chunk 2 — agent
+
+5. Compose: policy image or generated background, label sized to the screen,
+   legible over any image.
+6. Idempotence keyed on image + name + screen; a rename re-renders.
+7. Build, publish, verify on hardware.
+
 ### ✅ W128 — Download a stored build from the console
 
 Operator, 2026-09-11: *"In the local apps section, give me a download button
