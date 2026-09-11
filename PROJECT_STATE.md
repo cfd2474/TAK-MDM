@@ -563,6 +563,87 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W132 — The label becomes an overlay, like the clock
+
+Operator, 2026-09-11, after two attempts at wallpaper geometry: *"a bit better,
+but its always centered initally, then shifted with the rotation. What about
+the idea of making it like a widget, similar to the clock?"*
+
+#### ⚠️ The wallpaper was the wrong surface, and no amount of geometry fixes it
+
+Two rounds of this have now failed, and the reason is structural rather than
+arithmetic. **The system owns the wallpaper's placement** — it decides the crop,
+the pan and the parallax, per orientation, per launcher, and OEM shells vary it
+further. The agent supplies pixels and has no say in where they land. W131's
+square canvas made the two orientations *consistent* with each other, which is
+why it got "a bit better", but consistent is not *placed*.
+
+The clock does not have this problem because it is **not painted into the
+wallpaper** — it is a view the window manager lays out, and re-lays out on
+every rotation. The operator's instinct is right.
+
+#### ✅ The agent already does exactly this, twice
+
+`NightOverlay` and `AlertOverlay` are `TYPE_APPLICATION_OVERLAY` windows with
+`FLAG_NOT_TOUCHABLE or FLAG_NOT_FOCUSABLE`, driven from `PolicyApplier` by
+`set(...)` / `remove(...)`. **"Display over other apps" is already a *required*
+permission in the provisioning wizard**, so every provisioned device has the
+capability granted. This is not new ground.
+
+A window is laid out by the platform, so it reflows on rotation with no
+geometry of ours involved at all. That is the whole fix.
+
+#### ⚠️ It cannot appear on the lock screen, and that is not solvable here
+
+`TYPE_APPLICATION_OVERLAY` sits **below the keyguard**. Showing above it needs a
+system-signature window type the agent cannot have. So:
+
+| Surface | Overlay | Wallpaper label |
+|---|---|---|
+| Home screen, and over apps | ✅ placed exactly | ⚠️ wherever the system puts it |
+| Lock screen | ❌ never | ✅ |
+
+**So the wallpaper label stays**, as the only thing that identifies a locked
+tablet, and the overlay handles everything else. One policy flag drives both —
+the label appears wherever it can, drawn by whichever mechanism can reach that
+surface.
+
+#### ⚠️ Never takes a touch
+
+Copied from `NightOverlay`'s warning, because the failure is the same and
+worse: an overlay that swallowed input would be a bricked tablet recoverable
+only by removing the policy.
+
+#### Chunk 1
+
+1. `DeviceIdOverlay` — a small non-touchable window, top-centre, mirroring
+   `NightOverlay`'s lifecycle and its permission check.
+2. Driven from the wallpaper reconcile alongside the existing drawing: shown
+   when the policy asks for the label, removed when it stops.
+3. Re-asserted each reconcile so it survives a process restart, and updated in
+   place on a rename rather than removed and re-added.
+4. Tests for the contract: non-touchable, permission-checked, removed when the
+   policy drops it.
+5. Build, publish, verify on hardware — rotation is the whole point and no test
+   can judge it.
+
+#### ✅ Done (2026-09-11) — agent 0.65.0 (versionCode 110)
+
+Suite **1452 passed, 1 skipped**. `DeviceIdOverlay` is a `WRAP_CONTENT`
+`TYPE_APPLICATION_OVERLAY` window, positioned by **gravity rather than
+coordinates** — a pixel offset would drift exactly as the wallpaper did — and
+re-laid out by the platform on every rotation.
+
+⚠️ **Driven above the wallpaper's idempotence check.** That check exists to skip
+rewriting an unchanged bitmap, and a window has nothing to do with it. Placed
+after it, a device whose wallpaper had not changed would have had no label at
+all once its process restarted. There is a test pinning the ordering, because
+it is the kind of thing a later tidy-up moves.
+
+The drawn wallpaper label is **kept**: the overlay sits below the keyguard, so
+it is the only thing that can identify a locked tablet. Deleting it as
+redundant would have quietly lost the lock screen.
+
 ### ✅ W131 — The label survives rotation
 
 Operator, 2026-09-11: *"when I rotate the screen, it is no longer in position…

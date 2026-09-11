@@ -467,3 +467,78 @@ def test_the_console_says_what_an_unnamed_device_shows():
     )
 
     assert "serial number" in field.help
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ The label as a window rather than as paint (W132)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_label_is_a_window_laid_out_by_the_platform():
+    """⚠️ Two rounds of wallpaper geometry failed for a structural reason: the
+    system owns a wallpaper's crop and pan, so the agent has no say in where
+    its pixels land. A window is laid out by the window manager and re-laid out
+    on every rotation, which is why the clock never drifts."""
+    overlay = _agent("ui/DeviceIdOverlay.kt")
+
+    assert "TYPE_APPLICATION_OVERLAY" in overlay
+    # Gravity, not coordinates: a pixel offset would drift exactly as before.
+    assert "Gravity.TOP or Gravity.CENTER_HORIZONTAL" in overlay
+
+
+def test_the_overlay_never_takes_a_touch():
+    """⚠️ An overlay that swallowed input would be a bricked tablet, undoable
+    only by removing the policy. Same warning NightOverlay carries."""
+    overlay = _agent("ui/DeviceIdOverlay.kt")
+
+    assert "FLAG_NOT_TOUCHABLE" in overlay
+    assert "FLAG_NOT_FOCUSABLE" in overlay
+
+
+def test_the_overlay_is_idempotent_across_reconciles():
+    """It is driven every couple of minutes; an unchanged name must not stack a
+    second window each time."""
+    overlay = _agent("ui/DeviceIdOverlay.kt")
+
+    assert "if (showing == name && view != null) return@post" in overlay
+
+
+def test_a_rename_retexts_rather_than_recreating():
+    """A remove/add cycle flickers, and renaming is the common case."""
+    overlay = _agent("ui/DeviceIdOverlay.kt")
+
+    assert "it.text = name" in overlay
+
+
+def test_the_overlay_is_driven_before_the_wallpaper_shortcut():
+    """⚠️ The bug this ordering avoids. The idempotence check below it exists to
+    skip rewriting an unchanged bitmap — and the overlay is a window, with
+    nothing to do with that. Placed after it, a device whose wallpaper had not
+    changed would have no label at all once the process restarted."""
+    reconciler = _agent("sync/Reconciler.kt")
+
+    body = reconciler[reconciler.index("private fun reconcileWallpaper") :]
+    body = body[: body.index("// Commands")]
+
+    assert body.index("DeviceIdOverlay.set(context, label)") < body.index(
+        "config.appliedWallpaperSha == identity"
+    )
+
+
+def test_the_overlay_goes_when_the_policy_stops_asking():
+    """Both ways out: no wallpaper policy at all, and a policy that no longer
+    wants the label."""
+    reconciler = _agent("sync/Reconciler.kt")
+
+    assert reconciler.count("DeviceIdOverlay.remove(context)") == 2
+
+
+def test_the_wallpaper_label_is_kept_for_the_lock_screen():
+    """⚠️ `TYPE_APPLICATION_OVERLAY` sits below the keyguard, so the overlay
+    cannot identify a *locked* tablet. Deleting the drawn label as redundant
+    would lose the only surface that can."""
+    reconciler = _agent("sync/Reconciler.kt")
+    overlay = _agent("ui/DeviceIdOverlay.kt")
+
+    assert "DeviceIdLabel.render(" in reconciler
+    assert "below the keyguard" in overlay

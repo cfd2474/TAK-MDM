@@ -55,6 +55,7 @@ import com.taksolutions.atlasmdm.policy.GeofencePlan
 import com.taksolutions.atlasmdm.policy.LocationSamplingPlan
 import com.taksolutions.atlasmdm.policy.LocationTracker
 import com.taksolutions.atlasmdm.policy.PolicyApplier
+import com.taksolutions.atlasmdm.ui.DeviceIdOverlay
 import com.taksolutions.atlasmdm.ui.InstallNotifier
 import com.taksolutions.atlasmdm.policy.DeviceIdLabel
 import com.taksolutions.atlasmdm.policy.WallpaperPlan
@@ -668,10 +669,12 @@ class Reconciler(private val context: Context) {
             )
         ) {
             AgentLog.i(TAG, "no policy sets a wallpaper; restoring the device default")
+            DeviceIdOverlay.remove(context)
             val failure = policyApplier.clearWallpaper()
                 ?: run { config.appliedWallpaperSha = null; return emptyList() }
             return listOf("wallpaper: could not restore the default — $failure")
         }
+        if (!wantsLabel) DeviceIdOverlay.remove(context)
         if (tablet == null && phone == null && !wantsLabel) return emptyList()
 
         val errors = mutableListOf<String>()
@@ -718,6 +721,13 @@ class Reconciler(private val context: Context) {
         // (W129). Keyed on the sha alone, renaming a device in the console would
         // redraw nothing — the image is unchanged, so the reconcile would decide
         // it had nothing to do and the tablet would keep the old name for ever.
+        // ⚠️ Driven here, above every early return below (W132). The overlay is
+        // a *window*, so it has nothing to do with whether the wallpaper bitmap
+        // needs rewriting — and the idempotence check a few lines down exists
+        // precisely to skip that work. Placed after it, an unchanged wallpaper
+        // would mean no label at all after a process restart.
+        DeviceIdOverlay.set(context, label)
+
         // ⚠️ "v2" because the geometry changed (W131). A device already carrying
         // a label drawn the old way matches on image, name and screen, so
         // without this the reconcile would decide there was nothing to do and
