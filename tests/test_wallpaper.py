@@ -307,3 +307,73 @@ def test_no_wallpaper_policy_still_resolves_to_nothing(db):
     """⚠️ The distinction the agent depends on. An empty result means "clear the
     wallpaper"; the label-only case must not look like that."""
     assert resolve(db, {}) == {}
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ What the agent must do with it (W129)
+# --------------------------------------------------------------------------- #
+
+
+def _agent(name: str) -> str:
+    import pathlib
+
+    return pathlib.Path(
+        f"agent/app/src/main/java/com/taksolutions/atlasmdm/{name}"
+    ).read_text(encoding="utf-8")
+
+
+def test_the_label_alone_does_not_clear_the_wallpaper():
+    """⚠️ The failure this would have had. `shouldClear` fires when the policy
+    names no image, and a label-only policy names none — so the agent would
+    have restored the factory wallpaper instead of drawing the name."""
+    reconciler = _agent("sync/Reconciler.kt")
+
+    assert "tablet != null || phone != null || wantsLabel" in reconciler
+
+
+def test_the_applied_key_includes_the_name():
+    """⚠️ Keyed on the image sha alone, renaming a device would redraw nothing:
+    the image is unchanged, so the reconcile decides it has nothing to do and
+    the tablet keeps the old name for ever."""
+    reconciler = _agent("sync/Reconciler.kt")
+
+    body = reconciler[reconciler.index("private fun reconcileWallpaper") :]
+    body = body[: body.index("// Commands")]
+
+    assert 'label?.let { "label:' in body
+    assert "config.appliedWallpaperSha == identity" in body
+
+
+def test_the_label_is_never_drawn_over_the_live_wallpaper():
+    """⚠️ The compounding trap. Reading what is on screen and drawing on it
+    would stack a label every reconcile. The base is the policy image or a
+    generated background — never the current wallpaper."""
+    label = _agent("policy/DeviceIdLabel.kt")
+
+    assert "getDrawable" not in label
+    assert "getWallpaper" not in label
+
+
+def test_the_text_scales_with_the_screen():
+    """A fixed point size is legible on a phone at arm's length and useless on
+    a tablet across a room, which is the job this exists for."""
+    label = _agent("policy/DeviceIdLabel.kt")
+
+    assert "TEXT_FRACTION" in label
+    assert "minOf(width, height)" in label
+
+
+def test_a_long_name_shrinks_rather_than_truncating():
+    """⚠️ "Field Tab…" is a worse identifier than smaller text that reads in
+    full, and telling two tablets apart is the entire point."""
+    label = _agent("policy/DeviceIdLabel.kt")
+
+    assert "measureText(name) > maxWidth" in label
+
+
+def test_an_unnamed_device_reports_rather_than_drawing_a_placeholder():
+    """A wallpaper reading "unnamed" on every tablet is worse than none, and
+    the fix is to name the device."""
+    reconciler = _agent("sync/Reconciler.kt")
+
+    assert "the device ID label is on but this device has no name" in reconciler

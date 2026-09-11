@@ -17,6 +17,7 @@
 package com.taksolutions.atlasmdm.sync
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.os.Build
 import java.io.File
 import org.json.JSONArray
@@ -55,6 +56,7 @@ import com.taksolutions.atlasmdm.policy.LocationSamplingPlan
 import com.taksolutions.atlasmdm.policy.LocationTracker
 import com.taksolutions.atlasmdm.policy.PolicyApplier
 import com.taksolutions.atlasmdm.ui.InstallNotifier
+import com.taksolutions.atlasmdm.policy.DeviceIdLabel
 import com.taksolutions.atlasmdm.policy.WallpaperPlan
 
 /** Outcome of one reconciliation pass. */
@@ -647,12 +649,16 @@ class Reconciler(private val context: Context) {
     private fun reconcileWallpaper(wallpaper: JSONObject): List<String> {
         val tablet = wallpaper.optJSONObject("tablet")
         val phone = wallpaper.optJSONObject("phone")
+        // ⚠️ The label is an instruction in its own right (W129). A policy that
+        // asks only for it names no image, and treating that as "no wallpaper
+        // policy" would clear the screen instead of labelling it.
+        val wantsLabel = wallpaper.optBoolean("device_id_label", false)
 
         // Handled before the early return, and reached because the section is
         // applied even when absent — the same lesson as R14/R19: "no policy says
         // anything" is a state to converge on, not an absence of work.
         if (WallpaperPlan.shouldClear(
-                policyNamesAnyImage = tablet != null || phone != null,
+                policyNamesAnyImage = tablet != null || phone != null || wantsLabel,
                 previouslyApplied = config.appliedWallpaperSha != null,
             )
         ) {
@@ -661,7 +667,7 @@ class Reconciler(private val context: Context) {
                 ?: run { config.appliedWallpaperSha = null; return emptyList() }
             return listOf("wallpaper: could not restore the default — $failure")
         }
-        if (tablet == null && phone == null) return emptyList()
+        if (tablet == null && phone == null && !wantsLabel) return emptyList()
 
         val errors = mutableListOf<String>()
         // A slot pointing at a file that has left the library. Reported rather than
@@ -684,33 +690,78 @@ class Reconciler(private val context: Context) {
             WallpaperPlan.Choice.TABLET -> usableTablet
             WallpaperPlan.Choice.PHONE -> usablePhone
             WallpaperPlan.Choice.NONE -> null
-        } ?: return errors
-
-        val sha = chosen.optString("sha256").takeIf { it.isNotBlank() }
-            ?: return errors + "wallpaper: the chosen image has no artifact"
-
-        // Nothing to do if this exact image is already on. Re-setting a wallpaper
-        // is visible to the user as a flicker, so an idempotent reconcile must
-        // genuinely do nothing.
-        if (config.appliedWallpaperSha == sha) return errors
-
-        val target = File(cacheDir, sha)
-        if (!downloadArtifact(sha, target)) {
-            return errors + "wallpaper: download of $sha failed verification"
         }
+        if (chosen == null && !wantsLabel) return errors
+
+        val sha = chosen?.optString("sha256")?.takeIf { it.isNotBlank() }
+        if (chosen != null && sha == null) {
+            return errors + "wallpaper: the chosen image has no artifact"
+        }
+
+        val label = if (wantsLabel) config.deviceName?.takeIf { it.isNotBlank() } else null
+        if (wantsLabel && label == null) {
+            // Reported rather than drawn as "unnamed": a wallpaper reading
+            // "unnamed" on every tablet is worse than none, and the fix is to
+            // name the device.
+            errors += "wallpaper: the device ID label is on but this device has no name"
+        }
+
+        // ⚠️ The identity of what is on screen, not of the file it came from
+        // (W129). Keyed on the sha alone, renaming a device in the console would
+        // redraw nothing — the image is unchanged, so the reconcile would decide
+        // it had nothing to do and the tablet would keep the old name for ever.
+        val screen = "${'$'}{context.resources.displayMetrics.widthPixels}x" +
+            "${'$'}{context.resources.displayMetrics.heightPixels}"
+        val identity = listOfNotNull(sha ?: "none", label?.let { "label:${'$'}it" }, screen)
+            .joinToString("|")
+
+        // Re-setting a wallpaper is visible to the user as a flicker, so an
+        // idempotent reconcile must genuinely do nothing.
+        if (config.appliedWallpaperSha == identity) return errors
+
+        var target: File? = null
+        if (sha != null) {
+            val file = File(cacheDir, sha)
+            if (!downloadArtifact(sha, file)) {
+                return errors + "wallpaper: download of ${'$'}sha failed verification"
+            }
+            target = file
+        }
+
+        if (label != null) {
+            val metrics = context.resources.displayMetrics
+            val composed = DeviceIdLabel.render(
+                source = target,
+                name = label,
+                width = metrics.widthPixels,
+                height = metrics.heightPixels,
+            ) ?: return errors + "wallpaper: could not draw the device ID label"
+
+            val out = File(cacheDir, "labelled.png")
+            val written = runCatching {
+                out.outputStream().use { composed.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            }.isSuccess
+            composed.recycle()
+            if (!written) return errors + "wallpaper: could not write the labelled image"
+            target = out
+        }
+
+        val image = target ?: return errors
 
         AgentLog.i(
             TAG,
-            "applying $choice wallpaper (smallestScreenWidthDp=$width) from ${sha.take(12)}…"
+            "applying ${'$'}choice wallpaper (smallestScreenWidthDp=${'$'}width)" +
+                (if (sha != null) " from ${'$'}{sha.take(12)}…" else " (generated)") +
+                (if (label != null) " with device ID label" else "")
         )
         val applied = policyApplier.setWallpaper(
-            image = target,
+            image = image,
             alsoLockScreen = wallpaper.optBoolean("lock_screen", false),
             preventUserChange = wallpaper.optBoolean("prevent_user_change", false),
         )
-        if (applied != null) return errors + "wallpaper: $applied"
+        if (applied != null) return errors + "wallpaper: ${'$'}applied"
 
-        config.appliedWallpaperSha = sha
+        config.appliedWallpaperSha = identity
         return errors
     }
 

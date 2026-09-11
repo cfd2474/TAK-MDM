@@ -563,7 +563,7 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
-### 🚧 W129 — Device ID label on the wallpaper
+### ✅ W129 — Device ID label on the wallpaper
 
 Operator, 2026-09-11: *"can we add 'Device ID Label' that when selected, would
 overlay the Device Name/friendly name from the web portal onto the wallpaper?
@@ -628,6 +628,28 @@ actual widget is wanted; it is a different build.
    legible over any image.
 6. Idempotence keyed on image + name + screen; a rename re-renders.
 7. Build, publish, verify on hardware.
+
+#### ✅ Both chunks done (2026-09-11) — agent 0.62.0
+
+Suite **1438 passed, 1 skipped**.
+
+`DeviceIdLabel.render` composes onto the policy image, or onto a generated
+background sized to the display when the policy names none. Text is a fraction
+of the shorter edge (a fixed point size is legible on a phone at arm's length
+and useless on a tablet across a room), on a translucent plate because the
+image underneath is an operator's photograph and may be white, busy or both.
+
+⚠️ **A long name shrinks rather than truncating.** *"Field Tab…"* is a worse
+identifier than smaller text that reads in full, and telling two tablets apart
+is the entire point.
+
+⚠️ **An unnamed device reports an error rather than drawing a placeholder.** A
+wallpaper reading "unnamed" on every tablet is worse than none, and the fix is
+to name the device.
+
+⚠️ Not yet verified on hardware — the bitmap work is the part a test cannot
+judge. Worth a look at legibility and placement on the SM-X520 before trusting
+it across a fleet.
 
 ### ✅ W128 — Download a stored build from the console
 
