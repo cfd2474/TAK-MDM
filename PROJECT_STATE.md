@@ -563,7 +563,7 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
-### 🚧 W116 — Disenroll clears Factory Reset Protection (inconclusive)
+### ✅ W116 — Disenroll clears Factory Reset Protection
 
 Built and deployed in agent 0.58.0 (`42b6ea9`); the disenroll path sends
 `wipe_reset_protection`, an ordinary lost-device wipe does not.
@@ -590,8 +590,20 @@ whose failure mode is invisible, confirm the precondition before firing, not
 after.**
 
 **A valid run needs a Google account signed in on the device before the
-disenroll.** Redoing it costs a provisioning cycle, and the tablet has to be
-re-provisioned anyway.
+disenroll.**
+
+#### ✅ Redone properly, 2026-09-11 — verified
+
+With a Google account signed in first: the device disenrolled, reset, and
+**re-provisioning proceeded without ever asking for that account**. FRP was
+armed, and `WIPE_RESET_PROTECTION_DATA` cleared it.
+
+So the feature does what the console promises — a handed-back device comes up
+ready for whoever receives it, rather than gated on credentials belonging to
+whoever held it last — and **FRP clearing is not a Knox dependency** on One UI.
+
+Both halves of the lost-vs-handed-back distinction are now real: a disenroll
+clears the protection, an ordinary wipe leaves it armed.
 
 ### ✅ W117 — A master bypass PIN for the provisioning permission block
 

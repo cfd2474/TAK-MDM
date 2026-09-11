@@ -1611,19 +1611,17 @@ that does not know the key leaves FRP armed — failing in the safe direction.
 tablet reset. So the call does not reject the flag, which is the half of the
 contract that *can* be observed from a single run.
 
-❌ **Whether the FRP data was actually cleared is still unproven, and the run
-that looked like a pass was a no-op.** The tablet came up with no Google account
-challenge — but it had no Google account signed in, so Factory Reset Protection
-was never armed and there was nothing for the flag to clear.
+✅ **Samsung honours `WIPE_RESET_PROTECTION_DATA`** — `SM-X828U`, 2026-09-11,
+with **a Google account signed in before the wipe**. The device disenrolled,
+reset, and setup completed **without asking for that account**. So AOSP's
+contract holds on One UI: FRP clearing is not a Knox dependency.
 
-⚠️ **This test's pass condition and its no-op condition are identical from the
-outside**, which is the whole difficulty with it: "setup asked for nothing" is
-what you see whether the flag worked or whether FRP was never on. **A valid run
-needs a Google account signed in on the device before the wipe.** Recorded so
-nobody reads "tested, no prompt" as evidence.
-
-⚠️ FRP behaviour is partly OEM territory, so Samsung honouring the flag as AOSP
-describes remains an open question.
+⚠️ **The run before this one looked identical and proved nothing**, because that
+tablet had no Google account and FRP was never armed. This test's pass condition
+and its no-op condition are indistinguishable from outside — "setup asked for
+nothing" is what you see either way — so **a valid run requires an account
+signed in before the wipe**, and the first attempt is recorded here rather than
+deleted precisely because the trap is easy to fall into twice.
 
 ### ⚠️ A client certificate without a *grant* is silently useless (W112 C2, 2026-09-09)
 
