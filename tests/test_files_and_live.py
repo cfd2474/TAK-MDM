@@ -434,10 +434,11 @@ def test_add_mode_never_removes(client: TestClient, enrolled):
         ).json()["values"]["PASSWORD"]["min_length"] == 9
 
 
-def test_bulk_assignment_mixes_devices_groups_and_tags(client: TestClient, enrolled):
+def test_bulk_assignment_mixes_devices_and_groups(client: TestClient, enrolled):
+    """Tags were the third target kind until W123 removed them."""
     device = enrolled(serial="MIX-1")
     group = client.post("/api/v1/groups", json={"name": "Field"}).json()
-    tag = client.post("/api/v1/tags", json={"name": "urgent"}).json()
+    second = client.post("/api/v1/groups", json={"name": "Urgent"}).json()
     policy = client.post(
         "/api/v1/policies",
         json={"name": "Fleet PW", "policy_type": "PASSWORD", "spec": {"min_length": 9}},
@@ -447,8 +448,7 @@ def test_bulk_assignment_mixes_devices_groups_and_tags(client: TestClient, enrol
         f"/api/v1/policies/{policy['id']}/targets",
         json={
             "device_ids": [device["device_id"]],
-            "group_ids": [group["id"]],
-            "tag_ids": [tag["id"]],
+            "group_ids": [group["id"], second["id"]],
         },
     ).json()
 

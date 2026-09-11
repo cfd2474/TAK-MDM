@@ -467,14 +467,16 @@ def test_reenrollment_preserves_group_membership(client: TestClient):
 
 
 def test_token_scoping_lands_the_device_in_its_policy_stack(client: TestClient):
+    # Two groups rather than a group and a tag (W123 removed tags): the point
+    # is that *every* scoping on the token lands, not that two kinds exist.
     group = client.post("/api/v1/groups", json={"name": "Field Teams"}).json()
-    tag = client.post("/api/v1/tags", json={"name": "quarantine"}).json()
+    second = client.post("/api/v1/groups", json={"name": "Quarantine"}).json()
 
     group_policy = client.post(
         "/api/v1/policies",
         json={"name": "Group PW", "policy_type": "PASSWORD", "spec": {"min_length": 8}},
     ).json()
-    tag_policy = client.post(
+    second_policy = client.post(
         "/api/v1/policies",
         json={
             "name": "No Camera",
@@ -482,19 +484,19 @@ def test_token_scoping_lands_the_device_in_its_policy_stack(client: TestClient):
             "spec": {"allow_camera": False},
         },
     ).json()
-    for policy, scope, target in (
-        (group_policy, "group", group["id"]),
-        (tag_policy, "tag", tag["id"]),
+    for policy, target in (
+        (group_policy, group["id"]),
+        (second_policy, second["id"]),
     ):
         client.post(
             "/api/v1/assignments",
-            json={"policy_id": policy["id"], "scope": scope, "target_id": target, "rank": 1},
+            json={"policy_id": policy["id"], "scope": "group", "target_id": target, "rank": 1},
         )
 
     result = client.post(
         "/api/v1/enroll",
         json={
-            "token": create_token(client, group_ids=[group["id"]], tag_ids=[tag["id"]])[
+            "token": create_token(client, group_ids=[group["id"], second["id"]])[
                 "secret"
             ],
             "csr_pem": generate_csr(),

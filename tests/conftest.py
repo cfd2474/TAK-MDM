@@ -190,14 +190,12 @@ def enrolled(client: TestClient):
         serial: str = "R5CN00TAK01",
         *,
         group_ids: list[str] | None = None,
-        tag_ids: list[str] | None = None,
     ) -> dict:
         created = client.post(
             "/api/v1/enrollment-tokens",
             json={
                 "name": "Test Token",
                 "group_ids": group_ids or [],
-                "tag_ids": tag_ids or [],
             },
             headers=ADMIN_HEADERS,
         )

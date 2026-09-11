@@ -130,15 +130,17 @@ def test_publishing_a_version_leaves_the_previous_one_untouched(
 # --------------------------------------------------------------------------- #
 
 
-def test_policies_stack_across_device_group_and_tag(client: TestClient, make_policy, make_device, assign):
+def test_policies_stack_across_device_and_groups(client: TestClient, make_policy, make_device, assign):
+    """Tags were the third scope until W123; stacking across the remaining two,
+    and across two memberships of the same kind, is the same property."""
     device = make_device()
     group = client.post("/api/v1/groups", json={"name": "Field Teams"}).json()
-    tag = client.post("/api/v1/tags", json={"name": "quarantine"}).json()
+    second = client.post("/api/v1/groups", json={"name": "Quarantine"}).json()
 
-    client.put(
-        f"/api/v1/groups/{group['id']}/devices", json={"device_ids": [device["id"]]}
-    )
-    client.put(f"/api/v1/tags/{tag['id']}/devices", json={"device_ids": [device["id"]]})
+    for g in (group, second):
+        client.put(
+            f"/api/v1/groups/{g['id']}/devices", json={"device_ids": [device["id"]]}
+        )
 
     baseline = make_policy("Baseline Password", "PASSWORD", {"min_length": 6})
     field = make_policy("Field Apps", "APP_CATALOG", {"blocked_packages": ["com.game"]})
@@ -146,7 +148,7 @@ def test_policies_stack_across_device_group_and_tag(client: TestClient, make_pol
 
     assign(baseline["id"], device["id"], scope="device", rank=10)
     assign(field["id"], group["id"], scope="group", rank=20)
-    assign(lockdown["id"], tag["id"], scope="tag", rank=100)
+    assign(lockdown["id"], second["id"], scope="group", rank=100)
 
     values = effective(client, device["id"])["values"]
 

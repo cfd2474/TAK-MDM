@@ -35,7 +35,6 @@ from app.db.models import (
     DeviceGroup,
     EnrollmentState,
     EnrollmentToken,
-    Tag,
 )
 from app.security.ca import CertificateAuthority
 from app.security.enrollment_qr import EnrollmentQrError, EnrollmentQrGuard
@@ -74,7 +73,6 @@ def create_token(
     ttl_hours: int,
     max_uses: int | None = None,
     group_ids: Sequence[uuid.UUID] = (),
-    tag_ids: Sequence[uuid.UUID] = (),
     created_by: str | None = None,
     vault: TokenVault | None = None,
 ) -> IssuedToken:
@@ -93,8 +91,6 @@ def create_token(
     )
     if group_ids:
         token.groups = list(session.scalars(select(DeviceGroup).where(DeviceGroup.id.in_(group_ids))))
-    if tag_ids:
-        token.tags = list(session.scalars(select(Tag).where(Tag.id.in_(tag_ids))))
 
     session.add(token)
     session.flush()
@@ -165,7 +161,6 @@ def retire_and_create_primary(
     *,
     name: str,
     group_ids: Sequence[uuid.UUID] = (),
-    tag_ids: Sequence[uuid.UUID] = (),
     created_by: str | None = None,
     vault: TokenVault | None = None,
 ) -> EnrollmentToken:
@@ -189,7 +184,6 @@ def retire_and_create_primary(
         name=name,
         ttl_hours=_PRIMARY_TOKEN_LIFETIME_HOURS,
         group_ids=group_ids,
-        tag_ids=tag_ids,
         created_by=created_by,
         vault=vault,
     )
@@ -387,8 +381,6 @@ def enroll_device(
     # rather than replacing it.
     existing_groups = {g.id for g in device.groups}
     device.groups.extend(g for g in token.groups if g.id not in existing_groups)
-    existing_tags = {t.id for t in device.tags}
-    device.tags.extend(t for t in token.tags if t.id not in existing_tags)
 
     token.use_count += 1
     session.flush()

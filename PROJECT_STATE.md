@@ -563,6 +563,98 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### 🚧 W123 — Remove tags
+
+Operator, 2026-09-11: *"Lets remove tags all together"* — one day after the Tags
+tab was built, having seen what it actually offers.
+
+#### ✅ Nothing is at stake on this host — checked, not assumed
+
+| | rows |
+|---|---|
+| `tag` | 0 |
+| `device_tag_member` | 0 |
+| `assignment` with `tag_id` | 0 |
+| `profile_assignment` with `tag_id` | 0 |
+| `enrollment_token_tag` | 0 |
+
+So the migration destroys nothing here. Groups carry every grouping this
+deployment actually uses.
+
+#### ⚠️ The migration ships to installs that are not this one
+
+This is the part worth stating before it is written. The operator has said they
+want the project usable by other deployers, and **a deployer who uses tags
+would lose every tag, membership and tag-scoped assignment on upgrade — and
+their devices would lose those policies with no warning at all.** Tags reach
+devices exactly the way groups do.
+
+That is an accepted consequence of removing a feature, not a bug, but it is not
+something to discover from a changelog. `downgrade()` recreates the schema; it
+cannot recreate the data, and the migration says so.
+
+#### ⚠️ The enum value and the columns have to go together
+
+`AssignmentScope` is stored as a string, and `scope` is mapped through the Python
+enum. Dropping `TAG` from the enum while any row still says `"tag"` makes that
+row **unloadable** — a 500 on the resolver rather than a tidy absence. So the
+migration deletes tag-scoped rows *before* the enum loses the value, and the two
+land in the same release. Removing the surface first and the schema later is
+only safe in that order, never the reverse.
+
+⚠️ `ck_assignment_single_target` names `tag_id` and has to be rewritten rather
+than dropped — otherwise an assignment could be created targeting nothing.
+SQLite needs batch mode for that.
+
+#### W122's generality collapses back
+
+`_CONTAINERS` exists to drive groups and tags through one implementation. With
+one kind left, a dispatch table of one entry is noise that invites the next
+reader to wonder what the other cases were. It goes back to plain group
+handling — the day-old refactor is undone deliberately, not forgotten.
+
+✅ **No agent change.** The agent never knew about tags; this is server-only, so
+no APK.
+
+#### Chunk 1 — the surface
+
+1. Console: Manage keeps Devices and Groups tabs; tag routes, the tag half of
+   the container machinery, and the tag inputs on Enroll and the profile editor
+   go.
+2. API: `POST /api/v1/tags`, `PUT /api/v1/tags/{id}/devices`, and `tag_ids` on
+   enrollment-token creation and profile targets.
+3. `enrollment.py` stops scoping tokens to tags and stops placing devices in
+   them.
+4. Tests: delete `test_tags_console.py`; fix the fixtures and cases that pass
+   `tag_ids`.
+5. Deploy — a state where tags are unreachable but the columns still exist, so
+   nothing can half-break.
+
+#### ✅ Chunk 1 done (2026-09-11)
+
+Suite **1403 passed, 1 skipped**. Tags are unreachable: no console surface, no
+API, no token scoping, no device placement. The columns and `AssignmentScope.TAG`
+remain, so any row that still says `"tag"` continues to load and resolve.
+
+⚠️ **Removal is not the same shape of work as building.** Deleting the schema
+field first broke 345 tests at once, because four call sites still passed
+`tag_ids` into functions that no longer took it. That is the ordinary cost of
+pulling a thread through a codebase — but it is also why chunk 2 is separate:
+had the migration been in the same pass, the fleet would have been mid-deploy
+with a half-applied removal.
+
+Three tests changed rather than being deleted, because each was testing
+something that still matters with two scopes instead of three: token scoping
+lands *every* target on the device, bulk assignment mixes target kinds, and
+policies stack across scopes.
+
+#### Chunk 2 — the schema
+
+6. Drop `Tag`, `device_tag_member`, `enrollment_token_tag`, `assignment.tag_id`,
+   `profile_assignment.tag_id`, `AssignmentScope.TAG`, and the resolver's `tag`
+   specificity tier; rewrite the CHECK constraint; migration with `alembic
+   heads` checked first.
+
 ### ✅ W122 — Manage tabs: Devices, Groups, Tags
 
 Operator, 2026-09-11: *"On the manage page, I want tabs for devices, groups, and

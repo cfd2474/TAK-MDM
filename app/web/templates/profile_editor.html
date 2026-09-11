@@ -198,18 +198,6 @@
             {% else %}<p class="muted">No groups.</p>{% endfor %}
           </div>
         </div>
-        <div>
-          <label>Tags</label>
-          <div class="checks">
-            {% for t in tags %}
-              <label>
-                <input type="checkbox" name="tag_ids" value="{{ t.id }}"
-                       {% if t.id in assigned.tag %}checked{% endif %}>
-                {{ t.name }}
-              </label>
-            {% else %}<p class="muted">No tags.</p>{% endfor %}
-          </div>
-        </div>
       </div>
       <button type="submit" style="margin-top:14px">Apply</button>
     </form>

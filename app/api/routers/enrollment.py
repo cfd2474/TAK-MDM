@@ -129,7 +129,6 @@ def create_enrollment_token(
         ttl_hours=payload.ttl_hours or settings.enrollment_token_ttl_hours,
         max_uses=payload.max_uses,
         group_ids=payload.group_ids,
-        tag_ids=payload.tag_ids,
         created_by=None if identity.is_anonymous else identity.username,
         vault=vault,
     )
@@ -192,7 +191,6 @@ def create_primary_enrollment_token(
         session,
         name=payload.name,
         group_ids=payload.group_ids,
-        tag_ids=payload.tag_ids,
         created_by=None if identity.is_anonymous else identity.username,
         vault=vault,
     )

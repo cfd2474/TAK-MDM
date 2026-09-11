@@ -33,10 +33,8 @@ from app.api.schemas import (
     GroupRead,
     MembershipUpdate,
     NamedCreate,
-    TagCreate,
-    TagRead,
 )
-from app.db.models import Device, DeviceGroup, EnrollmentState, Tag
+from app.db.models import Device, DeviceGroup, EnrollmentState
 from app.services import device_identity
 from app.services import effective_policy as eff
 from app.services.enrollment import revoke_device_certificates
@@ -195,19 +193,6 @@ def list_groups(session: Session = Depends(get_db)) -> list[DeviceGroup]:
     return list(session.scalars(select(DeviceGroup).order_by(DeviceGroup.name)))
 
 
-@router.post("/tags", response_model=TagRead, status_code=status.HTTP_201_CREATED)
-def create_tag(payload: TagCreate, session: Session = Depends(get_db)) -> Tag:
-    tag = Tag(name=payload.name)
-    session.add(tag)
-    _commit(session, f"tag {payload.name!r} already exists")
-    return tag
-
-
-@router.get("/tags", response_model=list[TagRead])
-def list_tags(session: Session = Depends(get_db)) -> list[Tag]:
-    return list(session.scalars(select(Tag).order_by(Tag.name)))
-
-
 # --------------------------------------------------------------------------- #
 # Membership
 #
@@ -217,7 +202,7 @@ def list_tags(session: Session = Depends(get_db)) -> list[Tag]:
 
 
 def _apply_membership(
-    session: Session, container: DeviceGroup | Tag, device_ids: list[uuid.UUID]
+    session: Session, container: DeviceGroup, device_ids: list[uuid.UUID]
 ) -> list[Device]:
     devices = list(session.scalars(select(Device).where(Device.id.in_(device_ids))))
     found = {d.id for d in devices}
@@ -244,10 +229,3 @@ def set_group_devices(
     group = fetch_or_404(session, DeviceGroup, group_id, "group")
     return _apply_membership(session, group, payload.device_ids)
 
-
-@router.put("/tags/{tag_id}/devices", response_model=list[DeviceRead])
-def set_tag_devices(
-    tag_id: uuid.UUID, payload: MembershipUpdate, session: Session = Depends(get_db)
-) -> list[Device]:
-    tag = fetch_or_404(session, Tag, tag_id, "tag")
-    return _apply_membership(session, tag, payload.device_ids)

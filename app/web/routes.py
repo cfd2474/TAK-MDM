@@ -291,9 +291,8 @@ def dashboard(
         "manage.html",
         identity=identity,
         rows=rows,
-        # The Groups and Tags tabs (W122). Same shape, different column.
-        group_rows=_container_rows(session, "group"),
-        tag_rows=_container_rows(session, "tag"),
+        # The Groups tab (W122; tags removed in W123).
+        group_rows=_group_rows(session),
         # Computed here rather than in the template: "enrolled but never arrived"
         # is a judgement about how devices fail, not a formatting choice, and it
         # is tested where it lives.
@@ -843,51 +842,24 @@ def _profile_origin(session: Session, assignment_id: str) -> str:
     return f"section of profile {profile.name}" if profile else "from a profile"
 
 
-#: Groups and tags differ only in a model class and a scope string, so the
-#: console handles them once and dispatches on this (W122).
-#:
-#: ⚠️ The service layer was already general — `_apply_membership` is typed
-#: `DeviceGroup | Tag` and `create_assignment` takes the scope as a parameter.
-#: Only the console half would have been duplicated, and two copies of
-#: assignment handling is precisely how W118 shipped a cache bug.
-_CONTAINERS: dict[str, dict[str, Any]] = {
-    "group": {
-        "model": DeviceGroup,
-        "scope": "group",
-        "label": "group",
-        "prefix": "/groups",
-        "tab": "groups",
-    },
-    "tag": {
-        "model": Tag,
-        "scope": "tag",
-        "label": "tag",
-        "prefix": "/tags",
-        "tab": "tags",
-    },
-}
+def _group_or_404(session: Session, group_id: uuid.UUID) -> DeviceGroup:
+    group = session.get(DeviceGroup, group_id)
+    if group is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "group not found")
+    return group
 
 
-def _container_or_404(session: Session, kind: str, container_id: uuid.UUID):
-    spec = _CONTAINERS[kind]
-    container = session.get(spec["model"], container_id)
-    if container is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"{spec['label']} not found")
-    return spec, container
-
-
-def _container_rows(session: Session, kind: str) -> list[dict[str, Any]]:
-    spec = _CONTAINERS[kind]
-    model = spec["model"]
-    column = Assignment.group_id if kind == "group" else Assignment.tag_id
+def _group_rows(session: Session) -> list[dict[str, Any]]:
     rows = []
-    for c in session.scalars(select(model).order_by(model.name)):
+    for c in session.scalars(select(DeviceGroup).order_by(DeviceGroup.name)):
         rows.append(
             {
                 "container": c,
                 "device_count": len(c.devices),
                 "policy_count": session.scalar(
-                    select(func.count()).select_from(Assignment).where(column == c.id)
+                    select(func.count())
+                    .select_from(Assignment)
+                    .where(Assignment.group_id == c.id)
                 )
                 or 0,
             }
@@ -895,43 +867,33 @@ def _container_rows(session: Session, kind: str) -> list[dict[str, Any]]:
     return rows
 
 
-def _create_container(
-    session: Session, kind: str, name: str, description: str = ""
+def _create_group(
+    session: Session, name: str, description: str = ""
 ) -> RedirectResponse:
-    spec = _CONTAINERS[kind]
-    model = spec["model"]
     label = name.strip()
     if not label:
-        return _redirect(
-            f"/fleet?error=" + _quote(f"a {spec['label']} needs a name") + f"#tab-{spec['tab']}"
-        )
+        return _redirect("/fleet?error=" + _quote("a group needs a name") + "#tab-groups")
 
-    if session.scalar(select(model).where(model.name == label)) is not None:
+    if session.scalar(select(DeviceGroup).where(DeviceGroup.name == label)) is not None:
         # The column is unique, so this would otherwise be an IntegrityError
         # and a 500 rather than a message.
         return _redirect(
             "/fleet?error="
-            + _quote(f"a {spec['label']} called {label} already exists")
-            + f"#tab-{spec['tab']}"
+            + _quote(f"a group called {label} already exists")
+            + "#tab-groups"
         )
 
-    # ⚠️ Tag has no `description` column, unlike DeviceGroup.
-    kwargs: dict[str, Any] = {"name": label}
-    if hasattr(model, "description"):
-        kwargs["description"] = description.strip() or None
-
-    container = model(**kwargs)
-    session.add(container)
+    group = DeviceGroup(name=label, description=description.strip() or None)
+    session.add(group)
     session.commit()
-    return _redirect(f"{spec['prefix']}/{container.id}")
+    return _redirect(f"/groups/{group.id}")
 
 
-def _render_container_detail(
+def _render_group_detail(
     request: Request,
     session: Session,
     identity: AdminIdentity,
-    kind: str,
-    container_id: uuid.UUID,
+    group_id: uuid.UUID,
 ) -> HTMLResponse:
     """One group or tag: its devices, and what membership actually buys them.
 
@@ -940,29 +902,27 @@ def _render_container_detail(
     be removed from the device page. That is only useful advice if the container
     has somewhere to go, and this is it.
     """
-    spec, container = _container_or_404(session, kind, container_id)
+    container = _group_or_404(session, group_id)
 
     member_ids = {d.id for d in container.devices}
     devices = list(session.scalars(select(Device).order_by(Device.serial_number)))
 
-    column = Assignment.group_id if kind == "group" else Assignment.tag_id
     assignments = list(
         session.scalars(
-            select(Assignment).where(column == container.id).order_by(Assignment.rank.desc())
+            select(Assignment)
+            .where(Assignment.group_id == container.id)
+            .order_by(Assignment.rank.desc())
         )
     )
 
-    # ⚠️ Counted for the delete panel, and only groups can be referenced this
-    # way. A token scoped to a group keeps working after the group is deleted
-    # and simply stops placing devices in it — the one cascade whose effect is
-    # invisible everywhere else.
-    token_count = 0
-    if kind == "group":
-        token_count = session.scalar(
-            select(func.count())
-            .select_from(enrollment_token_group)
-            .where(enrollment_token_group.c.group_id == container.id)
-        ) or 0
+    # ⚠️ Counted for the delete panel. A token scoped to a group keeps working
+    # after the group is deleted and simply stops placing devices in it — the
+    # one cascade whose effect is invisible everywhere else.
+    token_count = session.scalar(
+        select(func.count())
+        .select_from(enrollment_token_group)
+        .where(enrollment_token_group.c.group_id == container.id)
+    ) or 0
 
     assignable = list(
         session.scalars(
@@ -974,14 +934,13 @@ def _render_container_detail(
 
     return _render(
         request,
-        "container_detail.html",
+        "group_detail.html",
         identity=identity,
         container=container,
-        kind=kind,
-        label=spec["label"],
-        description=getattr(container, "description", None),
-        prefix=spec["prefix"],
-        tab=spec["tab"],
+        label="group",
+        description=container.description,
+        prefix="/groups",
+        tab="groups",
         devices=[{"device": d, "member": d.id in member_ids} for d in devices],
         member_count=len(member_ids),
         token_count=token_count,
@@ -1003,12 +962,12 @@ def _render_container_detail(
     )
 
 
-def _set_container_devices(
-    request: Request, session: Session, kind: str, container_id: uuid.UUID
+def _set_group_devices(
+    request: Request, session: Session, group_id: uuid.UUID
 ) -> RedirectResponse:
     """Replace membership with exactly what was ticked.
 
-    ⚠️ **Replace, not add** — `PUT /{kind}s/{id}/devices` sets the whole list and
+    ⚠️ **Replace, not add** — `PUT /groups/{id}/devices` sets the whole list and
     the form mirrors that. An "Add device" button would imply incremental
     semantics the endpoint does not have.
 
@@ -1018,7 +977,7 @@ def _set_container_devices(
     """
     from app.api.routers.inventory import _apply_membership
 
-    spec, container = _container_or_404(session, kind, container_id)
+    container = _group_or_404(session, group_id)
 
     form = _sync_form(request)
     ids: list[uuid.UUID] = []
@@ -1027,13 +986,13 @@ def _set_container_devices(
             ids.append(uuid.UUID(raw))
 
     _apply_membership(session, container, ids)
-    return _redirect(f"{spec['prefix']}/{container_id}?saved=1")
+    return _redirect(f"/groups/{group_id}?saved=1")
 
 
-def _assign_policy_to_container(
-    session: Session, kind: str, container_id: uuid.UUID, policy_id: uuid.UUID, rank: int
+def _assign_policy_to_group(
+    session: Session, group_id: uuid.UUID, policy_id: uuid.UUID, rank: int
 ) -> RedirectResponse:
-    """Assign one policy to this group or tag.
+    """Assign one policy to this group.
 
     Delegates to the API's `create_assignment` rather than building the row
     here: that validates the policy, refuses a template, resolves a pinned
@@ -1042,68 +1001,61 @@ def _assign_policy_to_container(
     from app.api.routers.assignments import create_assignment
     from app.api.schemas import AssignmentCreate
 
-    spec, _ = _container_or_404(session, kind, container_id)
+    _group_or_404(session, group_id)
 
     try:
         create_assignment(
             AssignmentCreate(
-                policy_id=policy_id,
-                scope=spec["scope"],
-                target_id=container_id,
-                rank=rank,
+                policy_id=policy_id, scope="group", target_id=group_id, rank=rank
             ),
             session,
         )
     except HTTPException as exc:
-        return _redirect(f"{spec['prefix']}/{container_id}?error=" + _quote(str(exc.detail)))
+        return _redirect(f"/groups/{group_id}?error=" + _quote(str(exc.detail)))
 
-    return _redirect(f"{spec['prefix']}/{container_id}?assigned=1")
+    return _redirect(f"/groups/{group_id}?assigned=1")
 
 
-def _remove_container_assignment(
-    session: Session, kind: str, container_id: uuid.UUID, assignment_id: uuid.UUID
+def _remove_group_assignment(
+    session: Session, group_id: uuid.UUID, assignment_id: uuid.UUID
 ) -> RedirectResponse:
-    """Unassign a policy from this group or tag.
+    """Unassign a policy from this group.
 
     ⚠️ **Allowed here, and refused on the device page** (W118). The click changes
     every member either way; the difference is whether the page the operator is
     looking at makes that obvious. Here it does, and the button says how many
     devices it reaches.
 
-    Still checks the assignment really belongs to *this* container, so a
-    hand-edited URL cannot reach a device- or other-scoped row from here.
+    Still checks the assignment really belongs to *this* group, so a
+    hand-edited URL cannot reach a device-scoped row from here.
     """
     from app.api.routers.assignments import delete_assignment
 
-    spec = _CONTAINERS[kind]
     assignment = session.get(Assignment, assignment_id)
     if assignment is None:
         return _redirect(
-            f"{spec['prefix']}/{container_id}?error="
-            + _quote("that assignment no longer exists")
+            f"/groups/{group_id}?error=" + _quote("that assignment no longer exists")
         )
 
-    owner = assignment.group_id if kind == "group" else assignment.tag_id
-    if owner != container_id:
+    if assignment.group_id != group_id:
         return _redirect(
-            f"{spec['prefix']}/{container_id}?error="
-            + _quote(f"that assignment does not belong to this {spec['label']}")
+            f"/groups/{group_id}?error="
+            + _quote("that assignment does not belong to this group")
         )
 
     name = assignment.policy.name if assignment.policy else "the policy"
     delete_assignment(assignment_id, session)
-    return _redirect(f"{spec['prefix']}/{container_id}?unassigned=" + _quote(name))
+    return _redirect(f"/groups/{group_id}?unassigned=" + _quote(name))
 
 
-def _delete_container(
-    session: Session, kind: str, container_id: uuid.UUID, confirm: str
+def _delete_group(
+    session: Session, group_id: uuid.UUID, confirm: str
 ) -> RedirectResponse:
-    """Delete a group or tag, and everything that hangs off it.
+    """Delete a group, and everything that hangs off it.
 
     ⚠️ **The cascades, one of which is silent.** `device_group.id` is referenced
     with `ondelete="CASCADE"` from membership, `Assignment`, `ProfileAssignment`
-    and — for groups only — `enrollment_token_group`. The first three are
-    visible on the page. The fourth is not: a token scoped to the group stays
+    and `enrollment_token_group`. The first three are visible on the page. The fourth is not: a token scoped to the group stays
     live and simply stops placing devices in it, so a tablet enrolled afterwards
     lands without the policy stack and nothing says why. The page counts those
     tokens before asking.
@@ -1117,12 +1069,11 @@ def _delete_container(
     on every member at once. A single unassign stays a plain click, because
     ceremony should track consequence rather than destructiveness in general.
     """
-    spec, container = _container_or_404(session, kind, container_id)
+    container = _group_or_404(session, group_id)
 
     if confirm.strip() != container.name:
         return _redirect(
-            f"{spec['prefix']}/{container_id}?error="
-            + _quote(f"type the {spec['label']} name exactly to confirm")
+            f"/groups/{group_id}?error=" + _quote("type the group name exactly to confirm")
         )
 
     affected = {d.id for d in container.devices}
@@ -1131,7 +1082,7 @@ def _delete_container(
     session.flush()
     eff.invalidate(session, affected)
     session.commit()
-    return _redirect("/fleet?deleted=" + _quote(name) + f"#tab-{spec['tab']}")
+    return _redirect("/fleet?deleted=" + _quote(name) + "#tab-groups")
 
 
 # --------------------------------------------------------------------------- #
@@ -1157,7 +1108,7 @@ def create_group_form(
     session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
 ) -> RedirectResponse:
-    return _create_container(session, "group", name, description)
+    return _create_group(session, name, description)
 
 
 @router.get("/groups/{group_id}", response_class=HTMLResponse)
@@ -1167,7 +1118,7 @@ def group_detail_page(
     session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
 ) -> HTMLResponse:
-    return _render_container_detail(request, session, identity, "group", group_id)
+    return _render_group_detail(request, session, identity, group_id)
 
 
 @router.post("/groups/{group_id}/devices")
@@ -1177,7 +1128,7 @@ def set_group_devices_form(
     session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
 ) -> RedirectResponse:
-    return _set_container_devices(request, session, "group", group_id)
+    return _set_group_devices(request, session, group_id)
 
 
 @router.post("/groups/{group_id}/assignments")
@@ -1188,7 +1139,7 @@ def assign_policy_to_group_form(
     session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
 ) -> RedirectResponse:
-    return _assign_policy_to_container(session, "group", group_id, policy_id, rank)
+    return _assign_policy_to_group(session, group_id, policy_id, rank)
 
 
 @router.post("/groups/{group_id}/assignments/{assignment_id}/remove")
@@ -1198,7 +1149,7 @@ def remove_group_assignment_form(
     session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
 ) -> RedirectResponse:
-    return _remove_container_assignment(session, "group", group_id, assignment_id)
+    return _remove_group_assignment(session, group_id, assignment_id)
 
 
 @router.post("/groups/{group_id}/delete")
@@ -1208,72 +1159,7 @@ def delete_group_form(
     session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
 ) -> RedirectResponse:
-    return _delete_container(session, "group", group_id, confirm)
-
-
-# --------------------------------------------------------------------------- #
-# Tags — the same machinery, a different column (W122)
-# --------------------------------------------------------------------------- #
-
-
-@router.post("/tags")
-def create_tag_form(
-    name: str = Form(...),
-    session: Session = Depends(get_db),
-    identity: AdminIdentity = Depends(admin_required),
-) -> RedirectResponse:
-    return _create_container(session, "tag", name)
-
-
-@router.get("/tags/{tag_id}", response_class=HTMLResponse)
-def tag_detail_page(
-    tag_id: uuid.UUID,
-    request: Request,
-    session: Session = Depends(get_db),
-    identity: AdminIdentity = Depends(admin_required),
-) -> HTMLResponse:
-    return _render_container_detail(request, session, identity, "tag", tag_id)
-
-
-@router.post("/tags/{tag_id}/devices")
-def set_tag_devices_form(
-    tag_id: uuid.UUID,
-    request: Request,
-    session: Session = Depends(get_db),
-    identity: AdminIdentity = Depends(admin_required),
-) -> RedirectResponse:
-    return _set_container_devices(request, session, "tag", tag_id)
-
-
-@router.post("/tags/{tag_id}/assignments")
-def assign_policy_to_tag_form(
-    tag_id: uuid.UUID,
-    policy_id: uuid.UUID = Form(...),
-    rank: int = Form(default=0),
-    session: Session = Depends(get_db),
-    identity: AdminIdentity = Depends(admin_required),
-) -> RedirectResponse:
-    return _assign_policy_to_container(session, "tag", tag_id, policy_id, rank)
-
-
-@router.post("/tags/{tag_id}/assignments/{assignment_id}/remove")
-def remove_tag_assignment_form(
-    tag_id: uuid.UUID,
-    assignment_id: uuid.UUID,
-    session: Session = Depends(get_db),
-    identity: AdminIdentity = Depends(admin_required),
-) -> RedirectResponse:
-    return _remove_container_assignment(session, "tag", tag_id, assignment_id)
-
-
-@router.post("/tags/{tag_id}/delete")
-def delete_tag_form(
-    tag_id: uuid.UUID,
-    confirm: str = Form(default=""),
-    session: Session = Depends(get_db),
-    identity: AdminIdentity = Depends(admin_required),
-) -> RedirectResponse:
-    return _delete_container(session, "tag", tag_id, confirm)
+    return _delete_group(session, group_id, confirm)
 
 
 @router.post("/devices/{device_id}/assignments/{assignment_id}/remove")
@@ -1937,7 +1823,6 @@ def profile_detail(
         **_form_catalogs(session),
         devices=list(session.scalars(select(Device).order_by(Device.serial_number))),
         groups=list(session.scalars(select(DeviceGroup).order_by(DeviceGroup.name))),
-        tags=list(session.scalars(select(Tag).order_by(Tag.name))),
         assigned=assigned,
         current_rank=pas[0].rank if pas else 0,
     )
@@ -1960,7 +1845,6 @@ def set_profile_targets_form(
     selected = {
         AssignmentScope.DEVICE: _uuids(form.getlist("device_ids")),
         AssignmentScope.GROUP: _uuids(form.getlist("group_ids")),
-        AssignmentScope.TAG: _uuids(form.getlist("tag_ids")),
     }
     existing = {
         (a.scope, a.device_id or a.group_id or a.tag_id): a
@@ -2302,7 +2186,6 @@ def policy_detail(
         **_form_catalogs(session),
         devices=list(session.scalars(select(Device).order_by(Device.serial_number))),
         groups=list(session.scalars(select(DeviceGroup).order_by(DeviceGroup.name))),
-        tags=list(session.scalars(select(Tag).order_by(Tag.name))),
         assigned=assigned,
         current_rank=assignments[0].rank if assignments else 0,
     )
@@ -2357,7 +2240,6 @@ def set_targets(
     selected = {
         AssignmentScope.DEVICE: _uuids(form.getlist("device_ids")),
         AssignmentScope.GROUP: _uuids(form.getlist("group_ids")),
-        AssignmentScope.TAG: _uuids(form.getlist("tag_ids")),
     }
 
     existing = {
@@ -2423,7 +2305,6 @@ def enrollment_page(
         identity=identity,
         primary=get_primary_token(session),
         groups=list(session.scalars(select(DeviceGroup).order_by(DeviceGroup.name))),
-        tags=list(session.scalars(select(Tag).order_by(Tag.name))),
         qr_ttl_seconds=settings.enrollment_qr_ttl_seconds,
         qr_svg=None,
         payload=None,
@@ -2454,7 +2335,6 @@ def create_primary(
         session,
         name=name,
         group_ids=_uuids(form.getlist("group_ids")),
-        tag_ids=_uuids(form.getlist("tag_ids")),
         created_by=None if identity.is_anonymous else identity.username,
         vault=vault,
     )

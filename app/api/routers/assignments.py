@@ -148,7 +148,6 @@ def set_policy_targets(
     for scope, ids in (
         (AssignmentScope.DEVICE, payload.device_ids),
         (AssignmentScope.GROUP, payload.group_ids),
-        (AssignmentScope.TAG, payload.tag_ids),
     ):
         target_model, label, _ = _TARGET_MODELS[scope]
         for target_id in ids:

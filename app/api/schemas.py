@@ -85,15 +85,6 @@ class GroupRead(ORMModel):
     description: str | None
 
 
-class TagCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=64)
-
-
-class TagRead(ORMModel):
-    id: uuid.UUID
-    name: str
-
-
 class MembershipUpdate(BaseModel):
     device_ids: list[uuid.UUID]
 
@@ -258,7 +249,6 @@ class EnrollmentTokenCreate(BaseModel):
     # whole shipment.
     max_uses: int | None = Field(default=None, ge=1, le=10_000)
     group_ids: list[uuid.UUID] = Field(default_factory=list)
-    tag_ids: list[uuid.UUID] = Field(default_factory=list)
     wifi: WifiConfig | None = None
 
 
@@ -272,7 +262,6 @@ class EnrollmentTokenRead(ORMModel):
     revoked_at: datetime | None
     created_at: datetime
     groups: list[GroupRead]
-    tags: list[TagRead]
 
 
 class EnrollmentTokenCreated(BaseModel):
@@ -294,7 +283,6 @@ class PrimaryEnrollmentTokenCreate(BaseModel):
 
     name: str = Field(min_length=1, max_length=128)
     group_ids: list[uuid.UUID] = Field(default_factory=list)
-    tag_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class PrimaryEnrollmentQrIssued(BaseModel):
@@ -546,7 +534,6 @@ class PolicyTargets(BaseModel):
 
     device_ids: list[uuid.UUID] = Field(default_factory=list)
     group_ids: list[uuid.UUID] = Field(default_factory=list)
-    tag_ids: list[uuid.UUID] = Field(default_factory=list)
     rank: int = 0
     pinned_version: int | None = None
     # replace: targets not listed have their assignment removed. add: purely additive.

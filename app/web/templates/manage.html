@@ -13,7 +13,7 @@
   </div>
 {% endif %}
 
-{{ tabs([('devices', 'Devices'), ('groups', 'Groups'), ('tags', 'Tags')],
+{{ tabs([('devices', 'Devices'), ('groups', 'Groups')],
         active='devices', scope='manage-tabs') }}
 
 <div id="manage-tabs">
@@ -117,33 +117,26 @@
 
 </div><!-- /devices -->
 
-{# ⚠️ Groups and tags are the same machinery over a different column, so the
-   two panels are the same markup driven by `containers` (W122). A tag has no
-   description; the loop must not assume the richer shape. #}
-{% for kind, heading, rows, blurb in [
-     ('groups', 'Groups', group_rows,
-      'A group is how one policy reaches many devices, and how an enrollment QR can drop a tablet straight into its policy stack.'),
-     ('tags', 'Tags', tag_rows,
-      'A tag is a looser grouping — a device can carry several, and a policy assigned to one reaches every device wearing it.')] %}
-<div class="tab-panel" data-tab-panel="{{ kind }}" hidden>
+<div class="tab-panel" data-tab-panel="groups" hidden>
   <div class="panel">
-    <h2>Create a {{ 'group' if kind == 'groups' else 'tag' }}</h2>
-    <p class="sub">{{ blurb }}</p>
-    <form method="post" action="/{{ 'groups' if kind == 'groups' else 'tags' }}" class="stack">
+    <h2>Create a group</h2>
+    <p class="sub">
+      A group is how one policy reaches many devices, and how an enrollment QR
+      can drop a tablet straight into its policy stack.
+    </p>
+    <form method="post" action="/groups" class="stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="row">
-        <label for="{{ kind }}-name">Name</label>
-        <input type="text" id="{{ kind }}-name" name="name" maxlength="128"
+        <label for="groups-name">Name</label>
+        <input type="text" id="groups-name" name="name" maxlength="128"
                required autocomplete="off" style="min-width:260px">
       </div>
-      {% if kind == 'groups' %}
       <div class="row">
         <label for="groups-desc">Description</label>
         <input type="text" id="groups-desc" name="description" maxlength="500"
                autocomplete="off" style="min-width:360px">
       </div>
-      {% endif %}
-      <div><button type="submit">Create {{ 'group' if kind == 'groups' else 'tag' }}</button></div>
+      <div><button type="submit">Create group</button></div>
       <p class="field-tip">
         You will land on its page, where devices and policies are added.
       </p>
@@ -151,8 +144,8 @@
   </div>
 
   <div class="panel">
-    <h2>{{ heading }}</h2>
-    {% if not rows %}
+    <h2>Groups</h2>
+    {% if not group_rows %}
       <p class="muted">
         None yet. Worth creating as soon as two devices should get the same
         policy — assign it once here rather than once per device.
@@ -160,18 +153,13 @@
     {% else %}
     <table>
       <thead>
-        <tr><th>Name</th>{% if kind == 'groups' %}<th>Description</th>{% endif %}<th>Devices</th><th>Policies</th></tr>
+        <tr><th>Name</th><th>Description</th><th>Devices</th><th>Policies</th></tr>
       </thead>
       <tbody>
-      {% for row in rows %}
+      {% for row in group_rows %}
         <tr>
-          <td>
-            <a href="/{{ 'groups' if kind == 'groups' else 'tags' }}/{{ row.container.id }}">
-              {{ row.container.name }}</a>
-          </td>
-          {% if kind == 'groups' %}
-            <td class="muted">{{ row.container.description or '—' }}</td>
-          {% endif %}
+          <td><a href="/groups/{{ row.container.id }}">{{ row.container.name }}</a></td>
+          <td class="muted">{{ row.container.description or '—' }}</td>
           <td class="mono">{{ row.device_count }}</td>
           <td class="mono">{{ row.policy_count }}</td>
         </tr>
@@ -181,7 +169,6 @@
     {% endif %}
   </div>
 </div>
-{% endfor %}
 
 </div><!-- /manage-tabs -->
 {% endblock %}
