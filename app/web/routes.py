@@ -144,6 +144,7 @@ from app.services.enrollment import (
     get_primary_token,
     mint_qr_secret,
     retire_and_create_primary,
+    token_for_group,
     revoke_device_certificates,
     revoke_token,
 )
@@ -2318,24 +2319,39 @@ def generate_qr(
     wifi_ssid: str = Form(default=""),
     wifi_password: str = Form(default=""),
     wifi_security: str = Form(default="WPA"),
+    group_id: str = Form(default=""),
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     storage: ArtifactStorage = Depends(get_storage),
     guard: EnrollmentQrGuard = Depends(get_enrollment_qr_guard),
+    vault: TokenVault = Depends(get_token_vault),
     identity: AdminIdentity = Depends(admin_required),
 ) -> HTMLResponse:
-    """Mint a fresh 15-minute QR for the active primary.
+    """Mint a fresh 15-minute QR, optionally scoped to a group (W121).
 
     Also what the Wi-Fi form on the QR page itself submits to: there is no
     per-QR row to re-render with credentials added, so embedding Wi-Fi simply
     mints a new secret with the credentials baked in. The one just displayed
     keeps working until its own 15 minutes elapse — nothing revokes it.
+
+    ⚠️ **A group makes this resolve to a different token, not a different QR
+    format.** The signed derivative carries only a token id, and the enrolment
+    path already applies whatever groups that token is scoped to — so picking a
+    group means issuing against the group's standing token instead of the
+    primary. Nothing about the QR, the signature or enrolment changes.
     """
+    group = None
+    if group_id.strip():
+        with suppress(ValueError):
+            group = session.get(DeviceGroup, uuid.UUID(group_id.strip()))
+
     return _render_primary_qr(
         request, session, settings, storage, guard, identity,
         wifi_ssid=wifi_ssid.strip() or None,
         wifi_password=wifi_password or None,
         wifi_security=wifi_security,
+        group=group,
+        vault=vault,
     )
 
 
@@ -2350,11 +2366,20 @@ def _render_primary_qr(
     wifi_ssid: str | None = None,
     wifi_password: str | None = None,
     wifi_security: str = "WPA",
+    group: DeviceGroup | None = None,
+    vault: TokenVault | None = None,
 ) -> HTMLResponse:
     context: dict[str, Any] = {
         "primary": None,
         "wifi_ssid": wifi_ssid,
         "wifi_security": wifi_security,
+        # ⚠️ Named beside the code. A QR is a picture and says nothing about
+        # what it will do; one that silently enrols into the wrong group is the
+        # failure this feature could most easily introduce.
+        "group": group,
+        "groups": list(
+            session.scalars(select(DeviceGroup).order_by(DeviceGroup.name))
+        ),
         "qr_svg": None,
         "payload": None,
         "secret": None,
@@ -2369,7 +2394,12 @@ def _render_primary_qr(
     }
 
     try:
-        primary, secret = mint_qr_secret(session, guard)
+        if group is not None:
+            token = token_for_group(session, group, vault=vault)
+            session.commit()
+            primary, secret = token, guard.issue(token.id)
+        else:
+            primary, secret = mint_qr_secret(session, guard)
     except EnrollmentError as exc:
         context["problem"] = str(exc)
         return _render(request, "token_qr.html", identity=identity, **context)

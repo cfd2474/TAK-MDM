@@ -563,6 +563,79 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W121 — Pick a group when generating the provisioning QR
+
+Operator, 2026-09-11: *"I want to be able to assign a group during the
+provisioning process via the QR code. Set the group when adding the wifi details
+so that device automatically joins selected group and receives associated group
+policies"*.
+
+#### Almost all of this already exists
+
+An enrollment token can be scoped to groups (`enrollment_token_group`), and
+enrolment already applies them — `enrollment.py:336`,
+`device.groups.extend(g for g in token.groups …)`. A device enrolled with a
+group-scoped token lands in the group and inherits its policy stack with no
+second step. **What is missing is only the choosing.**
+
+#### ⚠️ The QR is a derivative of the *primary* token, which is what makes this
+#### a design question rather than a form field
+
+`mint_qr_secret` issues a signed 15-minute secret resolving to **the** primary
+token, so today a QR always carries the primary's groups. Two ways to let an
+operator pick:
+
+| | Cost |
+|---|---|
+| **Encode the groups in the signed QR payload** | Changes the `{id}.{nonce}.{issued}.{signature}` format and `resolve_token`'s contract — it returns a token, and would now need to return a token plus overrides. Security-sensitive surface, touched for a UI convenience. |
+| ✅ **Issue the QR against a group-scoped token instead of the primary** | No change to enrolment, auth or crypto at all. |
+
+The second works because of something worth stating plainly: **`resolve_token`
+verifies the QR signature, loads that token id and checks `is_usable()` — it
+never requires `is_primary`.** The QR machinery is already general over tokens;
+only the minting helper was specific to the primary.
+
+So: **get-or-create one standing token per group**, named for it, and issue the
+same 15-minute derivatives against that. One extra row per group rather than
+one per QR, revocable on its own, and the whole short-lived-signed-QR property
+is retained rather than re-implemented.
+
+#### ⚠️ A QR that silently enrols into the wrong group is the failure to avoid
+
+The QR is a picture; nothing about it says what it will do. The page must state
+the group beside the code, and the "no group" case must stay visibly distinct
+from "some group I forgot I picked" — a sticky selection would be worse than no
+feature.
+
+#### Chunk 1
+
+1. `enrollment.token_for_group(session, group)` — get-or-create the standing
+   group token, non-primary, long-lived, scoped to exactly that group.
+2. Group select on both Wi-Fi forms (`enroll.html`, `token_qr.html`), defaulting
+   to "No group".
+3. `/enrollment/qr` accepts `group_id` and mints against that token.
+4. The QR page names the group beside the code, or says plainly that no group
+   is attached.
+5. Tests: a device enrolled with a group QR lands in the group **and** receives
+   its policies; no group selected behaves exactly as today; the group token is
+   reused rather than multiplied; revoking it does not disturb the primary.
+6. Deploy.
+
+#### ✅ Done (2026-09-11)
+
+Suite **1402 passed, 1 skipped**. No change to enrolment, the QR guard or the
+signed payload — the group select resolves the code to a different token, and
+everything downstream was already general over tokens.
+
+⚠️ **A test-harness trap worth recording.** Three tests failed for a reason
+unrelated to the feature: without `agent_signature_checksum` the QR payload
+raises, and the page renders an error banner *instead of* the block holding the
+pill and the secret — so every assertion about the QR fails identically whether
+the feature works or not. The fixture that configures it must depend on
+`client`: as a bare autouse fixture it ran **before** `client`, which then reset
+`dependency_overrides` and silently undid it. The existing example in
+`test_admin_ui.py` sidesteps this by setting the override inside the test body.
+
 ### ✅ W120 — Delete a group, and manage its assignments
 
 Operator, 2026-09-11: *"build deleting a group, and editing group assignments

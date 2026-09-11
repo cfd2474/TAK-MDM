@@ -90,7 +90,21 @@
           {% endfor %}
         </select>
       </div>
+      <div>
+        <label for="qr_group">Enrol into group — optional</label>
+        <select id="qr_group" name="group_id" class="field-full">
+          <option value="">No group</option>
+          {% for g in groups %}
+            <option value="{{ g.id }}">{{ g.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
     </div>
+    <p class="field-tip">
+      A group here means the tablet joins it as it enrols and picks up that
+      group's policies on its first check-in, with no second step. Manage groups
+      on the <a href="/groups">Groups</a> page.
+    </p>
     <button type="submit" style="margin-top:14px">Generate enrollment QR</button>
   </form>
 </div>

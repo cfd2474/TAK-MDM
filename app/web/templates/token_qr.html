@@ -42,7 +42,21 @@
           {% endfor %}
         </select>
 
-        <button type="submit" style="margin-top:14px">OK — new QR with Wi-Fi</button>
+
+        <label for="qr_group" style="margin-top:12px">Enrol into group — optional</label>
+        <select id="qr_group" name="group_id" style="width:100%">
+          <option value="">No group</option>
+          {% for g in groups %}
+            <option value="{{ g.id }}"
+              {% if group and group.id == g.id %}selected{% endif %}>{{ g.name }}</option>
+          {% endfor %}
+        </select>
+        <p class="field-tip">
+          The tablet joins this group as it enrols and picks up the group's
+          policies on its first check-in — no second step.
+        </p>
+
+        <button type="submit" style="margin-top:14px">OK — new QR</button>
       </form>
 
       <p class="muted" style="font-size:12px; margin-top:14px">
@@ -76,6 +90,14 @@
           </span>
           <span class="muted">— good for any number of devices until then.</span>
         </p>
+        {# ⚠️ A QR is a picture and says nothing about what it does. The group
+           belongs beside it, and "no group" has to stay visibly distinct from a
+           group the operator forgot they picked. #}
+        {% if group %}
+          <p><span class="pill good">Enrols into group: {{ group.name }}</span></p>
+        {% else %}
+          <p><span class="pill">No group — the device enrols ungrouped</span></p>
+        {% endif %}
         {% if wifi_ssid %}
           <p><span class="pill good">Wi-Fi embedded: {{ wifi_ssid }}</span></p>
         {% else %}

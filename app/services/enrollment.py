@@ -214,6 +214,59 @@ def mint_qr_secret(
     return primary, guard.issue(primary.id)
 
 
+#: Prefixes the name of a token that exists only to scope a QR to one group, so
+#: the Enroll page's token list reads as intended rather than as clutter.
+GROUP_TOKEN_PREFIX = "Group: "
+
+
+def token_for_group(
+    session: Session, group: DeviceGroup, *, vault: TokenVault | None = None
+) -> EnrollmentToken:
+    """The standing enrollment token that places a device into `group` (W121).
+
+    ⚠️ **Get-or-create, one per group** — not one per QR. A QR is already a
+    short-lived signed derivative, so minting a fresh *token* each time would
+    pile up rows that all do the same thing and each have to be revoked
+    separately. One row per group is revocable on its own and reads clearly on
+    the Enroll page.
+
+    ⚠️ **Not a primary.** `uq_enrollment_token_one_live_primary` allows only one
+    live primary, and this must not compete for that slot; it also must not
+    become what the plain QR button resolves to. It is an ordinary token that
+    nobody types in by hand — which is exactly what the QR guard already
+    supports, because `resolve_token` verifies the signature, loads the id and
+    checks `is_usable()` without ever asking whether the token is primary.
+
+    Long-lived for the same reason the primary is: this is a standing
+    credential an operator manages, not a one-shot.
+    """
+    name = f"{GROUP_TOKEN_PREFIX}{group.name}"
+    existing = session.scalar(
+        select(EnrollmentToken).where(
+            EnrollmentToken.name == name, EnrollmentToken.revoked_at.is_(None)
+        )
+    )
+    if existing is not None and existing.is_usable(now=_utcnow()):
+        # ⚠️ Re-scoped on every use rather than trusted. A group renamed, or its
+        # membership of this token edited by hand, would otherwise leave a QR
+        # quietly enrolling into the wrong place — and a QR is a picture that
+        # says nothing about what it does.
+        if [g.id for g in existing.groups] != [group.id]:
+            existing.groups = [group]
+            session.flush()
+        return existing
+
+    issued = create_token(
+        session,
+        name=name,
+        ttl_hours=_PRIMARY_TOKEN_LIFETIME_HOURS,
+        group_ids=[group.id],
+        created_by="group QR",
+        vault=vault,
+    )
+    return issued.token
+
+
 def reveal_secret(token: EnrollmentToken, vault: TokenVault) -> str | None:
     """Recover a token's secret so its QR can be re-rendered, or None."""
     return vault.open(token.token_ciphertext)
