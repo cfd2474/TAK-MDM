@@ -769,10 +769,39 @@ A real provisioning run with three required permissions ungranted:
 * the optional `power_menu` sits in `compliance_warnings` and does **not** touch
   the status, which is the invariant `PermissionRequirement` insists on.
 
-⚠️ **The path that was actually exercised is the pre-enrolment one**, because
-this run reached the screen before enrolling. **The mTLS path — the one bug 1 was
-about — is covered by tests but has not run on hardware.** It will be exercised
-by any run that enrols first, which is what happened on the *previous* attempt.
+#### ✅ Both paths now verified on hardware — `SM-X828U`, 2026-09-11
+
+The first run exercised the **pre-enrolment** path (token). A second run was
+steered deliberately onto the **mTLS** path by waiting on the permission screen
+until the device had enrolled before tapping, which nulls the token:
+
+```
+POST /api/v1/device/bypass-pin  200   x3
+bypass PIN rejected for device R5GL80RJYHK (attempt 1 of 10)
+bypass PIN rejected for device R5GL80RJYHK (attempt 2 of 10)
+bypass PIN accepted  for device R5GL80RJYHK
+```
+
+`device.bypass_attempts` back to 0 afterwards — counted per **device**, and the
+allowance restored on success.
+
+⚠️ **The two paths are chosen by a race, not by configuration.**
+`MdmDeviceAdminReceiver.onEnabled` starts `SyncScheduler` as soon as device
+admin is enabled, so enrolment runs concurrently with the permission screen and
+whichever finishes first decides which credential still exists. That is why the
+same tablet produced "no server is configured" on one run and a working code box
+on the next. **To test a particular path deliberately: tap immediately for the
+token path, or wait until the device appears in the fleet for the mTLS path.**
+
+#### Wording fixed (agent 0.61.0)
+
+The rejection message named the enrollment token — *"…before this enrollment
+token is locked out"* — which is the credential on only one of the two paths,
+and not the one an operator normally hits. On an enrolled device the counter is
+on the device, so the message pointed at the wrong thing and implied a wrong
+remedy ("use a new enrollment token"). Now neutral: *"…attempt(s) left before
+the bypass locks out"*, and the locked message says to grant the permissions,
+which is the remedy on both paths.
 
 #### Follow-up worth doing
 

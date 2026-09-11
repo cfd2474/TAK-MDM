@@ -44,8 +44,8 @@
     <string name="compliance_override_cancel">Go back</string>
     <string name="compliance_override_hint">6-digit code</string>
     <string name="compliance_override_checking">Checking the code…</string>
-    <string name="compliance_override_wrong">That code is not correct. %1$d attempt(s) left before this enrollment token is locked out.</string>
-    <string name="compliance_override_locked">This enrollment token has no bypass attempts left. Use a new enrollment token, or grant the permissions.</string>
+    <string name="compliance_override_wrong">That code is not correct. %1$d attempt(s) left before the bypass locks out.</string>
+    <string name="compliance_override_locked">No bypass attempts left. Grant the permissions listed above to continue.</string>
     <string name="compliance_override_unreachable">Could not reach the server to check the code. The bypass needs a connection; the permissions above do not.</string>
     <string name="compliance_override_no_server">No server is configured, so the code cannot be checked.</string>
     <string name="action_review_permissions">Review permissions</string>
