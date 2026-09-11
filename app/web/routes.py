@@ -82,6 +82,7 @@ from app.artifacts import app_restrictions
 from app.artifacts.storage import ArtifactStorage
 from app.config import Settings, get_settings
 from app.db.models import (
+    enrollment_token_group,
     AppPackage,
     AppPackageVersion,
     Assignment,
@@ -920,6 +921,23 @@ def group_detail_page(
         )
     )
 
+    # ⚠️ Counted for the delete panel. A token scoped to this group keeps
+    # working after the group is deleted and simply stops placing devices in
+    # it — the one cascade whose effect is invisible everywhere else.
+    token_count = session.scalar(
+        select(func.count())
+        .select_from(enrollment_token_group)
+        .where(enrollment_token_group.c.group_id == group.id)
+    ) or 0
+
+    assignable = list(
+        session.scalars(
+            select(Policy)
+            .where(Policy.archived_at.is_(None), Policy.is_template.is_(False))
+            .order_by(Policy.name)
+        )
+    )
+
     return _render(
         request,
         "group_detail.html",
@@ -927,6 +945,8 @@ def group_detail_page(
         group=group,
         devices=[{"device": d, "member": d.id in member_ids} for d in devices],
         member_count=len(member_ids),
+        token_count=token_count,
+        assignable=assignable,
         assignments=[
             {
                 "assignment": a,
@@ -971,6 +991,121 @@ def set_group_devices_form(
 
     _apply_membership(session, group, ids)
     return _redirect(f"/groups/{group_id}?saved=1")
+
+
+@router.post("/groups/{group_id}/assignments")
+def assign_policy_to_group_form(
+    group_id: uuid.UUID,
+    policy_id: uuid.UUID = Form(...),
+    rank: int = Form(default=0),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Assign one policy to this group (W120).
+
+    Delegates to the API's `create_assignment` rather than building the row
+    here: that validates the policy, refuses a template, resolves a pinned
+    version and invalidates every affected device. A second hand-rolled copy is
+    how W118 shipped a cache bug.
+    """
+    from app.api.routers.assignments import create_assignment
+    from app.api.schemas import AssignmentCreate
+
+    group = session.get(DeviceGroup, group_id)
+    if group is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "group not found")
+
+    try:
+        create_assignment(
+            AssignmentCreate(
+                policy_id=policy_id, scope="group", target_id=group_id, rank=rank
+            ),
+            session,
+        )
+    except HTTPException as exc:
+        return _redirect(f"/groups/{group_id}?error=" + _quote(str(exc.detail)))
+
+    return _redirect(f"/groups/{group_id}?assigned=1")
+
+
+@router.post("/groups/{group_id}/assignments/{assignment_id}/remove")
+def remove_group_assignment_form(
+    group_id: uuid.UUID,
+    assignment_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Unassign a policy from this group.
+
+    ⚠️ **Allowed here, and refused on the device page** (W118). The click
+    changes every device in the group either way; the difference is whether the
+    page the operator is looking at makes that obvious. Here it does, and the
+    button says how many devices it reaches.
+
+    Still checks the assignment really belongs to *this* group, so a hand-edited
+    URL cannot reach a device- or tag-scoped row from here.
+    """
+    from app.api.routers.assignments import delete_assignment
+
+    assignment = session.get(Assignment, assignment_id)
+    if assignment is None:
+        return _redirect(
+            f"/groups/{group_id}?error=" + _quote("that assignment no longer exists")
+        )
+    if assignment.group_id != group_id:
+        return _redirect(
+            f"/groups/{group_id}?error="
+            + _quote("that assignment does not belong to this group")
+        )
+
+    name = assignment.policy.name if assignment.policy else "the policy"
+    delete_assignment(assignment_id, session)
+    return _redirect(f"/groups/{group_id}?unassigned=" + _quote(name))
+
+
+@router.post("/groups/{group_id}/delete")
+def delete_group_form(
+    group_id: uuid.UUID,
+    confirm: str = Form(default=""),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Delete a group, and everything that hangs off it.
+
+    ⚠️ **Four cascades, one of them silent.** `device_group.id` is referenced
+    with `ondelete="CASCADE"` from membership, `Assignment`, `ProfileAssignment`
+    and `enrollment_token_group`. The first three are visible on this page. The
+    fourth is not: a token scoped to this group stays live and simply stops
+    placing devices in it, so a tablet enrolled afterwards lands without the
+    policy stack and nothing says why. The page counts those tokens before
+    asking.
+
+    ⚠️ **Members are captured before the delete, not after.** Once the cascade
+    runs, `device_group_member` is gone and there is no way to learn whose
+    effective policy just changed — the same ordering the API's
+    `delete_assignment` uses.
+
+    Typing the name is the confirmation, as with disenroll: this changes policy
+    on every member at once. A single unassign stays a plain click, because
+    ceremony should track consequence rather than destructiveness in general.
+    """
+    group = session.get(DeviceGroup, group_id)
+    if group is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "group not found")
+
+    if confirm.strip() != group.name:
+        return _redirect(
+            f"/groups/{group_id}?error="
+            + _quote("type the group name exactly to confirm")
+        )
+
+    affected = {d.id for d in group.devices}
+    name = group.name
+    session.delete(group)
+    session.flush()
+    eff.invalidate(session, affected)
+    session.commit()
+    return _redirect("/groups?deleted=" + _quote(name))
 
 
 @router.post("/devices/{device_id}/assignments/{assignment_id}/remove")

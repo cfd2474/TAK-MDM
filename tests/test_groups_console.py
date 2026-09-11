@@ -264,3 +264,172 @@ def test_an_unknown_group_is_a_404(client: TestClient):
     response = client.get(f"/groups/{uuid.uuid4()}", headers=ADMIN_HEADERS)
 
     assert response.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Assignments, from the group's own page (W120)
+# --------------------------------------------------------------------------- #
+
+
+def _make_policy(client: TestClient, name: str = "group pw") -> str:
+    return client.post(
+        "/api/v1/policies",
+        json={"name": name, "policy_type": "PASSWORD", "spec": {"min_length": 8}},
+    ).json()["id"]
+
+
+def _assign(client: TestClient, group_id, policy_id: str, rank: int = 0):
+    return client.post(
+        f"/groups/{group_id}/assignments",
+        data={"policy_id": policy_id, "rank": rank},
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+
+
+def test_assigning_from_the_group_page_reaches_its_members(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    _create(client, "Field Tablets")
+    group = _group(db, "Field Tablets")
+    _set_members(client, group.id, [result["device_id"]])
+
+    _assign(client, group.id, _make_policy(client))
+
+    after = checkin(client, headers, force_full=True)["desired_state"]
+    assert after["policy"].get("PASSWORD") == {"min_length": 8}
+
+
+def test_removing_an_assignment_here_is_allowed_and_takes_effect(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """⚠️ Refused on the device page (W118), correct here.
+
+    The click changes every member either way; the difference is whether the
+    page the operator is looking at makes that obvious.
+    """
+    from app.db.models import Assignment
+
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    _create(client, "Field Tablets")
+    group = _group(db, "Field Tablets")
+    _set_members(client, group.id, [result["device_id"]])
+    _assign(client, group.id, _make_policy(client))
+    assignment = db.scalar(select(Assignment).where(Assignment.group_id == group.id))
+
+    client.post(
+        f"/groups/{group.id}/assignments/{assignment.id}/remove",
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+
+    after = checkin(client, headers, force_full=True)["desired_state"]
+    assert not after["policy"].get("PASSWORD")
+
+
+def test_an_assignment_from_another_group_is_refused(client: TestClient, db, enrolled):
+    """⚠️ A hand-edited URL must not reach another group's row from here."""
+    from app.db.models import Assignment
+
+    _create(client, "Field Tablets")
+    _create(client, "Depot")
+    mine = _group(db, "Field Tablets")
+    theirs = _group(db, "Depot")
+    _assign(client, theirs.id, _make_policy(client))
+    assignment = db.scalar(select(Assignment).where(Assignment.group_id == theirs.id))
+
+    response = client.post(
+        f"/groups/{mine.id}/assignments/{assignment.id}/remove",
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+
+    assert "error=" in response.headers["location"]
+    assert db.get(Assignment, assignment.id) is not None
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ Deleting a group
+# --------------------------------------------------------------------------- #
+
+
+def _delete(client: TestClient, group_id, confirm: str):
+    return client.post(
+        f"/groups/{group_id}/delete",
+        data={"confirm": confirm},
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+
+
+def test_deleting_needs_the_name_typed(client: TestClient, db):
+    _create(client, "Field Tablets")
+    group = _group(db, "Field Tablets")
+
+    response = _delete(client, group.id, "field tablets")
+
+    assert "error=" in response.headers["location"]
+    assert _group(db, "Field Tablets") is not None
+
+
+def test_deleting_strips_its_policies_from_members(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """⚠️ The cascade that matters, and the reason members are captured before
+    the delete: afterwards `device_group_member` is gone and there is no way to
+    learn whose effective policy just changed."""
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    _create(client, "Field Tablets")
+    group = _group(db, "Field Tablets")
+    _set_members(client, group.id, [result["device_id"]])
+    _assign(client, group.id, _make_policy(client))
+    assert checkin(client, headers, force_full=True)["desired_state"]["policy"].get("PASSWORD")
+
+    _delete(client, group.id, "Field Tablets")
+
+    after = checkin(client, headers, force_full=True)["desired_state"]
+    assert not after["policy"].get("PASSWORD")
+
+
+def test_deleting_leaves_the_devices_enrolled(client: TestClient, db, enrolled):
+    """It removes a grouping, not a fleet."""
+    result = enrolled()
+    _create(client, "Field Tablets")
+    group = _group(db, "Field Tablets")
+    _set_members(client, group.id, [result["device_id"]])
+
+    _delete(client, group.id, "Field Tablets")
+
+    assert db.get(Device, uuid.UUID(result["device_id"])) is not None
+
+
+def test_the_page_warns_that_scoped_tokens_survive(client: TestClient, db):
+    """⚠️ The silent cascade. A token scoped to this group keeps working and
+    simply stops placing devices in it, so a tablet enrolled afterwards arrives
+    without the policy stack and nothing on the device says why."""
+    _create(client, "Field Tablets")
+    group = _group(db, "Field Tablets")
+    client.post(
+        "/api/v1/enrollment-tokens",
+        json={"name": "field", "group_ids": [str(group.id)]},
+        headers=ADMIN_HEADERS,
+    )
+
+    body = client.get(f"/groups/{group.id}", headers=ADMIN_HEADERS).text
+
+    assert "enrollment token" in body
+    assert "does <strong>not</strong> revoke" in body
+
+
+def test_no_token_warning_when_none_reference_the_group(client: TestClient, db):
+    """The warning has to mean something when it appears."""
+    _create(client, "Field Tablets")
+    group = _group(db, "Field Tablets")
+
+    body = client.get(f"/groups/{group.id}", headers=ADMIN_HEADERS).text
+
+    assert "does <strong>not</strong> revoke" not in body

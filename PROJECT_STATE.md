@@ -563,6 +563,83 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W120 — Delete a group, and manage its assignments
+
+Operator, 2026-09-11: *"build deleting a group, and editing group assignments
+from the group page"*. The two pieces W119 deliberately left out.
+
+#### Assignments belong here, unlike on the device page
+
+W118 refused to remove a group assignment from a *device* page, because the
+click would change every device in the group while looking like a per-device
+tidy-up. On the **group's own** page that is exactly what the operator means, so
+the button belongs here — labelled with how many devices it reaches, so the
+scale is visible at the moment of the click rather than discovered afterwards.
+
+Both actions delegate to the API's `create_assignment` / `delete_assignment`
+rather than building `Assignment` rows here. Those already validate the policy,
+reject templates, resolve pinned versions and call
+`invalidate_for_assignment` — and one implementation cannot drift from itself.
+W118 shipped a cache bug precisely by hand-rolling the second copy.
+
+#### ⚠️ Deleting a group cascades four ways, and one of them is silent
+
+`device_group.id` is referenced with `ondelete="CASCADE"` from four places:
+
+| Cascade | Consequence |
+|---|---|
+| `device_group_member` | Devices leave the group |
+| `Assignment.group_id` | **The group's policies stop reaching those devices** |
+| `ProfileAssignment.group_id` | Same, for profile assignments |
+| `enrollment_token_group` | ⚠️ **Enrollment tokens lose their scoping** |
+
+The last one is the trap. A token scoped to this group stays live and keeps
+working — it just quietly stops putting devices into the group. A tablet
+enrolled with it afterwards lands with none of the policy stack the operator
+expects, and nothing anywhere says why. **The delete panel therefore counts the
+tokens that reference the group and says what will happen to them**, because
+that consequence is invisible everywhere else.
+
+#### ⚠️ Invalidate before the cascade, not after
+
+The member list has to be captured *before* the delete: once the cascade runs,
+`device_group_member` is gone and there is no way to know whose effective policy
+just changed. Same shape as the API's delete resolving `devices_targeted_by`
+before removing the row.
+
+#### Typing the name to confirm
+
+Consistent with disenroll, and for the same reason: this changes policy on every
+member device at once and breaks token scoping invisibly. Unassigning a single
+policy stays a plain click — it is reversible and affects one thing. Ceremony
+should track consequence, not just destructiveness.
+
+#### Chunk 1
+
+1. Group page: assign a policy (select + rank), delegating to the API.
+2. Group page: remove an assignment, labelled with the device count.
+3. Delete panel: impact counts, typed-name confirmation.
+4. Delete route: capture members → delete → invalidate them.
+5. Tests: assigning reaches members; removing stops reaching; deleting a group
+   both strips its policies from members *and* is refused without the name; the
+   token-scoping warning appears when a token references the group.
+6. Deploy.
+
+#### ✅ Done (2026-09-11)
+
+Suite **1394 passed, 1 skipped** — the group tests passed first run, which is
+the payoff for delegating to `create_assignment` / `delete_assignment` instead
+of writing a third copy of assignment handling.
+
+Both directions are asserted against the **desired state**, not against rows:
+assigning from the group page reaches a member's tablet, removing stops
+reaching it, and deleting the group strips its policies from members. Two
+refusals are pinned as well — another group's assignment cannot be removed via
+a hand-edited URL, and the delete is refused unless the name matches exactly.
+
+The token warning has a negative test beside it, so it still means something
+when it appears.
+
 ### ✅ W119 — Device groups in the console
 
 Operator, 2026-09-11: *"in the manage section, i want to be able to create

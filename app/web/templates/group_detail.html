@@ -15,6 +15,16 @@
     Membership saved. Devices added or removed converge on their next check-in.
   </div>
 {% endif %}
+{% if request.query_params.get('assigned') %}
+  <div class="banner good">
+    Policy assigned. It reaches all {{ member_count }} device{{ '' if member_count == 1 else 's' }} in this group.
+  </div>
+{% endif %}
+{% if request.query_params.get('unassigned') %}
+  <div class="banner good">
+    Removed <strong>{{ request.query_params.get('unassigned') }}</strong> from this group.
+  </div>
+{% endif %}
 
 <h2>Devices in this group</h2>
 <div class="panel">
@@ -76,7 +86,7 @@
     in the group.
   </p>
   <table>
-    <thead><tr><th>Policy</th><th>Type</th><th>Version</th><th>Rank</th></tr></thead>
+    <thead><tr><th>Policy</th><th>Type</th><th>Version</th><th>Rank</th><th></th></tr></thead>
     <tbody>
     {% for row in assignments %}
       <tr>
@@ -88,15 +98,87 @@
         <td class="mono">{{ row.policy.policy_type if row.policy else '—' }}</td>
         <td class="mono">{% if row.version %}v{{ row.version }}{% else %}—{% endif %}</td>
         <td class="mono">{{ row.assignment.rank }}</td>
+        <td>
+          {# ⚠️ Allowed here and refused on the device page (W118). The click
+             changes every member either way; what differs is whether the page
+             makes that obvious. The label carries the count so the scale is
+             visible at the moment of the click. #}
+          <form method="post"
+                action="/groups/{{ group.id }}/assignments/{{ row.assignment.id }}/remove"
+                class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="linklike">
+              Remove from {{ member_count }} device{{ '' if member_count == 1 else 's' }}
+            </button>
+          </form>
+        </td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
   <p class="field-tip">
-    ⚠️ These are the assignments a device page cannot remove — it shows them as
-    "via group {{ group.name }}" precisely because removing one here would
-    change every device above, not just the one being looked at.
+    ⚠️ A device page shows these as "via group {{ group.name }}" and will not
+    remove them, because there the same click would change every device above
+    rather than the one being looked at. Here it is what you mean.
   </p>
   {% endif %}
+
+  <hr>
+  <h3>Assign a policy to this group</h3>
+  {% if not assignable %}
+    <p class="muted">No policies exist yet. Create one on the
+      <a href="/policies">Policies</a> page.</p>
+  {% else %}
+  <form method="post" action="/groups/{{ group.id }}/assignments" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="row">
+      <label for="assign-policy">Policy</label>
+      <select id="assign-policy" name="policy_id" required style="min-width:280px">
+        {% for p in assignable %}
+          <option value="{{ p.id }}">{{ p.name }} ({{ p.policy_type }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="row">
+      <label for="assign-rank">Rank</label>
+      <input type="number" id="assign-rank" name="rank" value="0" style="width:90px">
+      <span class="field-tip">Higher wins when two policies set the same field.</span>
+    </div>
+    <div><button type="submit">Assign to group</button></div>
+  </form>
+  {% endif %}
+</div>
+
+<h2>Delete this group</h2>
+<div class="panel">
+  <p>
+    <strong>Deleting {{ group.name }} removes more than the group.</strong>
+    Its {{ assignments|length }} policy assignment{{ '' if assignments|length == 1 else 's' }}
+    go with it, so the
+    {{ member_count }} device{{ '' if member_count == 1 else 's' }} in it stop
+    receiving {{ 'that policy' if assignments|length == 1 else 'those policies' }}
+    at their next check-in.
+  </p>
+  {% if token_count %}
+  <p class="banner warn">
+    ⚠️ {{ token_count }} enrollment token{{ '' if token_count == 1 else 's' }}
+    {{ 'is' if token_count == 1 else 'are' }} scoped to this group. Deleting it
+    does <strong>not</strong> revoke {{ 'that token' if token_count == 1 else 'those tokens' }} —
+    {{ 'it' if token_count == 1 else 'they' }} keep working and simply stop placing
+    devices in this group, so a tablet enrolled afterwards arrives without this
+    policy stack and nothing on the device says why.
+  </p>
+  {% endif %}
+  <form method="post" action="/groups/{{ group.id }}/delete" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="group-confirm">Type the group name to confirm</label>
+    <input type="text" id="group-confirm" name="confirm" class="field-full"
+           autocomplete="off">
+    <div><button type="submit" class="danger">Delete group</button></div>
+    <p class="field-tip">
+      The devices themselves are untouched — they leave the group, they are not
+      unenrolled.
+    </p>
+  </form>
 </div>
 {% endblock %}

@@ -10,6 +10,13 @@
   <a href="/fleet">&larr; Fleet</a>
 </p>
 
+{% if request.query_params.get('deleted') %}
+  <div class="banner good">
+    Deleted <strong>{{ request.query_params.get('deleted') }}</strong>. Its devices
+    remain enrolled and converge on their next check-in.
+  </div>
+{% endif %}
+
 <div class="panel">
   <h2>Create a group</h2>
   <form method="post" action="/groups" class="stack">
