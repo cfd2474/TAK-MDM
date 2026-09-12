@@ -1036,6 +1036,42 @@ v52 moved to `takmdm_data_usage_v2` at `IMPORTANCE_HIGH`.
 ⚠️ **Pick the importance when the channel is born**, and assume you get one
 chance. A warning nobody sees is the same as no warning.
 
+### Knowing what app is in front: `UsageStatsManager` (W136)
+
+📖 Read from `sources/android-36.1/android/app/usage/UsageStatsManager.java`.
+
+| API | Contract | Limits |
+|---|---|---|
+| `queryEvents(begin, end)` | *"Query for events in the given time range. Events are only kept by the system for a few days."* | `@RequiresPermission(PACKAGE_USAGE_STATS)`. **Returns `null`** when the user is locked — *"Starting from Android R, if the user's device is not in an unlocked state … then `null` will be returned."* |
+| `UsageEvents.Event.ACTIVITY_RESUMED` | The foreground activity changed to this package. | Replaces the deprecated `MOVE_TO_FOREGROUND`. |
+
+⚠️ **There is no callback.** Polling is not a shortcut here; it is the only
+public mechanism. Anything claiming to observe the foreground app without usage
+access is either an accessibility service or a system app.
+
+⚠️ **`PACKAGE_USAGE_STATS` is an app-op, so `setPermissionGrantState` does
+not reach it** and a Device Owner cannot grant it to itself. Check it with
+`AppOpsManager.unsafeCheckOpNoThrow(OPSTR_GET_USAGE_STATS, …) == MODE_ALLOWED`
+(both are public API — verified with `javap` against `android-36/android.jar`,
+unlike `OPSTR_ACTIVATE_VPN` two lines below it, which is `@SystemApi`).
+`MODE_DEFAULT` defers to the permission, which is signature-protected, so it is
+a refusal.
+
+⚠️ **The W44 NetworkStats exemption does not extend to this.** Device owners
+are documented to get *NetworkStats* for every app without a grant, which is why
+the manifest has declared `PACKAGE_USAGE_STATS` since W44. That is a different
+service, and `queryEvents` carries no device-owner carve-out. Declaring the
+permission only puts the app in Settings › Special access › Usage access, where
+a human can switch it on.
+
+⚠️ **No events is the normal state of an idle device.** A tablet sitting on
+its home screen has resumed nothing for minutes, so a short query window comes
+back empty. Empty means *no answer*, not "no app is in front" — treat it as a
+reason to hold the last conclusion. A first query needs a much wider window than
+the polling interval or a device already at rest is never classified at all.
+
+⏳ Not yet verified on hardware.
+
 ### Operator-facing text: support messages and lock-screen info (W42)
 
 📖 Read from `sources/android-36.1/android/app/admin/DevicePolicyManager.java`
