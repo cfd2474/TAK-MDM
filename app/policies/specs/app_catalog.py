@@ -108,6 +108,23 @@ class AppCatalogSpec(PolicySpec):
             )
         return self
 
+    storefront_id: Annotated[
+        str | None, Merge(MergeStrategy.HIGHEST_RANK)
+    ] = Field(
+        default=None,
+        title="ATLAS store",
+        description=(
+            "The shelf of apps a user may install for themselves on this device. "
+            "One per policy — a device has one store, not several. "
+            "⚠️ Two policies on the same device naming different storefronts is "
+            "reported as a conflict: the higher-ranked one wins and the other's "
+            "apps are simply not offered. Where both list the same app at "
+            "different builds, only one can ever be installed, so the losing "
+            "build is not a fallback — it is unreachable."
+        ),
+        json_schema_extra={"ui_group": "ATLAS store", "ui_control": "storefront"},
+    )
+
     # The blacklist: make these packages unusable by whatever means each one allows.
     #
     # An ordinary app is uninstalled. One that ships with the device is **hidden**

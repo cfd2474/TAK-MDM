@@ -404,14 +404,12 @@ class PackageRead(ORMModel):
     label: str | None
     signature_sha256: str | None
     signature_scheme: str | None
-    store_listed: bool
     created_at: datetime
     versions: list[PackageVersionRead]
 
 
 class PackageUpdate(BaseModel):
     label: str | None = None
-    store_listed: bool | None = None
 
 
 class AppGroupCreate(BaseModel):

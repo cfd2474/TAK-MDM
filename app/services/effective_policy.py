@@ -52,6 +52,7 @@ from app.db.models import (
     Policy,
     PolicyVersion,
     ProfileAssignment,
+    Storefront,
 )
 from app.services import files, notifications, packages
 from app.policies.registry import PolicyTypeError, registry
@@ -337,45 +338,60 @@ ATLAS_LAUNCHER_PACKAGE = "com.taksolutions.atlaslauncher"
 
 
 def resolve_store_apps(
-    session: Session, required: list[dict[str, Any]] | None = None
+    session: Session,
+    required: list[dict[str, Any]] | None = None,
+    values: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """The ATLAS store, resolved to concrete downloads the device can offer (W56).
 
-    Store membership is **server-wide curation, not policy**: an operator moves a
-    package into the store and every enrolled device may offer it. So this takes
-    no policy values — unlike `resolve_required_apps`, there is nothing per-device
-    to resolve against.
+    ⚠️ **Policy decides the shelf now** (W140). This used to read
+    `AppPackage.store_listed` and take no policy values at all, because store
+    membership was server-wide curation and every enrolled device saw the same
+    apps. A policy names a `Storefront` instead, so two devices can be offered
+    different shelves — and a device whose policies name none is offered
+    nothing, which is the honest reading of "no store was assigned".
 
     ⚠️ An offer is not an order. These are apps a user *may* install; the agent
     must never install one on its own. The shape matches a required app so the
     agent can reuse one download path, and `required` is what keeps the two from
     colliding.
 
-    Apps with nothing publishable are **omitted**, not reported unavailable — the
-    opposite of the required path. A required app with no build is a broken policy
-    an operator must see; a store app with no build is simply not on the shelf, and
-    listing something a user cannot install would be worse than a shorter list.
+    Apps whose build has left the library are **omitted**, not reported
+    unavailable — the opposite of the required path. A required app with no build
+    is a broken policy an operator must see; a shelf entry that cannot be
+    installed is simply not on the shelf, and listing something a user cannot
+    install would be worse than a shorter list.
     """
+    storefront_id = (values or {}).get("APP_CATALOG", {}).get("storefront_id")
+    if not storefront_id:
+        return []
+    try:
+        storefront = session.get(Storefront, uuid.UUID(str(storefront_id)))
+    except ValueError:
+        storefront = None
+    if storefront is None:
+        # A storefront deleted out from under a policy. Empty rather than an
+        # error: the device loses an offer, not a configuration, and nothing it
+        # has already installed is touched.
+        return []
+
     already_required = {
         entry.get("package_name") for entry in (required or []) if entry.get("package_name")
     }
 
     offered: list[dict[str, Any]] = []
-    for package in session.scalars(
-        select(AppPackage).where(AppPackage.store_listed.is_(True))
-    ):
+    for item in storefront.items:
+        package = item.package
         # Required wins. Offering a user the choice to install something policy is
         # already installing is a contradiction the console cannot resolve for them.
-        if package.package_name in already_required:
+        if package is None or package.package_name in already_required:
             continue
 
-        # ⚠️ **The newest build, and here the difference is deliberate** (W139).
-        # A required app is installed *for* someone, so the policy has to say
-        # which build and an unanswered question is a broken policy. A store app
-        # is installed *by* someone from a shelf, and there is no policy to carry
-        # the answer — so the shelf offers the current build, the same way any
-        # app store does.
-        version = packages.newest(session, package)
+        # ⚠️ **The build the storefront names**, not the newest. The comment that
+        # stood here said a shelf should offer the current build because "there
+        # is no policy to carry the answer" — true when the shelf was
+        # server-wide, and obsolete the moment a policy started naming it.
+        version = item.version
         if version is None:
             continue
 
@@ -413,10 +429,10 @@ def refresh(session: Session, device: Device) -> dict[str, Any]:
     effective = compute(session, device)
     payload = effective.as_dict()
     payload["apps"] = resolve_required_apps(session, payload["values"])
-    # The store is server-wide curation, so it takes no policy values — but it is
-    # given the required list so an app that is both required and listed stays
-    # required rather than being offered as an optional install as well (W56).
-    payload["store"] = resolve_store_apps(session, payload["apps"])
+    # Given the required list so an app that is both required and on the shelf
+    # stays required rather than being offered as an optional install as well
+    # (W56), and the values because the shelf itself is now policy (W140).
+    payload["store"] = resolve_store_apps(session, payload["apps"], payload["values"])
     payload["files"] = files.resolve_files(session, payload["values"])
     payload["wallpaper"] = files.resolve_wallpaper(session, payload["values"])
 

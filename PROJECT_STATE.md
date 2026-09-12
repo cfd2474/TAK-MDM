@@ -586,6 +586,125 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### 🚧 W140 — The store becomes something a policy assigns
+
+Operator, 2026-09-12: *"remove the add to store button in the local apps. I want
+to create versions of the store that can be assigned to policies … they can only
+select 1 atlas store grouping per policy … they also need to be warned of the
+negative effects of assigning multiple policies to a device that have different
+versions of the atlas store."*
+
+#### What the store is today
+
+`AppPackage.store_listed`, a single boolean per package. `resolve_store_apps`
+takes **no policy values at all** — its own docstring says so: *"Store membership
+is server-wide curation, not policy"*. Every enrolled device sees the same shelf.
+
+That is the thing being replaced. The shelf becomes a named, assignable set.
+
+#### ⚠️ "Profile" is already taken — these are **storefronts**
+
+`PolicyProfile` is a policy made of sections, and it is all over this codebase.
+A second "profile" meaning a set of apps would collide in every conversation and
+every grep. The model is `Storefront`, described in the console as *a version of
+the ATLAS store*, which is the operator's own phrase.
+
+#### ✅ A storefront names builds, not packages
+
+There is already an `AppGroup` — a named, ordered set of *packages* — and it
+would have been the quick answer. It is the wrong one: W139 removed automatic
+selection one day ago, and a shelf that offered "whichever build is newest"
+would put it straight back, for the one surface where nobody would look for it.
+
+It is also what makes the operator's warning meaningful. *"The same app with
+multiple versions assigned causing conflict"* is only a describable failure if a
+storefront says which version.
+
+⚠️ **This reverses a comment written yesterday.** `resolve_store_apps` says a
+store app is installed *by* someone off a shelf, so "there is no policy to carry
+the answer — the shelf offers the current build". That was true when the shelf
+was server-wide. There is a policy now, so the reason expires with the design it
+described.
+
+#### ✅ The warning is a real conflict, not prose
+
+`MergeStrategy.HIGHEST_RANK` already exists and `strategies.py` already draws the
+distinction the operator is asking for:
+
+> **conflict** — a value was discarded by a strategy with no natural ordering
+> (`HIGHEST_RANK` had to pick arbitrarily between two different wallpapers). The
+> operator probably did not intend this and must be told.
+
+Two policies naming different storefronts is exactly that shape. So the field
+merges by `HIGHEST_RANK`, the existing conflict machinery reports it, and the
+device page already renders conflicts. The editor carries the explanation; the
+device carries the detection. **Prose alone would have been the weak answer** —
+it warns the operator who reads it and says nothing to the one who does not.
+
+#### ⚠️ Devices with no storefront get no store
+
+Today every device sees the shelf; afterwards a device sees one only if a policy
+names a storefront. That is the point of the change and it is still a behaviour
+change worth stating. Free right now — there are no devices and no policies on
+the server — and it would not have been last week.
+
+#### Chunk 1 — the server
+
+1. `Storefront` and `StorefrontItem` (package + the pinned build + position);
+   migration adding both and dropping `AppPackage.store_listed`.
+2. A `storefronts` service: list, get, create, rename, delete, set items.
+3. `APP_CATALOG.storefront_id` — one per policy, because the field is single
+   valued rather than because a validator says so — merged by `HIGHEST_RANK`,
+   in a new `ATLAS store` ui_group so the sub-page appears on its own.
+4. `resolve_store_apps` reads that value instead of `store_listed`; required
+   still wins over offered.
+5. Tests: a storefront's builds reach the device; no storefront means no store;
+   two policies naming different ones raise a **conflict**, not an override.
+6. Suite. ⚠️ Not deployed — chunk 2 carries the console that manages these.
+
+#### ✅ Chunk 1 done — not deployed
+
+`Storefront` and `StorefrontItem`, a service, `APP_CATALOG.storefront_id`, and
+`resolve_store_apps` reading it instead of `store_listed`. The column is gone,
+and with it the "Add to store" button, the toggle route, the API field and the
+CSV column.
+
+⚠️ **The migration's first draft claimed nothing would be lost and that was
+wrong.** It said zero packages were store-listed — checking found **four**
+(`beartoothtakplugin`, `fobs.plugin`, `uasready`, `edgescout`). They are named
+in the migration so the list outlives the column that held it. Not converted
+automatically: a boolean says which apps were on the shelf and not which build
+of each, and deriving "the newest" would have been this migration picking builds
+on an operator's behalf.
+
+⚠️ **Editing a shelf is not a policy edit**, so nothing recomputes any device
+unless the storefront service says so — the same trap the old boolean had, and
+its route invalidated for exactly this reason. `_tell_the_fleet` lives in the
+service rather than the route, against this codebase's usual split, because a
+second caller forgetting it would leave a fleet serving a stale shelf with
+nothing to see in the console.
+
+✅ **The warning is a real conflict.** `HIGHEST_RANK` + the existing machinery
+reports two policies naming different storefronts as a *conflict* rather than an
+override — `strategies.py` already defines that as "discarded by a strategy with
+no natural ordering … the operator probably did not intend this and must be
+told". Mutation-checked: switching the strategy to `MOST_RESTRICTIVE` fails four
+tests. Removing the annotation entirely is caught by the registry, not by me.
+
+⚠️ The policy form renders `ui_control: "storefront"` as a plain text box for
+now. Chunk 2 replaces it with the select and the explanation.
+
+Server **1488 passed, 1 skipped** (11 new in `test_storefronts.py`).
+
+#### Chunk 2 — the console
+
+1. Apps › Store becomes a list of storefronts: create, rename, delete, and pick
+   apps and their builds. The "Add to store" button goes with `store_listed`.
+2. The policy form's **ATLAS store** sub-page: one select, the explanation of
+   what two differing storefronts do to a device.
+3. The conflict rendered where an operator will meet it.
+4. Tests, deploy.
+
 ### ✅ W139 — The policy names the build; nothing is "published"
 
 Operator, 2026-09-12: *"I dont want to have a designated 'published' app version

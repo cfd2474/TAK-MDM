@@ -155,7 +155,7 @@ def _command_history(session: Session) -> Rows:
 
 
 def _app_inventory(session: Session) -> Rows:
-    columns = ["Package", "Label", "Latest version", "Parts", "In store", "Versions"]
+    columns = ["Package", "Label", "Latest version", "Parts", "Versions"]
     rows = []
     for p in session.scalars(select(AppPackage).order_by(AppPackage.package_name)):
         lv = p.latest_version
@@ -164,7 +164,6 @@ def _app_inventory(session: Session) -> Rows:
             p.label or "",
             (f"{lv.version_code}" + (f" ({lv.version_name})" if lv.version_name else "")) if lv else "",
             len(lv.files) if lv else 0,
-            "yes" if p.store_listed else "no",
             len(p.versions),
         ])
     return columns, rows

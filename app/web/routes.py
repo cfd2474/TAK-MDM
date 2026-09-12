@@ -124,6 +124,7 @@ from app.services import import_jobs
 from app.services import tak_gov
 from app.services import tak_gov_link
 from app.services import app_groups as app_group_service
+from app.services import storefronts as storefront_service
 from app.services.app_sources import repos as app_repos
 from app.services import commands as command_service
 from app.services import content_admin
@@ -2630,7 +2631,7 @@ def apps_page(
         "apps.html",
         identity=identity,
         packages=packages,
-        store_packages=[p for p in packages if p.store_listed],
+        storefronts=storefront_service.list_all(session),
         groups=app_group_service.list_groups(session),
         tpc=_tpc_panel(request, session, vault),
         # Only the sources the 3rd party bar actually searches. Google Play has
@@ -3258,26 +3259,6 @@ def preview_app_upload(
             "would_deploy": c.would_deploy,
         }
     )
-
-
-@router.post("/apps/{package_id}/store")
-def toggle_store_form(
-    package_id: uuid.UUID,
-    listed: str = Form(default=""),
-    session: Session = Depends(get_db),
-    identity: AdminIdentity = Depends(admin_required),
-) -> RedirectResponse:
-    package = session.get(AppPackage, package_id)
-    if package is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "package not found")
-    was_listed = package.store_listed
-    package.store_listed = listed == "true"
-    # ⚠️ Store membership is not policy, so nothing else recomputes anyone. Without
-    # this the shelf changes in the console and no device is ever told (W56).
-    if package.store_listed != was_listed:
-        eff.invalidate_all(session)
-    session.commit()
-    return _redirect("/apps#tab-" + ("store" if package.store_listed else "local"))
 
 
 @router.post("/apps/{package_id}/delete")

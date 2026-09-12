@@ -120,18 +120,17 @@ def update_package(
     payload: PackageUpdate,
     session: Session = Depends(get_db),
 ) -> AppPackage:
-    """Edit operator-owned package fields: its label and whether the ATLAS store
-    lists it. Identity and signing details are read from the file, not set here."""
+    """Edit the one operator-owned package field: its label. Identity and signing
+    details are read from the file, not set here.
+
+    ⚠️ `store_listed` was editable here (W140). Store membership is a
+    `Storefront`'s business now, and a package no longer knows whether it is on
+    a shelf — several shelves may name it, at different builds.
+    """
     package: AppPackage = fetch_or_404(session, AppPackage, package_id, "package")
     fields = payload.model_dump(exclude_unset=True)
     if "label" in fields:
         package.label = (fields["label"] or "").strip() or None
-    if "store_listed" in fields and fields["store_listed"] is not None:
-        if package.store_listed != fields["store_listed"]:
-            package.store_listed = fields["store_listed"]
-            # The store is offered to every device, and no policy edit accompanies
-            # this — so without invalidating, the shelf changes and nobody is told.
-            eff.invalidate_all(session)
     session.commit()
     return package
 

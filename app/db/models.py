@@ -734,11 +734,9 @@ class AppPackage(Base):
     icon_adaptive: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default=sa_false()
     )
-    # Offered in the ATLAS store — the curated set that ships with a deployment and
-    # is presented to operators as ready-to-assign.
-    store_listed: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False, server_default=sa_false()
-    )
+    # ⚠️ A `store_listed` boolean stood here (W140). It made the store one
+    # server-wide shelf every device saw; the shelf is a `Storefront` now, and a
+    # policy decides which device gets which one.
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
 
     versions: Mapped[list[AppPackageVersion]] = relationship(
@@ -778,6 +776,81 @@ class AppGroup(Base):
         order_by=app_group_member.c.position,
         lazy="selectin",
     )
+
+
+class Storefront(Base):
+    """A named version of the ATLAS store — the apps a user may install for
+    themselves — which a policy assigns to a device (W140).
+
+    ⚠️ **Not "profile".** :class:`PolicyProfile` is a policy made of sections and
+    the word is used that way throughout this codebase; a second "profile"
+    meaning a set of apps would collide in every conversation and every grep.
+
+    ⚠️ **Not :class:`AppGroup` either**, which names *packages*. A shelf that
+    offered whichever build happened to be newest would reintroduce the
+    automatic selection W139 removed, on the one surface where nobody would
+    think to look for it. Each item names a build.
+
+    Before this, store membership was a boolean on the package and every
+    enrolled device saw the same shelf. That is what a storefront replaces: the
+    shelf is now something a policy hands to a device.
+    """
+
+    __tablename__ = "storefront"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+
+    items: Mapped[list[StorefrontItem]] = relationship(
+        back_populates="storefront",
+        cascade="all, delete-orphan",
+        order_by="StorefrontItem.position",
+        lazy="selectin",
+    )
+
+
+class StorefrontItem(Base):
+    """One app on a storefront's shelf, at the build an operator chose.
+
+    ⚠️ **One entry per package**, enforced by the database. Android installs one
+    build of a package, so two entries are not a choice between builds — they
+    are the same slot filled twice, the same contradiction `AppCatalogSpec`
+    rejects for required apps.
+
+    ⚠️ **A build deleted from the library takes its shelf entry with it**
+    (`ondelete="CASCADE"`). The alternative would be an entry pointing at
+    nothing, which either disappears from the shelf silently or, worse, gets
+    quietly resolved to some other build of the same app — and a shelf that
+    changes what it offers without anyone deciding to is the thing this whole
+    design exists to prevent.
+    """
+
+    __tablename__ = "storefront_item"
+    __table_args__ = (
+        UniqueConstraint(
+            "storefront_id", "package_id", name="uq_storefront_one_entry_per_package"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    storefront_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("storefront.id", ondelete="CASCADE"), index=True
+    )
+    #: Denormalised from the version purely to carry the constraint above. The
+    #: service is the only writer and sets it from `version.package_id`.
+    package_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("app_package.id", ondelete="CASCADE"), index=True
+    )
+    version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("app_package_version.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, default=0)
+
+    storefront: Mapped[Storefront] = relationship(back_populates="items")
+    package: Mapped[AppPackage] = relationship(lazy="selectin")
+    version: Mapped[AppPackageVersion] = relationship(lazy="selectin")
 
 
 class AppPackageVersion(Base):

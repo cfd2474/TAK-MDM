@@ -173,14 +173,24 @@ def test_a_package_carrying_an_obb_is_flagged(client: TestClient):
     assert ">OBB</span>" in body
 
 
-def test_add_to_store_and_it_shows_in_the_store_tab(client: TestClient):
+def test_there_is_no_add_to_store_button(client: TestClient):
+    """⚠️ Removed at the operator's request (W140), and the route with it.
+
+    A package no longer knows whether it is "in the store" — several storefronts
+    may name it, at different builds. A button still posting to a route that no
+    longer exists would look like a feature and 404 on use.
+    """
     _upload_app(client, "com.example.store")
     pkg_id = client.get("/api/v1/packages", headers=ADMIN).json()[0]["id"]
 
-    client.post(f"/apps/{pkg_id}/store", data={"listed": "true"}, follow_redirects=False)
+    page = client.get("/apps").text
+    assert "Add to store" not in page
+    assert "store_listed" not in client.get("/api/v1/packages", headers=ADMIN).text
 
-    assert client.get("/api/v1/packages", headers=ADMIN).json()[0]["store_listed"] is True
-    assert "com.example.store" in client.get("/apps").text
+    gone = client.post(
+        f"/apps/{pkg_id}/store", data={"listed": "true"}, follow_redirects=False
+    )
+    assert gone.status_code == 404
 
 
 def test_delete_package(client: TestClient):

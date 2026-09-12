@@ -145,13 +145,6 @@
                 <a class="btn ghost" href="/apps/versions/{{ p.latest_version.id }}/download"
                    title="Download this build — several parts arrive as one .xapk">Download</a>
               {% endif %}
-              <form method="post" action="/apps/{{ p.id }}/store" style="margin:0">
-                {{ csrf_field(csrf_token) }}
-                <input type="hidden" name="listed" value="{{ 'false' if p.store_listed else 'true' }}">
-                <button type="submit" class="ghost">
-                  {{ 'In store — remove' if p.store_listed else 'Add to store' }}
-                </button>
-              </form>
             </td>
             <td>
               <form method="post" action="/apps/{{ p.id }}/delete" style="margin:0"
@@ -226,81 +219,31 @@
   <div class="tab-panel" data-tab-panel="store" hidden>
     <div class="panel">
       <p class="sub">
-        The curated set offered to every enrolled device. Anything listed here
-        appears under <strong>Available</strong> in the ATLAS app on the device,
-        for the user to install if they want it — it is an offer, not a policy, so
-        nothing is installed automatically. To install an app whether the user
-        wants it or not, make it a required app in an App&nbsp;Management policy.
+        A <strong>storefront</strong> is a version of the ATLAS store: a shelf of
+        apps a user may install for themselves. It reaches a device only when an
+        App&nbsp;Management policy assigns it, so different devices can be
+        offered different shelves. An offer is not a policy &mdash; nothing here
+        installs automatically. To install an app whether the user wants it or
+        not, make it a required app instead.
       </p>
-      {% if not store_packages %}
-        {{ empty_state('Nothing in the store. Add a package from the Local apps tab.') }}
+      {#
+        ⚠️ Each entry names a build, the same way a required app does (W139). A
+        shelf that offered whichever build was newest would put automatic
+        selection back on the one surface nobody would think to check.
+      #}
+      {% if not storefronts %}
+        {{ empty_state('No storefronts yet.') }}
       {% else %}
-      {# Same shape as Local apps, within reason: icon, name over package id,
-         newest version, parts — and sortable. The two tabs list the same kind
-         of thing, so reading one should teach you how to read the other.
-
-         🐛 The header used to declare four columns (Package, Label, Latest
-         version, blank) while every row emitted three, so the columns did not
-         line up with their headings at all. #}
       <table data-sortable>
         <thead><tr>
-          <th class="app-icon-col"></th>
-          <th data-sort>App name</th><th data-sort>Offered version</th>
-          <th data-sort>Parts</th><th></th>
+          <th data-sort>Storefront</th><th data-sort>Apps</th><th>Description</th>
         </tr></thead>
         <tbody>
-        {% for p in store_packages %}
+        {% for sf in storefronts %}
           <tr>
-            <td class="app-icon-col">
-              {% if p.icon_media_type %}
-                <span class="app-icon">
-                  <img src="/api/v1/packages/{{ p.id }}/icon" alt=""
-                       loading="lazy"
-                       class="{{ 'adaptive' if p.icon_adaptive else '' }}">
-                </span>
-              {% else %}
-                <span class="app-icon app-icon-blank" aria-hidden="true">
-                  {{ (p.label or p.package_name)[0] | upper }}
-                </span>
-              {% endif %}
-            </td>
-            <td>
-              {% if p.label %}
-                {{ p.label }}
-                <div class="mono muted" style="font-size:11px">{{ p.package_name }}</div>
-              {% else %}
-                <span class="mono">{{ p.package_name }}</span>
-              {% endif %}
-            </td>
-            <td class="mono">
-              {#
-                ⚠️ The newest build in the library, which is **not** a claim
-                about what any device is running (W139). There is no "deployed"
-                build any more — each policy names the one it installs, and two
-                policies can name different ones. The column says what is here,
-                and the earlier attempts to make it say what the fleet gets
-                (W124/W125/W127's "held" wording) went with the flag.
-              #}
-              {% set latest = p.versions | sort(attribute='version_code') | last %}
-              {% if latest %}
-                {{ latest.version_code }}{% if latest.version_name %} ({{ latest.version_name }}){% endif %}
-              {% else %}
-                <span class="pill warn">nothing uploaded</span>
-              {% endif %}
-            </td>
-            <td class="muted">
-              {{ (p.latest_version.files | length) if p.latest_version else 0 }}
-              {% if p.latest_version and p.latest_version.has_obb %}
-                <span class="pill" title="This package ships an OBB expansion file. A Device Owner cannot place OBB files on the device, so the APK installs WITHOUT it and the app will be missing the assets it expects.">OBB</span>
-              {% endif %}
-            </td>
-            <td>
-              <form method="post" action="/apps/{{ p.id }}/store" style="margin:0">
-                {{ csrf_field(csrf_token) }}
-                <input type="hidden" name="listed" value="false">
-                <button type="submit" class="ghost">Remove from store</button>
-              </form>
-            </td>
+            <td><strong>{{ sf.name }}</strong></td>
+            <td class="mono">{{ sf.items | length }}</td>
+            <td class="muted">{{ sf.description or '—' }}</td>
           </tr>
         {% endfor %}
         </tbody>
