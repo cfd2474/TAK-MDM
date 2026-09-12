@@ -764,6 +764,39 @@ before it could be proven.
 
 Server **1530 passed, 1 skipped** (18 more).
 
+#### ⚠️ Chunk 2 amended — the flavour comparison was built on a wrong premise
+
+Operator, immediately after: *"atak-mil and atak-gov are activated by a plugin
+for each. they start with atak-civ, then the plugin unlocks the 'flavor' … we
+can remove any logic comparing gov/mil/civ compatibility in the plugin manager.
+instead, its just going to have to be version numbers."*
+
+**There is no second ATAK.** A device runs ATAK-CIV and a *flavour plugin*
+unlocks GOV or MIL, so nothing can be incompatible with a build that does not
+exist — the comparison would have flagged correct pairings as broken, on a fleet
+where every device is CIV underneath. `plugin_flavour`, `atak_flavour`,
+`flavours_agree` and the flavour branch of `check()` are gone, and a test asserts
+they stay gone: a dead reader implying a rule that does not exist is worse than
+no reader, because the next person to find `flavours_agree` will assume flavour
+matters.
+
+✅ **The real requirement is a fact about the fleet, not a comparison.** A GOV or
+MIL plugin needs the Flavor plugin installed, so the TPC browser says so where
+an operator picks that product — *"they must download and install the ATAK Flavor
+plugin in order for ATAK to allow these plugins to load"*.
+
+⚠️ **Two banners, not one merged paragraph.** That tab already warned about GOV
+and MIL licensing and export controls. A technical prerequisite and a legal
+caution are different problems; welding them into one sentence would have made
+both easier to skim past. They sit as separate paragraphs under one condition.
+
+⚠️ **Worth keeping in mind about the whole exchange:** the flavour rule was
+implemented exactly as described, tested at its own truth table, and
+mutation-checked — and it was still wrong, because the premise it rested on was
+wrong. No amount of testing catches that; only the operator could.
+
+Server **1519 passed, 1 skipped**.
+
 #### Chunk 3 — the console
 
 1. The sub-page: an ATAK Core select (ATAK builds only), then a plugin rowset

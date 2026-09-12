@@ -333,109 +333,6 @@ def test_an_unscanned_plugin_is_unknown_not_a_mismatch():
 
 
 # --------------------------------------------------------------------------- #
-# CIV and MIL are different plugins (W141, operator)
-# --------------------------------------------------------------------------- #
-
-
-def test_the_flavour_is_read_from_the_string_the_version_came_from():
-    """⚠️ No new column and no second source of truth. `_PLUGIN_API` has captured
-    this group since it was written and nothing read it."""
-    assert atak_compat.plugin_flavour("com.atakmap.app@5.8.0.CIV") == "CIV"
-    assert atak_compat.plugin_flavour("com.atakmap.app@5.8.0.MIL") == "MIL"
-    assert atak_compat.plugin_flavour("com.atakmap.app@5.8.0") is None
-    assert atak_compat.plugin_flavour(None) is None
-
-
-def test_ataks_flavour_comes_from_its_package_name():
-    assert atak_compat.atak_flavour("com.atakmap.app.civ") == "CIV"
-    assert atak_compat.atak_flavour("com.atakmap.app.mil") == "MIL"
-    assert atak_compat.atak_flavour("com.example.notes") is None
-
-
-def test_a_bare_atak_package_has_no_flavour_and_claims_none():
-    """⚠️ This project has seen `com.atakmap.app` and `com.atakmap.app.civ` on
-    hardware and no MIL package name at all. Reading a flavour out of a bare
-    name would be inventing one, and a warning built on a guess is worse than
-    no warning."""
-    assert atak_compat.atak_flavour("com.atakmap.app") is None
-
-
-@pytest.mark.parametrize(
-    "plugin, atak, agree",
-    [
-        ("CIV", "CIV", True),
-        ("MIL", "MIL", True),
-        # The operator's rule, in as many words: "for now, lets assume a civ
-        # plugin is compatible with mil version".
-        ("CIV", "MIL", True),
-        ("CIV", "GOV", True),
-        # "a mil plugin is not compatible with a civ plugin".
-        ("MIL", "CIV", False),
-        ("GOV", "CIV", False),
-        # Silence when either side is unknown.
-        (None, "CIV", True),
-        ("MIL", None, True),
-    ],
-)
-def test_the_flavour_table(plugin, atak, agree):
-    assert atak_compat.flavours_agree(plugin, atak) is agree
-
-
-def test_a_mil_plugin_beside_civ_atak_is_flagged():
-    """The version agrees and the flavour does not, which is the case the whole
-    rule exists for."""
-    found = atak_compat.check(
-        atak_version="5.8.0",
-        atak_package="com.atakmap.app.civ",
-        plugins={"com.plugin.one": "com.atakmap.app@5.8.0.MIL"},
-    )
-
-    assert len(found) == 1
-    assert "MIL" in found[0].message and "CIV" in found[0].message
-    assert "not compatible" in found[0].message
-
-
-def test_a_civ_plugin_beside_mil_atak_is_not_flagged():
-    found = atak_compat.check(
-        atak_version="5.8.0",
-        atak_package="com.atakmap.app.mil",
-        plugins={"com.plugin.one": "com.atakmap.app@5.8.0.CIV"},
-    )
-
-    assert found == []
-
-
-def test_without_the_atak_package_only_the_version_is_checked():
-    """⚠️ Honest degradation. Flavour comes from ATAK's package name, and a
-    caller that does not know the package does not know the flavour — so it
-    checks what it can and stays quiet about the rest."""
-    assert atak_compat.check(
-        atak_version="5.8.0",
-        plugins={"com.plugin.one": "com.atakmap.app@5.8.0.MIL"},
-    ) == []
-
-    mismatched = atak_compat.check(
-        atak_version="5.8.0",
-        plugins={"com.plugin.one": "com.atakmap.app@5.5.0.MIL"},
-    )
-    assert len(mismatched) == 1
-
-
-def test_a_version_mismatch_is_reported_as_one_not_as_a_flavour():
-    """One reason at a time. A sentence naming four things is one nobody reads,
-    and the version is the first thing that stops it loading anyway."""
-    found = atak_compat.check(
-        atak_version="5.8.0",
-        atak_package="com.atakmap.app.civ",
-        plugins={"com.plugin.one": "com.atakmap.app@5.5.0.MIL"},
-    )
-
-    assert len(found) == 1
-    assert "5.5.0" in found[0].message
-    assert "not compatible with" not in found[0].message
-
-
-# --------------------------------------------------------------------------- #
 # Knowing a plugin when we see one
 # --------------------------------------------------------------------------- #
 
@@ -480,3 +377,64 @@ def test_an_xapk_is_scanned_for_plugin_status_like_an_apk(db, artifact_storage):
     db.commit()
 
     assert "com.plugin.split" in atak_compat.plugin_packages(db)
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ MIL and GOV are not separate builds (operator, W141)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_comparison_is_the_version_and_only_the_version():
+    """⚠️ A CIV/MIL/GOV comparison was built here and removed, because the
+    premise was wrong.
+
+    A device does not run a MIL build. It runs ATAK-CIV, and a *flavour plugin*
+    unlocks the rest — so there is no second ATAK for a plugin to be
+    incompatible with, and comparing flavours flagged correct pairings as
+    broken. What a GOV or MIL plugin needs is that flavour plugin present, which
+    is a fact about the fleet rather than a mismatch between two builds.
+    """
+    assert atak_compat.check(
+        atak_version="5.8.0",
+        plugins={"com.plugin.mil": "com.atakmap.app@5.8.0.MIL"},
+    ) == []
+
+    assert atak_compat.check(
+        atak_version="5.8.0",
+        plugins={"com.plugin.civ": "com.atakmap.app@5.8.0.CIV"},
+    ) == []
+
+
+def test_a_version_disagreement_is_still_caught_whatever_the_flavour():
+    found = atak_compat.check(
+        atak_version="5.8.0",
+        plugins={"com.plugin.old": "com.atakmap.app@5.5.0.MIL"},
+    )
+
+    assert len(found) == 1
+    assert "5.5.0" in found[0].message
+
+
+def test_nothing_reads_a_flavour_any_more():
+    """Dead readers that imply a rule which does not exist are worse than none:
+    the next person to see `flavours_agree` would assume flavour matters."""
+    for gone in ("plugin_flavour", "atak_flavour", "flavours_agree",
+                 "UNIVERSAL_FLAVOUR"):
+        assert not hasattr(atak_compat, gone), gone
+
+
+def test_the_tpc_browser_says_gov_and_mil_need_the_flavour_plugin(client, db):
+    """⚠️ Where an operator actually meets the requirement — picking the product
+    — rather than in a doc they will not open."""
+    import pathlib
+
+    apps = pathlib.Path("app/web/templates/apps.html").read_text(encoding="utf-8")
+
+    banner = apps[apps.index("tpc.product != 'ATAK-CIV'"):]
+    banner = banner[: banner.index("{% endif %}")]
+
+    assert "ATAK Flavor plugin" in banner
+    assert "ATAK will refuse to load them" in banner
+    # The licensing warning it already carried is still there, and still its own
+    # paragraph — two different problems should not share one sentence.
+    assert "export controls" in banner

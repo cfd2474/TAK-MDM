@@ -438,8 +438,18 @@
           <button type="submit">Show</button>
         </form>
         {% if tpc.product != 'ATAK-CIV' %}
+          {#
+            ⚠️ Two separate things, kept in one banner rather than stacked as
+            two. An operator who meets a wall of warnings reads none of them.
+          #}
+          <div class="banner warn">
+            <strong>{{ tpc.product }} plugins need the ATAK Flavor plugin.</strong>
+            A device does not run a {{ tpc.product }} build — it runs ATAK-CIV,
+            and the Flavor plugin unlocks {{ tpc.product }}. Without it installed,
+            the plugins below will install and ATAK will refuse to load them.
+          </div>
           <div class="banner">
-            <strong>{{ tpc.product }}.</strong> ATAK-CIV object code carries a
+            <strong>Licensing.</strong> ATAK-CIV object code carries a
             distribution grant; GOV and MIL do not, and their plugins carry access
             and export controls. Mirroring these into a fleet is the kind of thing
             worth clearing in writing before you rely on it.
