@@ -586,6 +586,94 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W137 — A provisioning QR that does not expire
+
+Operator, 2026-09-11: *"i want an option to have a persistent provisioning qr
+code generated, meaning that the token doesnt expire."*
+
+#### The token already never expires. The picture does.
+
+Worth being precise about, because it decides the whole design. A primary
+enrollment token is created with `_PRIMARY_TOKEN_LIFETIME_HOURS` — **50 years**.
+What expires after fifteen minutes is the *signed derivative* the QR carries:
+`{token_id}.{nonce}.{issued}.{signature}`, minted fresh by `EnrollmentQrGuard`
+on every press.
+
+So "a QR that does not expire" is not a change to tokens, lifetimes, or the
+enrolment protocol. It is a change to **what goes in the picture**.
+
+#### ✅ Put the token's own secret in the QR
+
+`resolve_token` already accepts a raw token secret — it tries the QR wrapper
+first and falls through to a hash lookup for anything that is not four
+dot-separated parts, which a `secrets.token_urlsafe` secret never is. And
+`reveal_secret` already exists to recover a sealed secret from the vault; it has
+been dead code since the design that needed it was replaced.
+
+So a persistent QR is the standing token's own secret, rendered. No new rows, no
+new token kind, no protocol change, nothing for the agent to learn.
+
+✅ **Re-rendering gives the identical QR**, which is what "persistent" should
+mean — a printed sheet at a provisioning bench keeps working, and reprinting it
+produces the same code rather than a second forever-credential.
+
+⚠️ **The alternative was worse, which is why it is written down.** A
+never-expiring *derivative* would look more cautious and behave less so: every
+press would mint another forever-valid credential, with no record of how many
+exist and no way to cancel one. One credential that can be revoked beats many
+that cannot.
+
+#### ⚠️ The picture is the credential now, and that is the trade
+
+A photograph of a persistent QR enrols devices until the token is retired. A
+photograph of the fifteen-minute one is worthless by the time anyone gets home.
+That is the whole point of the option and the operator asked for it knowingly —
+but it must be **opt-in per QR, never the default**, and the page has to say so
+where it is standing, not in a tooltip.
+
+⚠️ **Killing a leaked persistent QR means retiring the token**, which also
+invalidates the short-lived QRs for that same token — they are the same
+credential, and "Retire & create new" on the Enroll page already does it in one
+click. There is no way to revoke only the picture.
+
+#### Chunk 1
+
+1. `_render_primary_qr(persistent=True)` renders the token's revealed secret
+   instead of a guard derivative, for the primary and for a group token alike.
+2. Refuse clearly when the secret cannot be recovered — a token sealed with no
+   vault, or created before one existed, is unrecoverable by design, and the
+   operator needs to be told to make a new one rather than shown a broken page.
+3. A checkbox on both forms that reach `/enrollment/qr`, off by default.
+4. The result page drops the countdown and says plainly that this QR does not
+   expire and what retires it.
+5. Tests: it resolves after the fifteen-minute window has passed; it stops the
+   moment the token is retired; twice asking gives the same secret; the default
+   is still short-lived.
+6. Suite, commit, deploy. Console-only — no agent change.
+
+#### Built
+
+`reveal_secret` — dead code since the design that needed it was replaced — turned
+out to be the whole implementation. The route reveals the standing token's own
+secret instead of calling `guard.issue`, and nothing else moved: not the
+protocol, not the agent, not `resolve_token`, which has always fallen through to
+a hash lookup for anything that is not four dot-separated parts.
+
+⚠️ **The test that matters advances the clock.** An hour on, the ordinary QR is
+refused and the persistent one still enrols. A test that only checked a
+persistent secret working *now* would have passed against a version that changed
+nothing at all — and this session has shipped that mistake more than once.
+Mutation-checked: ignoring the flag fails four of the ten.
+
+⚠️ **A persistent QR labelled with a countdown is how a credential leaks
+without anyone deciding to leak it.** The page drops the countdown, says *does
+not expire* in the same place the countdown was, and names retiring the token as
+the only thing that stops it. There is a test for each half, including that an
+ordinary QR still counts down — a template conditional that silently inverted
+would be invisible otherwise.
+
+Server **1467 passed, 1 skipped**.
+
 ### ✅ W136 — The label belongs to the home screen only
 
 Operator, 2026-09-11: *"that overlay needs to only show up on the home screen of

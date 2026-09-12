@@ -56,13 +56,29 @@
           policies on its first check-in — no second step.
         </p>
 
+        {# ⚠️ Carries the current choice rather than resetting to off. Someone
+           adding Wi-Fi to a permanent QR means to keep it permanent, and
+           silently downgrading it would hand them a code that stops working
+           the next day with nothing said. #}
+        <label style="display:block; margin-top:12px">
+          <input type="checkbox" name="persistent" value="true"
+                 {% if persistent %}checked{% endif %}>
+          Never expires
+        </label>
+        <p class="field-tip">
+          A permanent QR stays a live enrollment credential until this token is
+          retired.
+        </p>
+
         <button type="submit" style="margin-top:14px">OK — new QR</button>
       </form>
 
       <p class="muted" style="font-size:12px; margin-top:14px">
         Not stored. Submitting mints a fresh QR — there is no standing record to
         re-render — so the one on screen now keeps working until its own 15
-        minutes run out; nothing revokes it.
+        minutes run out; nothing revokes it. A permanent QR is the exception:
+        it is the token's own code, so generating it again gives the same
+        picture back.
       </p>
     </div>
   </div>
@@ -82,14 +98,26 @@
           them work out how long they have got. The `title` keeps the absolute
           time for anyone who wants it.
         #}
-        <p>
-          <span class="pill warn" data-countdown="{{ qr_expires_in }}"
-                data-countdown-expired="expired — generate a new QR"
-                title="expires {{ qr_expires_at.strftime('%H:%M:%S') }} UTC">
-            expires in <span data-countdown-value>{{ '%d:%02d' % (qr_expires_in // 60, qr_expires_in % 60) }}</span>
-          </span>
-          <span class="muted">— good for any number of devices until then.</span>
-        </p>
+        {% if persistent %}
+          {# ⚠️ Where someone standing over a tablet will read it, not in a
+             tooltip. This picture is a live enrollment credential for as long
+             as the token exists, and the only thing that ends it is named. #}
+          <p>
+            <span class="pill warn">does not expire</span>
+            <span class="muted">— good for any number of devices, indefinitely.
+            Retiring this token on the <a href="/enrollment">Enroll</a> page is
+            the only thing that stops it.</span>
+          </p>
+        {% else %}
+          <p>
+            <span class="pill warn" data-countdown="{{ qr_expires_in }}"
+                  data-countdown-expired="expired — generate a new QR"
+                  title="expires {{ qr_expires_at.strftime('%H:%M:%S') }} UTC">
+              expires in <span data-countdown-value>{{ '%d:%02d' % (qr_expires_in // 60, qr_expires_in % 60) }}</span>
+            </span>
+            <span class="muted">— good for any number of devices until then.</span>
+          </p>
+        {% endif %}
         {# ⚠️ A QR is a picture and says nothing about what it does. The group
            belongs beside it, and "no group" has to stay visibly distinct from a
            group the operator forgot they picked. #}
@@ -114,7 +142,13 @@
           <pre style="margin-top:8px">{{ payload | pretty_json }}</pre>
         </details>
         <details style="margin-top:8px">
-          <summary class="muted">QR secret (expires {{ qr_expires_at.strftime('%H:%M:%S') }} UTC)</summary>
+          <summary class="muted">
+            {% if persistent %}
+              QR secret — this is the token itself, and it does not expire
+            {% else %}
+              QR secret (expires {{ qr_expires_at.strftime('%H:%M:%S') }} UTC)
+            {% endif %}
+          </summary>
           <pre style="margin-top:8px">{{ secret }}</pre>
         </details>
       {% elif not problem %}

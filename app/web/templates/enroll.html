@@ -55,7 +55,8 @@
   <p class="sub">
     A factory-reset tablet has no network. Fill in Wi-Fi and the tablet joins it
     and downloads the agent with nobody touching the setup wizard. The QR is good
-    for {{ (qr_ttl_seconds // 60) }} minutes and any number of devices in that window.
+    for {{ (qr_ttl_seconds // 60) }} minutes and any number of devices in that
+    window — or permanently, if you tick the box below.
   </p>
   <form method="post" action="/enrollment/qr">
     {{ csrf_field(csrf_token) }}
@@ -95,6 +96,22 @@
       A group here means the tablet joins it as it enrols and picks up that
       group's policies on its first check-in, with no second step. Manage groups
       on the <a href="/groups">Groups</a> page.
+    </p>
+    {#
+      ⚠️ Off by default, and worded so the trade is visible before the box is
+      ticked rather than on the page that follows. A persistent QR is a picture
+      that stays a live credential — which is exactly what a provisioning bench
+      wants and exactly what a photograph should not be.
+    #}
+    <label style="display:block; margin-top:14px">
+      <input type="checkbox" name="persistent" value="true">
+      Make this QR permanent — it never expires
+    </label>
+    <p class="field-tip">
+      The same QR keeps working, and re-generating it gives the identical code,
+      so it can be printed for a provisioning bench. Anyone who photographs it
+      can enrol devices until this token is retired — “Retire &amp; create new”
+      below is how that is undone.
     </p>
     <button type="submit" style="margin-top:14px">Generate enrollment QR</button>
   </form>

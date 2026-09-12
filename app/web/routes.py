@@ -147,6 +147,7 @@ from app.services.enrollment import (
     get_primary_token,
     mint_qr_secret,
     retire_and_create_primary,
+    reveal_secret,
     token_for_group,
     revoke_device_certificates,
     revoke_token,
@@ -2362,6 +2363,7 @@ def generate_qr(
     wifi_password: str = Form(default=""),
     wifi_security: str = Form(default="WPA"),
     group_id: str = Form(default=""),
+    persistent: bool = Form(default=False),
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     storage: ArtifactStorage = Depends(get_storage),
@@ -2394,6 +2396,7 @@ def generate_qr(
         wifi_security=wifi_security,
         group=group,
         vault=vault,
+        persistent=persistent,
     )
 
 
@@ -2410,6 +2413,7 @@ def _render_primary_qr(
     wifi_security: str = "WPA",
     group: DeviceGroup | None = None,
     vault: TokenVault | None = None,
+    persistent: bool = False,
 ) -> HTMLResponse:
     context: dict[str, Any] = {
         "primary": None,
@@ -2432,6 +2436,11 @@ def _render_primary_qr(
         # tablet. Counting down from a duration is immune to that; the only error
         # is the page load itself.
         "qr_expires_in": None,
+        # ⚠️ Drives what the page *says*, and the page saying the wrong thing is
+        # the real hazard here: a QR that outlives the room it was shown in,
+        # labelled with a countdown, is how a credential leaks without anyone
+        # deciding to leak it.
+        "persistent": persistent,
         "problem": None,
     }
 
@@ -2439,7 +2448,26 @@ def _render_primary_qr(
         if group is not None:
             token = token_for_group(session, group, vault=vault)
             session.commit()
-            primary, secret = token, guard.issue(token.id)
+            primary = token
+        else:
+            primary = get_primary_token(session)
+            if primary is None:
+                raise EnrollmentError("no active enrollment token; create one first")
+
+        if persistent:
+            # ⚠️ The token's **own** secret, not a derivative (W137). That is
+            # what makes the picture outlive the fifteen-minute window, and it
+            # is also why re-rendering produces an identical QR rather than
+            # another credential nobody can count.
+            secret = reveal_secret(primary, vault) if vault is not None else None
+            if secret is None:
+                raise EnrollmentError(
+                    "this token's secret cannot be recovered, so a persistent QR "
+                    "cannot be made for it. Retire it and create a new one, which "
+                    "will be sealed and can be shown again."
+                )
+        elif group is not None:
+            secret = guard.issue(primary.id)
         else:
             primary, secret = mint_qr_secret(session, guard)
     except EnrollmentError as exc:
@@ -2465,10 +2493,11 @@ def _render_primary_qr(
     session.commit()
     context["payload"] = payload
     context["secret"] = secret
-    context["qr_expires_at"] = datetime.now(timezone.utc) + timedelta(
-        seconds=settings.enrollment_qr_ttl_seconds
-    )
-    context["qr_expires_in"] = settings.enrollment_qr_ttl_seconds
+    if not persistent:
+        context["qr_expires_at"] = datetime.now(timezone.utc) + timedelta(
+            seconds=settings.enrollment_qr_ttl_seconds
+        )
+        context["qr_expires_in"] = settings.enrollment_qr_ttl_seconds
     context["qr_svg"] = _qr_svg(json.dumps(payload))
     return _render(request, "token_qr.html", identity=identity, **context)
 
