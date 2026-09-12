@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf_field, empty_state %}
+{% set nav = 'apps' %}
+{% block title %}{{ storefront.name }} — ATLAS store{% endblock %}
+
+{% block content %}
+{{ page_header(storefront.name, 'A version of the ATLAS store: the apps a user may install for themselves on any device whose policy hands out this shelf.') }}
+
+<p class="sub"><a href="/apps#tab-store">&larr; Storefronts</a></p>
+
+{% if request.query_params.get('saved') %}
+  <div class="banner good">Saved. Devices pick this up on their next check-in.</div>
+{% endif %}
+{% if request.query_params.get('error') %}
+  <div class="banner bad">{{ request.query_params.get('error') }}</div>
+{% endif %}
+
+<div class="panel">
+  <h2>Name</h2>
+  <form method="post" action="/storefronts/{{ storefront.id }}" class="stack">
+    {{ csrf_field(csrf_token) }}
+    <div class="row">
+      <label for="sf-name">Name</label>
+      <input type="text" id="sf-name" name="name" maxlength="128" required
+             value="{{ storefront.name }}" style="min-width:260px">
+    </div>
+    <div class="row">
+      <label for="sf-desc">Description</label>
+      <input type="text" id="sf-desc" name="description" maxlength="500"
+             value="{{ storefront.description or '' }}" style="min-width:360px">
+    </div>
+    <div><button type="submit">Save</button></div>
+  </form>
+</div>
+
+<div class="panel">
+  <h2>Apps on this shelf</h2>
+  <p class="sub">
+    Tick an app and choose the build to offer. An offer is not an order &mdash;
+    the user decides whether to install it, and nothing here installs
+    automatically. To install an app whether the user wants it or not, make it a
+    required app in the same policy.
+  </p>
+  {#
+    ⚠️ Each entry names a build, like a required app does (W139). A shelf that
+    followed "whichever is newest" would move under a fleet with nobody
+    deciding to, which is the behaviour that was removed a day before this.
+  #}
+  {% if not packages %}
+    {{ empty_state('No apps in the library yet. Upload one on the Local apps tab.') }}
+  {% else %}
+  <form method="post" action="/storefronts/{{ storefront.id }}/items">
+    {{ csrf_field(csrf_token) }}
+    <table>
+      <thead><tr><th></th><th>App</th><th>Build to offer</th></tr></thead>
+      <tbody>
+      {% for p in packages %}
+        {% set builds = p.versions | sort(attribute='version_code', reverse=true) %}
+        <tr>
+          <td>
+            <input type="checkbox" name="include" value="{{ p.id }}"
+                   id="inc-{{ p.id }}"
+                   {{ 'checked' if chosen.get(p.id | string) }}
+                   {{ 'disabled' if not builds }}>
+          </td>
+          <td>
+            <label for="inc-{{ p.id }}">
+              {% if p.label %}{{ p.label }}{% else %}<span class="mono">{{ p.package_name }}</span>{% endif %}
+            </label>
+            {% if p.label %}<div class="mono muted" style="font-size:11px">{{ p.package_name }}</div>{% endif %}
+          </td>
+          <td>
+            {% if not builds %}
+              <span class="pill warn">nothing uploaded</span>
+            {% else %}
+              <select name="version__{{ p.id }}" style="min-width:240px">
+                {% for v in builds %}
+                  <option value="{{ v.id }}"
+                    {{ 'selected' if chosen.get(p.id | string) == (v.id | string) }}>
+                    {{ v.version_code }}{% if v.version_name %} ({{ v.version_name }}){% endif %}{% if loop.first %} — newest{% endif %}
+                  </option>
+                {% endfor %}
+              </select>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <button type="submit" style="margin-top:14px">Save shelf</button>
+    <p class="field-tip">
+      Unticking an app removes it from the shelf. Devices that already installed
+      it keep it &mdash; an offer withdrawn is not an uninstall.
+    </p>
+  </form>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>Delete</h2>
+  {% if used_by %}
+    <p class="sub">
+      Handed out by
+      {% for name in used_by %}<strong>{{ name }}</strong>{% if not loop.last %}, {% endif %}{% endfor %}.
+      Deleting it leaves those policies offering an empty shelf; nothing already
+      installed on a device is touched.
+    </p>
+  {% else %}
+    <p class="sub">No policy hands this out.</p>
+  {% endif %}
+  <form method="post" action="/storefronts/{{ storefront.id }}/delete"
+        data-confirm="Delete {{ storefront.name }}? Any policy naming it will offer nothing.">
+    {{ csrf_field(csrf_token) }}
+    <button type="submit" class="danger">Delete storefront</button>
+  </form>
+</div>
+{% endblock %}

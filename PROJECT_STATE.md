@@ -586,7 +586,7 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
-### 🚧 W140 — The store becomes something a policy assigns
+### ✅ W140 — The store becomes something a policy assigns
 
 Operator, 2026-09-12: *"remove the add to store button in the local apps. I want
 to create versions of the store that can be assigned to policies … they can only
@@ -704,6 +704,35 @@ Server **1488 passed, 1 skipped** (11 new in `test_storefronts.py`).
    what two differing storefronts do to a device.
 3. The conflict rendered where an operator will meet it.
 4. Tests, deploy.
+
+#### ✅ Chunk 2 done
+
+Apps › Store creates and lists storefronts; each has a page where apps are
+ticked and their build chosen. The policy form's **ATLAS store** sub-page is one
+select plus the warning, sitting next to the control that causes the problem.
+
+⚠️ **The select shipped empty and the page looked fine.** The catalogues are
+threaded through `policy_subform` → `_control` → `_live_control` as macro
+*parameters*, not read from the template context, and I missed the last hop. A
+bare name inside an imported Jinja macro renders as an empty list rather than
+failing, so the control drew itself, the warning appeared, and there was simply
+nothing to choose. Caught by a test asserting a created storefront's *name*
+reaches the page — asserting the control existed would have passed against it.
+Mutation-checked by removing the threading again.
+
+⚠️ **The device page rendered the conflict as a pair of uuids.** The generic
+renderer prints values verbatim, which is right for every other field and
+useless for this one — the single conflict the operator asked to be warned
+about would have been the least readable thing on the page.
+`_name_storefronts_in` swaps ids for names on the way out, leaving an
+unresolvable id alone because a storefront deleted after the conflict was
+recorded is exactly when the raw id still helps.
+
+⚠️ **Blank means absent, not empty.** A policy with no store leaves the field
+out of the spec entirely; writing `""` would, under `HIGHEST_RANK`, beat a
+lower-ranked policy that did name one.
+
+Server **1498 passed, 1 skipped** (21 in `test_storefronts.py`).
 
 ### ✅ W139 — The policy names the build; nothing is "published"
 

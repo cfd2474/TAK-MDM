@@ -3,7 +3,7 @@
 
   Form-driven policy editor (W10), sub-paged (W12). No JSON typing (DW6). Import:
     {% from "_policy_form.html" import policy_subform, resulting_spec, app_group_buttons %}
-  `policy_subform(page.fields, spec, app_packages, managed_files, geofence_tiles)`
+  `policy_subform(page.fields, spec, app_packages, managed_files, geofence_tiles, storefronts)`
   renders one
   ui_group's controls; the caller places each sub-page in a rail. All sub-pages of
   a category share one <form>, so `parse_form(type, whole_form)` reads every field
@@ -427,6 +427,44 @@
     {% if value %}<option value="{{ value }}" selected>{{ value }}</option>{% endif %}
   </select>
   <div class="muted" style="font-size:12px; margin-top:6px" data-activity-note></div>
+{% endmacro %}
+
+{#
+  The ATLAS store a policy hands out (W140).
+
+  ⚠️ **One per policy, because the field holds one value** — not because a
+  validator says so. A device has one store, and letting an operator pick two
+  here would mean inventing a rule for which one a device sees.
+#}
+{% macro _storefront(f, value, name, storefronts) %}
+  <select name="{{ name }}" class="field-full">
+    <option value="">&mdash; no store on this policy &mdash;</option>
+    {% for sf in storefronts %}
+      <option value="{{ sf.id }}" {{ 'selected' if (value | string) == (sf.id | string) }}>
+        {{ sf.name }} ({{ sf.items | length }} app{{ '' if sf.items | length == 1 else 's' }})
+      </option>
+    {% endfor %}
+  </select>
+  {#
+    ⚠️ The warning the operator asked for, next to the control that causes it.
+    The device page reports the conflict when it actually happens; this is what
+    stops it being created in the first place.
+  #}
+  <div class="banner warn" style="margin-top:10px">
+    <strong>One store per device, not per policy.</strong>
+    If two policies reach the same device and name <em>different</em> storefronts,
+    the higher-ranked policy wins and the other's shelf is discarded entirely —
+    reported as a conflict on the device's page. The loser is not a fallback:
+    apps only on that shelf are offered nowhere, and where both shelves list the
+    same app at different builds, only the winner's build can ever be installed.
+    Assign one storefront across the policies that share a device, or keep the
+    store on a single policy.
+  </div>
+  {% if not storefronts %}
+    <p class="field-tip">
+      No storefronts exist yet — create one under <a href="/apps#tab-store">Apps › Store</a>.
+    </p>
+  {% endif %}
 {% endmacro %}
 
 {% macro _app_list(f, items, name, app_packages) %}
@@ -1139,7 +1177,7 @@
   </div>
 {% endmacro %}
 
-{% macro _control(f, spec, name, app_packages, managed_files, geofence_tiles='{}') %}
+{% macro _control(f, spec, name, app_packages, managed_files, geofence_tiles='{}', storefronts=[]) %}
   {% set value = spec.get(f.name) %}
   {% if f.requires %}
     {#
@@ -1150,18 +1188,18 @@
       polite half of that, not the guard.
     #}
     <fieldset disabled style="border:0; padding:0; margin:0; opacity:.55">
-      {{ _live_control(f, value, name, app_packages, managed_files, geofence_tiles) }}
+      {{ _live_control(f, value, name, app_packages, managed_files, geofence_tiles, storefronts) }}
     </fieldset>
     <div class="muted" style="font-size:12px; margin-top:4px">
       <span class="pill warn">needs {{ f.requires }}</span>
       No AOSP Device Owner API can do this, so it cannot be saved yet.
     </div>
   {% else %}
-    {{ _live_control(f, value, name, app_packages, managed_files, geofence_tiles) }}
+    {{ _live_control(f, value, name, app_packages, managed_files, geofence_tiles, storefronts) }}
   {% endif %}
 {% endmacro %}
 
-{% macro _live_control(f, value, name, app_packages, managed_files, geofence_tiles='{}') %}
+{% macro _live_control(f, value, name, app_packages, managed_files, geofence_tiles='{}', storefronts=[]) %}
   {% if f.control == 'bool' %}{{ _bool(f, value, name) }}
   {% elif f.control == 'int' %}{{ _int(f, value, name) }}
   {% elif f.control == 'enum' %}{{ _enum(f, value, name) }}
@@ -1181,6 +1219,7 @@
   {% elif f.control == 'usage_rules' %}{{ _usage_rules(f, value, name, none) }}
   {% elif f.control == 'app_usage_rules' %}{{ _usage_rules(f, value, name, app_packages) }}
   {% elif f.control == 'app_configs' %}{{ _app_configs(f, value, name, app_packages) }}
+  {% elif f.control == 'storefront' %}{{ _storefront(f, value, name, storefronts) }}
   {% elif f.control == 'atak_core_prefs' %}{{ _atak_core_prefs(f, value, name) }}
   {% elif f.control == 'plugin_prefs' %}{{ _plugin_prefs(f, value, name, app_packages) }}
   {% elif f.control == 'data_package_list' %}{{ _data_package_list(f, value, name, managed_files) }}
@@ -1216,7 +1255,7 @@
 <script type="application/json" data-app-compat>{{ app_compat | tojson }}</script>
 {% endmacro %}
 
-{% macro policy_subform(fields, spec, app_packages, managed_files, geofence_tiles='{}') %}
+{% macro policy_subform(fields, spec, app_packages, managed_files, geofence_tiles='{}', storefronts=[]) %}
   {% for f in fields %}
   <div class="pf-field" data-field="{{ f.name }}">
     <div class="pf-label">
@@ -1225,7 +1264,7 @@
       {% if f.merge_hint %}<div class="muted" style="font-size:11px">↳ {{ f.merge_hint }}</div>{% endif %}
     </div>
     <div class="pf-control">
-      {{ _control(f, spec, f.name, app_packages, managed_files, geofence_tiles) }}
+      {{ _control(f, spec, f.name, app_packages, managed_files, geofence_tiles, storefronts) }}
     </div>
   </div>
   {% endfor %}

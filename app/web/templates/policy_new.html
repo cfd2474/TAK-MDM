@@ -57,7 +57,7 @@
         {% for pg in t.pages %}
           <h2>{{ t.label }}{% if t.pages | length > 1 %} <span class="muted">· {{ pg.label }}</span>{% endif %}</h2>
           {% if t.policy_type == 'APP_CATALOG' and pg.slug == 'required-apps' %}{{ app_group_buttons(app_groups) }}{% endif %}
-          {{ policy_subform(pg.fields, {}, app_packages, managed_files, geofence_tiles) }}
+          {{ policy_subform(pg.fields, {}, app_packages, managed_files, geofence_tiles, storefronts) }}
         {% endfor %}
       </div>
     {% endfor %}

@@ -105,6 +105,7 @@ from app.db.models import (
     PolicyProfile,
     PolicyVersion,
     ProfileAssignment,
+    Storefront,
     TakGovLinkStatus,
 )
 from app.policies import creator_catalog
@@ -478,7 +479,7 @@ def device_detail(
         considered=considered,
         values=payload.get("values", {}),
         provenance=payload.get("provenance", {}),
-        conflicts=payload.get("conflicts", []),
+        conflicts=_name_storefronts_in(session, payload.get("conflicts", [])),
         apps=payload.get("apps", []),
         atak_mismatches={m.package_name: m.message for m in atak_compat.for_device(session, device)},
         files=payload.get("files", {"required": [], "available": []}),
@@ -1480,6 +1481,8 @@ def _form_catalogs(session: Session) -> dict[str, Any]:
     packages = list(session.scalars(select(AppPackage).order_by(AppPackage.package_name)))
     return {
         "app_packages": packages,
+        # The shelves an APP_CATALOG policy may hand out (W140).
+        "storefronts": storefront_service.list_all(session),
         # Library only: a policy-editor upload must not show up in the FILES
         # picker as something to deploy to a device (W46).
         "managed_files": list(
@@ -3259,6 +3262,200 @@ def preview_app_upload(
             "would_deploy": c.would_deploy,
         }
     )
+
+
+# --------------------------------------------------------------------------- #
+# Storefronts — versions of the ATLAS store a policy assigns (W140)
+# --------------------------------------------------------------------------- #
+
+
+@router.post("/storefronts")
+def create_storefront_form(
+    name: str = Form(...),
+    description: str = Form(default=""),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Create a shelf and go straight to it, where its apps are chosen.
+
+    Empty on arrival, which is the honest state: a storefront with nothing on it
+    offers nothing, and nobody has said what belongs there yet.
+    """
+    try:
+        storefront = storefront_service.create(
+            session, name=name, description=description
+        )
+    except storefront_service.StorefrontError as exc:
+        return _redirect(f"/apps?error={_quote(str(exc))}#tab-store")
+    session.commit()
+    return _redirect(f"/storefronts/{storefront.id}")
+
+
+@router.get("/storefronts/{storefront_id}", response_class=HTMLResponse)
+def storefront_detail_page(
+    storefront_id: uuid.UUID,
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> HTMLResponse:
+    storefront = storefront_service.get(session, storefront_id)
+    if storefront is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "storefront not found")
+
+    chosen = {str(item.package_id): str(item.version_id) for item in storefront.items}
+    return _render(
+        request,
+        "storefront_detail.html",
+        identity=identity,
+        storefront=storefront,
+        packages=list(
+            session.scalars(select(AppPackage).order_by(AppPackage.package_name))
+        ),
+        chosen=chosen,
+        # Which policies hand this shelf out, so deleting it is an informed act.
+        used_by=_policies_naming_storefront(session, storefront_id),
+    )
+
+
+def _name_storefronts_in(session: Session, conflicts: list[dict]) -> list[dict]:
+    """Swap storefront ids for their names before the device page renders them.
+
+    ⚠️ **Otherwise the one conflict the operator asked to be warned about is the
+    least readable thing on the page.** The generic renderer prints the winning
+    and discarded values verbatim, which for every other field is a number or a
+    package name and here is a pair of uuids — technically complete and no use
+    to anyone deciding which policy to change.
+
+    A name that no longer resolves is left as-is rather than blanked: a
+    storefront deleted after the conflict was recorded is exactly when knowing
+    the raw id still helps.
+    """
+    ids = {
+        str(value)
+        for conflict in conflicts
+        if conflict.get("field") == "storefront_id"
+        for value in [conflict.get("winning_value")]
+        + [d.get("value") for d in conflict.get("discarded", [])]
+        if value
+    }
+    if not ids:
+        return conflicts
+
+    names = {
+        str(sf.id): sf.name
+        for sf in session.scalars(select(Storefront).where(Storefront.id.in_(
+            [uuid.UUID(i) for i in ids if _is_uuid(i)]
+        )))
+    }
+
+    named = []
+    for conflict in conflicts:
+        if conflict.get("field") != "storefront_id":
+            named.append(conflict)
+            continue
+        copy = dict(conflict)
+        copy["winning_value"] = names.get(
+            str(copy.get("winning_value")), copy.get("winning_value")
+        )
+        copy["discarded"] = [
+            {**d, "value": names.get(str(d.get("value")), d.get("value"))}
+            for d in copy.get("discarded", [])
+        ]
+        named.append(copy)
+    return named
+
+
+def _is_uuid(raw: str) -> bool:
+    try:
+        uuid.UUID(raw)
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True
+
+
+def _policies_naming_storefront(session: Session, storefront_id: uuid.UUID) -> list[str]:
+    """Names of the policies whose current version assigns this storefront.
+
+    ⚠️ Latest version only. An older version naming it is history, not a live
+    instruction — reporting those would make a shelf look in use long after
+    every policy had moved off it.
+    """
+    names: list[str] = []
+    for policy in session.scalars(select(Policy).where(Policy.policy_type == "APP_CATALOG")):
+        version = policy.latest_version
+        if version is None:
+            continue
+        if (version.spec or {}).get("storefront_id") == str(storefront_id):
+            names.append(policy.name)
+    return sorted(names)
+
+
+@router.post("/storefronts/{storefront_id}")
+def rename_storefront_form(
+    storefront_id: uuid.UUID,
+    name: str = Form(...),
+    description: str = Form(default=""),
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    storefront = storefront_service.get(session, storefront_id)
+    if storefront is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "storefront not found")
+    try:
+        storefront_service.rename(
+            session, storefront, name=name, description=description
+        )
+    except storefront_service.StorefrontError as exc:
+        return _redirect(f"/storefronts/{storefront_id}?error={_quote(str(exc))}")
+    session.commit()
+    return _redirect(f"/storefronts/{storefront_id}?saved=1")
+
+
+@router.post("/storefronts/{storefront_id}/items")
+def set_storefront_items_form(
+    storefront_id: uuid.UUID,
+    request: Request,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    """Replace the shelf with the ticked apps, each at the build chosen beside it.
+
+    ⚠️ The version select is read only for a **ticked** app. An operator who
+    changes a build and then unticks the app has said "not this one at all", and
+    honouring the select would put it back on the shelf.
+    """
+    storefront = storefront_service.get(session, storefront_id)
+    if storefront is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "storefront not found")
+
+    form = _sync_form(request)
+    version_ids: list[uuid.UUID] = []
+    for package_id in form.getlist("include"):
+        raw = (form.get(f"version__{package_id}") or "").strip()
+        with suppress(ValueError):
+            version_ids.append(uuid.UUID(raw))
+
+    try:
+        storefront_service.set_items(session, storefront, version_ids)
+    except storefront_service.StorefrontError as exc:
+        return _redirect(f"/storefronts/{storefront_id}?error={_quote(str(exc))}")
+    session.commit()
+    return _redirect(f"/storefronts/{storefront_id}?saved=1")
+
+
+@router.post("/storefronts/{storefront_id}/delete")
+def delete_storefront_form(
+    storefront_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    identity: AdminIdentity = Depends(admin_required),
+) -> RedirectResponse:
+    storefront = storefront_service.get(session, storefront_id)
+    if storefront is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "storefront not found")
+    name = storefront.name
+    storefront_service.delete(session, storefront)
+    session.commit()
+    return _redirect(f"/apps?deleted={_quote(name)}#tab-store")
 
 
 @router.post("/apps/{package_id}/delete")

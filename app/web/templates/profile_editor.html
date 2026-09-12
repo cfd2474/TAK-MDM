@@ -34,7 +34,7 @@
   {% if row.category.key == 'app_management' and pg.page.slug == 'required-apps' %}
     {{ app_group_buttons(app_groups) }}
   {% endif %}
-  {{ policy_subform(pg.page.fields, row.spec, app_packages, managed_files, geofence_tiles) }}
+  {{ policy_subform(pg.page.fields, row.spec, app_packages, managed_files, geofence_tiles, storefronts) }}
 {% endmacro %}
 
 {% block page_styles %}

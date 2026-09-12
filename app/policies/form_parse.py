@@ -175,6 +175,14 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
             if fences:
                 spec[name] = fences
 
+        elif field.control == "storefront":
+            # A uuid or nothing. Left out of the spec entirely when blank, so a
+            # policy that sets no store is a policy with no opinion about the
+            # store rather than one asserting an empty shelf.
+            chosen = (form.get(name) or "").strip()
+            if chosen:
+                spec[name] = chosen
+
         elif field.control == "package_list":
             items = [v.strip() for v in form.getlist(name) if v and v.strip()]
             # De-dupe, keep order.

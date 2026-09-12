@@ -231,6 +231,22 @@
         shelf that offered whichever build was newest would put automatic
         selection back on the one surface nobody would think to check.
       #}
+      <form method="post" action="/storefronts" class="stack" style="margin-bottom:18px">
+        {{ csrf_field(csrf_token) }}
+        <div class="row">
+          <label for="sf-new-name">Name</label>
+          <input type="text" id="sf-new-name" name="name" maxlength="128" required
+                 autocomplete="off" style="min-width:240px">
+          <label for="sf-new-desc">Description</label>
+          <input type="text" id="sf-new-desc" name="description" maxlength="500"
+                 autocomplete="off" style="min-width:300px">
+          <button type="submit">Create storefront</button>
+        </div>
+        <p class="field-tip">
+          You will land on its page, where its apps and their builds are chosen.
+        </p>
+      </form>
+
       {% if not storefronts %}
         {{ empty_state('No storefronts yet.') }}
       {% else %}
@@ -241,7 +257,7 @@
         <tbody>
         {% for sf in storefronts %}
           <tr>
-            <td><strong>{{ sf.name }}</strong></td>
+            <td><a href="/storefronts/{{ sf.id }}"><strong>{{ sf.name }}</strong></a></td>
             <td class="mono">{{ sf.items | length }}</td>
             <td class="muted">{{ sf.description or '—' }}</td>
           </tr>

@@ -22,6 +22,8 @@ whichever is newest — the same rule required apps follow since W139.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -258,3 +260,211 @@ def test_the_package_row_no_longer_knows_about_the_store(db):
     """`store_listed` is gone: several shelves may name one package, at
     different builds, so the question has no single answer to store."""
     assert not hasattr(AppPackage, "store_listed")
+
+
+# --------------------------------------------------------------------------- #
+# The console (W140 chunk 2)
+# --------------------------------------------------------------------------- #
+
+
+def _create(client: TestClient, name: str = "Field kit") -> str:
+    """Create through the console and return the id from its redirect."""
+    response = client.post(
+        "/storefronts",
+        data={"name": name, "description": ""},
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303), response.text
+    return response.headers["location"].rsplit("/", 1)[-1]
+
+
+def test_creating_one_lands_on_its_page(client: TestClient, db):
+    """A shelf arrives empty, so the next thing anyone needs is the page where
+    its apps are chosen."""
+    storefront_id = _create(client)
+
+    page = client.get(f"/storefronts/{storefront_id}", headers=ADMIN_HEADERS)
+
+    assert page.status_code == 200
+    assert "Field kit" in page.text
+    assert "Apps on this shelf" in page.text
+
+
+def test_a_duplicate_name_is_refused_legibly(client: TestClient, db):
+    _create(client, "Field kit")
+
+    response = client.post(
+        "/storefronts",
+        data={"name": "Field kit"},
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+
+    location = response.headers["location"]
+    assert "error=" in location
+    assert "already" in location and "exists" in location
+
+
+def test_ticking_an_app_puts_its_chosen_build_on_the_shelf(
+    client: TestClient, db, artifact_storage
+):
+    """⚠️ End to end through the real form, because every other test here builds
+    the shelf by calling the service directly."""
+    cert = make_signing_certificate()
+    old = _build(db, artifact_storage, "com.probe", 100, cert)
+    _build(db, artifact_storage, "com.probe", 900, cert)
+    db.commit()
+    package = db.scalar(select(AppPackage).where(AppPackage.package_name == "com.probe"))
+
+    storefront_id = _create(client)
+    client.post(
+        f"/storefronts/{storefront_id}/items",
+        data={"include": str(package.id), f"version__{package.id}": str(old.id)},
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+
+    db.expire_all()
+    shelf = storefronts.get(db, uuid.UUID(storefront_id))
+    assert [i.version.version_code for i in shelf.items] == [100]
+
+
+def test_an_unticked_app_is_off_the_shelf_whatever_its_select_says(
+    client: TestClient, db, artifact_storage
+):
+    """⚠️ Someone who changes a build and then unticks the app has said "not
+    this one at all". Reading the select regardless would put it back."""
+    version = _build(db, artifact_storage, "com.probe", 100)
+    db.commit()
+    package = db.scalar(select(AppPackage).where(AppPackage.package_name == "com.probe"))
+
+    storefront_id = _create(client)
+    client.post(
+        f"/storefronts/{storefront_id}/items",
+        data={f"version__{package.id}": str(version.id)},  # no `include`
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+
+    db.expire_all()
+    assert storefronts.get(db, uuid.UUID(storefront_id)).items == []
+
+
+def test_the_detail_page_names_the_policies_handing_it_out(
+    client: TestClient, db, make_device, make_policy, assign
+):
+    """Deleting a shelf should be an informed act."""
+    storefront_id = _create(client)
+    make_policy("Field", "APP_CATALOG", {"storefront_id": storefront_id})
+
+    page = client.get(f"/storefronts/{storefront_id}", headers=ADMIN_HEADERS).text
+
+    assert "Handed out by" in page
+    assert "Field" in page
+
+
+def test_deleting_from_the_console_removes_it(client: TestClient, db):
+    storefront_id = _create(client)
+
+    client.post(
+        f"/storefronts/{storefront_id}/delete",
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+
+    assert storefronts.get(db, uuid.UUID(storefront_id)) is None
+
+
+# --------------------------------------------------------------------------- #
+# The policy form
+# --------------------------------------------------------------------------- #
+
+
+def test_the_policy_form_offers_the_storefronts_and_the_warning(client: TestClient, db):
+    """⚠️ The warning belongs next to the control that creates the problem. The
+    device page reports the conflict once it exists; this is what stops it."""
+    _create(client, "Field kit")
+
+    page = client.get(
+        "/policies/new?policy_type=APP_CATALOG", headers=ADMIN_HEADERS
+    ).text
+
+    assert 'name="storefront_id"' in page
+    assert "Field kit" in page
+    assert "One store per device" in page
+    assert "only the winner" in page
+
+
+def test_saving_the_form_writes_the_chosen_storefront(client: TestClient, db):
+    storefront_id = _create(client)
+
+    response = client.post(
+        "/policies",
+        data={
+            "name": "With a store",
+            "policy_type": "APP_CATALOG",
+            "storefront_id": storefront_id,
+        },
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303), response.text
+
+    from app.db.models import Policy
+
+    policy = db.scalar(select(Policy).where(Policy.name == "With a store"))
+    assert policy.latest_version.spec["storefront_id"] == storefront_id
+
+
+def test_choosing_no_store_leaves_the_field_out(client: TestClient, db):
+    """⚠️ Absent, not empty. A policy with no opinion about the store must not
+    assert an empty shelf — under HIGHEST_RANK that would beat a lower-ranked
+    policy that did name one."""
+    response = client.post(
+        "/policies",
+        data={"name": "No store", "policy_type": "APP_CATALOG", "storefront_id": ""},
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303), response.text
+
+    from app.db.models import Policy
+
+    policy = db.scalar(select(Policy).where(Policy.name == "No store"))
+    assert "storefront_id" not in (policy.latest_version.spec or {})
+
+
+# --------------------------------------------------------------------------- #
+# The conflict, where an operator meets it
+# --------------------------------------------------------------------------- #
+
+
+def test_the_device_page_names_the_storefronts_in_the_conflict(
+    client: TestClient, db, make_device, make_policy, assign
+):
+    """⚠️ Otherwise the one conflict the operator asked to be warned about is the
+    least readable thing on the page: the generic renderer prints values
+    verbatim, and for this field that is a pair of uuids."""
+    device = make_device()
+    a = storefronts.create(db, name="Field kit")
+    b = storefronts.create(db, name="Warehouse kit")
+    db.commit()
+
+    high = make_policy("Field", "APP_CATALOG", {"storefront_id": str(a.id)})
+    low = make_policy("Warehouse", "APP_CATALOG", {"storefront_id": str(b.id)})
+    assign(high["id"], device["id"], rank=50)
+    assign(low["id"], device["id"], rank=10)
+
+    page = client.get(f"/devices/{device['id']}", headers=ADMIN_HEADERS).text
+
+    # ⚠️ Scoped to the conflict banner. The ids appear legitimately further down,
+    # in the resolved-values table — asserting their absence from the whole page
+    # would fail for a reason that has nothing to do with what this checks.
+    start = page.index("conflict(s)")
+    banner = page[start:page.index("</div>", start)]
+
+    assert "Field kit" in banner
+    assert "Warehouse kit" in banner
+    assert str(a.id) not in banner, "the raw uuid was rendered instead of the name"
+    assert str(b.id) not in banner
