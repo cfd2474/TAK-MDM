@@ -669,6 +669,12 @@ caught the literal-dollar bug in W131 only after hardware did.
 
 Suite **1446 passed, 1 skipped**. Agent **0.67.0 (versionCode 112)**.
 
+✅ **Confirmed on hardware by the operator, 2026-09-11**: *"Device lock
+screen token worked"*. The substituted name appears on the keyguard — which is
+the surface W133 knowingly gave up when the drawn label went, so the fleet is
+identifiable locked and unlocked again by two different mechanisms. Recorded in
+`docs/ANDROID_PLATFORM_REFERENCE.md` beside the API contract.
+
 ### ✅ W133 — Drop the drawn label, keep the widget
 
 Operator, 2026-09-11: *"that worked, now remove the wallpaper version, keeping

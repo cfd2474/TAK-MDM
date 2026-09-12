@@ -1069,6 +1069,12 @@ unassigned. So `applyCustomizations` runs even when the section is absent, pushi
 `null`. Unlike the `setPasswordMinimumLength` trap (W41), all three accept `null`
 in any state, so there is no quality-style gate to satisfy first.
 
+✅ **Verified on hardware, 2026-09-11.** A CUSTOMIZATIONS policy whose
+`lock_screen_message` contained `{device}` reached the lock screen with the
+device's own name substituted (W134). Confirms the whole path in one go: the
+call succeeds as device owner, the text renders on the keyguard, and the agent
+performs the substitution locally rather than the server baking a name in.
+
 📖 Localization is the DPC's job for all three: *"it is the responsibility of the
 DeviceAdminReceiver to listen to the ACTION_LOCALE_CHANGED broadcast and set a new
 version of this string accordingly."* ATLAS does not do this — the operator's
