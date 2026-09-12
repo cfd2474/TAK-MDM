@@ -191,8 +191,28 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
             if ordered:
                 spec[name] = ordered
 
-        elif field.control == "app_list":
+        elif field.control == "atak_core":
+            # One entry, not a list — a device has one ATAK. Left out of the
+            # spec entirely when no package is picked, so "no ATAK on this
+            # policy" is an absence rather than an empty object that would beat
+            # a lower-ranked policy naming one.
+            package = (form.get(f"{name}__package_name") or "").strip()
+            if package:
+                row: dict[str, Any] = {"package_name": package}
+                choice = (form.get(f"{name}__version_choice") or "").strip()
+                if choice.startswith("pin:"):
+                    sha = choice[4:].strip().lower()
+                    if len(sha) == 64:
+                        row["artifact_sha256"] = sha
+                spec[name] = row
+
+        elif field.control in ("app_list", "atak_plugins"):
             packages = form.getlist(f"{name}__package_name")
+            # Shared with `atak_plugins`, which is the same control drawn from a
+            # different half of the library (W141) — the rows parse identically
+            # because a plugin is a required app that happens to declare which
+            # ATAK it needs.
+            #
             # ⚠️ One intent left (W139): `pin:<sha>` names the build to install.
             # The select also carried "" for latest-published and `min:<code>`
             # for a floor, and both were automatic-selection modes the server

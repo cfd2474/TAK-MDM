@@ -1228,60 +1228,60 @@
 /* --- ATAK plugin compatibility -------------------------------------------
    A plugin only loads in the ATAK build it was compiled against. A mismatch is
    not a crash: the plugin installs and then never appears in ATAK, which looks
-   like an MDM fault and is not one. So warn, never block — and warn on the
-   plugin, since ATAK is the fixed point everything else is built against. */
+   like an MDM fault and is not one. So warn, never block.
+
+   ⚠️ Anchored on the **ATAK Core select**, not on whichever row happens to be
+   ATAK (W141). ATAK is the fixed point everything else is built against, and it
+   is now chosen rather than inferred — required apps cannot contain it at all,
+   so the old "find the ATAK row" rule would never fire again.
+
+   ⚠️ Versions only. A CIV/MIL/GOV check lived here briefly and came out: MIL and
+   GOV are not separate builds. A device runs ATAK-CIV and a flavour plugin
+   unlocks the rest, so there is no second ATAK to be incompatible with. What a
+   GOV or MIL plugin needs is that flavour plugin, which the TPC browser says. */
 (function () {
-  var blob = document.querySelector("[data-app-compat]");
-  if (!blob) return;
-
-  var compat;
-  try { compat = JSON.parse(blob.textContent); } catch (e) { return; }
-
-  function lineFor(row) {
-    var pkg = row.querySelector('select[name$="__package_name"]');
-    var ver = row.querySelector('select[name$="__version_choice"]');
-    if (!pkg || !pkg.value) return null;
-    var entry = compat[pkg.value];
-    if (!entry) return null;
-    var choice = ver ? ver.value : "";
-    if (choice.indexOf("pin:") === 0) {
-      return { pkg: pkg.value, atak: entry.is_atak, line: entry.pins[choice.slice(4)] || null };
-    }
-    // Reached only before an app has builds, or on a policy written before
-    // W139 whose stored choice matches no option. The newest build is the best
-    // guess at what re-saving will pin it to.
-    return { pkg: pkg.value, atak: entry.is_atak, line: entry.latest };
+  function lineOf(select) {
+    if (!select) return null;
+    var option = select.options[select.selectedIndex];
+    if (!option) return null;
+    return (
+      option.getAttribute("data-atak-line") ||
+      option.getAttribute("data-plugin-target") ||
+      null
+    );
   }
 
-  function refresh(scope) {
-    var rows = Array.from(scope.querySelectorAll(".rs-row"));
-    var infos = rows.map(lineFor);
+  function refresh() {
+    var core = document.querySelector('select[name="atak_core__version_choice"]');
+    var plugins = document.querySelector("[data-atak-plugins]");
+    if (!plugins) return;
 
-    // ATAK is the truth. If the policy does not install it, there is nothing to
-    // compare against here and the device view is the place that knows.
-    var atak = infos.find(function (i) { return i && i.atak && i.line; });
+    // No ATAK chosen is an unknown, not a clean bill of health — and not a
+    // reason to tell someone their plugin is wrong.
+    var atakLine = lineOf(core);
 
-    rows.forEach(function (row, i) {
+    plugins.querySelectorAll(".rs-row").forEach(function (row) {
       var box = row.querySelector(".app-compat-warning");
       if (!box) return;
-      var info = infos[i];
       box.hidden = true;
-      if (!atak || !info || info.atak || !info.line) return;
-      if (info.line === atak.line) return;
+
+      var target = lineOf(row.querySelector('select[name$="__version_choice"]'));
+      if (!atakLine || !target || target === atakLine) return;
+
       box.textContent =
-        info.pkg + " is built for ATAK " + info.line + ", but this policy installs ATAK " +
-        atak.line + ". ATAK loads only plugins built for its own version, so this one " +
-        "will install and then not appear. Assigning it anyway is allowed.";
+        "This plugin is built for ATAK " + target + ", but this policy installs " +
+        "ATAK " + atakLine + ". It is a mismatch and may not be compatible — it " +
+        "will install, and ATAK may then refuse to load it. Assigning it anyway " +
+        "is allowed.";
       box.hidden = false;
     });
   }
 
-  document.querySelectorAll("[data-rowset]").forEach(function (scope) {
-    if (!scope.querySelector(".app-compat-warning")) return;
-    scope.addEventListener("change", function () { refresh(scope); });
-    scope.addEventListener("click", function () { setTimeout(function () { refresh(scope); }, 0); });
-    refresh(scope);
-  });
+  // Delegated, because rows arrive from a <template> long after load and the
+  // core select changes independently of them.
+  document.addEventListener("change", refresh);
+  document.addEventListener("click", function () { setTimeout(refresh, 0); });
+  refresh();
 })();
 
 /* --- Wallpaper preview ------------------------------------------------------

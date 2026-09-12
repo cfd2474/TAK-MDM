@@ -3,7 +3,7 @@
 
   Form-driven policy editor (W10), sub-paged (W12). No JSON typing (DW6). Import:
     {% from "_policy_form.html" import policy_subform, resulting_spec, app_group_buttons %}
-  `policy_subform(page.fields, spec, app_packages, managed_files, geofence_tiles, storefronts)`
+  `policy_subform(page.fields, spec, app_packages, managed_files, geofence_tiles, storefronts, app_kinds)`
   renders one
   ui_group's controls; the caller places each sub-page in a rail. All sub-pages of
   a category share one <form>, so `parse_form(type, whole_form)` reads every field
@@ -465,6 +465,101 @@
       No storefronts exist yet — create one under <a href="/apps#tab-store">Apps › Store</a>.
     </p>
   {% endif %}
+{% endmacro %}
+
+{#
+  ATAK Core: one build, and the fixed point every plugin below is checked
+  against (W141).
+
+  ⚠️ Wrapped in `.rs-row` although it is not a row in a set. `atlas.js` finds a
+  version select's package picker with `closest(".rs-row")`, and a core select
+  outside one would list every build of every ATAK at once — which is exactly
+  the way to install the wrong one.
+#}
+{% macro _atak_core(f, value, name, atak_packages) %}
+  <div class="rs-row">
+    <select name="{{ name }}__package_name">
+      <option value="">&mdash; no ATAK on this policy &mdash;</option>
+      {% for p in atak_packages %}
+        <option value="{{ p.package_name }}"
+          {{ 'selected' if value and value.package_name == p.package_name }}>
+          {{ p.label or p.package_name }} ({{ p.package_name }})
+        </option>
+      {% endfor %}
+    </select>
+    <select name="{{ name }}__version_choice" style="min-width:280px">
+      {% for p in atak_packages %}
+        {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
+          {% set base = (v.files | selectattr('role.value', 'equalto', 'base') | list | first) %}
+          {% if base %}
+            <option value="pin:{{ base.artifact_sha256 }}"
+                    data-package="{{ p.package_name }}"
+                    data-atak-line="{{ v.version_name | atak_line_of }}"
+                    {{ 'selected' if value and value.artifact_sha256 == base.artifact_sha256 }}>
+              {{ v.version_code }}{% if v.version_name %} ({{ v.version_name }}){% endif %}{% if loop.first %} — newest{% endif %}
+            </option>
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+    </select>
+  </div>
+  {% if not atak_packages %}
+    <p class="field-tip">
+      No ATAK build in the library yet — upload one under
+      <a href="/apps">Apps</a>, or import it from TPC.
+    </p>
+  {% endif %}
+{% endmacro %}
+
+{#
+  The plugins, each at a chosen build. Same shape as required apps, drawn from
+  the plugins in the library rather than everything.
+#}
+{% macro _atak_plugins(f, items, name, plugin_packages) %}
+  <div class="rowset" data-rowset="{{ name }}" data-atak-plugins>
+    {% for entry in items or [] %}
+      {{ _atak_plugin_row(name, plugin_packages, entry) }}
+    {% endfor %}
+    <template data-row-template>{{ _atak_plugin_row(name, plugin_packages, none) }}</template>
+    <button type="button" class="ghost" data-add-row>Add plugin</button>
+  </div>
+  {% if not plugin_packages %}
+    <p class="field-tip">
+      No plugins in the library yet. Import them from the
+      <a href="/apps?tab=tpc">TPC Plugins</a> tab, or upload one.
+    </p>
+  {% endif %}
+{% endmacro %}
+
+{% macro _atak_plugin_row(name, plugin_packages, entry) %}
+  <div class="rs-row">
+    <select name="{{ name }}__package_name">
+      <option value="">&mdash; pick a plugin &mdash;</option>
+      {% for p in plugin_packages %}
+        <option value="{{ p.package_name }}" {{ 'selected' if entry and entry.package_name == p.package_name }}>
+          {{ p.label or p.package_name }} ({{ p.package_name }})
+        </option>
+      {% endfor %}
+    </select>
+    <select name="{{ name }}__version_choice" style="min-width:280px">
+      {% for p in plugin_packages %}
+        {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
+          {% set base = (v.files | selectattr('role.value', 'equalto', 'base') | list | first) %}
+          {% if base %}
+            <option value="pin:{{ base.artifact_sha256 }}"
+                    data-package="{{ p.package_name }}"
+                    data-plugin-target="{{ v.plugin_api | atak_target }}"
+                    {{ 'selected' if entry and entry.artifact_sha256 == base.artifact_sha256 }}>
+              {{ v.version_code }}{% if v.version_name %} ({{ v.version_name }}){% endif %}{% if v.plugin_api | atak_target %} — for ATAK {{ v.plugin_api | atak_target }}{% endif %}{% if loop.first %} — newest{% endif %}
+            </option>
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+    </select>
+    <button type="button" class="ghost" data-remove-row>Remove</button>
+    {# Filled by atlas.js when this plugin's target disagrees with ATAK Core. #}
+    <div class="app-compat-warning banner" hidden></div>
+  </div>
 {% endmacro %}
 
 {% macro _app_list(f, items, name, app_packages) %}
@@ -1177,7 +1272,7 @@
   </div>
 {% endmacro %}
 
-{% macro _control(f, spec, name, app_packages, managed_files, geofence_tiles='{}', storefronts=[]) %}
+{% macro _control(f, spec, name, app_packages, managed_files, geofence_tiles='{}', storefronts=[], app_kinds={}) %}
   {% set value = spec.get(f.name) %}
   {% if f.requires %}
     {#
@@ -1188,18 +1283,18 @@
       polite half of that, not the guard.
     #}
     <fieldset disabled style="border:0; padding:0; margin:0; opacity:.55">
-      {{ _live_control(f, value, name, app_packages, managed_files, geofence_tiles, storefronts) }}
+      {{ _live_control(f, value, name, app_packages, managed_files, geofence_tiles, storefronts, app_kinds) }}
     </fieldset>
     <div class="muted" style="font-size:12px; margin-top:4px">
       <span class="pill warn">needs {{ f.requires }}</span>
       No AOSP Device Owner API can do this, so it cannot be saved yet.
     </div>
   {% else %}
-    {{ _live_control(f, value, name, app_packages, managed_files, geofence_tiles, storefronts) }}
+    {{ _live_control(f, value, name, app_packages, managed_files, geofence_tiles, storefronts, app_kinds) }}
   {% endif %}
 {% endmacro %}
 
-{% macro _live_control(f, value, name, app_packages, managed_files, geofence_tiles='{}', storefronts=[]) %}
+{% macro _live_control(f, value, name, app_packages, managed_files, geofence_tiles='{}', storefronts=[], app_kinds={}) %}
   {% if f.control == 'bool' %}{{ _bool(f, value, name) }}
   {% elif f.control == 'int' %}{{ _int(f, value, name) }}
   {% elif f.control == 'enum' %}{{ _enum(f, value, name) }}
@@ -1207,7 +1302,9 @@
   {% elif f.control == 'text' %}{{ _text(f, value, name) }}
   {% elif f.control == 'password' %}{{ _password(f, value, name) }}
   {% elif f.control == 'package_list' %}{{ _package_list(f, value, name) }}
-  {% elif f.control == 'app_list' %}{{ _app_list(f, value, name, app_packages) }}
+  {% elif f.control == 'app_list' %}{{ _app_list(f, value, name, app_kinds.get('plain', app_packages)) }}
+  {% elif f.control == 'atak_core' %}{{ _atak_core(f, value, name, app_kinds.get('atak', [])) }}
+  {% elif f.control == 'atak_plugins' %}{{ _atak_plugins(f, value, name, app_kinds.get('plugins', [])) }}
   {% elif f.control == 'kiosk_apps' %}{{ _kiosk_apps(f, value, name, app_packages) }}
   {% elif f.control == 'geofences' %}{{ _geofences(f, value, name, geofence_tiles) }}
   {% elif f.control == 'kiosk_app' %}{{ _kiosk_app(f, value, name, app_packages) }}
@@ -1251,11 +1348,8 @@
   page context, and threading one more argument through every call site to carry
   data the browser reads globally is worse than a named block.
 #}
-{% macro app_compat_blob(app_compat) %}
-<script type="application/json" data-app-compat>{{ app_compat | tojson }}</script>
-{% endmacro %}
 
-{% macro policy_subform(fields, spec, app_packages, managed_files, geofence_tiles='{}', storefronts=[]) %}
+{% macro policy_subform(fields, spec, app_packages, managed_files, geofence_tiles='{}', storefronts=[], app_kinds={}) %}
   {% for f in fields %}
   <div class="pf-field" data-field="{{ f.name }}">
     <div class="pf-label">
@@ -1264,7 +1358,7 @@
       {% if f.merge_hint %}<div class="muted" style="font-size:11px">↳ {{ f.merge_hint }}</div>{% endif %}
     </div>
     <div class="pf-control">
-      {{ _control(f, spec, f.name, app_packages, managed_files, geofence_tiles, storefronts) }}
+      {{ _control(f, spec, f.name, app_packages, managed_files, geofence_tiles, storefronts, app_kinds) }}
     </div>
   </div>
   {% endfor %}

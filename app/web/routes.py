@@ -210,6 +210,8 @@ _TEMPLATES.env.filters["spec_rows"] = _spec_rows
 # A filter, not context: Jinja macros do not inherit the page context, and the
 # version picker lives inside one. Parsing stays in Python either way.
 _TEMPLATES.env.filters["atak_target"] = atak_compat.plugin_target
+#: ATAK's own versionName -> the line a plugin would have to target (W141).
+_TEMPLATES.env.filters["atak_line_of"] = atak_compat.atak_line
 _TEMPLATES.env.filters["category_label"] = lambda key: (
     creator_catalog.get(key).label if creator_catalog.get(key) else key
 )
@@ -1479,8 +1481,27 @@ def _managed_file_names(session: Session) -> dict[str, str]:
 def _form_catalogs(session: Session) -> dict[str, Any]:
     """Uploaded apps and files, for the policy form's list controls."""
     packages = list(session.scalars(select(AppPackage).order_by(AppPackage.package_name)))
+    # ⚠️ Partitioned here, not in Jinja (W141). "Is a plugin" is a query — any
+    # build declaring a `plugin-api`, or one imported from TAK.gov — and a
+    # template that tried to work it out per row would ask the database inside a
+    # loop and still get provenance wrong.
+    plugin_names = atak_compat.plugin_packages(session)
     return {
         "app_packages": packages,
+        # One threaded parameter rather than three: these travel together
+        # through `policy_subform` -> `_control` -> `_live_control`, and every
+        # extra positional argument is another hop to forget.
+        "app_kinds": {
+            # Required apps picks from these: ATAK and its plugins have their own
+            # section, and offering them here is what the refusals prevent.
+            "plain": [
+                p for p in packages
+                if not atak_compat.is_atak(p.package_name)
+                and p.package_name not in plugin_names
+            ],
+            "atak": [p for p in packages if atak_compat.is_atak(p.package_name)],
+            "plugins": [p for p in packages if p.package_name in plugin_names],
+        },
         # The shelves an APP_CATALOG policy may hand out (W140).
         "storefronts": storefront_service.list_all(session),
         # Library only: a policy-editor upload must not show up in the FILES
@@ -1490,46 +1511,11 @@ def _form_catalogs(session: Session) -> dict[str, Any]:
                 select(ManagedFile).where(ManagedFile.in_library).order_by(ManagedFile.name)
             )
         ),
-        "app_compat": _app_compat_map(packages),
         "file_names": _managed_file_names(session),
         # The geofence picker's map source, resolved the same way every other map
         # on the console resolves it, so one setting governs all of them (W109).
         "geofence_tiles": json.dumps(location_service.tile_config(session)),
     }
-
-
-def _app_compat_map(packages: list[AppPackage]) -> dict[str, Any]:
-    """Per package, the ATAK line each selectable build implies.
-
-    Computed here rather than in the template or the browser: version strings need
-    real parsing, and a compatibility warning that is quietly wrong is worse than
-    none. The console only decides which rows disagree.
-    """
-    out: dict[str, Any] = {}
-    for package in packages:
-        latest = max(package.versions, key=lambda v: v.version_code, default=None)
-        is_atak = atak_compat.is_atak(package.package_name)
-
-        def line_of(version) -> str | None:
-            return (
-                atak_compat.atak_line(version.version_name)
-                if is_atak
-                else atak_compat.plugin_target(version.plugin_api)
-            )
-
-        pins = {}
-        for version in package.versions:
-            base = next((f for f in version.files if f.role is PartRole.BASE), None)
-            value = line_of(version)
-            if base and value:
-                pins[base.artifact_sha256] = value
-
-        out[package.package_name] = {
-            "is_atak": is_atak,
-            "latest": line_of(latest) if latest else None,
-            "pins": pins,
-        }
-    return out
 
 
 def _app_group_hints(session: Session) -> list[dict[str, Any]]:

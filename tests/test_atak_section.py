@@ -438,3 +438,166 @@ def test_the_tpc_browser_says_gov_and_mil_need_the_flavour_plugin(client, db):
     # The licensing warning it already carried is still there, and still its own
     # paragraph — two different problems should not share one sentence.
     assert "export controls" in banner
+
+
+# --------------------------------------------------------------------------- #
+# The console section (W141 chunk 3)
+# --------------------------------------------------------------------------- #
+
+
+def _form(client: TestClient) -> str:
+    return client.get(
+        "/policies/new?policy_type=APP_CATALOG", headers=ADMIN_HEADERS
+    ).text
+
+
+def _seed(db, artifact_storage):
+    """One ATAK, one plugin, one ordinary app — the three kinds the pickers split."""
+    cert = make_signing_certificate()
+    core = _build(db, artifact_storage, "com.atakmap.app.civ", 52800,
+                  version_name="5.8.0.4 (174b425)[playstore]", cert=cert)
+    plugin = _build(db, artifact_storage, "com.plugin.one", 1,
+                    plugin_api="com.atakmap.app@5.8.0.CIV")
+    ordinary = _build(db, artifact_storage, "com.example.notes", 7)
+    db.commit()
+    return core, plugin, ordinary
+
+
+def test_the_section_offers_atak_and_plugins_separately(
+    client: TestClient, db, artifact_storage
+):
+    _seed(db, artifact_storage)
+
+    page = _form(client)
+
+    assert 'name="atak_core__package_name"' in page
+    assert 'name="atak_plugins__package_name"' in page
+    # ⚠️ The names have to actually reach the options. W140 shipped a select
+    # that rendered perfectly and had nothing in it.
+    core = page[page.index('name="atak_core__package_name"'):]
+    core = core[: core.index("</select>")]
+    assert "com.atakmap.app.civ" in core
+    assert "com.plugin.one" not in core
+
+
+def test_required_apps_stops_offering_atak_and_plugins(
+    client: TestClient, db, artifact_storage
+):
+    """The filter the operator asked for, on the picker rather than only in a
+    refusal: an operator should not be able to choose the wrong thing and then
+    be told off for it."""
+    _seed(db, artifact_storage)
+
+    page = _form(client)
+    required = page[page.index('name="required_apps__package_name"'):]
+    required = required[: required.index("</select>")]
+
+    assert "com.example.notes" in required
+    assert "com.atakmap.app.civ" not in required
+    assert "com.plugin.one" not in required
+
+
+def test_the_plugin_picker_offers_only_plugins(client: TestClient, db, artifact_storage):
+    _seed(db, artifact_storage)
+
+    page = _form(client)
+    plugins = page[page.index('name="atak_plugins__package_name"'):]
+    plugins = plugins[: plugins.index("</select>")]
+
+    assert "com.plugin.one" in plugins
+    assert "com.example.notes" not in plugins
+    assert "com.atakmap.app.civ" not in plugins
+
+
+def test_the_options_carry_the_lines_the_warning_compares(
+    client: TestClient, db, artifact_storage
+):
+    """⚠️ The comparison happens in the browser against these attributes, so an
+    option without them is a warning that silently never fires."""
+    _seed(db, artifact_storage)
+
+    page = _form(client)
+
+    assert 'data-atak-line="5.8.0"' in page
+    assert 'data-plugin-target="5.8.0"' in page
+
+
+def test_saving_the_form_writes_the_section(client: TestClient, db, artifact_storage):
+    """End to end through the real parser, because everything above could pass
+    while the saved policy carried nothing."""
+    core, plugin, _ = _seed(db, artifact_storage)
+
+    response = client.post(
+        "/policies",
+        data={
+            "name": "Field ATAK",
+            "policy_type": "APP_CATALOG",
+            "atak_core__package_name": "com.atakmap.app.civ",
+            "atak_core__version_choice": f"pin:{_sha(core)}",
+            "atak_plugins__package_name": ["com.plugin.one"],
+            "atak_plugins__version_choice": [f"pin:{_sha(plugin)}"],
+        },
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303), response.text
+
+    from app.db.models import Policy
+
+    spec = db.scalar(select(Policy).where(Policy.name == "Field ATAK")).latest_version.spec
+    assert spec["atak_core"] == {
+        "package_name": "com.atakmap.app.civ",
+        "artifact_sha256": _sha(core),
+    }
+    assert spec["atak_plugins"][0]["artifact_sha256"] == _sha(plugin)
+
+
+def test_no_atak_picked_leaves_the_field_out(client: TestClient, db, artifact_storage):
+    """⚠️ Absent, not an empty object. Under HIGHEST_RANK an empty value would
+    beat a lower-ranked policy that actually named an ATAK."""
+    _seed(db, artifact_storage)
+
+    client.post(
+        "/policies",
+        data={
+            "name": "No ATAK",
+            "policy_type": "APP_CATALOG",
+            "atak_core__package_name": "",
+            "atak_core__version_choice": "",
+        },
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+
+    from app.db.models import Policy
+
+    spec = db.scalar(select(Policy).where(Policy.name == "No ATAK")).latest_version.spec
+    assert "atak_core" not in (spec or {})
+
+
+def test_the_warning_is_anchored_on_the_chosen_core():
+    """⚠️ Not on "whichever row is ATAK". Required apps cannot contain ATAK any
+    more, so the old rule would never fire again — and the point of the section
+    is that the fixed point is chosen rather than inferred."""
+    import pathlib
+
+    js = pathlib.Path("app/web/static/atlas.js").read_text(encoding="utf-8")
+    block = js[js.index("ATAK plugin compatibility"):]
+    block = block[: block.index("/* --- ")]
+
+    assert 'select[name="atak_core__version_choice"]' in block
+    assert "may not be compatible" in block
+    # Warn, never block: no disabling, no refusing to submit.
+    assert "disabled" not in block
+
+
+def test_the_orphaned_compat_blob_is_gone():
+    """It fed the old row-guessing check and nothing reads it now. A JSON blob of
+    every package rendered into every policy page and consumed by nobody is the
+    kind of thing that gets resurrected by accident."""
+    import pathlib
+
+    for name in ("_policy_form.html", "policy_new.html", "policy_detail.html",
+                 "profile_editor.html"):
+        text = pathlib.Path("app/web/templates") / name
+        assert "app_compat" not in text.read_text(encoding="utf-8"), name

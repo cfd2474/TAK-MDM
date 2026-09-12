@@ -1,12 +1,11 @@
 {% extends "base.html" %}
 {% from "_macros.html" import csrf_field, device_label %}
-{% from "_policy_form.html" import policy_subform, app_compat_blob %}
+{% from "_policy_form.html" import policy_subform %}
 {% set nav = 'policies' %}
 {% block main_class %}wide{% endblock %}
 {% block title %}{{ policy.name }} — ATLAS{% endblock %}
 
 {% block content %}
-{{ app_compat_blob(app_compat) }}
 <h1>{{ policy.name }}</h1>
 <p class="sub">
   <span class="pill">{{ policy.policy_type }}</span>
@@ -152,7 +151,7 @@
                {{ 'hidden' if pages | length > 1 }}>
         <div class="panel">
           {% if pages | length > 1 %}<h2>{{ pg.label }}</h2>{% endif %}
-          {{ policy_subform(pg.fields, current_spec, app_packages, managed_files, geofence_tiles, storefronts) }}
+          {{ policy_subform(pg.fields, current_spec, app_packages, managed_files, geofence_tiles, storefronts, app_kinds) }}
         </div>
       </section>
       {% endfor %}

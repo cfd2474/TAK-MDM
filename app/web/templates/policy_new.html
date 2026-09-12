@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import page_header, csrf_field %}
-{% from "_policy_form.html" import policy_subform, app_group_buttons, app_compat_blob, data_package_modal, data_package_check_modal %}
+{% from "_policy_form.html" import policy_subform, app_group_buttons, data_package_modal, data_package_check_modal %}
 {% set nav = 'policies' %}
 {% block title %}New single-concern policy — ATLAS{% endblock %}
 {% block main_class %}wide{% endblock %}
@@ -17,7 +17,6 @@
 {% endblock %}
 
 {% block content %}
-{{ app_compat_blob(app_compat) }}
 {{ data_package_modal(csrf_token) }}
 {{ data_package_check_modal() }}
 {{ page_header('New single-concern policy', 'One typed policy of a single kind, outside any bundle. Most operators use a composite policy instead.') }}
@@ -57,7 +56,7 @@
         {% for pg in t.pages %}
           <h2>{{ t.label }}{% if t.pages | length > 1 %} <span class="muted">· {{ pg.label }}</span>{% endif %}</h2>
           {% if t.policy_type == 'APP_CATALOG' and pg.slug == 'required-apps' %}{{ app_group_buttons(app_groups) }}{% endif %}
-          {{ policy_subform(pg.fields, {}, app_packages, managed_files, geofence_tiles, storefronts) }}
+          {{ policy_subform(pg.fields, {}, app_packages, managed_files, geofence_tiles, storefronts, app_kinds) }}
         {% endfor %}
       </div>
     {% endfor %}

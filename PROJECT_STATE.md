@@ -586,7 +586,7 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
-### 🚧 W141 — ATAK Core and Plugins, as their own section
+### ✅ W141 — ATAK Core and Plugins, as their own section
 
 Operator, 2026-09-12: a new App Management sub-category holding ATAK and its
 plugins, with ATAK Core chosen first and plugins compared against it; *"any
@@ -805,6 +805,37 @@ Server **1519 passed, 1 skipped**.
    the old "whichever row is ATAK" rule.
 3. Required apps and the allowlist stop offering ATAK and plugins.
 4. Tests, deploy.
+
+#### ✅ Chunk 3 done
+
+An ATAK Core picker (ATAK builds only), a plugin rowset (plugins only), and the
+mismatch warning in between. The library is partitioned **server-side** into
+plain / ATAK / plugin, because "is a plugin" is a query — a declared `plugin-api`
+or TAK.gov provenance — and a template working it out per row would hit the
+database inside a loop and still get provenance wrong.
+
+⚠️ **Threaded as one `app_kinds` parameter, through every hop.** W140's
+storefront select shipped empty because `_live_control` was missed and a bare
+name inside an imported Jinja macro renders as nothing rather than failing. Three
+separate parameters would have been three chances to repeat that; the tests
+assert the package *names* reach the options, not merely that a select exists.
+
+⚠️ **The allowlist needed no filtering.** It is a free-text control, not a
+picker — there is nothing to filter, and the spec validator already refuses ATAK
+typed into it by hand.
+
+✅ **The warning is anchored on the chosen core**, not on "whichever row is
+ATAK". Required apps cannot contain ATAK any more, so the old rule would never
+have fired again — it would have been a compatibility check that silently did
+nothing, which is worse than not having one.
+
+⚠️ **That orphaned the `data-app-compat` JSON blob**, which fed the old
+row-guessing check: a map of every package rendered into every policy page and
+read by nobody. Removed along with `_app_compat_map` and its three call sites,
+with a test that it stays gone.
+
+Mutation-checked: let required apps offer everything again and the filter test
+fails. Server **1527 passed, 1 skipped**.
 
 ### ✅ W140 — The store becomes something a policy assigns
 
