@@ -95,6 +95,7 @@ SP="<scratchpad>"   # the session scratchpad from your environment block
 python scripts/write_build.py          # writes ./BUILD, which the footer reads
 tar -czf "$SP/atlas.tgz" \
   --exclude='./.git' --exclude='./.venv' --exclude='./artifacts' --exclude='./pki' \
+  --exclude='./cache' \
   --exclude='./Test Files' --exclude='./agent/build' --exclude='./agent/app/build' \
   --exclude='./agent/launcher/build' --exclude='./agent/testapp/build' \
   --exclude='./agent/.gradle' --exclude='./.pytest_cache' --exclude='./.env' \
@@ -105,6 +106,15 @@ pscp … "$SP/atlas.tgz" "root@209.182.235.108:/tmp/atlas.tgz"
 plink … root@209.182.235.108 \
   "set -e; cd /opt/atlas; tar -xzf /tmp/atlas.tgz; docker compose up -d --build api"
 ```
+
+⚠️ **`./cache` is excluded for a reason you will not see fail.** It holds the
+downloaded F-Droid and IzzyOnDroid indexes — ~180 MB, regenerable, and
+gitignored, so it was easy to leave off this list. Shipping it overwrote the
+host's copy with this workstation's, **carrying Windows uid 197609 onto files a
+container running as uid 1000 then could not write**. The only symptom was one
+startup warning saying search would load the index on demand; the console
+worked, so nobody looked. Found 2026-09-11 and fixed on the host with
+`chown -R 1000:1000 /opt/atlas/cache`.
 
 ⚠️ **`--build`, always.** Plain `docker compose up -d` keeps the old image and the
 Python change appears to have had no effect. This is the single most expensive

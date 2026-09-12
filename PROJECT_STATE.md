@@ -270,6 +270,29 @@ Knox is strictly additive.
 
 ## Operational notes — read before debugging anything "impossible"
 
+### ⚠️ The deploy tarball shipped `./cache` and broke it silently (2026-09-11)
+
+Noticed while verifying the W135 deploy. `cache/` is gitignored but **was not in
+the tarball's exclude list**, so every deploy shipped ~180 MB of downloaded
+F-Droid and IzzyOnDroid indexes up and extracted them over the host's copy —
+carrying **this workstation's Windows uid 197609** onto files the container,
+running as uid 1000, then could not write.
+
+The only symptom was one line at startup:
+
+```
+WARNING [app.main] could not warm the IzzyOnDroid index; search will load it on demand
+PermissionError: [Errno 13] Permission denied: '/cache/izzyondroid-index-v2.1...part'
+```
+
+The console worked, search worked (slowly, re-fetching), so nothing looked
+broken. Same class as the anchored `./artifacts` exclude: **a gitignored
+directory is still in the tarball unless the tar command says otherwise.**
+
+Fixed on the host with `chown -R 1000:1000 /opt/atlas/cache`, the stale `.part`
+removed, and `--exclude='./cache'` added to the command in
+`docs/REMOTE_SERVER.md`.
+
 ### ⚠️ The local stack is not the one devices check into (2026-09-07)
 
 **Two ATLAS servers exist and it is easy to diagnose the wrong one.**
