@@ -80,6 +80,65 @@ def atak_line(version_name: str | None) -> str | None:
     return ".".join(parts[:3])
 
 
+#: The flavour that loads anywhere (operator, W141): *"for now, lets assume a
+#: civ plugin is compatible with mil version"*. Every other flavour must match
+#: the ATAK it sits next to.
+UNIVERSAL_FLAVOUR = "CIV"
+
+
+def plugin_flavour(plugin_api: str | None) -> str | None:
+    """The ATAK flavour a plugin targets — `CIV`, `MIL`, `GOV` — or None.
+
+    ⚠️ **Already in the string the version came from.** `_PLUGIN_API` has
+    captured this group since it was written and nothing read it, so the second
+    dimension of the check needs no new column and no second source of truth:
+    the plugin states its flavour in its own manifest, beside the version.
+    """
+    if not plugin_api:
+        return None
+    match = _PLUGIN_API.search(plugin_api)
+    flavour = match.group("flavour") if match else None
+    return flavour.upper() if flavour else None
+
+
+def atak_flavour(package_name: str | None) -> str | None:
+    """ATAK's flavour, from its package name — `com.atakmap.app.civ` → `CIV`.
+
+    ⚠️ **A bare `com.atakmap.app` yields None, and that stays silent.** This
+    project has seen `com.atakmap.app` and `com.atakmap.app.civ` on real
+    hardware and no MIL package name at all, so the suffix is read where it
+    exists and nothing is assumed where it does not — the same rule the version
+    check already follows. A flavour warning invented from a guess would be
+    worse than no warning.
+    """
+    if not is_atak(package_name):
+        return None
+    suffix = package_name[len(ATAK_PACKAGE_PREFIX):].lstrip(".")
+    return suffix.upper() if suffix else None
+
+
+def flavours_agree(plugin: str | None, atak: str | None) -> bool:
+    """Whether a plugin's flavour can sit next to this ATAK's.
+
+    | plugin | ATAK | verdict |
+    |---|---|---|
+    | CIV | anything | ✅ the universal donor, for now |
+    | MIL | MIL | ✅ |
+    | MIL | CIV | ⚠️ mismatch |
+    | either unknown | | ✅ silence |
+
+    ⏳ **GOV is not specified.** `tak_gov.py` knows three products and the
+    operator named two, so everything that is not CIV must match exactly. It is
+    a warning either way, so being wrong here costs a sentence rather than an
+    install.
+    """
+    if plugin is None or atak is None:
+        return True
+    if plugin == UNIVERSAL_FLAVOUR:
+        return True
+    return plugin == atak
+
+
 @dataclass(frozen=True)
 class Mismatch:
     package_name: str
@@ -87,6 +146,10 @@ class Mismatch:
     atak_version: str
     #: Where the ATAK version came from — "policy" or "device".
     source: str
+    #: Set when the *flavour* is what disagrees (W141), e.g. a MIL plugin beside
+    #: CIV ATAK. None when the versions are what disagree.
+    plugin_flavour: str | None = None
+    atak_flavour: str | None = None
 
     @property
     def message(self) -> str:
@@ -95,6 +158,13 @@ class Mismatch:
             if self.source == "policy"
             else "the device has ATAK"
         )
+        if self.plugin_flavour and self.atak_flavour:
+            return (
+                f"built for ATAK {self.plugin_flavour}, but {seen} "
+                f"{self.atak_flavour}. A {self.plugin_flavour} plugin is not "
+                f"compatible with {self.atak_flavour}, so this one may not "
+                "appear once installed."
+            )
         return (
             f"built for ATAK {self.plugin_target}, but {seen} {self.atak_version}. "
             "ATAK loads only plugins built for its own version, so this one will "
@@ -107,29 +177,56 @@ def check(
     atak_version: str | None,
     plugins: dict[str, str | None],
     source: str = "policy",
+    atak_package: str | None = None,
 ) -> list[Mismatch]:
-    """Plugins whose target does not match ``atak_version``.
+    """Plugins that will not load beside this ATAK, on either dimension.
 
     ``plugins`` maps package name to its raw ``plugin_api`` value. Entries with no
     target, and the case where the ATAK version is unknown, yield nothing — see the
     module docstring on silence.
+
+    ⚠️ **Two dimensions, one at a time** (W141). A version disagreement is
+    reported as a version disagreement; a flavour disagreement — a MIL plugin
+    beside CIV ATAK — is reported as that. Reporting both at once would produce
+    a sentence naming four things, when the operator only needs the first reason
+    it will not load.
+
+    ``atak_package`` is optional, and without it only the version is checked.
+    That is the honest degradation: flavour comes from ATAK's package name, and
+    a caller that does not know the package does not know the flavour.
     """
     if not atak_version:
         return []
 
+    wanted_flavour = atak_flavour(atak_package)
     mismatches = []
     for package_name, plugin_api in sorted(plugins.items()):
         target = plugin_target(plugin_api)
-        if target is None or target == atak_version:
+        if target is None:
             continue
-        mismatches.append(
-            Mismatch(
-                package_name=package_name,
-                plugin_target=target,
-                atak_version=atak_version,
-                source=source,
+        if target != atak_version:
+            mismatches.append(
+                Mismatch(
+                    package_name=package_name,
+                    plugin_target=target,
+                    atak_version=atak_version,
+                    source=source,
+                )
             )
-        )
+            continue
+
+        theirs = plugin_flavour(plugin_api)
+        if not flavours_agree(theirs, wanted_flavour):
+            mismatches.append(
+                Mismatch(
+                    package_name=package_name,
+                    plugin_target=target,
+                    atak_version=atak_version,
+                    source=source,
+                    plugin_flavour=theirs,
+                    atak_flavour=wanted_flavour,
+                )
+            )
     return mismatches
 
 
@@ -169,7 +266,14 @@ def for_device(session, device) -> list[Mismatch]:
         for name, version_code, plugin_api in rows
         if wanted.get(name) == version_code
     }
-    return check(atak_version=line, plugins=plugins, source="device")
+    # The device reports its ATAK package name alongside the version, so the
+    # flavour check has both halves here without guessing (W141).
+    return check(
+        atak_version=line,
+        plugins=plugins,
+        source="device",
+        atak_package=device.atak_package,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -183,22 +287,39 @@ def for_device(session, device) -> list[Mismatch]:
 # --------------------------------------------------------------------------- #
 
 
+#: A build imported from here is a plugin whatever its manifest says — the
+#: catalogue is a plugin catalogue (operator, W141).
+TPC_SOURCE = "tak.gov"
+
+
 def plugin_packages(session) -> set[str]:
-    """Package names in the library that declare a `plugin-api` on any build.
+    """Package names the library knows to be ATAK plugins.
+
+    Two ways of knowing, and both are needed:
+
+    * the build **declares a `plugin-api`**, read from the APK or XAPK at upload;
+    * the build **came from TAK.gov**, whose catalogue is plugins and nothing
+      else — *"any plugin that comes from the tpc repo is obviously a plugin"*.
 
     ⚠️ **Any build, not the newest.** `plugin_api` is NULL on anything uploaded
     before the column existed, and `backfill_plugin_api` fills those in
     afterwards — asking only the newest build would call a plugin an ordinary
-    app for as long as its latest upload happened to predate the scan.
+    app for as long as its latest upload happened to predate the scan. The same
+    reasoning applies to provenance: one TPC import is enough, forever.
     """
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
 
     from app.db.models import AppPackage, AppPackageVersion
 
     rows = session.scalars(
         select(AppPackage.package_name)
         .join(AppPackageVersion, AppPackageVersion.package_id == AppPackage.id)
-        .where(AppPackageVersion.plugin_api.is_not(None))
+        .where(
+            or_(
+                AppPackageVersion.plugin_api.is_not(None),
+                AppPackageVersion.source == TPC_SOURCE,
+            )
+        )
     )
     return set(rows)
 

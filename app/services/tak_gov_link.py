@@ -33,6 +33,10 @@ outage source. Three defences, in order of importance:
 
 from __future__ import annotations
 
+#: What a TAK.gov plugin import records as its origin. Sits beside `fdroid` and
+#: `apkpure` in `AppPackageVersion.source`.
+SOURCE_NAME = "tak.gov"
+
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
@@ -318,9 +322,21 @@ def import_plugin(
         tak_gov.download_apk_to_file(
             plugin, token, path, client=client, on_progress=on_progress
         )
-        return package_service.ingest(
+        result = package_service.ingest(
             session, storage, path.read_bytes(), label=plugin.display_name
         )
+        # ⚠️ Recorded so the library knows this is a plugin even if its manifest
+        # could not be read (W141). The repo importer already stamps `fdroid`
+        # here; a TPC import went in looking exactly like a hand upload.
+        #
+        # It answers "is this a plugin", not "which ATAK does it need" — that
+        # stays with the manifest's `plugin-api`, because the catalogue's
+        # product is what an operator *browsed* and the manifest is what the
+        # build *is*.
+        result.version.source = SOURCE_NAME
+        result.version.source_url = plugin.apk_url
+        session.flush()
+        return result
 
 
 # --------------------------------------------------------------------------- #

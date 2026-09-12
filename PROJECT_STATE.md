@@ -674,7 +674,97 @@ uploaded before the column existed.
 Four existing tests had to move their apps into the new section, which is the
 refusal working. Server **1512 passed, 1 skipped** (14 new).
 
-#### Chunk 2 — the console
+#### Chunk 2 — flavour, and knowing a plugin when we see one
+
+Operator, after chunk 1: *"use the tpc plugins repo to compare … atak-mil and
+atak-civ have different plugins. a mil plugin is not compatible with a civ
+plugin. for now, lets assume a civ plugin is compatible with mil version. any
+plugin that comes from the tpc repo is obviously a plugin, but we do need to
+scan uploaded apk/xapk for plugin status"*.
+
+#### ✅ The flavour is already in the string nothing reads
+
+`_PLUGIN_API` has captured a `flavour` group since it was written —
+`com.atakmap.app@5.8.0.CIV` → version `5.8.0`, flavour `CIV` — and
+`plugin_target()` throws it away. So the second dimension needs no new column
+and no new source of truth: **the plugin states its flavour, in the APK, next to
+the version already being compared.**
+
+ATAK's own flavour comes from its package name (`com.atakmap.app.civ`). ⚠️ A
+bare `com.atakmap.app` yields *no* flavour, and that is left silent rather than
+assumed — the same rule the version check already follows, and this project has
+only ever seen `com.atakmap.app` and `com.atakmap.app.civ` on real hardware. No
+MIL package name is guessed here.
+
+#### ⚠️ The rule is asymmetric, because the operator said so
+
+| plugin | ATAK | verdict |
+|---|---|---|
+| CIV | CIV | ✅ |
+| CIV | MIL / GOV | ✅ *"for now, lets assume a civ plugin is compatible"* |
+| MIL | CIV | ⚠️ mismatch |
+| either | unknown | silence |
+
+⏳ **GOV is not specified and is treated as needing an exact match.** `tak_gov.py`
+already knows three products — `ATAK-CIV`, `ATAK-GOV`, `ATAK-MIL` — and the
+operator named two. CIV is the universal donor; everything else must match. It
+is a warning either way, so the cost of being wrong is a sentence, not a block.
+
+#### ✅ TPC provenance answers "is this a plugin", not "which ATAK"
+
+The TPC catalog is already fetched **per product and per version** — an operator
+picks ATAK-CIV 5.8.0 and gets that shelf. But the import runs through the
+ordinary `ingest`, so a TPC plugin is recorded exactly like an upload and
+nothing marks where it came from.
+
+One line fixes that: `source = "tak.gov"`, the same way the repo importer
+records `fdroid`. Then *is this a plugin* is *declares a `plugin-api`* **or**
+*came from TPC* — which covers a plugin whose manifest could not be read.
+
+⚠️ **The comparison still reads `plugin-api`, not the TPC product.** The
+catalogue's product is what an operator *browsed*; the manifest is what the
+build *is*, it is the same publisher's statement, and it is the only one that
+exists for a plugin somebody carried in on a USB stick. Recording provenance and
+comparing on the manifest is not a compromise between the two — they answer
+different questions.
+
+1. `plugin_flavour()` and `atak_flavour()`, and `mismatch()` taking both
+   dimensions. Pure, tested at the table above.
+2. TPC imports record their source; `plugin_packages` counts provenance as well
+   as a declared `plugin-api`.
+3. Tests, including that an XAPK's plugin status is read the same as an APK's.
+
+#### ✅ Chunk 2 done — not deployed
+
+`plugin_flavour`, `atak_flavour`, `flavours_agree`, and `check()` taking both
+dimensions. A version disagreement is still reported as one; a flavour
+disagreement gets its own sentence. **One reason at a time** — a warning naming
+four things is one nobody reads, and the version is what stops it loading first
+anyway.
+
+⚠️ **The flavour needed no new column.** `_PLUGIN_API` had captured the group
+since it was written and `plugin_target()` threw it away. Mutation-checked at
+the operator's own asymmetry: make CIV stop being the universal donor and three
+tests fail.
+
+⚠️ **`check()` without an ATAK package name checks only the version.** Flavour
+comes from ATAK's package name, and a caller that does not know the package does
+not know the flavour — so it checks what it can rather than guessing. `for_device`
+has the package, because the device reports it at check-in.
+
+✅ TPC imports now stamp `source = "tak.gov"`, the way the repo importer stamps
+`fdroid`, and `plugin_packages` counts that as proof of plugin-hood alongside a
+declared `plugin-api`. **F-Droid provenance deliberately does not count** — only
+TAK.gov's catalogue carries that meaning, and treating every repository import as
+a plugin would put ordinary apps in the ATAK section.
+
+✅ XAPK plugin status confirmed rather than assumed: both `inspect` paths carry
+`plugin_api` from the base APK, and the test fixture had to learn to declare one
+before it could be proven.
+
+Server **1530 passed, 1 skipped** (18 more).
+
+#### Chunk 3 — the console
 
 1. The sub-page: an ATAK Core select (ATAK builds only), then a plugin rowset
    (plugin packages only, each with its own build select).

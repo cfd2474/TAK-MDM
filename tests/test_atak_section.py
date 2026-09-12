@@ -34,7 +34,7 @@ from app.db.models import AppPackage, Device
 from app.policies.registry import PolicyTypeError, registry
 from app.services import atak_compat
 from app.services import packages as package_service
-from tests.apk_fixtures import build_apk, make_signing_certificate
+from tests.apk_fixtures import build_apk, build_xapk, make_signing_certificate
 from tests.conftest import ADMIN_HEADERS, base_sha
 
 
@@ -330,3 +330,153 @@ def test_an_unscanned_plugin_is_unknown_not_a_mismatch():
     """Silence when unknown. A section that flagged every unscanned build is one
     nobody reads."""
     assert atak_compat.plugin_target(None) is None
+
+
+# --------------------------------------------------------------------------- #
+# CIV and MIL are different plugins (W141, operator)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_flavour_is_read_from_the_string_the_version_came_from():
+    """⚠️ No new column and no second source of truth. `_PLUGIN_API` has captured
+    this group since it was written and nothing read it."""
+    assert atak_compat.plugin_flavour("com.atakmap.app@5.8.0.CIV") == "CIV"
+    assert atak_compat.plugin_flavour("com.atakmap.app@5.8.0.MIL") == "MIL"
+    assert atak_compat.plugin_flavour("com.atakmap.app@5.8.0") is None
+    assert atak_compat.plugin_flavour(None) is None
+
+
+def test_ataks_flavour_comes_from_its_package_name():
+    assert atak_compat.atak_flavour("com.atakmap.app.civ") == "CIV"
+    assert atak_compat.atak_flavour("com.atakmap.app.mil") == "MIL"
+    assert atak_compat.atak_flavour("com.example.notes") is None
+
+
+def test_a_bare_atak_package_has_no_flavour_and_claims_none():
+    """⚠️ This project has seen `com.atakmap.app` and `com.atakmap.app.civ` on
+    hardware and no MIL package name at all. Reading a flavour out of a bare
+    name would be inventing one, and a warning built on a guess is worse than
+    no warning."""
+    assert atak_compat.atak_flavour("com.atakmap.app") is None
+
+
+@pytest.mark.parametrize(
+    "plugin, atak, agree",
+    [
+        ("CIV", "CIV", True),
+        ("MIL", "MIL", True),
+        # The operator's rule, in as many words: "for now, lets assume a civ
+        # plugin is compatible with mil version".
+        ("CIV", "MIL", True),
+        ("CIV", "GOV", True),
+        # "a mil plugin is not compatible with a civ plugin".
+        ("MIL", "CIV", False),
+        ("GOV", "CIV", False),
+        # Silence when either side is unknown.
+        (None, "CIV", True),
+        ("MIL", None, True),
+    ],
+)
+def test_the_flavour_table(plugin, atak, agree):
+    assert atak_compat.flavours_agree(plugin, atak) is agree
+
+
+def test_a_mil_plugin_beside_civ_atak_is_flagged():
+    """The version agrees and the flavour does not, which is the case the whole
+    rule exists for."""
+    found = atak_compat.check(
+        atak_version="5.8.0",
+        atak_package="com.atakmap.app.civ",
+        plugins={"com.plugin.one": "com.atakmap.app@5.8.0.MIL"},
+    )
+
+    assert len(found) == 1
+    assert "MIL" in found[0].message and "CIV" in found[0].message
+    assert "not compatible" in found[0].message
+
+
+def test_a_civ_plugin_beside_mil_atak_is_not_flagged():
+    found = atak_compat.check(
+        atak_version="5.8.0",
+        atak_package="com.atakmap.app.mil",
+        plugins={"com.plugin.one": "com.atakmap.app@5.8.0.CIV"},
+    )
+
+    assert found == []
+
+
+def test_without_the_atak_package_only_the_version_is_checked():
+    """⚠️ Honest degradation. Flavour comes from ATAK's package name, and a
+    caller that does not know the package does not know the flavour — so it
+    checks what it can and stays quiet about the rest."""
+    assert atak_compat.check(
+        atak_version="5.8.0",
+        plugins={"com.plugin.one": "com.atakmap.app@5.8.0.MIL"},
+    ) == []
+
+    mismatched = atak_compat.check(
+        atak_version="5.8.0",
+        plugins={"com.plugin.one": "com.atakmap.app@5.5.0.MIL"},
+    )
+    assert len(mismatched) == 1
+
+
+def test_a_version_mismatch_is_reported_as_one_not_as_a_flavour():
+    """One reason at a time. A sentence naming four things is one nobody reads,
+    and the version is the first thing that stops it loading anyway."""
+    found = atak_compat.check(
+        atak_version="5.8.0",
+        atak_package="com.atakmap.app.civ",
+        plugins={"com.plugin.one": "com.atakmap.app@5.5.0.MIL"},
+    )
+
+    assert len(found) == 1
+    assert "5.5.0" in found[0].message
+    assert "not compatible with" not in found[0].message
+
+
+# --------------------------------------------------------------------------- #
+# Knowing a plugin when we see one
+# --------------------------------------------------------------------------- #
+
+
+def test_a_tak_gov_import_is_a_plugin_whatever_its_manifest_says(db, artifact_storage):
+    """⚠️ *"any plugin that comes from the tpc repo is obviously a plugin"*. The
+    catalogue is a plugin catalogue, so provenance settles it even when the
+    manifest could not be read."""
+    from app.services import tak_gov_link
+
+    version = _build(db, artifact_storage, "com.plugin.quiet", 1)
+    version.plugin_api = None
+    version.source = tak_gov_link.SOURCE_NAME
+    db.commit()
+
+    assert "com.plugin.quiet" in atak_compat.plugin_packages(db)
+
+
+def test_an_fdroid_import_is_not_a_plugin_by_provenance(db, artifact_storage):
+    """Only TAK.gov's catalogue carries that meaning. Treating every repository
+    import as a plugin would put ordinary F-Droid apps in the ATAK section."""
+    version = _build(db, artifact_storage, "com.example.notes", 1)
+    version.plugin_api = None
+    version.source = "fdroid"
+    db.commit()
+
+    assert "com.example.notes" not in atak_compat.plugin_packages(db)
+
+
+def test_an_xapk_is_scanned_for_plugin_status_like_an_apk(db, artifact_storage):
+    """⚠️ *"we do need to scan uploaded apk/xapk for plugin status"*. A split app
+    arrives as a container, and the manifest that declares `plugin-api` is the
+    base APK inside it."""
+    from app.services import packages as package_service
+
+    package_service.ingest(
+        db,
+        artifact_storage,
+        build_xapk("com.plugin.split", 1, splits=("config.arm64_v8a",),
+                   plugin_api="com.atakmap.app@5.8.0.CIV"),
+    )
+    db.commit()
+
+    assert "com.plugin.split" in atak_compat.plugin_packages(db)

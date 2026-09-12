@@ -324,6 +324,7 @@ def build_xapk(
     certificate_der: bytes | None = None,
     with_obb: bool = False,
     include_manifest_json: bool = True,
+    plugin_api: str | None = None,
 ) -> bytes:
     certificate_der = certificate_der or make_signing_certificate()
 
@@ -334,10 +335,16 @@ def build_xapk(
                 "manifest.json",
                 f'{{"package_name":"{package_name}","version_code":"{version_code}"}}',
             )
+        # ⚠️ On the base only. `plugin-api` is declared by the app, and a split
+        # carries no manifest of its own worth reading — which is exactly the
+        # shape `inspect` reads it back from.
         archive.writestr(
             f"{package_name}.apk",
             build_apk(
-                package_name, version_code, certificate_der=certificate_der
+                package_name,
+                version_code,
+                certificate_der=certificate_der,
+                plugin_api=plugin_api,
             ),
         )
         for split in splits:
