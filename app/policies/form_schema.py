@@ -203,10 +203,29 @@ def sub_pages(policy_type: str) -> list[SubPage]:
     ]
 
 
+def _is_set(value: object) -> bool:
+    """Whether a spec value is something an operator actually chose (W135).
+
+    ⚠️ **Key presence is not configuration.** `to_stored` uses
+    `exclude_unset=True`, but that keeps a key passed explicitly as null — so a
+    spec could carry `core_prefs: None` and describe a page nobody had filled
+    in, which is what put a tick beside ATAK Core Pref Config.
+
+    ⚠️ **Falsiness is not emptiness.** `allow_camera: False` and a timeout of 0
+    are deliberate settings; `if not value` would hide every page an operator
+    had configured to turn something *off*.
+    """
+    if value is None:
+        return False
+    if isinstance(value, (str, list, dict, tuple, set)):
+        return len(value) > 0
+    return True
+
+
 def managed_group_slugs(policy_type: str, spec: dict) -> set[str]:
     """Slugs of the sub-pages that have at least one field set in ``spec``."""
     return {
         page.slug
         for page in sub_pages(policy_type)
-        if any(f.name in spec for f in page.fields)
+        if any(f.name in spec and _is_set(spec[f.name]) for f in page.fields)
     }

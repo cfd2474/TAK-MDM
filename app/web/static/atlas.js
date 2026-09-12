@@ -212,6 +212,16 @@
           // Prefix, not substring: multi_app_packages__package_name is a real
           // field and contains a double underscore in the middle.
           if (el.name && el.name.indexOf("__") === 0) return false;
+
+          // ⚠️ `<field>__key` is scaffolding, not content. The ATAK settings
+          // table renders one hidden key input per *declared* setting — 293 of
+          // them for ATAK, every one non-empty — so counting them marked the
+          // page configured the moment it finished loading, before anyone had
+          // typed a value. Nothing is lost by skipping them: a key is always
+          // rendered beside its `__value`, and that is the half an operator
+          // actually fills in.
+          if (el.name && /__key$/.test(el.name)) return false;
+
           return !el.disabled && el.name !== "csrf_token" && el.type !== "file";
         }
       );

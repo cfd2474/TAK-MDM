@@ -563,6 +563,43 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W135 — A tick on a page nobody filled in
+
+Operator, 2026-09-11: *"on the policy maker, ATAK core pref config shows as
+active (green check) even though no info has been put into it."*
+
+#### The scaffolding was being counted as content
+
+The settings table is built from the scanned APK — **293 settings for ATAK** —
+and `makeRow` gives every one a hidden `<field>__key` input carrying the
+setting's name. They are not inside a `.rs-row`, so the client-side
+`hasContent` counted them as loose controls with a value, and the page ticked
+itself the moment the table finished building. The *value* inputs beside them
+were all empty, which is what an operator has actually filled in.
+
+`__key` is now skipped. Nothing is lost: a key is always rendered next to its
+value input, so a genuinely configured page is still detected by the half that
+holds the setting.
+
+#### ⚠️ The server had the same bug, and only a test found it
+
+`managed_group_slugs` asked `f.name in spec` — **key presence, not value**. A
+spec carrying `core_prefs: None` or `[]` described a page nobody had filled in.
+`to_stored` uses `exclude_unset=True`, but that keeps a key passed explicitly
+as null, so this was reachable. Fixed with `_is_set`.
+
+⚠️ **Falsiness is not emptiness.** `if not value` would have been the obvious
+one-liner and would have hidden every page configured to turn something *off* —
+`allow_camera: False`, a timeout of `0`. There is a test for that specifically,
+because the wrong fix here is invisible until an operator wonders why their
+restrictions page looks blank.
+
+⚠️ Third time this session that an assertion tripped on its own explanation: a
+test banned the string `__value` and failed on the comment describing why keys
+are skipped. Now asserts the filter lines rather than the prose.
+
+Suite **1452 passed, 1 skipped**. No agent change.
+
 ### ✅ W134 — The device name on the lock screen, via a token
 
 Operator, 2026-09-11: *"lets find a way to add the device name as a lock screen
