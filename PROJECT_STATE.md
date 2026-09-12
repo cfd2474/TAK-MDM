@@ -586,6 +586,106 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W136 — The label belongs to the home screen only
+
+Operator, 2026-09-11: *"that overlay needs to only show up on the home screen of
+the launcher, either native or the atlas launcher"*.
+
+`TYPE_APPLICATION_OVERLAY` sits above every app window by definition, so today
+the label floats over ATAK's map. It cannot be pushed *under* apps — no public
+window type sits below them — so the only way to get this behaviour is to
+**take the window down when a launcher is not in front**.
+
+#### ⚠️ That needs foreground-app detection, which needs a human's tap
+
+`UsageStatsManager.queryEvents` is the only public API that answers "what is in
+front", and it is `@RequiresPermission(PACKAGE_USAGE_STATS)` — an **app-op**, so
+`setPermissionGrantState` does not reach it and a Device Owner cannot grant it
+to itself. The manifest already declares it (W44 added it as a NetworkStats
+fallback), which is what puts the agent in Settings › Special access › Usage
+access; nothing has ever needed it to actually be *on*.
+
+⚠️ **The W44 exemption does not carry over.** Device owners are documented to
+get *NetworkStats* for every app without a grant. That is a different service
+from `UsageStatsManager`, and the `@RequiresPermission` on `queryEvents` has no
+device-owner carve-out. Do not assume one because W44 got away with it.
+
+📖 `queryEvents` also **returns null before first unlock** (Android R+), so
+the watcher must treat "no answer" as "do not change anything" rather than as
+"not home".
+
+#### The launcher is not hardcoded
+
+"Home" is *any* package with an activity resolving `ACTION_MAIN` +
+`CATEGORY_HOME`. That is the native launcher, whatever OEM shell replaced it,
+**and the ATLAS launcher**, which declares that category in its own manifest.
+One rule covers both halves of what the operator asked for, and a fleet running
+Nova or a Samsung One UI home needs no code change.
+
+#### ⚠️ When usage access is missing, the label still shows
+
+Decided, and worth arguing with if you disagree: **ungated, plus a warning**.
+The alternative — hide the label until the permission arrives — turns a missing
+tap into a device that cannot be identified at all, and the whole point of the
+label is identification. Showing it in the wrong place is the lesser failure and
+the warning names the fix. This matches W132's precedent for the overlay
+permission itself: degrade and say so, never fail the policy.
+
+The requirement is **optional**, not required. A required one marks the device
+DEGRADED, and `agent_update.decide()` refuses to send updates to a degraded
+device — agent 79 shut its own update channel that way.
+
+#### Chunk 1
+
+1. `PermissionRequirement.UsageAccess` — optional, checked with
+   `AppOpsManager.unsafeCheckOpNoThrow(OPSTR_GET_USAGE_STATS)`, granted through
+   `Settings.ACTION_USAGE_ACCESS_SETTINGS`. Listed in `ALL` so the wizard shows
+   a row and a reconcile warns when it is off.
+2. `HomeScreenWatcher` — resolves home packages from `PackageManager`, reads the
+   last `ACTIVITY_RESUMED` from `UsageStatsManager`, and polls only while the
+   screen is on. The decision itself is a pure function, separate from the
+   Android calls, so it can be tested.
+3. `DeviceIdOverlay` splits *wanted* from *shown*: the reconcile says what the
+   label is, the watcher says whether this moment deserves it.
+4. Wire into `reconcileWallpaper` in place of the unconditional `set`, and stop
+   the watcher when the policy drops the label.
+5. Unit tests: home matching, a null/empty event answer, the ungated fallback,
+   and that an unchanged state adds no second window.
+6. Build, both `testReleaseUnitTest` suites and the server suite, bump
+   `versionCode`/`versionName`, publish, and record it here and in the platform
+   reference.
+
+#### Built
+
+Three objects, because they fail for different reasons: `HomeScreenWatcher`
+observes, `DeviceIdLabelPlan` decides, `DeviceIdOverlay` draws, and
+`DeviceIdLabelController` says who talks to whom. The reconcile now calls the
+controller — it knows what the label *says* and has no business knowing what is
+in front of it.
+
+⚠️ **Both rules were mutation-checked, not just asserted.** Inverting
+"no answer holds the last verdict" and "ungated when the permission is missing"
+each made a test fail, which is the check this session has learned to run: a
+test that passes against the bug is worse than no test. 9 JVM cases; **303 agent
+tests, 0 failures**; server **1457 passed, 1 skipped**.
+
+⚠️ **A generic warning that lied was deleted on the way past.** Every missing
+optional permission reported *"some Device Settings controls will explain
+themselves instead of working"* — true of the power menu, false of usage access.
+It now carries the requirement's own rationale.
+
+⚠️ **Every device in the field will start warning `usage_access` once agent
+113 lands.** That is the intended way the operator learns to grant it, and it is
+a warning, not an error, so nothing is marked DEGRADED and the update channel
+stays open.
+
+⏳ Hardware is the only judge of the rest — whether the label disappears
+promptly enough on leaving home, and comes back fast enough on returning. Grant
+**Usage access** in the agent first; without it the label shows everywhere, by
+design.
+
+Agent **0.68.0 (versionCode 113)**.
+
 ### ✅ W135 — A tick on a page nobody filled in
 
 Operator, 2026-09-11: *"on the policy maker, ATAK core pref config shows as

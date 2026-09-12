@@ -80,11 +80,15 @@ class WallpaperSpec(PolicySpec):
         title="Device ID label",
         description=(
             "Show this device's name, as set on its device page, in a small "
-            "panel at the top of the screen — over the launcher and over apps, "
-            "staying put through rotation. A device with no name shows its "
-            "serial instead, so the label always identifies something. Needs "
-            "no wallpaper image. Renaming updates it on the next check-in. "
-            "⚠️ Not shown on the lock screen: the panel sits below the keyguard."
+            "panel at the top of the home screen — the stock launcher or the "
+            "ATLAS one — staying put through rotation and stepping out of the "
+            "way when an app is opened. A device with no name shows its serial "
+            "instead, so the label always identifies something. Needs no "
+            "wallpaper image. Renaming updates it on the next check-in. "
+            "⚠️ Needs Usage access on the device, which a human grants once in "
+            "the agent; without it the label still shows, but over everything. "
+            "⚠️ Not shown on the lock screen: the panel sits below the keyguard. "
+            "Put {device} in the Customizations lock screen message for that."
         ),
         json_schema_extra={"ui_group": "Images"},
     )

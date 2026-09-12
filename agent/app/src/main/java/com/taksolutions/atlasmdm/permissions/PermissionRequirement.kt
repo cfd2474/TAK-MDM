@@ -17,12 +17,14 @@
 package com.taksolutions.atlasmdm.permissions
 
 import android.Manifest
+import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Environment
 import android.os.PowerManager
+import android.os.Process
 import android.provider.Settings
 import androidx.core.content.ContextCompat
 
@@ -102,6 +104,54 @@ sealed class PermissionRequirement {
             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
             Uri.parse("package:${context.packageName}")
         )
+    }
+
+    /**
+     * Usage access, which is how the agent learns what is in front (W136).
+     *
+     * ⚠️ **An app-op, so a Device Owner cannot grant it to itself.**
+     * `UsageStatsManager` is the only public way to know the foreground app,
+     * and the device ID label needs it to stay on the home screen instead of
+     * floating over ATAK's map.
+     *
+     * ⚠️ **The manifest has declared `PACKAGE_USAGE_STATS` since W44 and that
+     * proves nothing.** It was declared as a *NetworkStats* fallback, which a
+     * Device Owner is documented to get without a grant. That exemption is for
+     * a different service; `queryEvents` has no such carve-out. Declaring the
+     * permission is only what puts the agent in the Settings list.
+     *
+     * Optional: without it the label still shows, everywhere, and the warning
+     * says so. A device that is labelled in the wrong place is a nuisance; a
+     * device that is not labelled at all is the problem the label exists for.
+     */
+    data object UsageAccess : PermissionRequirement() {
+        override val id = "usage_access"
+        override val optional = true
+        override val title = "Usage access"
+        override val rationale =
+            "Lets the agent tell when the home screen is in front, so the " +
+                "device ID label appears there and not over whatever is running. " +
+                "Without it the label shows over every app."
+
+        override fun isGranted(context: Context): Boolean {
+            val ops = context.getSystemService(AppOpsManager::class.java) ?: return false
+            // ⚠️ MODE_ALLOWED only. MODE_DEFAULT means "fall back to the
+            // permission", and PACKAGE_USAGE_STATS is signature-protected, so
+            // the fallback is always a refusal — treating DEFAULT as granted
+            // would make the watcher throw on every poll.
+            val mode = runCatching {
+                ops.unsafeCheckOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName
+                )
+            }.getOrDefault(AppOpsManager.MODE_ERRORED)
+            return mode == AppOpsManager.MODE_ALLOWED
+        }
+
+        // ⚠️ No `package:` data. Some OEMs deep-link from it and some do not
+        // resolve the intent at all when it carries a Uri, and an unresolvable
+        // intent on the provisioning screen is a dead button on a screen that
+        // cannot be revisited without a factory reset.
+        override fun grantIntent(context: Context) = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
     }
 
     /**
@@ -232,6 +282,7 @@ sealed class PermissionRequirement {
             Location,
             BackgroundLocation,
             Notifications,
+            UsageAccess,
             // Last, because it is the only one that is optional in practice - and
             // the only one that cannot be granted later, since a locked device
             // cannot open Android's settings to reach it (W72).
@@ -253,7 +304,7 @@ sealed class PermissionRequirement {
             ALL.filterNot { it.optional }.filterNot { it.isGranted(context) }.map { it.id }
 
         /** Missing optional permissions, for reporting as warnings. */
-        fun outstandingOptional(context: Context): List<String> =
-            ALL.filter { it.optional }.filterNot { it.isGranted(context) }.map { it.id }
+        fun outstandingOptional(context: Context): List<PermissionRequirement> =
+            ALL.filter { it.optional }.filterNot { it.isGranted(context) }
     }
 }

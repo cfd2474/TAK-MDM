@@ -54,7 +54,7 @@ import com.taksolutions.atlasmdm.policy.GeofencePlan
 import com.taksolutions.atlasmdm.policy.LocationSamplingPlan
 import com.taksolutions.atlasmdm.policy.LocationTracker
 import com.taksolutions.atlasmdm.policy.PolicyApplier
-import com.taksolutions.atlasmdm.ui.DeviceIdOverlay
+import com.taksolutions.atlasmdm.ui.DeviceIdLabelController
 import com.taksolutions.atlasmdm.ui.InstallNotifier
 import com.taksolutions.atlasmdm.policy.WallpaperPlan
 
@@ -561,9 +561,13 @@ class Reconciler(private val context: Context) {
         // error marks the device DEGRADED, and agent_update.decide() refuses to
         // offer an update to a device that is not applying its policy cleanly -
         // so a missing nice-to-have would shut the update channel that fixes it.
+        // ⚠️ The requirement's own rationale, not one sentence covering all of
+        // them. The generic wording here used to say every optional permission
+        // made "Device Settings controls explain themselves instead of
+        // working", which is true of the power menu and false of usage access —
+        // a warning that misdescribes its own fix costs an afternoon.
         warnings += PermissionRequirement.outstandingOptional(context).map {
-            "optional permission not granted: $it (some Device Settings controls " +
-                "will explain themselves instead of working)"
+            "optional permission not granted: ${it.id} — ${it.rationale}"
         }
         // Reported, not merely logged. A device on the fallback identity looks
         // perfectly healthy right up until it is wiped, at which point it silently
@@ -667,6 +671,10 @@ class Reconciler(private val context: Context) {
         // avoid rewriting an unchanged bitmap, and a window has nothing to do
         // with that; behind one of them, a device would lose its label after a
         // process restart.
+        //
+        // This settles what the label *says*. Whether it is on screen at any
+        // given moment is the controller's business (W136) — it shows only over
+        // a launcher.
         val idLabel = if (wantsLabel) {
             // ⚠️ Falls back to the device's own identity, not to a placeholder
             // (operator, W130). A serial is unique, so it does the job the
@@ -675,7 +683,7 @@ class Reconciler(private val context: Context) {
         } else {
             null
         }
-        DeviceIdOverlay.set(context, idLabel)
+        DeviceIdLabelController.set(context, idLabel)
 
         // Handled before the early return, and reached because the section is
         // applied even when absent — the same lesson as R14/R19: "no policy says

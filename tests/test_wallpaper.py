@@ -344,7 +344,7 @@ def test_the_label_is_settled_before_any_wallpaper_shortcut():
     body = reconciler[reconciler.index("private fun reconcileWallpaper") :]
     body = body[: body.index("// Commands")]
 
-    assert body.index("DeviceIdOverlay.set(context, idLabel)") < body.index(
+    assert body.index("DeviceIdLabelController.set(context, idLabel)") < body.index(
         "WallpaperPlan.shouldClear"
     )
 
@@ -452,10 +452,86 @@ def test_a_rename_retexts_rather_than_recreating():
 
 def test_the_label_goes_when_the_policy_stops_asking():
     """One call handles show, rename and remove: `set(context, null)` takes it
-    away, so there is no second path that can be forgotten."""
+    away, so there is no second path that can be forgotten.
+
+    The reconcile talks to the controller, not to the window (W136): what the
+    label says and when it is on screen are different questions, and the
+    reconcile only answers the first."""
     reconciler = _agent("sync/Reconciler.kt")
+    controller = _agent("ui/DeviceIdLabelController.kt")
     overlay = _agent("ui/DeviceIdOverlay.kt")
 
-    assert "DeviceIdOverlay.set(context, idLabel)" in reconciler
+    assert "DeviceIdLabelController.set(context, idLabel)" in reconciler
+    assert "DeviceIdOverlay" not in reconciler
+    # Dropping the label stops the watcher too, or a device with no label left
+    # would poll usage stats once a second forever.
+    assert "HomeScreenWatcher.stop(app)" in controller
     assert "if (name.isNullOrBlank())" in overlay
     assert "removeOnMainThread(app)" in overlay
+
+
+# --------------------------------------------------------------------------- #
+# W136 — the label belongs to the home screen only.
+#
+# The decision itself is tested where it can actually run, in
+# `DeviceIdLabelPlanTest` on the JVM. What is left here is the wiring: the
+# things that are invisible until a fleet is already wrong.
+
+
+def test_usage_access_is_optional_not_required():
+    """⚠️ The one that costs a fleet.
+
+    A *required* permission that is missing marks the device DEGRADED, and
+    `agent_update.decide()` refuses to offer an update to a degraded device —
+    so a permission no device has yet been granted would shut the very channel
+    that ships the fix. Agent 79 did exactly that with an accessibility
+    service. Usage access will be missing on every device already in the field
+    the moment this build lands.
+    """
+    source = _agent("permissions/PermissionRequirement.kt")
+
+    block = source[source.index("data object UsageAccess") :]
+    block = block[: block.index("data object PowerMenu")]
+
+    assert "override val optional = true" in block
+
+
+def test_usage_access_is_granted_through_settings():
+    """An app-op: `setPermissionGrantState` does not reach it, so there has to
+    be an intent or the wizard cannot show a row at all."""
+    source = _agent("permissions/PermissionRequirement.kt")
+
+    assert "Settings.ACTION_USAGE_ACCESS_SETTINGS" in source
+    # ⚠️ MODE_ALLOWED only. MODE_DEFAULT defers to the permission, which is
+    # signature-protected, so treating it as granted would make every poll
+    # throw.
+    assert "AppOpsManager.MODE_ALLOWED" in source
+
+
+def test_the_watcher_stops_when_the_screen_goes_off():
+    """One binder call a second is affordable while someone is looking at the
+    device and not while it sits in a bag."""
+    watcher = _agent("ui/HomeScreenWatcher.kt")
+
+    assert "Intent.ACTION_SCREEN_OFF" in watcher
+    assert "if (!interactive) return" in watcher
+
+
+def test_home_is_resolved_rather_than_named():
+    """The operator asked for "native or the atlas launcher". Any package
+    answering CATEGORY_HOME is both, plus whatever OEM shell a future fleet
+    runs, with no list to keep up to date."""
+    watcher = _agent("ui/HomeScreenWatcher.kt")
+
+    assert "Intent.CATEGORY_HOME" in watcher
+    assert "com.taksolutions.atlaslauncher" not in watcher
+
+
+def test_the_optional_permission_warning_carries_its_own_reason():
+    """The generic wording claimed every optional permission made "Device
+    Settings controls explain themselves instead of working" — true of the
+    power menu, false of usage access. A warning that misdescribes its own fix
+    is worse than no warning."""
+    reconciler = _agent("sync/Reconciler.kt")
+
+    assert "${it.id} — ${it.rationale}" in reconciler

@@ -51,9 +51,14 @@ import com.taksolutions.atlasmdm.diag.AgentLog
  *
  * ⚠️ **It cannot appear on the lock screen.** `TYPE_APPLICATION_OVERLAY` sits
  * below the keyguard, and showing above it needs a system-signature window type
- * the agent cannot have. That is why the wallpaper label stays: it is the only
- * thing that identifies a *locked* tablet. The two together cover every
- * surface; neither does alone.
+ * the agent cannot have. A locked tablet is identified by the `{device}` token
+ * in the lock-screen message instead (W134) — a different mechanism for a
+ * surface this one cannot reach.
+ *
+ * ⚠️ **This object decides nothing.** It shows the text it is handed and hides
+ * when handed null. *When* that should happen — only over a launcher — belongs
+ * to [DeviceIdLabelController], because the window has no way to know what is
+ * in front of it and no business asking.
  */
 object DeviceIdOverlay {
 
