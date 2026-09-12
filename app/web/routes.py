@@ -2045,6 +2045,14 @@ def create_policy(
     except PolicyTypeError as exc:
         return _redirect(f"/policies/new/single?error={_quote(str(exc))}")
 
+    # Needs the library, so it cannot live on the spec with its ATAK-by-name
+    # sibling (W141).
+    misplaced = atak_compat.misplaced_plugins(session, validated)
+    if misplaced:
+        return _redirect(
+            f"/policies/new/single?error={_quote(atak_compat.refusal_for(misplaced))}"
+        )
+
     policy = Policy(
         name=name,
         policy_type=policy_type,
@@ -2206,6 +2214,12 @@ def publish_version(
         validated = registry.validate_spec(policy.policy_type, parsed)
     except PolicyTypeError as exc:
         return _redirect(f"/policies/{policy_id}?error={_quote(str(exc))}")
+
+    misplaced = atak_compat.misplaced_plugins(session, validated)
+    if misplaced:
+        return _redirect(
+            f"/policies/{policy_id}?error={_quote(atak_compat.refusal_for(misplaced))}"
+        )
 
     latest = policy.latest_version
     session.add(

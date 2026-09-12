@@ -193,7 +193,10 @@ def resolve_required_apps(
     of growing a second, thinner one beside it.
     """
     catalog = values.get("APP_CATALOG") or {}
-    required = list(catalog.get("required_apps") or [])
+    # ⚠️ All three fields, not just `required_apps` (W141). ATAK Core and the
+    # plugins are ordinary required apps sorted into their own section, and a
+    # resolver that read only this field would install everything except ATAK.
+    required = _everything_required(values)
 
     kiosk = values.get("KIOSK") or {}
 
@@ -335,6 +338,28 @@ def _icon_url(version: AppPackageVersion | None) -> str | None:
 #: contract expressed in two languages, and a typo here is a kiosk that never
 #: locks.
 ATLAS_LAUNCHER_PACKAGE = "com.taksolutions.atlaslauncher"
+
+
+def _everything_required(values: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Required apps, ATAK Core and the plugins, as one list (W141).
+
+    ⚠️ **ATAK and its plugins were always ordinary required apps.** They were
+    split into their own section so a version mismatch could be talked about,
+    not because they install differently — so they are folded back together
+    here and the agent is told nothing new.
+
+    Order is deliberate: ATAK Core first, then its plugins, then everything
+    else. Nothing downstream depends on it, but a desired state read by a human
+    at three in the morning should put the thing everything else is built
+    against at the top.
+    """
+    catalog = (values or {}).get("APP_CATALOG", {})
+    core = catalog.get("atak_core")
+    return (
+        ([core] if core else [])
+        + (catalog.get("atak_plugins") or [])
+        + (catalog.get("required_apps") or [])
+    )
 
 
 def resolve_store_apps(

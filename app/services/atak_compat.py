@@ -170,3 +170,68 @@ def for_device(session, device) -> list[Mismatch]:
         if wanted.get(name) == version_code
     }
     return check(atak_version=line, plugins=plugins, source="device")
+
+
+# --------------------------------------------------------------------------- #
+# Which section an app belongs in (W141)
+#
+# ⚠️ These need the library, which is why they are here and not on the spec.
+# `is_atak` above is a package-name test and holds on every path into a policy;
+# "is a plugin" means *this app declares a plugin-api*, which is a column — so
+# the rule can only be enforced where a session exists, and the callers below
+# are the complete list of places a policy spec is written.
+# --------------------------------------------------------------------------- #
+
+
+def plugin_packages(session) -> set[str]:
+    """Package names in the library that declare a `plugin-api` on any build.
+
+    ⚠️ **Any build, not the newest.** `plugin_api` is NULL on anything uploaded
+    before the column existed, and `backfill_plugin_api` fills those in
+    afterwards — asking only the newest build would call a plugin an ordinary
+    app for as long as its latest upload happened to predate the scan.
+    """
+    from sqlalchemy import select
+
+    from app.db.models import AppPackage, AppPackageVersion
+
+    rows = session.scalars(
+        select(AppPackage.package_name)
+        .join(AppPackageVersion, AppPackageVersion.package_id == AppPackage.id)
+        .where(AppPackageVersion.plugin_api.is_not(None))
+    )
+    return set(rows)
+
+
+def misplaced_plugins(session, spec: dict | None) -> list[str]:
+    """Plugins sitting in required apps or the allowlist, which is the wrong section.
+
+    Returns the offending package names, sorted, or an empty list. The caller
+    decides how to complain, because a form and an API want different words for
+    the same refusal.
+    """
+    if not spec:
+        return []
+
+    plugins = plugin_packages(session)
+    if not plugins:
+        return []
+
+    named = {
+        entry.get("package_name")
+        for entry in (spec.get("required_apps") or [])
+        if isinstance(entry, dict)
+    } | set(spec.get("allowed_packages") or [])
+
+    return sorted(name for name in named if name in plugins)
+
+
+def refusal_for(names: list[str]) -> str:
+    """One sentence naming the section to use instead."""
+    listed = ", ".join(names)
+    plural = "is an ATAK plugin" if len(names) == 1 else "are ATAK plugins"
+    return (
+        f"{listed} {plural} and belongs in ATAK Core and Plugins, not in "
+        "required apps or the allowlist. That section checks a plugin against "
+        "the ATAK build it will sit next to, which this one cannot do."
+    )

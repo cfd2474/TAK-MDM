@@ -72,6 +72,45 @@ class AppCatalogSpec(PolicySpec):
     )
 
     @model_validator(mode="after")
+    def _atak_belongs_in_its_own_section(self):
+        """ATAK is refused in required apps and the allowlist (W141).
+
+        ⚠️ **By package name, which is why this can live in the model at all.**
+        `atak_compat.is_atak` is a prefix test on `com.atakmap.app`, so it needs
+        no database and holds on every path into a policy — the console form,
+        the API, a restored template. Its sibling rule, "no plugins here
+        either", cannot: a plugin is a build that *declares a plugin-api*, which
+        is a column, so that one is enforced where a session exists.
+
+        Refused rather than migrated silently. An entry that moved itself would
+        leave the operator's policy saying something they did not write, and the
+        two sections differ in more than tidiness — the ATAK section is where a
+        version mismatch can be reasoned about at all.
+        """
+        from app.services import atak_compat
+
+        offenders = sorted(
+            {
+                entry.package_name
+                for entry in (self.required_apps or [])
+                if atak_compat.is_atak(entry.package_name)
+            }
+            | {
+                name
+                for name in (self.allowed_packages or [])
+                if atak_compat.is_atak(name)
+            }
+        )
+        if offenders:
+            names = ", ".join(offenders)
+            raise ValueError(
+                f"{names} belongs in ATAK Core and Plugins, not in required apps "
+                "or the allowlist. That section picks the ATAK build every plugin "
+                "is checked against, which this one cannot do."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _one_entry_per_package(self):
         """Refuse two entries for the same package in one policy.
 
@@ -91,22 +130,69 @@ class AppCatalogSpec(PolicySpec):
 
         Different ATAK lines mean different policies, assigned to different
         devices.
+
+        ⚠️ **Counted across required apps, ATAK Core and plugins together**
+        (W141). A package named twice is the same Android slot filled twice
+        however it is spelled, and checking each field on its own would let a
+        plugin row and a required entry quietly disagree about one app — the
+        exact failure above, wearing the new section as a disguise.
         """
         seen: dict[str, int] = {}
-        for entry in self.required_apps or []:
+        entries = list(self.required_apps or []) + list(self.atak_plugins or [])
+        if self.atak_core is not None:
+            entries.append(self.atak_core)
+        for entry in entries:
             seen[entry.package_name] = seen.get(entry.package_name, 0) + 1
 
         duplicates = sorted(name for name, count in seen.items() if count > 1)
         if duplicates:
             names = ", ".join(duplicates)
             raise ValueError(
-                f"{names} appears more than once in required apps. Only one build "
-                "of a package can be installed on a device, so a second entry "
-                "cannot take effect — if these are builds for different ATAK "
-                "versions, put them in separate policies and assign each to the "
-                "devices running that ATAK."
+                f"{names} appears more than once across required apps, ATAK Core "
+                "and plugins. Only one build of a package can be installed on a "
+                "device, so the second entry cannot take effect — if these are "
+                "builds for different ATAK versions, put them in separate "
+                "policies and assign each to the devices running that ATAK."
             )
         return self
+
+    # ----------------------------------------------------------------------- #
+    # ATAK Core and Plugins (W141)
+    #
+    # ⚠️ **The same `RequiredApp` shape as required apps, deliberately.** ATAK
+    # and its plugins *are* required apps; they are sorted into their own
+    # section because that is where a compatibility rule can be stated, not
+    # because they install differently. `resolve_required_apps` folds all three
+    # fields into one list, so the agent learns nothing new.
+    # ----------------------------------------------------------------------- #
+
+    atak_core: Annotated[
+        RequiredApp | None, Merge(MergeStrategy.HIGHEST_RANK)
+    ] = Field(
+        default=None,
+        title="ATAK Core",
+        description=(
+            "The ATAK build installed on this device, and the version every "
+            "plugin below is checked against. ⚠️ One per device: two policies "
+            "naming different ATAK builds is reported as a conflict, and only "
+            "the higher-ranked one is installed."
+        ),
+        json_schema_extra={"ui_group": "ATAK Core and Plugins", "ui_control": "atak_core"},
+    )
+
+    atak_plugins: Annotated[
+        list[RequiredApp] | None,
+        Merge(MergeStrategy.MERGE_BY_KEY, key="package_name"),
+    ] = Field(
+        default=None,
+        title="ATAK plugins",
+        description=(
+            "Plugins installed alongside ATAK Core. A plugin only loads in the "
+            "ATAK build it was compiled against, so one targeting a different "
+            "version is flagged \u2014 as a warning, never a refusal."
+        ),
+        json_schema_extra={"ui_group": "ATAK Core and Plugins", "ui_control": "atak_plugins"},
+    )
 
     storefront_id: Annotated[
         str | None, Merge(MergeStrategy.HIGHEST_RANK)

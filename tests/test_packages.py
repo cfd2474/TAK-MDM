@@ -589,14 +589,18 @@ def require_app(client: TestClient, device_id: str, package_name: str, **entry) 
 
 
 def test_required_app_resolves_to_downloadable_files(client: TestClient, enrolled):
+    """⚠️ Was written with `com.atakmap.app`, which required apps now refuse
+    (W141). The package was never the point — splits and their download URLs
+    are — so it is an ordinary app, and ATAK's own path is tested where the
+    ATAK section is."""
     device = enrolled()
     uploaded = upload(
         client,
-        build_xapk("com.atakmap.app", 52400, splits=("config.arm64_v8a",)),
+        build_xapk("com.example.split", 52400, splits=("config.arm64_v8a",)),
         filename="a.xapk",
     )
     require_app(
-        client, device["device_id"], "com.atakmap.app",
+        client, device["device_id"], "com.example.split",
         artifact_sha256=base_sha(uploaded),
     )
 

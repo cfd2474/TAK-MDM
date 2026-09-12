@@ -586,6 +586,103 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### 🚧 W141 — ATAK Core and Plugins, as their own section
+
+Operator, 2026-09-12: a new App Management sub-category holding ATAK and its
+plugins, with ATAK Core chosen first and plugins compared against it; *"any
+mismatch must flag a warning on the plugin selection, but not prevent it"*.
+
+#### ✅ The comparison already exists and is already right
+
+`atak_compat.py` is pure functions over strings, and its docstring already
+states the three rules this asks for:
+
+> * **Warn, never forbid.** The operator may have a reason …
+> * **The warning goes on the plugin.** ATAK is the fixed point everything else
+>   is built against; telling someone their ATAK is wrong because a plugin
+>   disagrees inverts cause and effect.
+> * **Silence when unknown.** A missing `plugin-api` … produces no warning at
+>   all.
+
+`plugin_target()` reads `com.atakmap.app@5.8.0.CIV` → `5.8.0`; `atak_line()`
+reads ATAK's own `5.8.0.4 (174b425)[playstore]` → `5.8.0`, because the raw
+strings never match and comparing them would call every pairing a mismatch.
+**Nothing about the rules changes** — what changes is that the fixed point is
+now *chosen* rather than inferred from whichever row happened to be ATAK.
+
+⚠️ **Silence when unknown stays.** A plugin whose `plugin-api` was never
+recorded is not a mismatch, it is an unknown, and a section that flagged every
+unscanned build would be one nobody reads.
+
+#### The shape
+
+`atak_core` (one build) and `atak_plugins` (a list of builds) in a new
+`ATAK Core and Plugins` ui_group. Both carry the same `RequiredApp` shape as
+required apps, so **resolution concatenates them** into the same `apps` list and
+the agent learns nothing new — ATAK and its plugins were always just required
+apps, sorted into a section that knows how to talk about them.
+
+* `atak_core` merges by `HIGHEST_RANK`: one ATAK per device, and two policies
+  naming different ones is a conflict, exactly like a storefront.
+* `atak_plugins` merges by `MERGE_BY_KEY` on `package_name`, like required apps.
+
+#### ⚠️ Two kinds of rejection, because only one can be airtight
+
+| | Enforced where | Always? |
+|---|---|---|
+| **ATAK** in required apps / allowlist | the spec's own validator, by package name | ✅ every path, API included |
+| **Plugins** in required apps / allowlist | write paths that hold a session | ⚠️ needs the library |
+
+`is_atak()` is a package-name test, so it belongs in the model and holds
+everywhere. "Is a plugin" means *this build declares a `plugin-api`*, which is a
+column — a pydantic validator cannot see it. So the pickers stop offering
+plugins, and the write paths that have a session refuse them with a sentence
+naming the section to use instead.
+
+#### Chunk 1 — the spec, the resolution, the refusals
+
+1. `atak_core` and `atak_plugins` in a new ui_group, with their merge rules.
+2. `resolve_required_apps` folds them into `apps`; a plugin and a required entry
+   for the same package is the "same slot filled twice" case the spec already
+   rejects, now across three fields.
+3. The validator refuses ATAK in `required_apps` and `allowed_packages`.
+4. A session-aware refusal of plugins, at every write path that has one.
+5. Tests: ATAK and plugins reach the device exactly as required apps did;
+   refusals name the section to use; the mismatch rules are unchanged.
+
+#### ✅ Chunk 1 done — not deployed
+
+`atak_core` and `atak_plugins` carry the same `RequiredApp` shape as required
+apps, and `_everything_required` folds all three into one list, ATAK first —
+**the agent is told exactly what it was told before**. Mutation-checked: drop
+the fold and ATAK simply stops installing, which is the kind of silence worth a
+test.
+
+⚠️ **The duplicate check now counts across all three fields.** A package named
+in two of them is the same Android slot filled twice, and per-field checking
+would have let a plugin row and a required entry quietly disagree about one app
+— the original UAS Tool trap wearing the new section as a disguise.
+
+⚠️ **Two refusals, and only one can be airtight.** `is_atak` is a package-name
+prefix test, so it lives on the spec and holds on every path — console, API,
+restored template. "Is a plugin" means *this app declares a `plugin-api`*, which
+is a column, so it is enforced at the four write paths that hold a session
+(API create, API publish, console create, console save). `plugin_packages` asks
+**any** build rather than the newest, because `plugin_api` is NULL on anything
+uploaded before the column existed.
+
+Four existing tests had to move their apps into the new section, which is the
+refusal working. Server **1512 passed, 1 skipped** (14 new).
+
+#### Chunk 2 — the console
+
+1. The sub-page: an ATAK Core select (ATAK builds only), then a plugin rowset
+   (plugin packages only, each with its own build select).
+2. The mismatch warning on each plugin row, against the **chosen** core — not
+   the old "whichever row is ATAK" rule.
+3. Required apps and the allowlist stop offering ATAK and plugins.
+4. Tests, deploy.
+
 ### ✅ W140 — The store becomes something a policy assigns
 
 Operator, 2026-09-12: *"remove the add to store button in the local apps. I want

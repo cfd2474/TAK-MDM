@@ -298,7 +298,26 @@ def test_backfill_reads_plugin_api_from_stored_artifacts(db, artifact_storage):
 
 
 def assign_apps(client, make_policy, assign, device_id, required):
-    policy = make_policy("Apps", "APP_CATALOG", {"required_apps": required})
+    """Put these apps on a device through an APP_CATALOG policy.
+
+    ⚠️ Plugins go in `atak_plugins` and ATAK in `atak_core` since W141 —
+    required apps refuses both. The resolver folds all three fields into one
+    list, so what reaches the device is unchanged and these tests still test
+    what they say they do.
+    """
+    from app.services import atak_compat as _compat
+
+    spec: dict = {}
+    for entry in required:
+        name = entry.get("package_name", "")
+        if _compat.is_atak(name):
+            spec["atak_core"] = entry
+        elif name.startswith("com.plugin") or "plugin" in name:
+            spec.setdefault("atak_plugins", []).append(entry)
+        else:
+            spec.setdefault("required_apps", []).append(entry)
+
+    policy = make_policy("Apps", "APP_CATALOG", spec)
     assign(policy["id"], device_id)
 
 

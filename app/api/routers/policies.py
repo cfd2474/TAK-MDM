@@ -39,6 +39,7 @@ from app.db.models import Policy, PolicyVersion
 from app.policies import fence_rules
 from app.policies.registry import PolicyTypeError, registry
 from app.security.admin_auth import AdminIdentity, admin_required
+from app.services import atak_compat
 from app.services import effective_policy as eff
 from app.services import policy_admin
 
@@ -50,6 +51,21 @@ def _validated_spec(policy_type: str, spec: dict) -> dict:
         return registry.validate_spec(policy_type, spec)
     except PolicyTypeError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+
+
+def _refuse_misplaced_plugins(session: Session, spec: dict) -> None:
+    """An ATAK plugin in required apps or the allowlist is refused (W141).
+
+    Here rather than on the spec because it needs the library: a plugin is a
+    build that declares a `plugin-api`, and a pydantic validator cannot see a
+    column. Its sibling rule — no *ATAK* in those fields — is a package-name
+    test and lives on the model, where it holds even on paths this never sees.
+    """
+    misplaced = atak_compat.misplaced_plugins(session, spec)
+    if misplaced:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, atak_compat.refusal_for(misplaced)
+        )
 
 
 def _refuse_stranded_fence(
@@ -88,6 +104,7 @@ def _sibling_password_spec(session: Session, policy: Policy) -> dict | None:
 @router.post("", response_model=PolicyRead, status_code=status.HTTP_201_CREATED)
 def create_policy(payload: PolicyCreate, session: Session = Depends(get_db)) -> Policy:
     spec = _validated_spec(payload.policy_type, payload.spec)
+    _refuse_misplaced_plugins(session, spec)
     # A policy being created belongs to no profile yet, so there is no Password
     # section it could be travelling with.
     _refuse_stranded_fence(payload.policy_type, spec, sibling_password=None)
@@ -146,6 +163,7 @@ def publish_version(
 ) -> PolicyVersion:
     policy: Policy = fetch_or_404(session, Policy, policy_id, "policy")
     spec = _validated_spec(policy.policy_type, payload.spec)
+    _refuse_misplaced_plugins(session, spec)
     _refuse_stranded_fence(
         policy.policy_type, spec, sibling_password=_sibling_password_spec(session, policy)
     )

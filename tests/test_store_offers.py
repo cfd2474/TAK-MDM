@@ -237,13 +237,18 @@ def test_an_app_that_is_required_is_not_also_offered(client, db, make_device, ma
 
     # One policy that both requires the app and hands out a shelf holding it —
     # the contradiction at its sharpest, and the merge cannot duck it.
+    #
+    # ⚠️ ATAK goes in `atak_core`, not `required_apps`, which refuses it since
+    # W141 — and this still tests what it says it does, because the resolver
+    # folds the two into one list before the store ever sees them.
     policy = make_policy(
         "Requires ATAK",
         "APP_CATALOG",
         {
-            "required_apps": [
-                {"package_name": required_name, "artifact_sha256": base_sha(uploaded)}
-            ],
+            "atak_core": {
+                "package_name": required_name,
+                "artifact_sha256": base_sha(uploaded),
+            },
             "storefront_id": str(storefront.id),
         },
     )
