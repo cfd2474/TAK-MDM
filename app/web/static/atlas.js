@@ -597,11 +597,16 @@
     close.addEventListener("click", function () { modal.hidden = true; });
   })();
 
-  /* --- Version choices belong to the app that was picked (W51) ----------------
-     Every option already carried `data-package`; nothing ever read it, so the
-     dropdown listed every version of every app at once — including builds of
-     apps the row has nothing to do with, which is an easy way to pin the wrong
-     one. Now it is empty until an app is chosen, and then shows only that app's.
+  /* --- Which build, for the app that was picked (W51, W139) -------------------
+     Every option carries `data-package`; the dropdown once listed every version
+     of every app at once, including builds of apps the row has nothing to do
+     with, which is an easy way to pin the wrong one. It is empty until an app is
+     chosen, and then shows only that app's builds.
+
+     ⚠️ Since W139 there is nothing else in the list. "Latest published" and "At
+     least N" were automatic-selection modes, and the server no longer honours
+     either, so the default is now a **real build** — the newest, which is the
+     first option because the template sorts descending.
 
      Options are removed and re-added rather than hidden: browsers honour
      `hidden` on an <option> inconsistently, and a "hidden" option that can still
@@ -620,7 +625,6 @@
 
       // The full set, kept aside so filtering is never destructive.
       var all = Array.prototype.map.call(choice.options, function (o) { return o; });
-      var latest = all.filter(function (o) { return !o.getAttribute("data-package"); });
 
       function rebuild(keepValue) {
         var pkg = picker.value;
@@ -637,19 +641,31 @@
         }
 
         var wanted = all.filter(function (o) {
-          var owner = o.getAttribute("data-package");
-          return !owner || owner === pkg;
+          return o.getAttribute("data-package") === pkg;
         });
+
+        if (!wanted.length) {
+          // An app in the library with no installable build. Say so rather than
+          // leave an empty select that looks like it is still loading.
+          var none = document.createElement("option");
+          none.value = "";
+          none.textContent = "— no builds uploaded for this app —";
+          choice.appendChild(none);
+          choice.disabled = true;
+          return;
+        }
+
         choice.disabled = false;
         wanted.forEach(function (o) { choice.appendChild(o); });
 
-        // Keep the saved choice when it still belongs to this app; otherwise fall
-        // back to "Latest published" rather than silently keeping a pin that now
-        // points at some other app's build.
+        // ⚠️ The newest build is the default, and `wanted[0]` is it because the
+        // template sorts descending. A saved choice wins when it still belongs
+        // to this app — otherwise it would be a pin at some other app's build,
+        // or, for a policy written before W139, a floor that matches nothing.
         if (keepValue && wanted.some(function (o) { return o.value === keepValue; })) {
           choice.value = keepValue;
-        } else if (latest.length) {
-          choice.value = latest[0].value;
+        } else {
+          choice.value = wanted[0].value;
         }
       }
 
@@ -1229,10 +1245,11 @@
     if (!entry) return null;
     var choice = ver ? ver.value : "";
     if (choice.indexOf("pin:") === 0) {
-      // A pinned build names itself; "latest" and a floor both resolve to the
-      // newest published one.
       return { pkg: pkg.value, atak: entry.is_atak, line: entry.pins[choice.slice(4)] || null };
     }
+    // Reached only before an app has builds, or on a policy written before
+    // W139 whose stored choice matches no option. The newest build is the best
+    // guess at what re-saving will pin it to.
     return { pkg: pkg.value, atak: entry.is_atak, line: entry.latest };
   }
 

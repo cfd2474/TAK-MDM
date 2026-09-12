@@ -586,7 +586,7 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
-### 🚧 W139 — The policy names the build; nothing is "published"
+### ✅ W139 — The policy names the build; nothing is "published"
 
 Operator, 2026-09-12: *"I dont want to have a designated 'published' app version
 when there are multiple for the same package. I want the user to be able to
@@ -662,6 +662,27 @@ offered.
 3. `form_parse`: a choice is a sha or nothing; `min:` handling goes.
 4. Apps page: the publish/hold buttons and the "held" pill go.
 5. `docs/REMOTE_SERVER.md`'s publish script, tests, deploy.
+
+#### ✅ Chunk 2 done
+
+The version select lists **only real builds of the app that was picked**,
+newest first and labelled *newest*, and `atlas.js` selects it by default. The
+two automatic-selection options are gone from the list *and* from the parser —
+`min:` is no longer read at all, because writing a floor the resolver ignores
+would produce a policy that looks configured and installs nothing.
+
+✅ **A policy written before this converts by being re-saved.** It carries a
+floor or nothing, so it matches no option, the select falls back to the newest
+build, and saving turns it into a policy that installs something. That is the
+whole migration story, and it is an operator action rather than deploy-time
+code rewriting history.
+
+⚠️ **An app with no builds says so** rather than leaving an empty select,
+which reads as "still loading".
+
+Mutation-checked both halves: restoring "Latest published" to the list, and
+restoring `min:` to the parser, each fail a test. Server **1477 passed, 1
+skipped**, `node --check` clean.
 
 ⚠️ **Nothing is deployed between the two chunks.** After chunk 1 the console
 still offers "Latest published", which the server no longer honours; the pair

@@ -185,12 +185,12 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
 
         elif field.control == "app_list":
             packages = form.getlist(f"{name}__package_name")
-            # One select carrying all three intents, because they are mutually
-            # exclusive and two controls would let an operator express a
-            # contradiction the resolver then has to arbitrate silently:
-            #   ""          -> latest published
-            #   "min:<code>"-> at least that versionCode
-            #   "pin:<sha>" -> exactly this build, including an older one
+            # ⚠️ One intent left (W139): `pin:<sha>` names the build to install.
+            # The select also carried "" for latest-published and `min:<code>`
+            # for a floor, and both were automatic-selection modes the server
+            # has stopped honouring. `min:` is not parsed any more — writing a
+            # floor a resolver ignores would produce a policy that silently
+            # installs nothing.
             choices = form.getlist(f"{name}__version_choice")
             rows: list[dict[str, Any]] = []
             for i, package in enumerate(packages):
@@ -199,11 +199,7 @@ def parse_form(policy_type: str, form: _MultiDict) -> dict[str, Any]:
                     continue
                 row: dict[str, Any] = {"package_name": package}
                 choice = (choices[i] if i < len(choices) else "") or ""
-                if choice.startswith("min:"):
-                    floor = _int_or_none(choice[4:])
-                    if floor is not None:
-                        row["min_version_code"] = floor
-                elif choice.startswith("pin:"):
+                if choice.startswith("pin:"):
                     sha = choice[4:].strip().lower()
                     if len(sha) == 64:
                         row["artifact_sha256"] = sha

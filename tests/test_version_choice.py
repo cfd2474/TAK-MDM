@@ -312,24 +312,154 @@ def parse_apps(choice: str) -> dict:
     return form_parse.parse_form("APP_CATALOG", form)["required_apps"][0]
 
 
-def test_the_picker_default_means_latest(db):
+def test_an_empty_choice_writes_no_build(db):
+    """Reachable only for an app with nothing uploaded, where the select is
+    disabled. The row is still written so the operator can see the app they
+    picked; it resolves to a reason until a build exists and is chosen."""
     assert parse_apps("") == {"package_name": "com.probe"}
 
 
-def test_the_picker_can_express_a_floor(db):
-    assert parse_apps("min:400")["min_version_code"] == 400
+def test_a_floor_is_no_longer_parsed(db):
+    """⚠️ `min:` was the "at least this versionCode" option, and the select
+    stopped offering it (W139). The parser stopped accepting it too, rather
+    than writing a floor the resolver ignores — a stored floor would produce a
+    policy that looks configured and installs nothing.
+    """
+    assert parse_apps("min:400") == {"package_name": "com.probe"}
 
 
-def test_the_picker_can_pin_an_exact_build(db):
-    """The distinction that had no control at all: hold this fleet on one build,
-    including an older one."""
+def test_the_picker_names_an_exact_build(db):
+    """The only thing the control expresses now: install this build."""
     sha = "ab" * 32
     row = parse_apps(f"pin:{sha}")
 
     assert row["artifact_sha256"] == sha
-    assert "min_version_code" not in row  # mutually exclusive, never both
+    assert "min_version_code" not in row
 
 
 def test_a_malformed_pin_is_dropped_rather_than_written(db):
     """A short sha would fail the spec's pattern and reject the whole policy."""
     assert parse_apps("pin:not-a-sha") == {"package_name": "com.probe"}
+
+
+# --------------------------------------------------------------------------- #
+# The control an operator actually uses (W139 chunk 2)
+# --------------------------------------------------------------------------- #
+
+
+def _form_page(client: TestClient) -> str:
+    return client.get("/policies/new?policy_type=APP_CATALOG", headers=ADMIN_HEADERS).text
+
+
+def _macro() -> str:
+    import pathlib
+
+    return pathlib.Path("app/web/templates/_policy_form.html").read_text(encoding="utf-8")
+
+
+def test_the_version_select_offers_builds_and_nothing_else(client: TestClient, db):
+    """⚠️ "Latest published" and "At least N" were automatic-selection modes the
+    server no longer honours. Leaving either in the list would let an operator
+    save a policy that looks configured and installs nothing."""
+    page = _form_page(client)
+
+    picker = page[page.index("__version_choice") :]
+    picker = picker[: picker.index("</select>")]
+
+    assert "Latest published" not in picker
+    assert "At least" not in picker
+    assert "held" not in picker
+
+
+def test_every_build_of_the_picked_app_is_offered_newest_first(
+    client: TestClient, db, artifact_storage
+):
+    """The operator's example: three builds of one plugin, all choosable."""
+    cert = make_signing_certificate()
+    for code in (1786490539, 1786490584, 1786490659):
+        package_service.ingest(
+            db, artifact_storage,
+            build_apk("com.beartooth.beartoothtakplugin", code, certificate_der=cert),
+        )
+    db.commit()
+
+    page = _form_page(client)
+    picker = page[page.index("__version_choice") :]
+    picker = picker[: picker.index("</select>")]
+
+    for code in (1786490539, 1786490584, 1786490659):
+        assert str(code) in picker
+    # Newest first, and labelled, so the default is visible rather than implied.
+    assert picker.index("1786490659") < picker.index("1786490584")
+    assert "newest" in picker
+
+
+def test_each_option_says_which_app_it_belongs_to(client: TestClient, db, artifact_storage):
+    """`atlas.js` filters on `data-package`; without it every build of every app
+    stays in one list, which is how the wrong build gets pinned."""
+    package_service.ingest(db, artifact_storage, build_apk("com.probe", 1))
+    db.commit()
+
+    page = _form_page(client)
+
+    assert 'data-package="com.probe"' in page
+
+
+def test_the_newest_build_is_the_default(client: TestClient, db):
+    """⚠️ Asserted against the filter that actually runs. The template marks the
+    newest option, but nothing is selected until an app is picked — the default
+    is whatever `rebuild` chooses, and `wanted[0]` is the newest only because
+    the template sorts descending."""
+    import pathlib
+
+    js = pathlib.Path("app/web/static/atlas.js").read_text(encoding="utf-8")
+    body = js[js.index("function rebuild(keepValue)") :]
+    body = body[: body.index("picker.addEventListener")]
+
+    assert "choice.value = wanted[0].value" in body
+    # The saved choice still wins when it belongs to this app.
+    assert "keepValue" in body
+
+
+def test_an_app_with_no_builds_says_so_rather_than_going_blank(client: TestClient, db):
+    """An empty select reads as "still loading"."""
+    import pathlib
+
+    js = pathlib.Path("app/web/static/atlas.js").read_text(encoding="utf-8")
+
+    assert "no builds uploaded for this app" in js
+
+
+def test_saving_the_form_writes_a_pin(client: TestClient, db, artifact_storage):
+    """⚠️ End to end, through the real form parser, because every other test
+    here could pass while the saved policy still carried no build.
+
+    This is also the conversion path for a policy written before W139: it holds
+    a floor or nothing, the select falls back to the newest build, and saving
+    turns it into a policy that installs something.
+    """
+    result = package_service.ingest(db, artifact_storage, build_apk("com.probe", 700))
+    db.commit()
+    sha = base_sha(result)
+
+    response = client.post(
+        "/policies",
+        data={
+            "name": "Probe 700",
+            "policy_type": "APP_CATALOG",
+            "required_apps__package_name": ["com.probe"],
+            "required_apps__version_choice": [f"pin:{sha}"],
+        },
+        headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303), response.text
+
+    from app.db.models import Policy
+    from sqlalchemy import select as _select
+
+    policy = db.scalar(_select(Policy).where(Policy.name == "Probe 700"))
+    entry = policy.latest_version.spec["required_apps"][0]
+
+    assert entry["artifact_sha256"] == sha
+    assert resolve(db, entry)["version_code"] == 700

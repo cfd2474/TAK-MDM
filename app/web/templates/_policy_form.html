@@ -450,21 +450,22 @@
       {% endfor %}
     </select>
     {#
-      One select rather than a number box. The three intents are mutually
-      exclusive, and an operator could not previously see which builds exist —
-      let alone pin an older one, which had no control at all.
+      ⚠️ **Which build, and nothing else** (W139). This select used to carry
+      three mutually exclusive intents — "Latest published", "At least N", and
+      "Exactly this build" — because two of them were automatic-selection modes
+      the server has since stopped honouring. An option that quietly selected
+      nothing would be worse than no option, so only real builds are listed.
+
+      Filled in by `atlas.js` once an app is picked: every option carries
+      `data-package`, and a list of every build of every app is not a list
+      anyone can use.
+
+      ⚠️ A policy saved under the old model carries a floor, or nothing, and so
+      matches no option here. It falls back to the newest build, which is what
+      re-saving such a policy converts it to — the intended way an old entry
+      becomes a real one.
     #}
     <select name="{{ name }}__version_choice" style="min-width:280px">
-      <option value="">Latest published</option>
-      {% for p in app_packages %}
-        {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
-          <option value="min:{{ v.version_code }}"
-                  data-package="{{ p.package_name }}"
-                  {{ 'selected' if entry and entry.min_version_code == v.version_code and not entry.artifact_sha256 }}>
-            At least {{ v.version_code }}{% if v.version_name %} ({{ v.version_name }}){% endif %}
-          </option>
-        {% endfor %}
-      {% endfor %}
       {% for p in app_packages %}
         {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
           {% set base = (v.files | selectattr('role.value', 'equalto', 'base') | list | first) %}
@@ -472,7 +473,7 @@
             <option value="pin:{{ base.artifact_sha256 }}"
                     data-package="{{ p.package_name }}"
                     {{ 'selected' if entry and entry.artifact_sha256 == base.artifact_sha256 }}>
-              Exactly {{ v.version_code }}{% if v.version_name %} ({{ v.version_name }}){% endif %}{% if v.plugin_api | atak_target %} — for ATAK {{ v.plugin_api | atak_target }}{% endif %}{{ ' — held' if not v.published }}
+              {{ v.version_code }}{% if v.version_name %} ({{ v.version_name }}){% endif %}{% if v.plugin_api | atak_target %} — for ATAK {{ v.plugin_api | atak_target }}{% endif %}{% if loop.first %} — newest{% endif %}
             </option>
           {% endif %}
         {% endfor %}
