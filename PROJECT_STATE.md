@@ -586,6 +586,72 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W138 — Save the permanent QR as a file
+
+Operator, 2026-09-11: *"when a permanent qr is generated, have a button to save
+qr that downloads it from the browser."*
+
+#### Permanent only, and that is the point
+
+A saved copy of a fifteen-minute QR is a file that is already useless by the
+time anyone opens it. The button exists because a permanent QR is worth printing
+and pinning to a provisioning bench — so it appears only on that kind, which is
+also exactly what was asked for.
+
+#### Client-side, because the secret is already on the page
+
+The SVG is inline in the DOM. Serialising it in the browser means the credential
+travels nowhere new: no download route, no secret in a URL, nothing in an access
+log. A server-side endpoint would have had to take the secret as a parameter or
+re-mint it, and the first of those writes an enrollment credential into nginx's
+log on every press.
+
+⚠️ **PNG, with SVG as the fallback.** A PNG pastes into a document and prints
+from anything; the SVG the page holds is 20mm wide and rasterises to about 76
+pixels, which is unreadably small for a code this dense — so the clone is given
+explicit pixel dimensions before it is drawn. Canvas work can fail (tainting
+rules differ between browsers), and a button that silently does nothing is worse
+than one that hands over a slightly less convenient file, so any failure saves
+the SVG instead.
+
+⚠️ **The canvas is painted white first.** The SVG has no background of its
+own — the page supplies one with a white div — so a straight rasterisation gives
+black-on-transparent, which renders as black-on-black wherever a viewer assumes
+a dark ground. An unscannable QR that looks fine in the browser is the failure
+this feature could most easily ship.
+
+#### ⚠️ The file is a live credential
+
+A saved PNG of a permanent QR enrols devices until the token is retired. It is
+the same warning W137 put on the page, and it needs repeating next to the button
+that creates a copy which outlives the browser tab.
+
+#### Chunk 1
+
+1. The white wrapper gets a hook; a **Save QR** button beside it, permanent QRs
+   only, carrying the filename the download should use.
+2. `atlas.js`: a delegated handler in the established `data-` idiom — clone,
+   size, rasterise on a white ground, save; fall back to the SVG on any failure.
+3. The filename carries the group when the QR is scoped to one, so two printed
+   sheets are not interchangeable — the W121 hazard, on paper.
+4. Tests: the button is on permanent QRs and absent from short-lived ones, the
+   fallback exists, and the group reaches the filename.
+5. Suite, commit, deploy. Console-only — no agent change.
+
+#### Built
+
+One delegated handler in `atlas.js`, in the same `data-` idiom as
+`data-toggle-password` and `data-countdown`, and a button the template renders
+only when `persistent`. Nothing server-side at all.
+
+⏳ **The rasterisation cannot be tested here and is not claimed to work.** The
+suite asserts the wiring — the button appears on permanent QRs and not on
+short-lived ones, both failure paths reach the SVG fallback, the white ground is
+painted before the code, and the group reaches the filename. Whether the PNG a
+browser actually produces *scans* is a question for a browser and a tablet.
+
+Server **1472 passed, 1 skipped**, `node --check` clean.
+
 ### ✅ W137 — A provisioning QR that does not expire
 
 Operator, 2026-09-11: *"i want an option to have a persistent provisioning qr

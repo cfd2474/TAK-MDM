@@ -133,9 +133,29 @@
              <span class="muted">— the tablet must be put on a network by hand.</span></p>
         {% endif %}
 
-        <div style="background:#fff; padding:16px; display:inline-block; border-radius:8px">
+        <div style="background:#fff; padding:16px; display:inline-block; border-radius:8px"
+             data-qr-image>
           {{ qr_svg | safe }}
         </div>
+
+        {#
+          ⚠️ Permanent QRs only (W138). A saved copy of a fifteen-minute code is
+          a file that is useless by the time anyone opens it, and offering to
+          make one invites exactly that confusion. The filename carries the
+          group so two printed sheets are not interchangeable.
+        #}
+        {% if persistent %}
+          <p style="margin-top:12px">
+            <button type="button" class="btn ghost"
+                    data-save-qr="atlas-enrollment-qr{% if group %}-{{ group.name | lower | replace(' ', '-') }}{% endif %}">
+              Save QR
+            </button>
+            <span class="muted" style="font-size:12px">
+              — the saved file is a live enrollment credential, and stays one
+              until this token is retired.
+            </span>
+          </p>
+        {% endif %}
 
         <details style="margin-top:16px">
           <summary class="muted">Payload</summary>

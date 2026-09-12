@@ -995,6 +995,95 @@
     btn.textContent = reveal ? "Hide" : "Show";
   });
 
+  /* --- Save the provisioning QR ----------------------------------------------
+     <div data-qr-image><svg .../></div>
+     <button data-save-qr="atlas-enrollment-qr-bench">Save QR</button>
+
+     Downloads the QR the page is already showing (W138). Only permanent QRs
+     render the button; a saved copy of a fifteen-minute code is a file that
+     expires before it is opened.
+
+     ⚠️ Everything here happens in the browser. The QR encodes a live enrollment
+     credential, and the page already holds it — serialising the SVG in place
+     means it travels nowhere new. A download route would have had to take the
+     secret as a parameter, which writes it into nginx's access log on every
+     press.
+
+     ⚠️ PNG, because it pastes into a document and prints from anything. The
+     source SVG is 20mm across and rasterises to roughly 76 pixels, far too
+     coarse for a code this dense, so the clone is given pixel dimensions first.
+
+     ⚠️ White ground, painted before the QR. The SVG carries no background — the
+     page supplies one with a white div — and a transparent PNG is black-on-
+     black wherever something assumes a dark background. It would look perfect
+     in the browser and refuse to scan off the page.
+
+     ⚠️ Any failure saves the SVG instead. Browsers differ on whether drawing an
+     SVG taints a canvas, and a button that silently does nothing is worse than
+     one that hands over a less convenient file. */
+
+  (function () {
+    var SIZE = 1024;
+
+    function save(blob, filename) {
+      var url = URL.createObjectURL(blob);
+      var link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      // Deferred: revoking synchronously can cancel the download in Safari.
+      setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+    }
+
+    document.addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-save-qr]");
+      if (!btn) return;
+      e.preventDefault();
+
+      var wrap = document.querySelector("[data-qr-image]");
+      var svg = wrap && wrap.querySelector("svg");
+      if (!svg) return;
+
+      var name = btn.getAttribute("data-save-qr") || "enrollment-qr";
+      var clone = svg.cloneNode(true);
+      clone.setAttribute("width", SIZE);
+      clone.setAttribute("height", SIZE);
+      var markup = new XMLSerializer().serializeToString(clone);
+      var svgBlob = new Blob([markup], { type: "image/svg+xml;charset=utf-8" });
+
+      var fallback = function () { save(svgBlob, name + ".svg"); };
+
+      var url = URL.createObjectURL(svgBlob);
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var canvas = document.createElement("canvas");
+          canvas.width = SIZE;
+          canvas.height = SIZE;
+          var ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(0, 0, SIZE, SIZE);
+          ctx.drawImage(img, 0, 0, SIZE, SIZE);
+          canvas.toBlob(function (png) {
+            URL.revokeObjectURL(url);
+            if (png) save(png, name + ".png");
+            else fallback();
+          }, "image/png");
+        } catch (err) {
+          URL.revokeObjectURL(url);
+          fallback();
+        }
+      };
+      img.onerror = function () {
+        URL.revokeObjectURL(url);
+        fallback();
+      };
+      img.src = url;
+    });
+  })();
+
   /* --- Unsaved-change guard --------------------------------------------------
      <form data-policy-form>: warn before leaving the page with edits pending —
      on tab close (beforeunload) and on any in-app link that would navigate away.

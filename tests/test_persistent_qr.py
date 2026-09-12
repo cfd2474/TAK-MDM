@@ -229,3 +229,79 @@ def test_an_unrecoverable_secret_is_explained_not_rendered(client: TestClient, d
 
     assert "cannot be recovered" in body
     assert "QR secret" not in body
+
+
+# --------------------------------------------------------------------------- #
+# Saving it as a file (W138)
+# --------------------------------------------------------------------------- #
+
+
+def _atlas_js() -> str:
+    import pathlib
+
+    return pathlib.Path("app/web/static/atlas.js").read_text(encoding="utf-8")
+
+
+def test_a_permanent_qr_can_be_saved(client: TestClient):
+    """The button and the thing it reads from have to arrive together — the
+    handler looks up `[data-qr-image]` and does nothing at all without it."""
+    _primary(client)
+
+    body = _qr(client, persistent=True).text
+
+    assert "data-save-qr=" in body
+    assert "data-qr-image" in body
+
+
+def test_a_short_lived_qr_offers_no_save(client: TestClient):
+    """⚠️ Deliberately absent. A saved copy of a fifteen-minute code is a file
+    that expires before anyone opens it, and offering to make one invites that
+    confusion."""
+    _primary(client)
+
+    body = _qr(client).text
+
+    assert "data-save-qr=" not in body
+
+
+def test_the_filename_names_the_group(client: TestClient, db):
+    """⚠️ Two printed sheets that look identical and enrol into different groups
+    is the W121 hazard on paper. The filename is what tells them apart once the
+    browser tab is closed."""
+    _primary(client)
+    client.post(
+        "/groups", data={"name": "Bench Two"}, headers=ADMIN_HEADERS,
+        follow_redirects=False,
+    )
+    group = db.scalar(select(DeviceGroup).where(DeviceGroup.name == "Bench Two"))
+
+    body = _qr(client, persistent=True, group_id=str(group.id)).text
+
+    assert 'data-save-qr="atlas-enrollment-qr-bench-two"' in body
+
+
+def test_saving_falls_back_to_svg_when_the_canvas_refuses():
+    """⚠️ Browsers disagree about whether drawing an SVG taints a canvas, and a
+    Save button that silently does nothing is worse than one that hands over a
+    less convenient file. Both failure paths — the draw throwing and the image
+    never loading — have to reach the fallback."""
+    js = _atlas_js()
+
+    handler = js[js.index("data-save-qr") :]
+    handler = handler[: handler.index("Unsaved-change guard")]
+
+    assert handler.count("fallback()") >= 3
+    assert "img.onerror" in handler
+
+
+def test_the_saved_png_is_painted_on_white():
+    """⚠️ The SVG has no background of its own. A transparent PNG is
+    black-on-black wherever something assumes a dark ground — it would look
+    perfect in the browser and refuse to scan off the page."""
+    js = _atlas_js()
+
+    handler = js[js.index("data-save-qr") :]
+    handler = handler[: handler.index("Unsaved-change guard")]
+
+    assert 'ctx.fillStyle = "#fff"' in handler
+    assert handler.index("fillRect") < handler.index("drawImage")
