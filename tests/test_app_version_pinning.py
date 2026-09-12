@@ -14,12 +14,14 @@
 
 """Which build a policy resolves to, and what happens when it cannot.
 
-Pinning ``artifact_sha256`` is how an operator holds a fleet on a specific build —
-including an **older** one. That makes the failure modes asymmetric: resolving to a
-*newer* build than asked for is not a degraded outcome, it is the opposite of the
-instruction. So a pin that cannot be honoured has to fail rather than fall back.
+``artifact_sha256`` is how a policy names the build it installs — and since
+W139 it is the **only** way. There is no "newest", no floor, and no published
+flag: an entry that names no build resolves to nothing and says so.
 
-R17 and R18 were both found by probing this, and both had exactly that shape.
+The failure modes are asymmetric, which is what R17 and R18 were both about:
+resolving to a *newer* build than the one asked for is not a degraded outcome,
+it is the opposite of the instruction. So a pin that cannot be honoured fails
+rather than falling back.
 """
 
 from __future__ import annotations
@@ -52,20 +54,30 @@ def two_builds(db, storage, package: str = "com.probe"):
 
 
 # --------------------------------------------------------------------------- #
-# The three levels of intent
+# Named, or nothing
 # --------------------------------------------------------------------------- #
 
 
-def test_no_floor_and_no_pin_takes_the_newest(db, artifact_storage):
+def test_no_pin_takes_nothing(db, artifact_storage):
+    """⚠️ This asserted "takes the newest" until W139, and the inversion is the
+    point. Two builds exist and the policy names neither, so the entry is
+    incomplete — not a request for whichever number is highest."""
     two_builds(db, artifact_storage)
-    assert resolve(db, {"package_name": "com.probe"})["version_code"] == 200
+
+    resolved = resolve(db, {"package_name": "com.probe"})
+
+    assert resolved["available"] is False
+    assert "no version chosen" in resolved["reason"]
 
 
-def test_a_floor_takes_the_newest_that_clears_it(db, artifact_storage):
+def test_a_floor_is_inert(db, artifact_storage):
+    """A floor is an automatic selection, and automatic selection is gone. The
+    field is still accepted so stored specs validate."""
     two_builds(db, artifact_storage)
+
     assert resolve(db, {"package_name": "com.probe", "min_version_code": 100})[
-        "version_code"
-    ] == 200
+        "available"
+    ] is False
 
 
 def test_a_pin_holds_an_older_build_against_a_newer_one(db, artifact_storage):
@@ -180,14 +192,19 @@ def test_nothing_uploaded_still_says_so(db, artifact_storage):
     assert resolved["reason"] == "nothing uploaded for it"
 
 
-def test_a_floor_nothing_satisfies_names_the_floor(db, artifact_storage):
-    """Distinct from "nothing uploaded": builds exist, none is new enough."""
+def test_a_floor_reads_the_same_whether_or_not_anything_clears_it(db, artifact_storage):
+    """⚠️ Information deliberately given up. The reason used to name the floor,
+    which mattered when the floor selected a build; now it never does, so
+    "nothing is new enough" and "plenty is new enough" are the same situation —
+    a policy that has not said which build to install."""
     two_builds(db, artifact_storage)
 
-    resolved = resolve(db, {"package_name": "com.probe", "min_version_code": 9999})
+    impossible = resolve(db, {"package_name": "com.probe", "min_version_code": 9999})
+    satisfiable = resolve(db, {"package_name": "com.probe", "min_version_code": 100})
 
-    assert resolved["available"] is False
-    assert "9999" in resolved["reason"]
+    assert impossible["available"] is False
+    assert impossible["reason"] == satisfiable["reason"]
+    assert "no version chosen" in impossible["reason"]
 
 
 def test_each_failure_gives_a_different_reason(db, artifact_storage):

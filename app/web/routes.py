@@ -225,14 +225,13 @@ def _declared_plugin_api(package) -> str | None:
     it NULL until `backfill_plugin_api` runs, and the picker must not imply the
     unmarked apps are the non-plugins.
     """
-    # ⚠️ Not `package_service.latest_published`, which takes a session it does
-    # not currently use. A filter has none to give, and passing None would work
-    # only until that function grows a query — at which point it would fail
-    # inside a template render, which is the worst place to find out.
-    published = [v for v in package.versions if v.published]
-    if not published:
+    # ⚠️ Not `package_service.newest`, which takes a session it does not
+    # currently use. A filter has none to give, and passing None would work only
+    # until that function grows a query — at which point it would fail inside a
+    # template render, which is the worst place to find out.
+    if not package.versions:
         return None
-    return max(published, key=lambda v: v.version_code).plugin_api
+    return max(package.versions, key=lambda v: v.version_code).plugin_api
 
 
 _TEMPLATES.env.filters["plugin_api"] = _declared_plugin_api
@@ -1504,8 +1503,7 @@ def _app_compat_map(packages: list[AppPackage]) -> dict[str, Any]:
     """
     out: dict[str, Any] = {}
     for package in packages:
-        published = [v for v in package.versions if v.published]
-        latest = max(published, key=lambda v: v.version_code, default=None)
+        latest = max(package.versions, key=lambda v: v.version_code, default=None)
         is_atak = atak_compat.is_atak(package.package_name)
 
         def line_of(version) -> str | None:
@@ -2717,7 +2715,7 @@ _APP_CONFIG_SCAN_LIMIT = 32
 
 
 def _declared_app_config(session: Session, storage: ArtifactStorage, package: AppPackage):
-    """The managed configuration a package's latest published build declares.
+    """The managed configuration a package's newest build declares.
 
     Scanned from the APK rather than kept in a column, so it cannot drift from the
     build it describes — but memoised per artifact hash.
@@ -2727,7 +2725,7 @@ def _declared_app_config(session: Session, storage: ArtifactStorage, package: Ap
     first, taking Outlook from 0.13 s to 1.40 s and ~186 MB of transient heap **per
     request** — and the package picker fires one request per arrow-key press.
     """
-    version = package_service.latest_published(session, package)
+    version = package_service.newest(session, package)
     if version is None:
         return None
     base = next((f for f in version.files if f.role is PartRole.BASE), None)
@@ -3168,18 +3166,18 @@ def import_tpc_plugin_status(
 @router.post("/apps/upload")
 def upload_app_form(
     label: str = Form(default=""),
-    publish: str = Form(default="auto"),
     file: UploadFile = File(...),
     session: Session = Depends(get_db),
     storage: ArtifactStorage = Depends(get_storage),
     settings: Settings = Depends(get_settings),
     identity: AdminIdentity = Depends(admin_required),
 ) -> RedirectResponse:
-    """Upload a package, and say what it did to the fleet.
+    """Add a package to the library.
 
-    ``publish`` is "auto" (newer deploys, older is held), "yes", or "no". The
-    redirect carries a summary because an upload used to deploy fleet-wide in
-    silence — the operator had no way to tell whether anything had moved.
+    ⚠️ **It does nothing to the fleet** (W139). An upload used to deploy
+    fleet-wide in silence, then gained a three-way publish question to control
+    that. Both are gone: a device installs the build its policy names, so a new
+    upload reaches a device only when someone chooses it in a policy.
     """
     data = file.file.read()
     if not data:
@@ -3187,11 +3185,10 @@ def upload_app_form(
     if len(data) > settings.max_upload_bytes:
         return _redirect(f"/apps?error={_quote(f'upload exceeds {settings.max_upload_bytes} bytes')}")
 
-    wanted = {"yes": True, "no": False}.get(publish)
     try:
         comparison = package_service.compare_upload(session, data)
         result = package_service.ingest(
-            session, storage, data, label=label.strip() or None, publish=wanted
+            session, storage, data, label=label.strip() or None
         )
     except package_service.PackageError as exc:
         return _redirect(f"/apps?error={_quote(str(exc))}")
@@ -3204,25 +3201,23 @@ def upload_app_form(
 def _upload_summary(
     comparison: package_service.VersionComparison, result: package_service.IngestResult
 ) -> str:
-    """One sentence saying what the upload actually did."""
+    """One sentence saying what the upload actually did.
+
+    ⚠️ Which is: added a build to the library, and nothing else (W139). The
+    sentence still names what devices are on, because "you now have two builds
+    and they are running the other one" is the thing an operator wants to know
+    next — but it no longer claims anything moved, because nothing did.
+    """
     name = result.package.label or result.package.package_name
     code = result.version.version_code
-    if not result.version.published:
-        held = f"{name} {code} was added to the library and is being held"
-        if comparison.deployed_version_code is not None:
-            held += f" — devices stay on {comparison.deployed_version_code}"
-        return held + "."
-
-    if comparison.relation == "first":
-        return f"{name} {code} was uploaded and published."
-
-    moved = f"{name} {code} was published"
-    if comparison.deployed_version_code is not None:
-        moved += f", replacing {comparison.deployed_version_code}"
+    added = f"{name} {code} was added to the library"
     if comparison.device_count:
         plural = "" if comparison.device_count == 1 else "s"
-        moved += f" on {comparison.device_count} device{plural}"
-    return moved + "."
+        added += (
+            f". {comparison.device_count} device{plural} follow a policy naming "
+            f"{comparison.package_name} — edit it to deploy this build"
+        )
+    return added + "."
 
 
 @router.post("/apps/preview-upload")
@@ -3263,23 +3258,6 @@ def preview_app_upload(
             "would_deploy": c.would_deploy,
         }
     )
-
-
-@router.post("/apps/versions/{version_id}/publish")
-def publish_version_form(
-    version_id: uuid.UUID,
-    published: str = Form(...),
-    session: Session = Depends(get_db),
-    identity: AdminIdentity = Depends(admin_required),
-) -> RedirectResponse:
-    version = session.get(AppPackageVersion, version_id)
-    if version is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "version not found")
-
-    version.published = published == "true"
-    eff.invalidate_all(session)
-    session.commit()
-    return _redirect("/apps")
 
 
 @router.post("/apps/{package_id}/store")

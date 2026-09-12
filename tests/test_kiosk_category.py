@@ -375,14 +375,18 @@ def test_an_explicit_required_entry_keeps_its_own_version_pin():
             "KIOSK": {"kiosk_package": "com.atakmap.app.civ"},
             "APP_CATALOG": {
                 "required_apps": [
-                    {"package_name": "com.atakmap.app.civ", "min_version_code": 52400}
+                    {"package_name": "com.atakmap.app.civ", "artifact_sha256": "ab" * 32}
                 ]
             },
         },
     )
 
     assert len(resolved) == 1, "the kiosk app was required twice"
-    assert "52400" in resolved[0]["reason"], resolved[0]
+    # ⚠️ The pin has to survive the merge. The kiosk contributes a bare
+    # package_name for the same app, and if that replaced the operator's entry
+    # the device would install whatever the kiosk implied instead of the build
+    # the policy names. The sha in the reason is the proof it did not.
+    assert "abababab" in resolved[0]["reason"], resolved[0]
 
 
 def test_no_kiosk_app_adds_nothing():

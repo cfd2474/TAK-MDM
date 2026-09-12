@@ -586,6 +586,133 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### 🚧 W139 — The policy names the build; nothing is "published"
+
+Operator, 2026-09-12: *"I dont want to have a designated 'published' app version
+when there are multiple for the same package. I want the user to be able to
+select the app version they install when generating the policy. … it should be
+app package picked first, then app version. It should populate the most recent
+by default, but let the user choose a different one from a dropdown."*
+
+#### What "published" is today, and why it can go
+
+`AppPackageVersion.published` means **"eligible for automatic selection"** — it
+is read in exactly one decision, `resolve_for_policy`, which answers "newest
+published build at or above the floor". An explicit `artifact_sha256` pin
+already bypasses it entirely and always has.
+
+So the flag exists only to serve automatic selection. Once every policy entry
+names a build, there is no automatic selection left for it to govern, and a flag
+that governs nothing is worse than no flag — it is a switch operators can still
+see and still toggle, with no effect.
+
+#### ⚠️ Live data, checked before writing anything
+
+| | |
+|---|---|
+| Packages where the newest build is **not** the one that deploys today | `com.android.chrome`, `com.microsoft.office.outlook` — every build of both is held |
+| Policy entries with no pin | 3, all in the policy named *"test app"*: Chrome, `uasready`, `atak2drone.m3t` |
+| Beartooth | 3 builds, newest published — unaffected either way |
+
+⚠️ **This is the trap.** *"test app"* names Chrome with no pin. Today that
+resolves to nothing and the device installs nothing. If unpinned came to mean
+"newest build", **the next check-in would install Chrome on the fleet** — a
+policy that has never installed anything suddenly would, because a flag was
+deleted. That is the failure this note exists to prevent.
+
+#### ✅ So unpinned means *incomplete*, not *newest*
+
+An entry with no `artifact_sha256` resolves to **nothing**, reported as "no
+version chosen — edit the policy and pick one". Nothing is ever selected on an
+operator's behalf, which is the whole point of the request, and no build starts
+deploying because a column was dropped.
+
+⚠️ **Existing unpinned entries stop installing until re-saved.** Said plainly
+rather than discovered: opening such a policy and saving it pins the newest
+build and it works again. The alternative — preserving behaviour by writing pins
+in a migration — means authoring policy versions nobody wrote, and the three
+affected entries here are in a policy called "test app". Worth building if a
+real fleet ever carries this upgrade; not worth inventing history for now.
+
+`min_version_code` is the same thing wearing a floor: it is an auto-selection
+mode. It stays in the model so stored specs still validate, and stops being
+offered.
+
+#### Chunk 1 — the server stops choosing
+
+1. `resolve_for_policy`: no pin → nothing, with a reason that names the fix.
+   The `published` filter goes.
+2. `latest_published` → "the newest build", for the readers that only want
+   metadata: ATAK settings, declared config types, the activity list,
+   `compare_upload`.
+3. Drop the column. ⚠️ **`alembic heads`, never a directory listing** — that
+   mistake cost twenty minutes of API downtime earlier in this project.
+4. `ingest(publish=...)` goes, and with it the upload form's three-way question
+   and `repo_import`'s "always held" rule, which was a workaround for the same
+   automatic selection.
+5. Tests: unpinned reports rather than installs; a pin resolves however old it
+   is; the metadata readers follow the newest build.
+6. Re-check the live host against the new rule before anything is deployed.
+
+#### Chunk 2 — the console asks the question
+
+1. `_app_row`: package first, then a version select carrying only that
+   package's builds, newest first — the filtering from W51 already exists.
+2. Newest selected by default, on pick and on "Add app".
+3. `form_parse`: a choice is a sha or nothing; `min:` handling goes.
+4. Apps page: the publish/hold buttons and the "held" pill go.
+5. `docs/REMOTE_SERVER.md`'s publish script, tests, deploy.
+
+⚠️ **Nothing is deployed between the two chunks.** After chunk 1 the console
+still offers "Latest published", which the server no longer honours; the pair
+has to land together.
+
+#### ✅ Chunk 1 done — not deployed
+
+The flag is gone from the model, the migration, every service that read it, the
+apps page and the upload form. `resolve_for_policy` returns None and says so.
+`newest()` replaces `latest_published()` for the readers that only ever wanted a
+build to pull an icon, a label, an activity list or a config schema out of.
+
+⚠️ **The store deliberately keeps automatic selection.** A required app is
+installed *for* someone, so the policy must say which build. A store app is
+installed *by* someone off a shelf, and there is no policy to carry the answer —
+so the shelf offers the newest build, the way a store does.
+
+⚠️ **The reasons stayed separate.** "Nothing uploaded" and "no version
+chosen" have the same symptom and different fixes — one is an upload, the other
+is an edit. Collapsing them into one message would have been the R17/R18 mistake
+a third time.
+
+#### ⚠️ The upgrade hazard, measured rather than assumed
+
+An unresolvable required app is an **error**, an error marks the device
+DEGRADED, and `agent_update.decide()` refuses to update a degraded device. So on
+a fleet with unpinned entries, this change would cut off agent updates until
+every such policy was re-saved — the agent-79 failure, deliberately shipped.
+
+Checked against the live host before deciding: **three devices, all COMPLIANT,
+and not one enabled APP_CATALOG assignment.** The only unpinned entries live in
+a policy named "test app" that reaches nothing. Nothing regresses here.
+
+✅ **So no translating migration was written.** It would have rewritten stored
+policy specs to pin what they resolve to today — correct, and the right thing to
+build for an existing fleet. Nobody has deployed this project yet, so the
+upgrade path has no users: a fresh install has no unpinned entries, and
+untested deploy-time code that rewrites policy history is its own risk. ⏳ **If
+this ever ships to a fleet already running, build the translation first.**
+
+⚠️ `docs/REMOTE_SERVER.md`'s agent-publish script passed `publish=True` and
+would have died with `TypeError` *after* copying the APK into the container —
+which reads as a broken build, not a stale script. Fixed with the reason beside
+it. The agent update channel itself never used the flag.
+
+Test churn was large and unavoidable: two files describe features that no longer
+exist and were renamed (`test_version_publishing` → `test_version_choice`,
+`test_held_import_visibility` → `test_import_visibility`), and every test that
+required an app without naming a build had to start naming one. Server **1471
+passed, 1 skipped**.
+
 ### ✅ W138 — Save the permanent QR as a file
 
 Operator, 2026-09-11: *"when a permanent qr is generated, have a button to save

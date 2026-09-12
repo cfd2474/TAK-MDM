@@ -85,13 +85,13 @@ def _base_sha(version: AppPackageVersion) -> str | None:
 def schema_for(
     session: Session, storage: ArtifactStorage, package: AppPackage
 ) -> pref_screens.PrefSchema | None:
-    """The settings a package's latest published build declares, memoised.
+    """The settings a package's newest build declares, memoised.
 
     Scanned from the APK rather than kept in a column, so it cannot drift from
     the build it describes (D91) — the same trade `declared_config` makes for
     managed configuration.
     """
-    version = package_service.latest_published(session, package)
+    version = package_service.newest(session, package)
     if version is None:
         return None
     sha = _base_sha(version)

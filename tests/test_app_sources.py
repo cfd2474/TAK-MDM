@@ -212,12 +212,16 @@ def test_a_matching_download_is_marked_verified(tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-def test_an_imported_build_is_held_not_published(tmp_path, db, artifact_storage):
-    """⚠️ Publishing aims every device at a build.
+def test_an_imported_build_reaches_no_device(tmp_path, db, artifact_storage):
+    """⚠️ Fetching something to look at must not ship it.
 
-    Fetching something to look at must never do that as a side effect — and
-    `ingest` would, since this build is newer than everything deployed.
+    This needed a `publish=False` when `ingest` would otherwise have published
+    anything newer than what was deployed. Since W139 nothing is chosen
+    automatically, so the guarantee holds for every path into the library — and
+    is asserted here as what it actually means: no policy resolves to it.
     """
+    from app.services import effective_policy as eff
+
     apk = build_apk("org.example.app", 42)
     source = _source(tmp_path, _index(apk), apk)
     version = source.versions("org.example.app")[0]
@@ -225,8 +229,11 @@ def test_an_imported_build_is_held_not_published(tmp_path, db, artifact_storage)
     imported = repo_import.import_version(db, artifact_storage, source, version)
     db.commit()
 
-    assert imported.published is False
     assert imported.source == "fdroid"
+    resolved = eff.resolve_required_apps(
+        db, {"APP_CATALOG": {"required_apps": [{"package_name": "org.example.app"}]}}
+    )[0]
+    assert resolved["available"] is False
     assert imported.source_url.endswith("org.example.app_42.apk")
 
 
@@ -495,7 +502,6 @@ def test_an_import_runs_as_a_job_and_lands_held(
     stored = db.scalar(
         select(AppPackageVersion).where(AppPackageVersion.version_code == 42)
     )
-    assert stored.published is False
     assert stored.source == "fdroid"
 
 

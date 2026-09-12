@@ -29,7 +29,6 @@
           <input type="text" name="label" aria-label="Label">
           <p class="field-tip">Optional. Overrides the label read from the APK.</p>
         </div>
-        <input type="hidden" name="publish" value="auto">
         <button type="submit">Upload</button>
       </form>
 
@@ -114,28 +113,19 @@
               {% endif %}
             </td>
             <td class="mono">
-              {% set deployed = p.versions | selectattr('published') | sort(attribute='version_code') | last %}
-              {% if deployed %}
-                {{ deployed.version_code }}{% if deployed.version_name %} ({{ deployed.version_name }}){% endif %}
+              {#
+                ⚠️ The newest build in the library, which is **not** a claim
+                about what any device is running (W139). There is no "deployed"
+                build any more — each policy names the one it installs, and two
+                policies can name different ones. The column says what is here,
+                and the earlier attempts to make it say what the fleet gets
+                (W124/W125/W127's "held" wording) went with the flag.
+              #}
+              {% set latest = p.versions | sort(attribute='version_code') | last %}
+              {% if latest %}
+                {{ latest.version_code }}{% if latest.version_name %} ({{ latest.version_name }}){% endif %}
               {% else %}
-                {# ⚠️ Two different situations, and only one of them is a
-                   problem. A package holding a freshly imported build is doing
-                   exactly what an import does — repo imports never publish, so
-                   that every device asking for "latest" is aimed at a build by
-                   an operator's deliberate act. Flagging that in warning orange
-                   reports a success as a fault (W124, W125). An empty package
-                   really is a warning. #}
-                {% set held = p.versions | sort(attribute='version_code') | last %}
-                {% if held %}
-                  {# ⚠️ No badge (operator, W127) — but this column means the
-                     build devices are offered, so a held one rendered exactly
-                     like a published one would misreport what the fleet gets.
-                     A plain muted word keeps the distinction without the
-                     bubble. #}
-                  <span class="muted">{{ held.version_code }}{% if held.version_name %} ({{ held.version_name }}){% endif %} · held</span>
-                {% else %}
-                  <span class="pill warn">nothing uploaded</span>
-                {% endif %}
+                <span class="pill warn">nothing uploaded</span>
               {% endif %}
               {% if p.versions %}
                 <div class="muted" style="font-size:11px">
@@ -178,12 +168,13 @@
             <td colspan="6" style="background:var(--panel-2)">
               <strong>Versions of {{ p.label or p.package_name }}</strong>
               <p class="muted" style="font-size:12px; margin:4px 0 8px">
-                Only a <em>published</em> build is chosen automatically by a policy
-                asking for "latest" or "at least X". A held build stays available and
-                can still be pinned to exactly by a policy.
+                Every build here is installable. A policy names the one it
+                deploys, so uploading another changes nothing until someone
+                picks it — and two policies can deploy two different builds of
+                the same app to different devices.
               </p>
               <table>
-                <thead><tr><th>versionCode</th><th>Version</th><th>Architecture</th><th>Uploaded</th><th>State</th><th></th></tr></thead>
+                <thead><tr><th>versionCode</th><th>Version</th><th>Architecture</th><th>Uploaded</th><th></th></tr></thead>
                 <tbody>
                 {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
                   <tr>
@@ -206,19 +197,15 @@
                     </td>
                     <td class="muted">{{ v.uploaded_at.strftime('%Y-%m-%d %H:%M') if v.uploaded_at else '—' }}</td>
                     <td>
-                      {% if v.published %}<span class="pill good">published</span>
-                      {% else %}<span class="pill">held</span>{% endif %}
-                    </td>
-                    <td>
-                      <form method="post" action="/apps/versions/{{ v.id }}/publish" style="margin:0"
-                            data-confirm="{{ 'Hold ' ~ v.version_code ~ '? Policies asking for latest will fall back to the newest published build.' if v.published else 'Publish ' ~ v.version_code ~ '? Every policy asking for latest will deploy it at the next check-in.' }}">
-                        {{ csrf_field(csrf_token) }}
-                        <input type="hidden" name="published" value="{{ 'false' if v.published else 'true' }}">
-                        <button type="submit" class="ghost">{{ 'Hold' if v.published else 'Publish' }}</button>
-                      </form>
-                      {# A split app comes back as .xapk, which is the shape
+                      {# The Publish / Hold buttons stood here. They set a flag
+                         meaning "may be chosen automatically", and nothing is
+                         chosen automatically any more (W139) — a button that
+                         reported success and moved no device would be worse
+                         than no button.
+
+                         A split app comes back as .xapk, which is the shape
                          this console reads on the way back in (W128). #}
-                      <a class="btn ghost" style="margin-left:6px"
+                      <a class="btn ghost"
                          href="/apps/versions/{{ v.id }}/download">Download</a>
                     </td>
                   </tr>
@@ -249,7 +236,7 @@
         {{ empty_state('Nothing in the store. Add a package from the Local apps tab.') }}
       {% else %}
       {# Same shape as Local apps, within reason: icon, name over package id,
-         published version, parts — and sortable. The two tabs list the same kind
+         newest version, parts — and sortable. The two tabs list the same kind
          of thing, so reading one should teach you how to read the other.
 
          🐛 The header used to declare four columns (Package, Label, Latest
@@ -286,30 +273,19 @@
               {% endif %}
             </td>
             <td class="mono">
-              {# The *published* build, because that is the one a device is offered
-                 — the newest upload may deliberately be held back. #}
-              {% set deployed = p.versions | selectattr('published') | sort(attribute='version_code') | last %}
-              {% if deployed %}
-                {{ deployed.version_code }}{% if deployed.version_name %} ({{ deployed.version_name }}){% endif %}
+              {#
+                ⚠️ The newest build in the library, which is **not** a claim
+                about what any device is running (W139). There is no "deployed"
+                build any more — each policy names the one it installs, and two
+                policies can name different ones. The column says what is here,
+                and the earlier attempts to make it say what the fleet gets
+                (W124/W125/W127's "held" wording) went with the flag.
+              #}
+              {% set latest = p.versions | sort(attribute='version_code') | last %}
+              {% if latest %}
+                {{ latest.version_code }}{% if latest.version_name %} ({{ latest.version_name }}){% endif %}
               {% else %}
-                {# ⚠️ Two different situations, and only one of them is a
-                   problem. A package holding a freshly imported build is doing
-                   exactly what an import does — repo imports never publish, so
-                   that every device asking for "latest" is aimed at a build by
-                   an operator's deliberate act. Flagging that in warning orange
-                   reports a success as a fault (W124, W125). An empty package
-                   really is a warning. #}
-                {% set held = p.versions | sort(attribute='version_code') | last %}
-                {% if held %}
-                  {# ⚠️ No badge (operator, W127) — but this column means the
-                     build devices are offered, so a held one rendered exactly
-                     like a published one would misreport what the fleet gets.
-                     A plain muted word keeps the distinction without the
-                     bubble. #}
-                  <span class="muted">{{ held.version_code }}{% if held.version_name %} ({{ held.version_name }}){% endif %} · held</span>
-                {% else %}
-                  <span class="pill warn">nothing uploaded</span>
-                {% endif %}
+                <span class="pill warn">nothing uploaded</span>
               {% endif %}
             </td>
             <td class="muted">
@@ -395,8 +371,9 @@
       <h3 style="margin-top:0">Search every source</h3>
       <p class="muted" style="font-size:13px">
         One search across every repository below. Each result says where it came
-        from, because they are not equally trustworthy — and nothing is published
-        to devices by importing it: a build arrives <strong>held</strong>.
+        from, because they are not equally trustworthy — and importing reaches no
+        device: the build joins the library, and a policy has to name it before
+        anything installs it.
       </p>
 
       <div class="prefs-toolbar" style="margin-top:12px">

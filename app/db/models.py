@@ -46,7 +46,6 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     false as sa_false,
-    true as sa_true,
 )
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -824,15 +823,10 @@ class AppPackageVersion(Base):
     # never drift from the build it describes. NULL means "not scanned yet", which
     # is different from "declares nothing" (an empty object).
     declared_config: Mapped[str | None] = mapped_column(Text, default=None)
-    # Eligible for *automatic* selection — "latest", or "newest above the floor".
-    # A held build stays in the library and can still be reached by an explicit
-    # `artifact_sha256` pin, because a pin names one exact build and is a
-    # deliberate act; making it also require publication would be a second gate
-    # with no separate meaning, and a pin that silently did nothing is the R17
-    # failure wearing a different hat.
-    published: Mapped[bool] = mapped_column(
-        Boolean, default=True, nullable=False, server_default=sa_true()
-    )
+    # ⚠️ There was a `published` flag here and it is gone (W139). It meant
+    # "eligible for automatic selection", and automatic selection is gone with
+    # it: a policy names the exact build it installs. A build is in the library
+    # or it is not.
     uploaded_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
 
     package: Mapped[AppPackage] = relationship(back_populates="versions")

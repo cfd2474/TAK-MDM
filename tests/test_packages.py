@@ -26,6 +26,7 @@ from app.artifacts import axml
 from app.artifacts.apk import ApkError, inspect_apk
 from app.artifacts.bundles import PartRole, inspect, is_container
 from app.artifacts.storage import ArtifactNotFound, LocalArtifactStorage
+from tests.conftest import base_sha
 from tests.apk_fixtures import (
     build_apk,
     build_manifest_axml,
@@ -589,8 +590,15 @@ def require_app(client: TestClient, device_id: str, package_name: str, **entry) 
 
 def test_required_app_resolves_to_downloadable_files(client: TestClient, enrolled):
     device = enrolled()
-    upload(client, build_xapk("com.atakmap.app", 52400, splits=("config.arm64_v8a",)), filename="a.xapk")
-    require_app(client, device["device_id"], "com.atakmap.app")
+    uploaded = upload(
+        client,
+        build_xapk("com.atakmap.app", 52400, splits=("config.arm64_v8a",)),
+        filename="a.xapk",
+    )
+    require_app(
+        client, device["device_id"], "com.atakmap.app",
+        artifact_sha256=base_sha(uploaded),
+    )
 
     state = client.get(f"/api/v1/devices/{device['device_id']}/desired-state").json()
     app = state["desired_state"]["apps"][0]
@@ -621,7 +629,15 @@ def test_required_app_with_nothing_uploaded_is_flagged(client: TestClient, enrol
     ]
 
 
-def test_min_version_code_floor_is_honoured(client: TestClient, enrolled):
+def test_a_floor_alone_chooses_nothing(client: TestClient, enrolled):
+    """⚠️ This used to read `test_min_version_code_floor_is_honoured`, and the
+    behaviour it asserted is deliberately gone (W139).
+
+    A floor is an *automatic selection* — "newest at or above 5" — and the
+    operator asked for automatic selection to go away: a policy names the build
+    it installs. The field is still accepted so stored specs validate, and it
+    now selects nothing, which the device is told in as many words.
+    """
     device = enrolled()
     certificate = make_signing_certificate()
     upload(client, build_apk("com.example.app", 1, certificate_der=certificate))
@@ -629,19 +645,48 @@ def test_min_version_code_floor_is_honoured(client: TestClient, enrolled):
     require_app(client, device["device_id"], "com.example.app", min_version_code=5)
 
     state = client.get(f"/api/v1/devices/{device['device_id']}/desired-state").json()
+    app = state["desired_state"]["apps"][0]
 
-    assert state["desired_state"]["apps"][0]["version_code"] == 9
+    assert app["available"] is False
+    assert "no version chosen" in app["reason"]
 
 
-def test_uploading_a_new_build_bumps_state_version(
+def test_an_older_build_can_be_pinned_over_a_newer_one(client: TestClient, enrolled):
+    """The point of the whole change: three builds exist and the policy picks,
+    including backwards. Nothing about build 9 being newer matters."""
+    device = enrolled()
+    certificate = make_signing_certificate()
+    first = upload(client, build_apk("com.example.app", 1, certificate_der=certificate))
+    upload(client, build_apk("com.example.app", 9, certificate_der=certificate))
+    require_app(
+        client, device["device_id"], "com.example.app",
+        artifact_sha256=base_sha(first),
+    )
+
+    state = client.get(f"/api/v1/devices/{device['device_id']}/desired-state").json()
+
+    assert state["desired_state"]["apps"][0]["version_code"] == 1
+
+
+def test_uploading_a_new_build_moves_no_device(
     client: TestClient, enrolled, mtls_headers
 ):
-    """The policy text never changes, but what the device must do does."""
+    """⚠️ The inverse of what this test used to assert, and the reason the
+    `published` flag could be deleted (W139).
+
+    An upload used to change what a device must do — that is what the flag, the
+    three-way publish question and the "never walk a fleet backwards" rule all
+    existed to manage. A policy now names its build, so adding another one to
+    the library is invisible to every device until someone chooses it.
+    """
     device = enrolled()
     headers = mtls_headers(device["certificate_pem"])
     certificate = make_signing_certificate()
-    upload(client, build_apk("com.example.app", 1, certificate_der=certificate))
-    require_app(client, device["device_id"], "com.example.app")
+    first = upload(client, build_apk("com.example.app", 1, certificate_der=certificate))
+    require_app(
+        client, device["device_id"], "com.example.app",
+        artifact_sha256=base_sha(first),
+    )
 
     before = client.post(
         "/api/v1/device/checkin", json={"state_version": 0}, headers=headers
@@ -655,8 +700,9 @@ def test_uploading_a_new_build_bumps_state_version(
         headers=headers,
     ).json()
 
-    assert after["state_version"] > before["state_version"]
-    assert after["desired_state"]["apps"][0]["version_code"] == 2
+    assert after["state_version"] == before["state_version"]
+    state = client.get(f"/api/v1/devices/{device['device_id']}/desired-state").json()
+    assert state["desired_state"]["apps"][0]["version_code"] == 1
 
 
 def test_unrelated_upload_does_not_bump_state_version(

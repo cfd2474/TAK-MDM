@@ -20,10 +20,12 @@ package name, versionCode, signing certificate — is read from the file rather 
 believed from the catalogue. A listing that names the wrong package therefore
 cannot smuggle anything in under it.
 
-⚠️ **Imports are always held, never published.** Publishing aims every device
-asking for "latest" at a build; that is an operator's deliberate act, and it must
-not be a side effect of fetching something to look at. `packages.ingest` would
-otherwise publish anything newer than what is deployed.
+⚠️ **An import reaches no device.** It used to need saying, and to need a
+`publish=False` to enforce it: `ingest` would otherwise have published anything
+newer than what was deployed, so fetching a build to look at would have shipped
+it. Since W139 nothing is chosen automatically at all — a policy names the build
+it installs — so this is now true of every path into the library rather than a
+rule this one has to keep.
 """
 
 from __future__ import annotations
@@ -159,7 +161,7 @@ def import_version(
     label: str | None = None,
     progress=None,
 ) -> AppPackageVersion:
-    """Fetch one build and catalogue it, held."""
+    """Fetch one build and add it to the library."""
     downloaded = source.download(version, progress)
 
     result = package_service.ingest(
@@ -167,8 +169,6 @@ def import_version(
         storage,
         downloaded.data,
         label=label,
-        # ⚠️ Never publish. See the module docstring.
-        publish=False,
     )
     result.version.source = source.name
     result.version.source_url = downloaded.source_url

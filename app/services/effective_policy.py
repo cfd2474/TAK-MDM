@@ -255,13 +255,20 @@ def resolve_required_apps(
                 f"for {package_name}"
             )
         else:
+            # ⚠️ Always None now (W139). An entry that names no build is
+            # incomplete, not a request for whichever build is newest — see
+            # `resolve_for_policy` for why "newest" was the dangerous reading.
             version = packages.resolve_for_policy(
                 session, package_name, min_version_code=entry.get("min_version_code")
             )
-            floor = entry.get("min_version_code")
+            # ⚠️ Two different failures, kept apart. "Nothing uploaded" and "you
+            # never picked a build" look identical from here and are fixed in
+            # completely different places — one is an upload, the other is an
+            # edit. Collapsing them is the R17/R18 mistake again: a reason that
+            # covers every case tells an operator nothing.
             unavailable_reason = (
-                f"no published build at or above versionCode {floor}"
-                if floor
+                "no version chosen — edit the policy and pick the build to install"
+                if packages.has_builds(session, package_name)
                 else "nothing uploaded for it"
             )
 
@@ -362,7 +369,13 @@ def resolve_store_apps(
         if package.package_name in already_required:
             continue
 
-        version = packages.resolve_for_policy(session, package.package_name)
+        # ⚠️ **The newest build, and here the difference is deliberate** (W139).
+        # A required app is installed *for* someone, so the policy has to say
+        # which build and an unanswered question is a broken policy. A store app
+        # is installed *by* someone from a shelf, and there is no policy to carry
+        # the answer — so the shelf offers the current build, the same way any
+        # app store does.
+        version = packages.newest(session, package)
         if version is None:
             continue
 

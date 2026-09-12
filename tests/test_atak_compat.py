@@ -28,9 +28,20 @@ import uuid
 
 import pytest
 
+from app.db.models import PartRole
 from app.services import atak_compat
+from app.services import effective_policy as eff
 from app.services import packages as package_service
 from tests.apk_fixtures import build_apk, make_signing_certificate
+
+
+def base_sha(result) -> str:
+    """The build a policy entry names (W139)."""
+    return next(f.artifact_sha256 for f in result.version.files if f.role is PartRole.BASE)
+
+
+def resolve(db, entry: dict) -> dict:
+    return eff.resolve_required_apps(db, {"APP_CATALOG": {"required_apps": [entry]}})[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -229,23 +240,42 @@ def test_builds_for_different_atak_lines_are_not_ranked_against_each_other(
     )
     db.flush()
 
-    assert other_line.version.published is False
+    # ⚠️ The hazard this guarded is gone rather than fixed (W139). Ranking two
+    # ATAK lines against each other only mattered because the higher number was
+    # *chosen automatically* — the 5.8.0 build carries a lower versionCode than
+    # the 5.5.0 one, so a fleet on 5.8.0 would have been handed the wrong
+    # plugin. Nothing is chosen automatically now: both builds sit in the
+    # library and a policy names one.
+    both = {v.version_code for v in other_line.version.package.versions}
+    assert both == {1787086923, 1787086761}
+    assert resolve(db, {"package_name": "com.plugin"})["available"] is False
 
 
-def test_a_higher_build_on_the_same_line_still_publishes(db, artifact_storage):
-    """Within one ATAK line the sequence is real and must keep working."""
+def test_the_newest_build_across_lines_is_only_used_for_metadata(db, artifact_storage):
+    """⚠️ A known, accepted inaccuracy.
+
+    `packages.newest` ranks purely by versionCode, so for a plugin with builds
+    on two ATAK lines it can name the one for the *older* line. That is only
+    ever read for an icon, a label, an activity list or a declared-config
+    schema — never to decide what a device installs — so the worst outcome is a
+    slightly stale icon. Written down because the ranking looks wrong out of
+    context, and it is not worth a per-line rule to fix a picture.
+    """
     cert = make_signing_certificate()
     package_service.ingest(
         db, artifact_storage,
-        build_apk("com.plugin", 100, certificate_der=cert, plugin_api="com.atakmap.app@5.5.0.CIV"),
-    )
-    newer = package_service.ingest(
-        db, artifact_storage,
         build_apk("com.plugin", 200, certificate_der=cert, plugin_api="com.atakmap.app@5.5.0.CIV"),
+    )
+    newer_line = package_service.ingest(
+        db, artifact_storage,
+        build_apk("com.plugin", 100, certificate_der=cert, plugin_api="com.atakmap.app@5.8.0.CIV"),
     )
     db.flush()
 
-    assert newer.version.published is True
+    chosen = package_service.newest(db, newer_line.version.package)
+
+    assert chosen.version_code == 200
+    assert chosen.plugin_api == "com.atakmap.app@5.5.0.CIV"
 
 
 def test_backfill_reads_plugin_api_from_stored_artifacts(db, artifact_storage):
@@ -320,13 +350,15 @@ def test_a_plugin_for_another_atak_is_flagged_against_the_device(
 ):
     """The operator's example: UAS Tool built for 5.5.0, ATAK 5.8.0 installed."""
     session = enrolled()
-    package_service.ingest(
+    plugin = package_service.ingest(
         db, artifact_storage,
         build_apk("com.plugin", 1, plugin_api="com.atakmap.app@5.5.0.CIV"),
     )
     db.commit()
+    # Pinned, because an entry naming no build installs nothing and so cannot
+    # mismatch anything (W139).
     assign_apps(client, make_policy, assign, session["device_id"],
-                [{"package_name": "com.plugin"}])
+                [{"package_name": "com.plugin", "artifact_sha256": base_sha(plugin)}])
     db.commit()
 
     from app.db.models import Device
@@ -385,13 +417,13 @@ def test_the_device_page_shows_the_mismatch_and_names_the_atak(
     client, db, artifact_storage, enrolled, make_policy, assign
 ):
     session = enrolled()
-    package_service.ingest(
+    plugin = package_service.ingest(
         db, artifact_storage,
         build_apk("com.plugin", 1, plugin_api="com.atakmap.app@5.5.0.CIV"),
     )
     db.commit()
     assign_apps(client, make_policy, assign, session["device_id"],
-                [{"package_name": "com.plugin"}])
+                [{"package_name": "com.plugin", "artifact_sha256": base_sha(plugin)}])
     from app.db.models import Device
 
     db.get(Device, uuid.UUID(session["device_id"])).atak_version = "5.8.0.4 (174b425)[playstore]"

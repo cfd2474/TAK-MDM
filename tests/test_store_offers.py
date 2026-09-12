@@ -30,7 +30,7 @@ from sqlalchemy import select
 
 from app.db.models import AppPackage, Device
 from app.services import desired_state, effective_policy as eff
-from tests.conftest import ADMIN_HEADERS
+from tests.conftest import ADMIN_HEADERS, base_sha
 
 SURVEY123 = pathlib.Path("Test Files/ArcGIS+Survey123_3.25.32_APKPure.apk")
 ATAK = pathlib.Path("Test Files/ATAK-5.8.0.4-174b425-civSmall-release.apk")
@@ -44,13 +44,17 @@ needs_atak = pytest.mark.skipif(
 
 
 def _upload(client, path: pathlib.Path) -> str:
+    return _upload_full(client, path)["package"]["package_name"]
+
+
+def _upload_full(client, path: pathlib.Path) -> dict:
     response = client.post(
         "/api/v1/packages",
         files={"file": (path.name, path.read_bytes(), "application/octet-stream")},
         headers=ADMIN_HEADERS,
     )
     assert response.status_code == 201, response.text
-    return response.json()["package"]["package_name"]
+    return response.json()
 
 
 def _list_in_store(client, db, package_name: str, listed: bool = True) -> None:
@@ -218,9 +222,18 @@ def test_an_offer_carries_the_apps_name_and_icon(client, db, make_device):
 def test_a_required_app_carries_them_too(client, db, make_device, make_policy, assign):
     """Not a store-only nicety — the same screen lists both."""
     created = make_device()
-    package_name = _upload(client, SURVEY123)
+    uploaded = _upload_full(client, SURVEY123)
+    package_name = uploaded["package"]["package_name"]
+    # Pinned: a required entry naming no build installs nothing (W139), so
+    # without this the entry would carry a reason instead of a label.
     policy = make_policy(
-        "Requires Survey123", "APP_CATALOG", {"required_apps": [{"package_name": package_name}]}
+        "Requires Survey123",
+        "APP_CATALOG",
+        {
+            "required_apps": [
+                {"package_name": package_name, "artifact_sha256": base_sha(uploaded)}
+            ]
+        },
     )
     assign(policy["id"], created["id"])
 

@@ -166,7 +166,7 @@ storage = LocalArtifactStorage(pathlib.Path(str(get_settings().artifact_dir)))
 with SessionLocal() as session:
     r = packages.ingest(
         session, storage,
-        pathlib.Path("/tmp/atlas-agent-<N>.apk").read_bytes(), publish=True,
+        pathlib.Path("/tmp/atlas-agent-<N>.apk").read_bytes(),
     )
     session.commit()
     agent_update.publish(session, r.version.version_code, updated_by="deploy")
@@ -176,6 +176,13 @@ with SessionLocal() as session:
     print("fleet pointer ->", agent_update.current(session))
     print("rollout:", agent_update.rollout(session))
 ```
+
+⚠️ **`ingest` no longer takes `publish=`** (W139). It was removed with the
+published flag, and a script still passing it dies with `TypeError` *after* the
+APK has been copied into the container — which looks like a broken build rather
+than a stale script. The agent's own update channel never used that flag:
+`agent_update.publish` on the next line is a different mechanism with its own
+pointer, and it is still what aims the fleet at a build.
 
 ⚠️ **`-e PYTHONPATH=/app` is required.** Running `python /tmp/pub<N>.py` puts
 `/tmp` on `sys.path`, not the working directory, so the script dies with

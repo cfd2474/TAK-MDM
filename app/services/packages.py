@@ -96,8 +96,13 @@ class VersionComparison:
 
     @property
     def would_deploy(self) -> bool:
-        """True when publishing this build changes what devices install."""
-        return self.relation in ("first", "newer")
+        """Always False: an upload deploys nothing (W139).
+
+        Kept so the console's upload dialog keeps its shape while it is being
+        reworked. Devices install what their policy names, and adding a build to
+        the library changes no policy.
+        """
+        return False
 
 
 def _validate(session: Session, bundle: InspectedBundle) -> AppPackage | None:
@@ -138,15 +143,14 @@ def ingest(
     data: bytes,
     *,
     label: str | None = None,
-    publish: bool | None = None,
 ) -> IngestResult:
     """Inspect an APK or XAPK/APKS upload, store its parts, and record the version.
 
-    ``publish`` decides whether the new build is eligible for automatic selection.
-    Left as None it defaults by comparison: a build **newer** than everything
-    published is published, and an **older** one is held. That keeps an upload from
-    quietly moving a fleet backwards, and matches what the operator almost always
-    means by uploading an old build — keeping it available, not deploying it.
+    ⚠️ **An upload deploys nothing** (W139). It adds a build to the library, and
+    a policy names the build it wants. There used to be a `publish` argument
+    deciding whether this build could be picked automatically, with a rule about
+    not moving a fleet backwards; nothing is picked automatically now, so there
+    is nothing for it to decide and no way for an upload to move a fleet at all.
     """
     try:
         bundle = inspect(data)
@@ -189,23 +193,6 @@ def ingest(
             "uploaded; bump versionCode to publish a new build"
         )
 
-    if publish is None:
-        # Never let an upload move a fleet backwards by accident: an older build is
-        # held, a newer one (or the first) is published.
-        #
-        # ⚠️ Only compared **within one ATAK line**. Two builds of a plugin
-        # targeting different ATAK versions are alternatives, not a sequence, and
-        # their versionCodes do not order — UAS Tool for ATAK 5.8.0 carries a
-        # *lower* code than the 5.5.0 build (D45). Ranking across lines would
-        # publish whichever number happened to be bigger.
-        deployed = latest_published(session, package)
-        if deployed is None:
-            publish = True
-        elif deployed.plugin_api != bundle.plugin_api:
-            publish = False
-        else:
-            publish = bundle.version_code > deployed.version_code
-
     version = AppPackageVersion(
         package_id=package.id,
         version_code=bundle.version_code,
@@ -216,7 +203,6 @@ def ingest(
         # "" is a real answer — no native code, so it runs anywhere. See the
         # column's note on why that is not the same as NULL.
         abis=",".join(bundle.abis),
-        published=publish,
         # Scanned once, here, from the base part (W49). The device needs each key's
         # declared type to build a Bundle the app can actually read.
         # Read during inspection, while the resource table was already in hand
@@ -328,35 +314,48 @@ def delete_package(
 def resolve_for_policy(
     session: Session, package_name: str, *, min_version_code: int | None = None
 ) -> AppPackageVersion | None:
-    """Best **published** version satisfying a policy's floor, or None.
+    """Always None. A policy entry that names no build deploys nothing (W139).
 
-    Held builds are skipped here and only here. This is the *automatic* selection
-    path — "latest", or "newest above the floor" — and publishing is what an
-    operator uses to say a build may be chosen automatically. An explicit
-    `artifact_sha256` pin names one exact build and bypasses this entirely (W31).
+    ⚠️ **This used to be the automatic-selection path** — "newest published
+    build at or above the floor" — and it is deliberately empty rather than
+    deleted, so that an entry carrying only a `min_version_code` resolves the
+    same way as one carrying nothing: to a reason, not to a build.
+
+    ⚠️ **"Newest" would have been the obvious replacement and is the dangerous
+    one.** The console's own library had two packages whose every build was
+    held, one of them named by an unpinned policy entry. Under "newest" the
+    deletion of a column would have installed Chrome across the fleet at the
+    next check-in. Nothing is chosen on an operator's behalf any more; an entry
+    with no build named is incomplete, and says so.
+
+    `min_version_code` is accepted so stored specs still validate.
+    """
+    return None
+
+
+def has_builds(session: Session, package_name: str) -> bool:
+    """Whether the library holds any build of this package at all.
+
+    Separates "you have not uploaded this app" from "you have it but no policy
+    entry names a build" — two failures with the same symptom and different
+    fixes.
     """
     package = session.scalar(
         select(AppPackage).where(AppPackage.package_name == package_name)
     )
-    if package is None:
-        return None
-
-    candidates = [
-        version
-        for version in package.versions
-        if version.published
-        and (min_version_code is None or version.version_code >= min_version_code)
-    ]
-    return max(candidates, key=lambda v: v.version_code, default=None)
+    return bool(package and package.versions)
 
 
-def latest_published(session: Session, package: AppPackage) -> AppPackageVersion | None:
-    """The build this package currently deploys, or None if every one is held."""
-    return max(
-        (v for v in package.versions if v.published),
-        key=lambda v: v.version_code,
-        default=None,
-    )
+def newest(session: Session, package: AppPackage) -> AppPackageVersion | None:
+    """The most recent build in the library, or None if there are none.
+
+    ⚠️ **For reading metadata, never for deciding what to deploy.** Callers want
+    a representative build to pull an icon, a label, an activity list or a
+    declared-config schema out of, and the newest is the best guess at what the
+    app currently looks like. What a *device* installs is whatever its policy
+    names, which is a different question with a different answer.
+    """
+    return max(package.versions, key=lambda v: v.version_code, default=None)
 
 
 def compare_upload(session: Session, data: bytes) -> VersionComparison:
@@ -382,7 +381,9 @@ def compare_upload(session: Session, data: bytes) -> VersionComparison:
         )
 
     duplicate = any(v.version_code == bundle.version_code for v in package.versions)
-    deployed = latest_published(session, package)
+    # The newest build in the library, purely so the console can say "this is
+    # older than what you already have". It is not what anything deploys.
+    deployed = newest(session, package)
     if duplicate:
         relation = "same"
     elif deployed is None or bundle.version_code > deployed.version_code:
@@ -524,7 +525,7 @@ def backfill_labels(session: Session, storage: ArtifactStorage) -> int:
         select(AppPackage).where(needs_label | AppPackage.icon_media_type.is_(None))
     ).all()
     for package in candidates:
-        version = latest_published(session, package)
+        version = newest(session, package)
         if version is None:
             continue
         # ⚠️ Before the read, not after. This APK has already given up everything
@@ -676,7 +677,7 @@ def declared_receivers(
 def declared_activities(
     session: Session, storage: ArtifactStorage, package_name: str
 ) -> list[dict[str, object]]:
-    """Every activity a package's published build declares, launchers first (W62).
+    """Every activity a package's newest build declares, launchers first (W62).
 
     ⚠️ **Scans every part, not just the base.** Chrome's base APK declares three
     activities and none of them is its launcher — the rest live in its splits. A
@@ -693,7 +694,7 @@ def declared_activities(
     package = session.scalar(
         select(AppPackage).where(AppPackage.package_name == package_name)
     )
-    version = latest_published(session, package) if package else None
+    version = newest(session, package) if package else None
     if version is None:
         return []
 

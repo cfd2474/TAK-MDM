@@ -79,7 +79,7 @@ def _with_declared_types(
             select(AppPackage).where(AppPackage.package_name == package_name)
         )
         if package is not None:
-            version = package_service.latest_published(session, package)
+            version = package_service.newest(session, package)
             if version is not None:
                 declared = package_service.declared_config(session, version, storage)
                 # Only the keys this policy actually sets — the device has no use

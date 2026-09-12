@@ -12,12 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A held import has to look imported (W124).
+"""An import has to look imported (W124).
 
 Operator imported Chrome from Google Play. It worked — four splits, version
 `152.0.7977.82` — and the console said `none published`, which is *also* what a
 package with nothing in it says. Nothing on the row distinguished "imported and
 waiting" from "not there", so a successful import read as a failure.
+
+⚠️ **The wording that fixed it is gone; the bug it fixed is not.** W139 removed
+publishing altogether, so there is no "held" to say — the column shows the
+newest build in the library and an empty package is still the only warning.
+These tests follow the invariant rather than the sentence: a package with a
+build in it must never render like a package with none.
 """
 
 from __future__ import annotations
@@ -34,34 +40,31 @@ from tests.apk_fixtures import build_apk
 from tests.conftest import ADMIN_HEADERS
 
 
-def _held(db, artifact_storage, package: str = "org.example.held", code: int = 42):
-    """Ingest a version and leave it unpublished, as a repo import does."""
+def _imported(db, artifact_storage, package: str = "org.example.held", code: int = 42):
+    """Put one build in the library, the way an import does."""
     from app.services import packages as package_service
 
-    # publish=False is the repo-import path: stored, eligible for nothing
-    # until an operator publishes it.
-    package_service.ingest(db, artifact_storage, build_apk(package, code), publish=False)
+    package_service.ingest(db, artifact_storage, build_apk(package, code))
     db.commit()
     return db.scalar(select(AppPackage).where(AppPackage.package_name == package))
 
 
-def test_a_held_version_is_named_and_not_flagged_as_a_fault(
+def test_an_imported_version_is_named_and_not_flagged_as_a_fault(
     client: TestClient, db, artifact_storage
 ):
     """⚠️ The bug the operator hit, twice over.
 
-    `none published` alone is true of an empty package and of one holding a
+    `none published` alone was true of an empty package *and* of one holding a
     freshly imported build, and it was rendered in warning orange — so a
-    successful import was reported as a fault. Imports never publish by design
-    (`repo_import`: publishing aims every device asking for "latest" at a
-    build), which makes "held" the normal outcome, not an exception.
+    successful import was reported as a fault. The row now names the build,
+    which is both the fix and the simpler thing to say.
     """
-    package = _held(db, artifact_storage)
+    package = _imported(db, artifact_storage)
 
     body = client.get("/apps", headers=ADMIN_HEADERS).text
     row = body[body.index(package.package_name) :][:1200]
 
-    assert "held" in row and "42" in row
+    assert "42" in row
     assert "pill warn" not in row
 
 
@@ -82,12 +85,12 @@ def test_a_package_with_nothing_in_it_is_still_a_warning(
     assert "nothing uploaded" in row
 
 
-def test_a_single_held_version_still_links_to_the_library(
+def test_a_single_version_still_links_to_the_library(
     client: TestClient, db, artifact_storage
 ):
     """⚠️ The link was shown only when a package had **more than one** version,
     so the first import of anything had no way through to it at all."""
-    package = _held(db, artifact_storage)
+    package = _imported(db, artifact_storage)
 
     body = client.get("/apps", headers=ADMIN_HEADERS).text
 
@@ -197,19 +200,17 @@ def test_both_importers_announce_success_the_same_way():
     assert js.count('"Imported"') >= 2
 
 
-def test_the_hold_is_explained_where_it_is_acted_on_not_in_the_receipt():
-    """Holding is the normal result of every import, so it belongs on the page
-    where an operator publishes — which W125 made say so — rather than in the
-    line confirming the download worked."""
+def test_the_receipt_claims_nothing_about_deployment():
+    """⚠️ Three wordings have now stood here — "imported and held", a badge, a
+    muted "· held" — and every one of them was describing a publishing model
+    that no longer exists (W139). What must never come back is a receipt that
+    implies the import reached a device."""
     js = _js()
     apps = pathlib.Path("app/web/templates/apps.html").read_text(encoding="utf-8")
 
     assert "imported and <strong>held</strong>" not in js
-    # W127 dropped the badge at the operator's request but kept the word: the
-    # column means the build devices are offered, so a held one that rendered
-    # identically to a published one would misreport what the fleet gets.
-    assert "· held" in apps
-    assert "pill" not in apps.split("{% if held %}")[1].split("{% else %}")[0]
+    assert "· held" not in apps
+    assert "pill good\">published" not in apps
 
 
 def test_the_progress_bar_survives_the_success():

@@ -283,3 +283,18 @@ def assign(client: TestClient):
         return response.json()
 
     return _assign
+
+
+def base_sha(uploaded: dict) -> str:
+    """The base APK's content address, from an upload response.
+
+    ⚠️ The value a policy entry pins (W139). A policy names the exact build it
+    installs; there is no automatic "latest", so a test that requires an app and
+    does not say which build is testing the unresolvable case whether it meant
+    to or not.
+    """
+    return next(
+        f["artifact_sha256"]
+        for f in uploaded["version"]["files"]
+        if f["role"] == "base"
+    )
