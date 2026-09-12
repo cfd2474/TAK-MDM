@@ -208,6 +208,15 @@ def plugin_packages(session) -> set[str]:
     * the build **came from TAK.gov**, whose catalogue is plugins and nothing
       else — *"any plugin that comes from the tpc repo is obviously a plugin"*.
 
+    ⚠️ **ATAK is never a plugin, and it declares `plugin-api` itself.** Verified
+    against the real build in this checkout:
+    `ATAK-5.8.0.4-174b425-civSmall-release.apk` carries
+    `plugin-api="com.atakmap.app@5.8.0.CIV"`, the same meta-data a plugin uses —
+    presumably to state the API it *provides*. Without this exclusion ATAK is
+    offered in the plugin picker as well as the ATAK Core picker, and a policy
+    can name it twice. The synthetic fixtures never caught it because they only
+    set `plugin-api` when a test asked for a plugin.
+
     ⚠️ **Any build, not the newest.** `plugin_api` is NULL on anything uploaded
     before the column existed, and `backfill_plugin_api` fills those in
     afterwards — asking only the newest build would call a plugin an ordinary
@@ -228,7 +237,7 @@ def plugin_packages(session) -> set[str]:
             )
         )
     )
-    return set(rows)
+    return {name for name in rows if not is_atak(name)}
 
 
 def misplaced_plugins(session, spec: dict | None) -> list[str]:

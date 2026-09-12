@@ -837,6 +837,34 @@ with a test that it stays gone.
 Mutation-checked: let required apps offer everything again and the filter test
 fails. Server **1527 passed, 1 skipped**.
 
+#### 🐛 ATAK declares `plugin-api` itself
+
+Operator asked whether plugin detection actually worked on uploaded APKs and
+XAPKs. Running the real inspector over the files in this checkout answered yes —
+and found a bug in the same breath:
+
+```
+.apk  com.atakmap.android.uastool.plugin plugin_api='com.atakmap.app@5.8.0.CIV'
+.apk  com.atakmap.app.civ                plugin_api='com.atakmap.app@5.8.0.CIV'
+.xapk com.android.chrome                 plugin_api=None
+```
+
+**ATAK carries the same meta-data a plugin does** — presumably stating the API
+it *provides* rather than one it needs. Detecting plugins by that tag alone put
+ATAK in the plugin picker as well as its own ATAK Core picker, where one policy
+could name it in both and trip the duplicate check for a reason nobody could see.
+
+⚠️ **The synthetic fixtures could never have caught this.** `build_apk` sets
+`plugin-api` only when a test asks for a plugin, so no fixture ATAK ever declared
+one — every test agreed with every other test, and all of them were wrong about
+the real file. The new tests read the APKs in `Test Files/` instead, including
+one asserting ATAK still declares the tag, so if that ever stops being true the
+exclusion gets revisited rather than silently doing nothing.
+
+`plugin_packages` now ends `if not is_atak(name)`. Mutation-checked.
+
+Server **1530 passed, 1 skipped**.
+
 ### ✅ W140 — The store becomes something a policy assigns
 
 Operator, 2026-09-12: *"remove the add to store button in the local apps. I want

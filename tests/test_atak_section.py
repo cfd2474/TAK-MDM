@@ -26,6 +26,8 @@ what it was told before.
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -601,3 +603,64 @@ def test_the_orphaned_compat_blob_is_gone():
                  "profile_editor.html"):
         text = pathlib.Path("app/web/templates") / name
         assert "app_compat" not in text.read_text(encoding="utf-8"), name
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ Plugin detection, against the real files
+#
+# The synthetic fixtures set `plugin-api` only when a test asked for a plugin,
+# so they could never have caught ATAK declaring one itself. These read the APKs
+# in the checkout.
+# --------------------------------------------------------------------------- #
+
+_REAL = pathlib.Path("Test Files")
+_REAL_PLUGIN = _REAL / "ATAK-Plugin-uastool-13.0.6-74628a10-5.8.0-civ-release.apk"
+_REAL_ATAK = _REAL / "ATAK-5.8.0.4-174b425-civSmall-release.apk"
+_REAL_XAPK = _REAL / "Google+Chrome_152.0.7977.82_APKPure.xapk"
+
+needs_real = pytest.mark.skipif(
+    not _REAL_PLUGIN.exists(), reason="the real APKs are not in this checkout"
+)
+
+
+@needs_real
+def test_a_real_plugin_apk_is_detected_as_one():
+    from app.artifacts.bundles import inspect
+
+    bundle = inspect(_REAL_PLUGIN.read_bytes())
+
+    assert bundle.package_name == "com.atakmap.android.uastool.plugin"
+    assert bundle.plugin_api == "com.atakmap.app@5.8.0.CIV"
+
+
+@needs_real
+def test_atak_declares_plugin_api_itself_and_is_still_not_a_plugin(db, artifact_storage):
+    """⚠️ The bug this file's synthetic fixtures could not have found.
+
+    The real `ATAK-5.8.0.4-174b425-civSmall-release.apk` carries
+    `plugin-api="com.atakmap.app@5.8.0.CIV"` — the same meta-data a plugin uses,
+    presumably stating the API it *provides*. Detecting plugins by that tag
+    alone put ATAK in the plugin picker beside its own ATAK Core picker, where a
+    policy could name it twice.
+    """
+    from app.artifacts.bundles import inspect
+    from app.services import packages as package_service
+
+    data = _REAL_ATAK.read_bytes()
+    assert inspect(data).plugin_api, "ATAK no longer declares plugin-api; revisit"
+
+    package_service.ingest(db, artifact_storage, data)
+    db.commit()
+
+    assert "com.atakmap.app.civ" not in atak_compat.plugin_packages(db)
+    assert atak_compat.is_atak("com.atakmap.app.civ")
+
+
+@needs_real
+def test_a_real_xapk_is_scanned_and_is_not_a_plugin(db, artifact_storage):
+    """The container path reads the base APK's manifest, so an ordinary split app
+    comes back with nothing — which is the answer that keeps Chrome out of the
+    ATAK section."""
+    from app.artifacts.bundles import inspect
+
+    assert inspect(_REAL_XAPK.read_bytes()).plugin_api is None
