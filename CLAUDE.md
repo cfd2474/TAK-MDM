@@ -59,3 +59,71 @@
 - The operator has given a standing OK to push server updates and agent APKs to
   that host without asking. It does not extend to destroying data, or to any other
   host.
+- ⚠️ **Superseded for ATLAS releases by section 9.** That standing OK predates
+  ATLAS shipping as an InfraTAK module. Releases now reach a server only when
+  the operator runs InfraTAK's update — never from here.
+
+## 9. Releases: bump the version, push to GitHub, never to a server
+
+Every push that changes the product is a release. Two halves, and the second is
+the one that is easy to get wrong by being helpful.
+
+### Bump the version on every push
+
+`VERSION` at the repo root is the product version. Move it forward in the same
+commit as the change:
+
+- **patch** (`1.0.0` → `1.0.1`) by default — fixes, refactors, docs, tests.
+- **minor** (`1.0.0` → `1.1.0`) for a new capability an operator would notice.
+- **major** only when the operator says so.
+
+Then tag it, in that same commit:
+
+```
+git tag -a v1.0.1 -m "v1.0.1 — <what changed>"
+git rev-parse 'v1.0.1^{}'      # the COMMIT, for the module pin
+```
+
+⚠️ **`git rev-parse v1.0.1` returns the tag object, not the commit.** An
+annotated tag is its own object with its own SHA; recording it as the module pin
+made a deploy refuse itself, because the clone's HEAD is the commit the tag
+points at. The `^{}` suffix is not optional.
+
+⚠️ **`VERSION` must equal the newest tag.** `tests/test_version.py` enforces it,
+and that guard is the only reason a hand-maintained version string is allowed
+here at all — `main.py` carried `version="0.1.0"` through a hundred work items
+and taught anyone reading it nothing true. If the test fails, the fix is to bump
+`VERSION`, never to weaken the test.
+
+Three things follow a release and are easy to forget:
+
+- **`dist/` APKs**, when `agent/` changed. Rebuild, copy in, and ⚠️ **raise the
+  Android `versionCode`** — the seeder treats a repeated code as already present
+  and silently keeps the old build, so a rebuilt APK at the same code ships
+  nothing.
+- **The module pin** in the infra-TAK fork (`modules/atlas.py`: `ATLAS_TAG`,
+  `ATLAS_SHA`). It governs *fresh installs* only; updates resolve the newest tag
+  themselves. Leaving it stale means a new install lands on an old release and
+  immediately offers an update.
+- **`PROJECT_STATE.md`**, per section 1.
+
+### Never push a release to a server
+
+**The operator deploys. Not us.** They run InfraTAK's update function by hand,
+deliberately, so that the update path itself is exercised and proven on every
+release rather than bypassed by a convenient `git pull` and rebuild.
+
+Pushing the change to GitHub is the whole job. Do not, unless the operator asks
+for that specific thing in that specific message:
+
+- run a deploy, update, `docker compose up`, or a rebuild on any host;
+- `git pull` on a server to pick a release up;
+- restart the ATLAS containers to "make it take effect".
+
+⚠️ **A server updated from here is a release whose update path was never
+tested.** That is the failure this rule exists to prevent: it would work on the
+operator's box and break on everyone else's, and nobody would find out until a
+real deployment.
+
+Reading the box is still fine — logs, `docker ps`, a rendered page, an audit of
+what an uninstall left behind. The line is at *changing* it.

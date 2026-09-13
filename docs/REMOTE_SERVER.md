@@ -34,6 +34,15 @@ It does **not** cover: destroying data (`docker compose down -v`, dropping the
 database, `rm -rf /opt/atlas`), or anything on a host that is not this one. Ask
 first for those.
 
+⚠️ **Superseded for releases, 2026-09-13.** ATLAS now ships as an InfraTAK
+module and the operator deploys each release himself, through InfraTAK's update
+function — *"do not push updates to the server, I will manually use the update
+function of infraTAK to ensure they update properly"*. A release pushed from
+here is a release whose update path was never exercised: it would work on this
+box and break on everyone else's, and nobody would find out until a real
+deployment. See `CLAUDE.md` section 9. The standing OK above survives only for
+things the operator asks for in the moment.
+
 ---
 
 ## 1b. The InfraTAK dev host (W143)
