@@ -916,6 +916,16 @@ listener is gone.
      could not be expressed and every administrator would have been refused for
      want of a group no Authentik has. Now `${VAR-takmdm-admins}`.
 
+   * ⚠️ **Registering the application was not the same as restricting it.**
+     The startup access-policy converge is default-deny, but it runs when the
+     console *boots* — and a module deploy does not reboot the console. Queried
+     Authentik straight after a successful deploy: the ATLAS application came
+     back with **bindings NONE**, i.e. remote wipe and policy push reachable by
+     every authenticated user on the box until somebody next restarted the
+     console. The deploy now binds "Allow authentik Admins" itself and reports a
+     failure to bind as a failure. Mutation-checked by deleting the binding:
+     `BEFORE: NONE` → `AFTER: ['Allow authentik Admins']`.
+
 9. ✅ **Verified from outside**, against the live box: console `401`→SSO, device
    paths `404` on 443, `/api/v1/enroll` on `:8449` reaches ATLAS through mutual
    TLS, plain HTTP redirects, and `tak.leckliter.net` still answers — the module
