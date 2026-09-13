@@ -265,6 +265,14 @@
     // typed into; both still need the rail to catch up.
     panelsRoot.addEventListener("click", function () { setTimeout(refresh, 0); });
     refresh();
+    // ⚠️ Again, once the rest of this file has run (W142). This block sits near
+    // the top and several modules below it *disable* controls during their own
+    // wiring — the version pickers disable a build select until an app is
+    // chosen — and a disabled control is deliberately not counted as content.
+    // Computing the rail only at this point reads the page as it was half a
+    // tick before it finished setting itself up, and ticks pages nobody has
+    // touched.
+    setTimeout(refresh, 0);
   })();
 
   /* --- App configurations (managed configuration, W49) -----------------------

@@ -488,6 +488,17 @@
       {% endfor %}
     </select>
     <select name="{{ name }}__version_choice" style="min-width:280px">
+      {#
+        ⚠️ An empty first option, so the select holds nothing until an ATAK is
+        picked (W142). Without it the browser selects the first build the moment
+        the page renders, and a page nobody has touched reports itself as
+        configured — W135 again, in a control that did not exist then.
+
+        `atlas.js` drops this option as soon as a package is chosen: the rebuild
+        keeps only options carrying a matching `data-package`, and this one has
+        none.
+      #}
+      <option value=""></option>
       {% for p in atak_packages %}
         {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
           {% set base = (v.files | selectattr('role.value', 'equalto', 'base') | list | first) %}
@@ -542,6 +553,15 @@
       {% endfor %}
     </select>
     <select name="{{ name }}__version_choice" style="min-width:280px">
+      {#
+        ⚠️ Empty first option, so a freshly added row holds nothing until an app
+        is picked (W142). The browser selects the first option the moment a row
+        exists, which ticks the section's rail check before anyone has chosen
+        anything. `atlas.js` drops this option once a package is chosen — the
+        rebuild keeps only options whose `data-package` matches, and this one
+        has none.
+      #}
+      <option value=""></option>
       {% for p in plugin_packages %}
         {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
           {% set base = (v.files | selectattr('role.value', 'equalto', 'base') | list | first) %}
@@ -599,6 +619,15 @@
       becomes a real one.
     #}
     <select name="{{ name }}__version_choice" style="min-width:280px">
+      {#
+        ⚠️ Empty first option, so a freshly added row holds nothing until an app
+        is picked (W142). The browser selects the first option the moment a row
+        exists, which ticks the section's rail check before anyone has chosen
+        anything. `atlas.js` drops this option once a package is chosen — the
+        rebuild keeps only options whose `data-package` matches, and this one
+        has none.
+      #}
+      <option value=""></option>
       {% for p in app_packages %}
         {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
           {% set base = (v.files | selectattr('role.value', 'equalto', 'base') | list | first) %}

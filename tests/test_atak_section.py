@@ -664,3 +664,68 @@ def test_a_real_xapk_is_scanned_and_is_not_a_plugin(db, artifact_storage):
     from app.artifacts.bundles import inspect
 
     assert inspect(_REAL_XAPK.read_bytes()).plugin_api is None
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ A blank section must not tick the rail (W142)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_core_build_select_starts_empty(client: TestClient, db, artifact_storage):
+    """⚠️ W135's bug, in a control that did not exist then.
+
+    The rail ticks a page when any control in it holds a value. A build select
+    with no empty option is selected by the *browser* the moment the page
+    renders, so a section nobody has touched reports itself as configured. The
+    package select beside it always had an empty option; this one did not.
+    """
+    import re
+
+    _seed(db, artifact_storage)
+
+    page = _form(client)
+    block = page[page.index('name="atak_core__version_choice"'):]
+    block = block[: block.index("</select>")]
+    first = re.search(r"<option[^>]*>", block)
+
+    assert first, "the ATAK build select rendered no options at all"
+    assert 'value=""' in first.group(0), (
+        "the first option carries a build, so a blank policy ticks the rail"
+    )
+
+
+def test_every_version_select_starts_empty(client: TestClient, db, artifact_storage):
+    """The same property for the whole family, so the next control of this shape
+    inherits the fix instead of the bug."""
+    import re
+
+    _seed(db, artifact_storage)
+    page = _form(client)
+
+    for match in re.finditer(r'<select name="([^"]*__version_choice)"', page):
+        block = page[match.end():]
+        block = block[: block.index("</select>")]
+        first = re.search(r"<option[^>]*>", block)
+        if first is None:
+            continue  # nothing uploaded for that half of the library
+        assert 'value=""' in first.group(0), match.group(1)
+
+
+def test_the_rail_settles_after_the_rest_of_the_page_wires_itself():
+    """⚠️ The ordering half of the same bug.
+
+    The rail block sits near the top of `atlas.js`, and modules below it disable
+    controls while wiring — a build select is disabled until an app is picked,
+    and a disabled control is deliberately not counted. Computing the rail only
+    at that point reads the page half a tick before it has finished setting
+    itself up.
+    """
+    import pathlib
+
+    js = pathlib.Path("app/web/static/atlas.js").read_text(encoding="utf-8")
+    block = js[js.index('panelsRoot.addEventListener("input", refresh);'):]
+    block = block[: block.index("})();")]
+
+    assert block.count("setTimeout(refresh, 0)") >= 2, (
+        "the rail is computed once, before later modules disable their controls"
+    )

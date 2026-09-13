@@ -586,6 +586,41 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### ✅ W142 — A blank ATAK section ticked its own box
+
+Operator, 2026-09-12: *"the atak core and plugins module is showing data (green
+check) even when blank"*.
+
+#### Two causes, and the second is the interesting one
+
+**The build select had no empty option.** The package select beside it always
+had one; this one listed builds straight off, so the browser selected the first
+the moment the page rendered. `hasContent` saw a control holding `pin:…` and
+ticked the section — W135 exactly, in a control that did not exist when W135 was
+fixed.
+
+⚠️ **And the rail is computed before the page finishes wiring itself.** The
+rail block sits near the top of `atlas.js` at line 262; the module that
+*disables* a build select until an app is picked sits at line 600. A disabled
+control is deliberately not counted — so the rail was reading the page half a
+tick before it had finished setting itself up, and no later event recomputed it.
+Fixed either way: the HTML is truthful on its own, and the rail settles again
+once the file has run.
+
+#### ⚠️ The general test found the same bug in two more places
+
+Written to check the reported control, then widened to every
+`*__version_choice` select — and it immediately failed on **required apps** and
+the **plugin rows**, both shipped in W139 and W141 with the same missing option.
+Neither was reported, because both start with zero rows: the fault only appears
+the moment someone clicks *Add app*, and then races the filter that would have
+disabled it.
+
+That is the argument for testing the property rather than the instance. Three
+controls of one shape, one of them noticed.
+
+Server **1533 passed, 1 skipped**. Mutation-checked on the blank option.
+
 ### ✅ W141 — ATAK Core and Plugins, as their own section
 
 Operator, 2026-09-12: a new App Management sub-category holding ATAK and its
