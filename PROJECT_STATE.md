@@ -931,7 +931,32 @@ listener is gone.
    TLS, plain HTTP redirects, and `tak.leckliter.net` still answers — the module
    does not disturb the TAK stack sharing that Caddy.
 
-10. ⏳ **Still open**: enrol a real device against the module deployment; make
+10. ✅ **The agent checksum now comes from the agent build.** The operator hit
+    `agent_signature_checksum is not configured` minting the first token on the
+    module deployment. W40 solved this on the standalone host by hand-appending
+    `TAKMDM_AGENT_SIGNATURE_CHECKSUM` to `.env` — which cannot work here, because
+    **the module rewrites `.env` on every deploy**.
+
+    ⚠️ Traced rather than patched: `/api/v1/provisioning/agent.apk` serves
+    `latest_version`'s BASE part, *the same build* `declared_receivers` already
+    inspected for the receiver check. Android verifies the APK it downloads, so
+    that file's signing certificate is the only value that can be right — a
+    configured checksum is a claim about it. Both facts now come from one
+    inspection (`agent_build_facts`), which also avoids opening the archive
+    twice for a byte-identical answer.
+
+    A configured value that *disagrees* with the uploaded build is **refused**,
+    not silently overridden: one of the two is wrong, and picking either would
+    mean a QR that dies on the tablet or quietly ignoring what an operator set.
+    That guard is the load-bearing part — mutation-checked; precedence itself is
+    unobservable because the guard fires first. This also closes the trap
+    [docs/ANDROID_PLATFORM_REFERENCE.md](docs/ANDROID_PLATFORM_REFERENCE.md)
+    §Signature checksum names: debug and release keystores have different
+    checksums and pasting the wrong one fails on-device with no explanation.
+
+    Shipped as `v0.1.3`. Uploading the agent is now the whole setup.
+
+11. ⏳ **Still open**: enrol a real device against the module deployment; make
     `cfd2474/TAK-MDM` public and drop the deploy-key parameter; report upstream
     that `ctx['_get_service_domain']` is documented but missing from the ctx
     dict.

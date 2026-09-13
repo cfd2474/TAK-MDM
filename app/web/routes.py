@@ -2477,6 +2477,9 @@ def _render_primary_qr(
         return _render(request, "token_qr.html", identity=identity, **context)
     context["primary"] = primary
 
+    _agent = package_service.agent_build_facts(
+        session, storage, settings.agent_package_name
+    )
     try:
         payload = provisioning.qr_payload(
             settings,
@@ -2484,9 +2487,8 @@ def _render_primary_qr(
             wifi_ssid=wifi_ssid,
             wifi_password=wifi_password,
             wifi_security=wifi_security,
-            declared_receivers=package_service.declared_receivers(
-                session, storage, settings.agent_package_name
-            ),
+            declared_receivers=_agent.receivers if _agent else None,
+            uploaded_checksum=_agent.signature_checksum if _agent else None,
         )
     except provisioning.ProvisioningError as exc:
         context["problem"] = str(exc)

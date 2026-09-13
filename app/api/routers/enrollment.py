@@ -85,7 +85,7 @@ def _provisioning_bundle(
     settings: Settings,
     secret: str,
     wifi,
-    declared_receivers: tuple[str, ...] | None = None,
+    agent: package_service.AgentBuildFacts | None = None,
 ) -> dict[str, Any]:
     """QR and KME payloads. QR is best-effort: KME stays useful without a checksum."""
     bundle: dict[str, Any] = {"kme": provisioning.kme_payload(settings, secret)}
@@ -96,7 +96,8 @@ def _provisioning_bundle(
             wifi_ssid=wifi.ssid if wifi else None,
             wifi_password=wifi.password if wifi else None,
             wifi_security=wifi.security if wifi else "WPA",
-            declared_receivers=declared_receivers,
+            declared_receivers=agent.receivers if agent else None,
+            uploaded_checksum=agent.signature_checksum if agent else None,
         )
     except provisioning.ProvisioningError as exc:
         bundle["qr"] = None
@@ -141,7 +142,7 @@ def create_enrollment_token(
             settings,
             issued.secret,
             payload.wifi,
-            package_service.declared_receivers(
+            package_service.agent_build_facts(
                 session, storage, settings.agent_package_name
             ),
         ),
@@ -226,7 +227,7 @@ def issue_primary_enrollment_qr(
             settings,
             secret,
             wifi=None,
-            declared_receivers=package_service.declared_receivers(
+            agent=package_service.agent_build_facts(
                 session, storage, settings.agent_package_name
             ),
         ),

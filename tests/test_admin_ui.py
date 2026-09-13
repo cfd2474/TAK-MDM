@@ -1515,7 +1515,10 @@ def test_qr_is_withheld_without_a_signature_checksum(client: TestClient):
     )
 
     assert "<svg" not in response.text
-    assert "agent_signature_checksum is not configured" in text_of(response.text)
+    assert "no agent signature checksum available" in text_of(response.text)
+    # The way out is named, because the operator hit this on a fresh install with
+    # nothing uploaded and the old wording only named an environment variable.
+    assert "Upload a build of the agent app" in text_of(response.text)
 
 
 def test_qr_renders_when_a_checksum_is_configured(client: TestClient, settings):

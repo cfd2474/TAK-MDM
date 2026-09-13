@@ -83,6 +83,48 @@ def admin_extras(settings: Settings, secret: str) -> dict[str, str]:
     return extras
 
 
+def resolve_signature_checksum(
+    settings: Settings, uploaded_checksum: str | None
+) -> str:
+    """The base64url SHA-256 Android checks the downloaded agent APK against.
+
+    ⚠️ **The uploaded build wins.** Android verifies the APK it downloads from
+    this server, so the signing certificate of *that file* is the only answer
+    that can be right; a configured value is a claim about it. Deriving it also
+    closes a trap the platform reference calls out by name — the debug and
+    release keystores have different checksums, and pasting the wrong one
+    produces a QR that fails on-device with nothing to explain it.
+
+    A configured value that *disagrees* with the uploaded build is refused
+    rather than silently overridden. One of the two is wrong, and guessing which
+    would either break provisioning or quietly ignore what an operator set on
+    purpose.
+    """
+    configured = settings.agent_signature_checksum
+
+    if uploaded_checksum and configured and uploaded_checksum != configured:
+        raise ProvisioningError(
+            f"the uploaded agent build is signed with a different key than "
+            f"agent_signature_checksum names: the APK this server serves has "
+            f"{uploaded_checksum!r}, the setting says {configured!r}. Android would "
+            f"reject the install. Upload the build that matches the setting, or "
+            f"clear TAKMDM_AGENT_SIGNATURE_CHECKSUM and let the uploaded build "
+            f"speak for itself."
+        )
+
+    checksum = uploaded_checksum or configured
+    if not checksum:
+        # Android refuses to provision without this, and the failure on-device is
+        # opaque. Better to fail here, where the cause is obvious.
+        raise ProvisioningError(
+            "no agent signature checksum available; Android will reject provisioning "
+            "without the base64url SHA-256 of the agent signing certificate. Upload a "
+            "build of the agent app and this is taken from it automatically, or set "
+            "TAKMDM_AGENT_SIGNATURE_CHECKSUM."
+        )
+    return checksum
+
+
 def qr_payload(
     settings: Settings,
     secret: str,
@@ -92,6 +134,7 @@ def qr_payload(
     wifi_security: str = "WPA",
     leave_system_apps_enabled: bool = True,
     declared_receivers: tuple[str, ...] | None = None,
+    uploaded_checksum: str | None = None,
 ) -> dict[str, Any]:
     """The JSON encoded into a Device Owner provisioning QR code.
 
@@ -110,17 +153,11 @@ def qr_payload(
                 f"{', '.join(r for r in declared_receivers if r.startswith(settings.agent_package_name))}"
             )
 
-    if not settings.agent_signature_checksum:
-        # Android refuses to provision without this, and the failure on-device is
-        # opaque. Better to fail here, where the cause is obvious.
-        raise ProvisioningError(
-            "agent_signature_checksum is not configured; Android will reject "
-            "provisioning without the base64url SHA-256 of the agent signing certificate"
-        )
+    checksum = resolve_signature_checksum(settings, uploaded_checksum)
 
     payload: dict[str, Any] = {
         _COMPONENT: settings.agent_admin_receiver,
-        _CHECKSUM: settings.agent_signature_checksum,
+        _CHECKSUM: checksum,
         _DOWNLOAD: settings.agent_apk_url,
         _EXTRAS: admin_extras(settings, secret),
         _SKIP_ENCRYPTION: False,

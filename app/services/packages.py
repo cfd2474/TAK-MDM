@@ -646,15 +646,35 @@ def get_by_id(session: Session, package_id: uuid.UUID) -> AppPackage | None:
     return session.get(AppPackage, package_id)
 
 
-def declared_receivers(
-    session: Session, storage: ArtifactStorage, package_name: str
-) -> tuple[str, ...] | None:
-    """Receivers declared by the latest build of a package, or None if unavailable.
+@dataclass(frozen=True)
+class AgentBuildFacts:
+    """What the agent APK on this server says about itself.
 
-    Used to check that a provisioning payload names an admin component the agent
-    APK actually contains. Only the manifest entry is read, not the whole archive.
-    Returns None rather than raising when nothing is uploaded — the caller then has
-    nothing to verify against, which is not an error.
+    Both facts come from one inspection of one file: the build that
+    `/api/v1/provisioning/agent.apk` actually serves. Reading them separately
+    would mean opening the same archive twice for a byte-identical answer.
+    """
+
+    receivers: tuple[str, ...]
+    signature_checksum: str | None
+
+
+def agent_build_facts(
+    session: Session, storage: ArtifactStorage, package_name: str
+) -> AgentBuildFacts | None:
+    """Facts about the latest build of a package, or None if nothing is uploaded.
+
+    Used to check a provisioning payload against the APK the device will really
+    download: that it names an admin receiver the APK contains, and that it
+    carries that APK's own signing-certificate checksum.
+
+    ⚠️ **This is the same build `download_agent_apk` serves** — `latest_version`'s
+    BASE part — which is what makes it the right source for the checksum. Android
+    verifies the downloaded APK against the checksum in the QR, so a value derived
+    from anywhere else is a guess about a file this server is holding.
+
+    Returns None rather than raising when nothing is uploaded — the caller then
+    has nothing to verify against, which is not an error.
     """
     package = session.scalar(
         select(AppPackage).where(AppPackage.package_name == package_name)
@@ -669,9 +689,13 @@ def declared_receivers(
 
     try:
         with storage.open(base.artifact_sha256) as handle:
-            return inspect_apk(handle.read()).receivers
+            info = inspect_apk(handle.read())
     except (ApkError, OSError):
         return None
+    return AgentBuildFacts(
+        receivers=info.receivers,
+        signature_checksum=info.provisioning_checksum,
+    )
 
 
 def declared_activities(
