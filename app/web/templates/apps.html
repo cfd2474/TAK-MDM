@@ -284,13 +284,23 @@
         device profile — which decides the CPU architecture Play serves. Imports
         arrive <strong>held</strong>, like every other source.
       </p>
+      {% if googleplay.link.status.value == 'linked' %}
       <p class="field-tip">
         ⚠️ Play publishes no checksum here, so a download is checked by reading
         the file after it arrives rather than against anything Google stated.
         Using this path also carries the Terms of Service caveat shown on the
         admin tab.
       </p>
+      {% endif %}
 
+      {#
+        ⚠️ No search box without a linked account (W145). Play is the one source
+        that cannot be searched anonymously — every request is made *as* the
+        linked account — so offering the box first meant a search that failed at
+        the credential and surfaced as an error about Google, which reads like
+        Play being down rather than like a step not yet taken.
+      #}
+      {% if googleplay.link.status.value == 'linked' %}
       <div class="prefs-toolbar" style="margin-top:12px">
         <input type="search" id="play-q" class="field-grow"
                aria-label="Search Google Play" data-repo-query>
@@ -304,6 +314,20 @@
 
       <p class="muted" data-repo-status style="font-size:12px"></p>
       <div data-repo-results></div>
+      {% else %}
+      <p class="sub" style="margin-top:12px">
+        <strong>No Google account is linked</strong>, so there is nothing to
+        search as.
+      </p>
+      <p>
+        Link one under <a href="/admin#tab-googleplay">Admin → Google Play</a>.
+        Play serves downloads to an account, not to a server, and the account's
+        device profile decides which CPU architecture you get back.
+      </p>
+      {% if googleplay.link.last_error %}
+        <div class="banner bad">{{ googleplay.link.last_error }}</div>
+      {% endif %}
+      {% endif %}
     </div>
 
     <div class="modal-backdrop" data-repo-modal hidden>

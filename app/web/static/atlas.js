@@ -76,9 +76,25 @@
   }
 
   document.querySelectorAll("[data-tabs]").forEach(function (container) {
+    /* ⚠️ `?tab=` counts as well as `#tab-`, because both forms are already in
+       use and only one of them worked. `/admin?tab=googleplay` landed on Admin
+       and sat on whichever tab was default, which reads as a broken link rather
+       than an unsupported spelling — and `/apps?tab=tpc` is worse, because the
+       server *does* honour that query (it eagerly loads the catalog) while the
+       page went on showing a different tab entirely.
+
+       The hash still wins: it is what a click writes back, so it is the more
+       specific statement of intent. */
     var fromHash = (location.hash || "").replace(/^#tab-/, "");
+    var fromQuery = "";
+    try {
+      fromQuery = new URLSearchParams(location.search).get("tab") || "";
+    } catch (e) {
+      fromQuery = "";
+    }
+    var wanted = fromHash || fromQuery;
     var initial =
-      (fromHash && container.querySelector('[data-tab="' + CSS.escape(fromHash) + '"]') && fromHash) ||
+      (wanted && container.querySelector('[data-tab="' + CSS.escape(wanted) + '"]') && wanted) ||
       (container.querySelector("[data-tab].on") || container.querySelector("[data-tab]") || {}).getAttribute &&
         (container.querySelector("[data-tab].on") || container.querySelector("[data-tab]")).getAttribute("data-tab");
     if (initial) activateTab(container, initial);

@@ -2643,6 +2643,10 @@ def apps_page(
         # its own tab (W101), and listing it here would promise a search this
         # panel does not perform.
         repo_sources=[r for r in app_repos.KNOWN if r.unified],
+        # Whether Google Play can be searched at all. The panel offers no search
+        # box without it: the request would fail at the credential and report
+        # something that reads like Play being down (W145).
+        googleplay=_googleplay_panel(session),
     )
 
 

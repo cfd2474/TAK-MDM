@@ -600,12 +600,17 @@ def test_google_play_has_its_own_tab_and_leaves_the_repository_search(client):
     A Play result costs a linked Google account and carries terms the others do
     not; putting it behind a shared bar would hide that. It gets a tab, between
     TPC Plugins and the 3rd party repositories, and drops out of the unified
-    search — so each panel has exactly one bar, and two exist in total.
+    search — so each panel has its own bar rather than sharing one.
+
+    ⚠️ The count is one, not two, until an account is linked (W145): Play offers
+    no search box at all without one, because every Play request is made *as*
+    the linked account. `test_play_search_gate.py` covers both states; what
+    matters here is that the repository bar is unaffected either way.
     """
     body = client.get("/apps").text
 
     assert 'data-tab-panel="play"' in body
-    assert body.count("data-repo-query") == 2, "one bar per panel, not one shared"
+    assert body.count("data-repo-query") == 1, "the repository panel keeps its own bar"
 
     # Ordered between the TPC and repository tabs, as asked.
     assert (
