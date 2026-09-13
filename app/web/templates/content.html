@@ -39,7 +39,7 @@
 
   <div class="row">
     <div>
-      <label>Upload a package you already have</label>
+      <label data-required>Upload a package you already have</label>
       <form method="post" action="/content/data-package/upload"
             enctype="multipart/form-data" class="toolbar">
         {{ csrf_field(csrf_token) }}
@@ -76,7 +76,9 @@
       <label for="pkg-desc">Description (optional)</label>
       <input id="pkg-desc" name="description" class="field-full">
 
-      <label>Files</label>
+      {# Names the whole list, whose rows are added on demand — `for` could
+         only ever point at the first one, so the marker is opted into. #}
+      <label data-required>Files</label>
       <div data-package-files>
         <div class="rs-row"><input type="file" name="files" required></div>
       </div>

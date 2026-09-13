@@ -984,3 +984,14 @@ dl.kv dd { margin: 0; font-size: 13px; }
   background: var(--panel-2);
   color: var(--ink);
 }
+
+/* Required-field marker (W146). Red, and not only red: colour alone is not a
+   distinction for a red-green colourblind reader, so the mark is also a glyph
+   that is not there on optional fields, and it carries a title of "required". */
+.req-star {
+  color: var(--bad, #b4341f);
+  font-weight: 700;
+  text-decoration: none;      /* abbr[title] is underlined by default */
+  border-bottom: 0;
+  cursor: help;
+}

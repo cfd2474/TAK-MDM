@@ -16,6 +16,89 @@
  * Everything is opt-in through data- attributes so a page only gets the wiring
  * it asks for.
  */
+/* ⚠️ First on purpose. A top-level throw anywhere in this file stops every
+   block after it from evaluating — so the further down this sits, the more
+   unrelated failures can silently take it out. Found exactly that way: a
+   missing search control on the Apps page threw, and the marker (then last in
+   the file) never ran on that page at all. */
+/* --- Required fields wear an asterisk (W146) --------------------------------
+   Every mandatory field says so, project-wide, without anyone remembering to
+   write it on each one.
+
+   ⚠️ Driven by the `required` attribute rather than a hand-maintained list,
+   because the attribute is already what the browser enforces and what the
+   server's Form(...) signature mirrors. A separate list would be a third place
+   to state the same fact, and the one nobody updates.
+
+   ⚠️ A control with no visible label gets nothing — there is nowhere to put a
+   mark. Those are inline toolbar inputs carrying `aria-label` (cloning a policy
+   from the list), where the surrounding text already says what is wanted.
+
+   Runs again when the DOM grows, because several forms add rows on demand
+   (managed-file rows, attribute rows) and a field that appeared after load is
+   exactly as mandatory as one that did not.
+*/
+(function () {
+  "use strict";
+
+  var MARK = "req-star";
+
+  function labelFor(control) {
+    /* The `for` pairing first: it is the one that survives a tip paragraph
+       sitting between the label and its input, which several forms have. */
+    var id = control.getAttribute("id");
+    if (id) {
+      var byFor = document.querySelector('label[for="' + CSS.escape(id) + '"]');
+      if (byFor) return byFor;
+    }
+    return control.closest("label");
+  }
+
+  function star(label) {
+    var mark = document.createElement("abbr");
+    mark.className = MARK;
+    mark.textContent = "*";
+    /* Announced as "required" rather than read out as a bare asterisk, which is
+       what a screen reader would otherwise do with it. */
+    mark.title = "required";
+    mark.setAttribute("aria-label", "required");
+    label.appendChild(document.createTextNode(" "));
+    label.appendChild(mark);
+  }
+
+  function mark(control) {
+    if (control.type === "hidden" || control.disabled) return;
+    var label = labelFor(control);
+    if (!label || label.querySelector("." + MARK)) return;
+    star(label);
+  }
+
+  function sweep(root) {
+    var scope = root || document;
+    scope.querySelectorAll("[required]").forEach(mark);
+    /* An explicit opt-in, for a label that names a *group* of mandatory
+       controls rather than one of them — a file list whose rows are added on
+       demand, where `for` could only ever point at the first row. */
+    scope.querySelectorAll("label[data-required]").forEach(function (label) {
+      if (!label.querySelector("." + MARK)) star(label);
+    });
+  }
+
+  sweep(document);
+
+  if (window.MutationObserver) {
+    new MutationObserver(function (records) {
+      records.forEach(function (record) {
+        record.addedNodes.forEach(function (node) {
+          if (node.nodeType !== 1) return;
+          if (node.matches && node.matches("[required]")) mark(node);
+          if (node.querySelectorAll) sweep(node);
+        });
+      });
+    }).observe(document.body, { childList: true, subtree: true });
+  }
+})();
+
 (function () {
   "use strict";
 
@@ -2450,6 +2533,12 @@ function atlasWireAppSource(panelName, searchUrl) {
   if (!panel) return;
 
   var query = panel.querySelector("[data-repo-query]");
+  // ⚠️ A panel can exist without a search bar (W145/W146). Google Play renders
+  // no box until an account is linked, and this used to walk straight into
+  // `.addEventListener` on null — which throws at the top level of this file
+  // and stops every block *after* it from evaluating at all. One missing
+  // control silently disabled the rest of the page's JavaScript.
+  if (!query || !panel.querySelector("[data-repo-search]")) return;
   // ⚠️ There is no picker any more (W98). One bar searches everything, so the
   // source travels on the *row* — a version list or an import that guessed
   // would fetch a different build than the one the operator clicked.
