@@ -728,8 +728,27 @@ listener is gone.
 
 #### Chunk plan
 
-1. **Groundwork**: fork gets a `dev` branch from upstream; dev box re-pointed at
-   the fork; connection details recorded in `docs/`.
+1. ✅ **Groundwork done.** The fork has a `dev` branch cut from upstream's head;
+   `/root/infra-TAK` now has `origin` at the fork, and the three places `app.py`
+   names the upstream repo — `GITHUB_REPO`, the self-update `git fetch`, and the
+   `raw.githubusercontent` bootstrap — point at it too. `app.py` was backed up to
+   `/root/app.py.pre-fork-<stamp>` first, re-parsed after editing, and the
+   console restarted and came back **active**. ⚠️ That box runs a live TAK
+   Server, Authentik and CloudTAK; a 4.2 MB `app.py` edited in place is not a
+   thing to do without a way back.
+
+   ⚠️ **Three blockers surfaced before any module code was written**, which is
+   the point of doing groundwork first:
+
+   * **`cfd2474/TAK-MDM` is private.** A module's `deploy()` runs `git clone` on
+     an *operator's* box. A token inside the module is a hard fail under rule 5,
+     so the repository has to be public — or the module has to distribute
+     prebuilt images instead. `tvr.py` clones a public repo; that is the shape
+     the contract assumes.
+   * **No tags exist.** Rule 8 requires pinning to a release tag *plus* commit
+     SHA, verified after fetch. There is nothing to pin to yet.
+   * The licence direction works: ATLAS is Apache-2.0, infra-TAK is AGPL-3.0,
+     and Apache-2.0 can be taken into an AGPLv3 work.
 2. **Port design**: settled with the operator's document, then written down
    before any code depends on it.
 3. **Packaging ATLAS for a module**: the compose stack has to be installable by
