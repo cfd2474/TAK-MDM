@@ -1061,6 +1061,44 @@ listener is gone.
     * **E — uninstall feedback.** The operator pressed uninstall and got
       silence; it needs to say it has started, and what it is doing.
 
+    **Status: ✅ done and verified on the box.**
+
+    * **v1.0.0** ships. `VERSION` at the root, read by `app/version.py`, guarded
+      by `tests/test_version.py` against the newest tag — the only thing that
+      makes a hand-maintained version safe after `version="0.1.0"` went stale
+      for a hundred work items. Footer reads `v1.0.0`; the revision moved to the
+      tooltip.
+    * ⚠️ **The revision was `unknown` in the container** until a `BUILD` file was
+      written at deploy. `.dockerignore` excludes `.git` — correctly — so the
+      console showed a version to trust with no way to check it. The module now
+      stamps the checkout's revision before the image builds, on deploy and on
+      update. Footer tooltip: `revision 7038f1b · 2026-09-13 · source: file`.
+    * **Public repo.** No deploy key anywhere: SSH remote, paste form, settings
+      value and the key files are gone, and deploy/uninstall delete any left
+      behind. Verified absent from the box.
+    * **Update works, and keeps the fleet.** Exercised for real by checking the
+      box back to `v0.1.4` and running it: `unknown → 1.0.0`, and ⚠️ **the device
+      CA fingerprint was identical before and after** (`31b431376fe5fcd3`), which
+      is the property that matters — the alternative is every enrolled tablet
+      needing a factory reset. Packages survived too.
+    * ⚠️ **Version comparison is on parsed tuples.** `0.10.0` sorts *before*
+      `0.9.0` as a string, which would silently stop offering updates at the
+      tenth release of a series. Demonstrated in the helper check.
+    * ⚠️ **`ATLAS_REPO_API` was referenced but never defined** — a patch that
+      reported success had crashed before writing. The update check swallowed the
+      NameError and returned "unknown" forever, which looks exactly like a box
+      with no network. Found by running the helper against live GitHub rather
+      than reading it.
+    * **Uninstall speaks.** It blocks for the length of a `docker compose down -v`
+      and the dialog used to sit unchanged, so the only honest reading was that
+      the click had missed. It now shows a spinner, lists what it removed, and
+      reloads; a wrong password returns a usable dialog.
+    * **Uninstall leftovers audited** at the operator's request: nothing
+      unexpected. No containers, images, volumes, install directory, Caddy vhost,
+      firewall rule or Authentik application. The 396 MB dangling image on that
+      box is four months old and predates ATLAS. Docker's 21.9 GB build cache is
+      shared with every other module and is not ATLAS's to prune.
+
 16. ⏳ **Still open**: enrol a real device against the module deployment; make
     `cfd2474/TAK-MDM` public and drop the deploy-key parameter; report upstream
     that `ctx['_get_service_domain']` is documented but missing from the ctx
