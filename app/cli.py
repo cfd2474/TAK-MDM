@@ -150,6 +150,7 @@ def seed_packages(args: argparse.Namespace) -> int:
     """
     from app.api.deps import _artifact_storage
     from app.db.base import SessionLocal
+    from app.services import agent_update as agent_update_service
     from app.services import packages as package_service
 
     settings = get_settings()
@@ -174,8 +175,27 @@ def seed_packages(args: argparse.Namespace) -> int:
                 name = result.package.package_name
                 version_name = result.version.version_name
                 version_code = result.version.version_code
+
+                # ⚠️ Offering the new agent to the fleet is part of loading it.
+                # The agent and the server are one release: an update that put a
+                # newer agent in the library and left every device on the old one
+                # would be a fleet quietly running a build this server no longer
+                # matches. Only on a *new* build — a restart re-runs this and
+                # must not overrule an operator who pinned or paused the channel.
+                published = False
+                if name == settings.agent_package_name:
+                    agent_update_service.publish(
+                        session, version_code, updated_by="seed"
+                    )
+                    published = True
+
                 session.commit()
                 print(f"seed: loaded {name} {version_name} (versionCode {version_code})")
+                if published:
+                    print(
+                        f"seed: offering {version_name} to the fleet "
+                        f"(devices update on their next check-in)"
+                    )
         except package_service.PackageError as exc:
             # The ordinary case on every restart after the first.
             print(f"seed: {path.name} not loaded — {exc}")

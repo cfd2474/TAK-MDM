@@ -69,16 +69,24 @@
   {% block content %}{% endblock %}
 </main>
 {#
-  ⚠️ The running revision, on every page (W102). The question a footer answers is
-  "is this server the code I think it is", and only the commit can answer it — a
-  hand-maintained version string goes stale silently, which `version="0.1.0"` in
-  main.py did for a hundred work items.
+  ⚠️ The running release, on every page (W102, W144). A footer answers two
+  questions — "which release is this" and "is this exactly the code I think it
+  is" — and they need different answers, because a tag can move and a commit
+  cannot. The version leads, since that is what an operator compares against a
+  release note and what InfraTAK offers to update to; the revision stays one
+  hover away rather than being dropped.
 
-  It reads "build unknown" when nothing could be established, rather than showing
-  something plausible. A wrong build number is believed; a missing one is not.
+  The old warning still stands: a hand-maintained version goes stale silently,
+  which `version="0.1.0"` in main.py did for a hundred work items. What makes
+  this one safe is not care, it is `tests/test_version.py` refusing a VERSION
+  that does not match the newest tag.
+
+  It reads "build unknown" when nothing could be established, rather than
+  showing something plausible. A wrong build number is believed; a missing one
+  is not.
 #}
 <footer class="site-footer">
-  <span class="mono" title="Source: {{ build.source }}">{{ build.label }}</span>
+  <span class="mono" title="{{ build.detail }}">{{ build.label }}</span>
 </footer>
 <script src="/static/atlas.js?v={{ build.revision }}" defer></script>
 {#

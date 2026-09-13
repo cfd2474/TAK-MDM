@@ -1039,7 +1039,29 @@ listener is gone.
     `IJS8zAVM…`, agent served at 21,365,714 bytes), and a restart reported
     *"version code … is already uploaded"* for both rather than duplicating.
 
-15. ⏳ **Still open**: enrol a real device against the module deployment; make
+15. 🚧 **W144 — numeric versions, updates through InfraTAK, public repo.**
+    Operator, 2026-09-13. Chunk plan:
+
+    * **A — versioning.** `VERSION` at the repo root, this release being
+      **1.0.0** (the point ATLAS moved into InfraTAK). ⚠️ `app/version.py`
+      exists *because* a hand-maintained `version="0.1.0"` went stale for a
+      hundred work items — so the file is guarded by a test asserting it matches
+      the newest git tag, and the commit stays in the footer tooltip. The footer
+      label becomes the version.
+    * **B — the fleet follows the release.** The seeder publishes the agent
+      build it loads, so an ATLAS update offers the fleet the matching agent.
+      ⚠️ The launcher is deliberately *not* published — available, assigned by
+      policy, on the operator's instruction.
+    * **C — public repo.** `cfd2474/TAK-MDM` is public, so the module clones
+      over HTTPS and the deploy-key path goes, along with the key on the box.
+    * **D — update through InfraTAK.** Version detection against the newest
+      upstream tag plus a self-update slot, following `tvr.py`: ⚠️ deliberately
+      *not* the registry deploy job slot — update and deploy must never share a
+      lock or a log.
+    * **E — uninstall feedback.** The operator pressed uninstall and got
+      silence; it needs to say it has started, and what it is doing.
+
+16. ⏳ **Still open**: enrol a real device against the module deployment; make
     `cfd2474/TAK-MDM` public and drop the deploy-key parameter; report upstream
     that `ctx['_get_service_domain']` is documented but missing from the ctx
     dict.

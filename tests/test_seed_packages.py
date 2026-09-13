@@ -173,3 +173,50 @@ def test_startup_runs_the_seeder_after_migrations():
 
     assert "seed-packages" in entrypoint
     assert entrypoint.index("alembic upgrade head") < entrypoint.index("seed-packages")
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ The fleet follows the release (W144)
+# --------------------------------------------------------------------------- #
+
+
+def test_loading_the_agent_offers_it_to_the_fleet(db, artifact_storage, settings):
+    """An update that put a newer agent in the library and left every device on
+    the old one would be a fleet running a build this server no longer matches."""
+    from app.services import agent_update as agent_update_service
+    from app.services import packages as package_service
+
+    assert agent_update_service.current(db) is None
+
+    result = package_service.ingest(
+        db, artifact_storage, (DIST / "atlas-agent.apk").read_bytes()
+    )
+    agent_update_service.publish(db, result.version.version_code, updated_by="seed")
+    db.commit()
+
+    assert agent_update_service.current(db) == result.version.version_code
+
+
+def test_the_launcher_is_available_but_never_offered(db, artifact_storage, settings):
+    """⚠️ On the operator's instruction: the launcher is assigned by policy, not
+    pushed. Publishing it would install a home screen on every device."""
+    from app.services import agent_update as agent_update_service
+    from app.services import packages as package_service
+
+    package_service.ingest(
+        db, artifact_storage, (DIST / "atlas-launcher.apk").read_bytes()
+    )
+    db.commit()
+
+    assert agent_update_service.current(db) is None
+
+
+def test_only_the_agent_package_is_published():
+    """The seeder decides by package name, not by position in the directory."""
+    import inspect
+
+    from app.cli import seed_packages
+
+    source = inspect.getsource(seed_packages)
+
+    assert "if name == settings.agent_package_name:" in source

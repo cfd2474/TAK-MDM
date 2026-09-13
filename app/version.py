@@ -48,6 +48,16 @@ _ROOT = Path(__file__).resolve().parent.parent
 
 BUILD_FILE = _ROOT / "BUILD"
 
+#: The released version. ⚠️ Hand-maintained, which this module's own docstring
+#: warns about — so `tests/test_version.py` fails the build when it does not
+#: match the newest git tag. That is the difference between a number somebody
+#: must remember to bump and one they cannot forget: the guard, not the intent.
+#:
+#: The revision is *not* replaced by it. "Which release is this" and "is this
+#: exactly the code I think it is" are different questions, and a tag can move
+#: while a commit cannot — so the version leads and the commit stays alongside.
+VERSION_FILE = _ROOT / "VERSION"
+
 
 @dataclass(frozen=True)
 class BuildInfo:
@@ -63,6 +73,8 @@ class BuildInfo:
     #: Where this came from: env, file, git, or none. Kept so a surprising value
     #: can be traced rather than argued about.
     source: str = "none"
+    #: Released version, e.g. "1.0.0", or None when nothing declared one.
+    version: str | None = None
 
     @property
     def known(self) -> bool:
@@ -70,7 +82,17 @@ class BuildInfo:
 
     @property
     def label(self) -> str:
-        """One short string for the footer."""
+        """One short string for the footer.
+
+        The version when there is one, because that is what an operator compares
+        against a release note and what InfraTAK offers to update. A build with
+        no declared version still reports its revision rather than nothing.
+        """
+        if self.version:
+            text = f"v{self.version}"
+            if self.dirty:
+                text += " · modified"
+            return text
         if not self.known:
             return "build unknown"
         text = f"build {self.revision}"
@@ -79,6 +101,22 @@ class BuildInfo:
         if self.dirty:
             text += " · modified"
         return text
+
+    @property
+    def detail(self) -> str:
+        """The long form, for the footer's tooltip.
+
+        ⚠️ The commit does not disappear just because a version is shown. The
+        question "is this server exactly the code I think it is" still has only
+        one answer, and this is where it stays reachable.
+        """
+        parts = [f"revision {self.revision}"]
+        if self.committed:
+            parts.append(self.committed)
+        if self.dirty:
+            parts.append("uncommitted changes at build time")
+        parts.append(f"source: {self.source}")
+        return " · ".join(parts)
 
 
 def _from_env() -> BuildInfo | None:
@@ -146,14 +184,58 @@ def _from_git() -> BuildInfo | None:
         return None
 
 
+def _resolve_version() -> str | None:
+    """The released version, or None.
+
+    ⚠️ Resolved separately from the revision, and deliberately so: a deployment
+    can know exactly which commit it runs and still not be a numbered release
+    (a working copy between tags), and an image built by other means can be told
+    its version without being able to reach git.
+
+    1. `TAKMDM_VERSION` — an explicit override.
+    2. `VERSION` at the repo root — ships in the clone and in the image, which
+       is what makes this work in a container with no `.git`.
+    3. `git describe --tags` — a working copy, for development.
+    """
+    from_env = (os.environ.get("TAKMDM_VERSION") or "").strip()
+    if from_env:
+        return from_env.lstrip("v")
+
+    try:
+        declared = VERSION_FILE.read_text(encoding="utf-8").strip()
+        if declared:
+            return declared.lstrip("v")
+    except OSError:
+        pass
+
+    if (_ROOT / ".git").exists():
+        try:
+            found = subprocess.run(
+                ["git", "-C", str(_ROOT), "describe", "--tags", "--abbrev=0"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            if found.returncode == 0 and found.stdout.strip():
+                return found.stdout.strip().lstrip("v")
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return None
+
+
 @lru_cache(maxsize=1)
 def build_info() -> BuildInfo:
     """The running build. Resolved once — it cannot change while the process runs."""
+    import dataclasses
+
+    found = BuildInfo()
     for resolve in (_from_env, _from_file, _from_git):
-        found = resolve()
-        if found is not None:
-            return found
-    return BuildInfo()
+        candidate = resolve()
+        if candidate is not None:
+            found = candidate
+            break
+    return dataclasses.replace(found, version=_resolve_version())
 
 
 def write_build_file(path: Path, info: BuildInfo) -> Path:
