@@ -171,3 +171,30 @@ def test_asking_to_pin_nothing_is_refused(settings, tmp_path):
         provisioning.admin_extras(misconfigured, "secret")
 
     assert "nothing to trust" in str(raised.value)
+
+
+def test_the_ca_switch_reaches_the_container():
+    """⚠️ A setting the container never sees is not a setting.
+
+    `docker-compose.yml` has no `env_file`, so a variable written into `.env`
+    reaches the application only where compose names it. The switch was added,
+    written to `.env` by the module, and did nothing at all until this appeared
+    in the api service's environment.
+    """
+    import io
+
+    compose = io.open("docker-compose.yml", encoding="utf-8").read()
+
+    assert "TAKMDM_INCLUDE_SERVER_CA: ${TAKMDM_INCLUDE_SERVER_CA:-}" in compose
+
+
+def test_the_database_password_is_not_a_literal():
+    """An InfraTAK module has to generate its own database credential, and a
+    hardcoded one is a security-scan finding. The default keeps a laptop
+    `docker compose up` working unchanged."""
+    import io
+
+    compose = io.open("docker-compose.yml", encoding="utf-8").read()
+
+    assert "POSTGRES_PASSWORD: ${TAKMDM_DB_PASSWORD:-takmdm}" in compose
+    assert "postgresql+psycopg://takmdm:${TAKMDM_DB_PASSWORD:-takmdm}@db" in compose

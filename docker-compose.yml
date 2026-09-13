@@ -5,7 +5,11 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: takmdm
-      POSTGRES_PASSWORD: takmdm
+      # ⚠️ Not a literal any more. A deployment that generates its own password
+      # sets TAKMDM_DB_PASSWORD; the default keeps a `docker compose up` on a
+      # laptop working exactly as before. An InfraTAK module must generate this
+      # (their §17), and a hardcoded credential is a security-scan finding.
+      POSTGRES_PASSWORD: ${TAKMDM_DB_PASSWORD:-takmdm}
       POSTGRES_DB: takmdm
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -39,8 +43,14 @@ services:
   api:
     build: .
     environment:
-      TAKMDM_DATABASE_URL: postgresql+psycopg://takmdm:takmdm@db:5432/takmdm
+      TAKMDM_DATABASE_URL: postgresql+psycopg://takmdm:${TAKMDM_DB_PASSWORD:-takmdm}@db:5432/takmdm
       TAKMDM_PKI_DIR: /pki
+      # ⚠️ Declared here or it does not exist. This file has no `env_file`, so a
+      # variable in `.env` reaches the container only where compose names it —
+      # writing TAKMDM_INCLUDE_SERVER_CA into .env and stopping there set
+      # nothing at all, and provisioning went on pinning a CA it should not.
+      # Blank means "decide by looking"; see Settings.include_server_ca.
+      TAKMDM_INCLUDE_SERVER_CA: ${TAKMDM_INCLUDE_SERVER_CA:-}
       TAKMDM_ARTIFACT_DIR: /artifacts
       TAKMDM_CACHE_DIR: /cache
       # Baked into enrollment QR codes, so it must be an address the tablet can

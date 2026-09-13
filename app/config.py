@@ -19,6 +19,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -80,6 +81,20 @@ class Settings(BaseSettings):
     # to the absence of a file made the failure depend on a build step nobody
     # reads.
     include_server_ca: bool | None = None
+
+    @field_validator("include_server_ca", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value):
+        """An empty environment variable means "nobody chose", not "invalid".
+
+        ⚠️ Compose substitutes `${TAKMDM_INCLUDE_SERVER_CA:-}` to an empty
+        string when the deployment has no opinion, and pydantic rejects `""` for
+        `bool | None` — so the container refuses to start, which is a very loud
+        failure for a variable whose whole point is to be optional.
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     # --- Admin authentication (Authentik forward auth) -----------------------
     # "disabled" for local development, "forward_auth" behind an Authentik proxy
