@@ -106,13 +106,13 @@
     <div class="panel">
       <h2>Google Play account</h2>
       <p class="sub">
-        Lets the <a href="/apps?tab=repo">3rd party repo</a> search fetch apps from
-        Google Play as one nominated account. Downloads arrive
-        <strong>held</strong>, like every other source.
+        Lets <a href="/apps#tab-play">Apps &rsaquo; Google Play</a> search and fetch
+        as one nominated account. Downloads arrive <strong>held</strong>, like
+        every other source.
       </p>
 
       {% if request.query_params.get('play_linked') %}
-        <div class="banner good">Linked. Google Play now appears in app search.</div>
+        <div class="banner good">Linked. <a href="/apps#tab-play">Apps &rsaquo; Google Play</a> can search now.</div>
       {% endif %}
       {% if request.query_params.get('play_unlinked') %}
         <div class="banner good">

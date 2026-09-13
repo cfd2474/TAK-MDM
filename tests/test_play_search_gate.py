@@ -183,3 +183,13 @@ def test_the_linked_panel_still_explains_itself(client: TestClient, db, token_va
     assert "No Google account is linked" not in text
     for phrase in ("device profile", "CPU architecture", "held"):
         assert text.count(phrase) == 1, f"{phrase!r} appears {text.count(phrase)} times"
+
+
+def test_the_admin_panel_points_at_the_play_tab_not_the_repo_search(client: TestClient):
+    """⚠️ Google Play stopped being a row in the shared repository search when it
+    got its own tab (W101). The admin panel went on saying it fed that search,
+    and sent operators to the wrong tab to use what they had just linked."""
+    body = client.get("/admin").text
+
+    assert "3rd party repo</a> search fetch apps from" not in body
+    assert "/apps#tab-play" in body
