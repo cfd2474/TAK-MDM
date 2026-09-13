@@ -107,7 +107,10 @@ header {
   position: sticky;
   top: 0;
   z-index: 20;
-  min-height: 52px;
+  /* 92px logo + the brand's 5px padding top and bottom. A floor, not the
+     height — it keeps the bar from collapsing and snapping back while the logo
+     is still loading. */
+  min-height: 102px;
   flex-wrap: wrap;
 }
 
@@ -120,12 +123,14 @@ header .brand {
 
 header .brand .brand-logo {
   display: block;
-  height: 46px;
+  /* Twice the old 46px. `width: auto` is what keeps the artwork in proportion;
+     setting both would stretch a 560x153 banner. */
+  height: 92px;
   width: auto;
 }
 
 @media (max-width: 720px) {
-  header .brand .brand-logo { height: 34px; }
+  header .brand .brand-logo { height: 68px; }
 }
 
 header nav {
@@ -141,7 +146,7 @@ header nav a {
   padding: 0 14px;
   color: var(--brandbar-muted);
   text-decoration: none;
-  font-size: 13px;
+  font-size: 19.5px;   /* 13px, scaled by half again */
   font-weight: 550;
   border-bottom: 2px solid transparent;
 }
@@ -156,11 +161,15 @@ header nav a.on {
 header .who {
   margin-left: auto;
   color: var(--brandbar-muted);
-  font-size: 12.5px;
+  font-size: 18.75px;  /* 12.5px, scaled by half again */
   display: flex;
   align-items: center;
   gap: 8px;
 }
+
+/* The signed-in pill scales with the bar it sits in. Scoped, because `.pill`
+   is used throughout the console and only the menu bar was asked to grow. */
+header .who .pill { font-size: 18px; padding: 2px 12px; }
 
 main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 64px; }
 main.wide { max-width: 1440px; }
