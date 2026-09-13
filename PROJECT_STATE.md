@@ -621,6 +621,53 @@ controls of one shape, one of them noticed.
 
 Server **1533 passed, 1 skipped**. Mutation-checked on the blank option.
 
+#### 🐛 …and neither of those was the cause
+
+Operator: *"still showing green check"*, at both the category row and the
+sub-page, surviving a hard reload. Two guesses spent; time to stop guessing.
+
+**Ruled out by evidence, not reasoning:** the live server has zero policies, so
+it is an unsaved page; `managed_group_slugs` ticks only `required-apps` for a
+saved spec; the deployed template and `atlas.js` both carry the W142 changes;
+and the deployed page renders **every** rail check `hidden`, with one `.rs-row`
+whose two selects are both empty.
+
+So the tick had to be JS. jsdom was installed to run the real deployed page
+against the real `atlas.js`, and a tracer on the check's `hidden` setter named
+the caller in one run:
+
+```
+row 0: saved=true
+    atak_core__package_name  value="" nonEmpty=false
+    atak_core__version_choice value="" disabled=true
+```
+
+**`hasContent` returns true for any row carrying `data-saved-row` before it
+looks at a single control.** And the rail marks *every* `.rs-row` present at
+load with it, on the inference "a row exists, so the server rendered it from
+saved data". That holds for a rowset, where rows are created per saved entry.
+ATAK Core is a **fixed** row — it uses the class so the version picker can find
+its package select with `closest(".rs-row")` — and it renders whether or not
+anything is chosen.
+
+⚠️ **Emptying the controls could never have worked.** That branch returns
+before any control is read, which is exactly why two plausible fixes changed
+nothing. Scoped to `[data-rowset] .rs-row`.
+
+✅ Verified in a real DOM both ways: a blank page now shows **zero** visible
+checks, and a row injected into a rowset is still marked saved and still ticks.
+
+⚠️ The earlier two fixes are kept. The blank option and the deferred refresh
+were real faults — they were simply not *this* fault, and the version selects
+would have auto-selected a build the moment a row appeared.
+
+⚠️ My first regression test banned `querySelectorAll(".rs-row").forEach`
+outright and failed on the plugin compatibility check in this same feature —
+the **fourth** over-broad ban this session. It asserts the scoping around the
+marking statement now.
+
+Server **1534 passed, 1 skipped**.
+
 ### ✅ W141 — ATAK Core and Plugins, as their own section
 
 Operator, 2026-09-12: a new App Management sub-category holding ATAK and its

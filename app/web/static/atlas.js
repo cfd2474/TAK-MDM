@@ -178,7 +178,16 @@
     var panelsRoot = document.getElementById(rail.getAttribute("data-rail-panels")) || document;
 
     // Rows present at load came from the server, i.e. from saved policy content.
-    panelsRoot.querySelectorAll(".rs-row").forEach(function (row) {
+    //
+    // ⚠️ **Inside a rowset only** (W142). The inference is "a row exists, so the
+    // server rendered it from something saved" — and that holds only where rows
+    // are created per saved entry. ATAK Core is a *fixed* `.rs-row`: it uses the
+    // class so the version picker can find its package select with
+    // `closest(".rs-row")`, and it renders whether or not anything is chosen.
+    // Marking it saved made a blank ATAK section report content on every page
+    // load, and no amount of emptying the controls could undo it, because this
+    // branch returns before they are looked at.
+    panelsRoot.querySelectorAll("[data-rowset] .rs-row").forEach(function (row) {
       row.setAttribute("data-saved-row", "");
     });
 

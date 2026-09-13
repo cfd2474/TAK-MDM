@@ -711,6 +711,36 @@ def test_every_version_select_starts_empty(client: TestClient, db, artifact_stor
         assert 'value=""' in first.group(0), match.group(1)
 
 
+def test_a_fixed_row_is_not_treated_as_saved_content():
+    """⚠️ The actual cause of the operator's green check, found by running the
+    real page in jsdom after two wrong guesses.
+
+    `atlas.js` marks every `.rs-row` present at load with `data-saved-row`, and
+    `hasContent` returns true for such a row **before looking at any control**.
+    The inference is "a row exists, so the server rendered it from saved data",
+    which holds only where rows are created per saved entry. ATAK Core is a
+    *fixed* row — it uses the class so the version picker can find its package
+    select with `closest(".rs-row")` — and it renders whether or not anything is
+    chosen. Emptying its controls could never have helped: that branch returns
+    first.
+    """
+    import pathlib
+
+    js = pathlib.Path("app/web/static/atlas.js").read_text(encoding="utf-8")
+
+    assert 'querySelectorAll("[data-rowset] .rs-row")' in js, (
+        "every .rs-row at load is marked saved, so a fixed row reports content"
+    )
+    # ⚠️ Scoped to the statement that marks rows, not a blanket ban on the
+    # selector: `.rs-row` is iterated legitimately elsewhere, including by the
+    # plugin compatibility check in this very feature. Banning the string
+    # outright failed on my own code — the fourth time this session.
+    marker = js.index('row.setAttribute("data-saved-row"')
+    assert "[data-rowset]" in js[marker - 300:marker], (
+        "rows are marked saved without being scoped to a rowset"
+    )
+
+
 def test_the_rail_settles_after_the_rest_of_the_page_wires_itself():
     """⚠️ The ordering half of the same bug.
 
