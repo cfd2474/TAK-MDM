@@ -46,6 +46,65 @@ logger = logging.getLogger(__name__)
 #: architecture that arrives — arm64, which is what this fleet runs.
 DEFAULT_DEVICE = "px_9a"
 
+#: Every device profile apkeep's bundled `gpapi` knows, as
+#: `(profile, model, primary ABI)`.
+#:
+#: ⚠️ **Play serves a build matched to this profile.** Choosing one whose primary
+#: ABI is 32-bit makes Play hand back an armeabi-v7a APK, which is the wrong
+#: binary for an arm64 tablet — and nothing downstream would call that an error,
+#: because it is a real APK that simply will not run well.
+#:
+#: Transcribed from `gpapi/device.properties` in EFForg/rs-google-play (23
+#: profiles, read 2026-09-13). ⚠️ **It is a convenience, not a gate**: the server
+#: still accepts any non-empty value, because a list that drifts from the
+#: apkeep in the image should cost an operator a dropdown entry, never the
+#: ability to link an account.
+DEVICE_PROFILES: tuple[tuple[str, str, str], ...] = (
+    ('bravia_vu2', 'BRAVIA VU2', 'armeabi-v7a'),
+    ('google_kiwi_x86_64', 'Google Play Games on PC', 'x86_64'),
+    ('hw_mate20', 'Huawei Mate 20', 'arm64-v8a'),
+    ('mi_a1', 'Xiaomi Mi A1', 'arm64-v8a'),
+    ('nk_drx', 'Nokia 1.3', 'arm64-v8a'),
+    ('nothing_p1', 'Nothing Phone(1)', 'arm64-v8a'),
+    ('op_8_pro', 'OnePlus8Pro_EEA', 'arm64-v8a'),
+    ('oppo_r17', 'Oppo R17', 'arm64-v8a'),
+    ('poco_f1', 'reloaded_beryllium', 'arm64-v8a'),
+    ('px_9_fold', 'Google Pixel 9 Pro Fold', 'arm64-v8a'),
+    ('px_9a', 'Google Pixel 9a', 'arm64-v8a'),
+    ('px_tablet', 'Google Pixel Tablet', 'arm64-v8a'),
+    ('rm_5_pro', 'Realme 5 Pro', 'armeabi-v7a'),
+    ('rm_5i', 'Realme 5i', 'arm64-v8a'),
+    ('rm_7', 'Redmi 7', 'arm64-v8a'),
+    ('rm_note_12_4g', 'Redmi Note 12 4G', 'arm64-v8a'),
+    ('sm_a13_5g', 'Samsung A13 5G', 'armeabi-v7a'),
+    ('sm_f34_5g', 'Samsung F34 5G', 'arm64-v8a'),
+    ('sm_j5_prime', 'Samsung J5 Prime', 'armeabi-v7a'),
+    ('sm_s20_plus', 'Samsung S20+', 'arm64-v8a'),
+    ('sm_s25u', 'Galaxy S25 Ultra', 'arm64-v8a'),
+    ('xm_11a', 'Xiaomi 11 Lite 5G NE', 'arm64-v8a'),
+    ('xp_5_dual', 'Xperia 5 Dual', 'arm64-v8a'),
+)
+
+
+def profiles_by_architecture() -> list[tuple[str, list[tuple[str, str, str]]]]:
+    """`DEVICE_PROFILES` grouped for a picker, 64-bit first.
+
+    The architecture is the only part of this choice that can go quietly wrong,
+    so it is what the groups are built on rather than the manufacturer.
+    """
+    groups: dict[str, list[tuple[str, str, str]]] = {}
+    for profile, model, abi in DEVICE_PROFILES:
+        if abi == "arm64-v8a":
+            key = "64-bit ARM — what ATAK tablets use"
+        elif abi.startswith("armeabi"):
+            key = "32-bit ARM only"
+        else:
+            key = "x86"
+        groups.setdefault(key, []).append((profile, model, abi))
+    order = ["64-bit ARM — what ATAK tablets use", "32-bit ARM only", "x86"]
+    return [(name, groups[name]) for name in order if name in groups]
+
+
 #: The one-time value copied out of the browser. Checked so an obvious paste
 #: mistake is caught here rather than surfacing as an opaque apkeep failure.
 _OAUTH = re.compile(r"^oauth2_4/[A-Za-z0-9._\-]+$")

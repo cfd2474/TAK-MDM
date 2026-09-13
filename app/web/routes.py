@@ -4198,7 +4198,14 @@ def _googleplay_panel(session: Session) -> dict:
     # ⚠️ The token itself is never part of this. The console shows *that* one is
     # held, never its value — there is no reason to render a durable credential
     # back into a page.
-    return {"link": link}
+    return {
+        "link": link,
+        # The picker's options. Grouped by architecture rather than by maker,
+        # because that is the half of the choice that can silently fetch the
+        # wrong binary.
+        "profiles": google_play_link.profiles_by_architecture(),
+        "default": google_play_link.DEFAULT_DEVICE,
+    }
 
 
 @router.post("/admin/google-play/link")

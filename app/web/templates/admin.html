@@ -190,12 +190,26 @@
           <p class="field-tip">Starts with <span class="mono">oauth2_4/</span>.</p>
 
           <label for="gp-device">Device profile</label>
-          <input type="text" id="gp-device" name="device_profile" class="field-full"
-                 value="px_9a">
+          {#
+            ⚠️ Grouped by architecture, because that is the part of this choice
+            that goes quietly wrong: a 32-bit profile makes Play hand back an
+            armeabi-v7a build, which is a perfectly valid APK that is simply the
+            wrong binary for an arm64 tablet.
+          #}
+          <select id="gp-device" name="device_profile" class="field-full">
+            {% for group, rows in googleplay.profiles %}
+              <optgroup label="{{ group }}">
+                {% for profile, model, abi in rows %}
+                  <option value="{{ profile }}" {{ 'selected' if profile == googleplay.default }}>
+                    {{ model }} — {{ profile }} ({{ abi }})
+                  </option>
+                {% endfor %}
+              </optgroup>
+            {% endfor %}
+          </select>
           <p class="field-tip">
-            Decides which build Play serves. <span class="mono">px_9a</span> is a
-            Pixel 9a — arm64, which suits this fleet. Other profiles are listed in
-            apkeep's <span class="mono">device.properties</span>.
+            Decides which build Play serves. The default is a Pixel 9a — arm64,
+            which suits this fleet.
           </p>
 
           <button type="submit">Link account</button>
