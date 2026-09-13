@@ -956,7 +956,36 @@ listener is gone.
 
     Shipped as `v0.1.3`. Uploading the agent is now the whole setup.
 
-11. ⏳ **Still open**: enrol a real device against the module deployment; make
+11. ✅ **ATLAS wears its own banner, and the module page shows one link.**
+    The sidebar, the marketplace tile and the module page each showed a phone
+    emoji. All three now carry `static/logos/atlas-banner.png` — the same artwork
+    ATLAS's web UI wears. ⚠️ The console and marketplace tiles *hide* the module
+    name when `icon_url` is set, which is why the wordmark version is the right
+    file and why the sidebar entry drops its separate text label rather than
+    printing the name twice.
+
+    The status card listed console, device channel and agent package. The last
+    two are not places a person goes — one answers only mutual TLS, the other is
+    for a tablet in out-of-box setup — so only the console remains, as a real
+    link opening in a new tab.
+
+12. ✅ **Removed completely from the dev box**, at the operator's request, for a
+    clean marketplace reinstall. The module's own `uninstall` deliberately keeps
+    the install directory, database volume and device CA — "stop serving this"
+    is not "destroy a fleet's enrolment" — so the rest was cleared separately:
+    `down -v`, the `takmdm_pgdata` volume, both images, `/root/atlas`,
+    `/var/lib/caddy/atlas`, and the `atlas_*` settings keys.
+
+    ⚠️ **`/root/.atlas_deploy_key` was kept deliberately.** `cfd2474/TAK-MDM` is
+    still private, and removing the key would have made the reinstall fail at
+    the clone with nothing on the page to explain it. Verified the page will not
+    prompt for one.
+
+    Verified gone: no containers, images or volumes; no ATLAS vhost (Caddy
+    config still valid); 8449 neither listening nor in ufw; the Authentik
+    application deregistered. `tak`, `authentik` and `map` all still answer.
+
+13. ⏳ **Still open**: enrol a real device against the module deployment; make
     `cfd2474/TAK-MDM` public and drop the deploy-key parameter; report upstream
     that `ctx['_get_service_domain']` is documented but missing from the ctx
     dict.
