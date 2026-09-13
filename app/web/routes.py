@@ -2358,6 +2358,26 @@ def retire_primary(
     return _redirect("/enrollment")
 
 
+@router.get("/enrollment/qr")
+def generate_qr_get() -> RedirectResponse:
+    """A GET here means something turned the POST back into a navigation.
+
+    ⚠️ **This is the only POST route that renders a page**, so its URL stays in
+    the address bar afterwards — and anything that replays that URL arrives as a
+    GET. Observed live: an Authentik session lapsed mid-form, the edge sent the
+    operator through the outpost, and they came back to a POST-only path. The
+    app answered `{"detail": "Method Not Allowed"}` as JSON, which is not a
+    sentence anybody can act on, in the middle of enrolling a device.
+
+    ⚠️ **A redirect, not a fresh QR.** Minting issues a signed short-lived
+    secret, and a GET that mints would hand one out to a reload, a bookmark or a
+    browser prefetch. The Wi-Fi details are not carried over either: a password
+    in a query string would be written to history and to every proxy log between
+    here and the browser.
+    """
+    return _redirect("/enrollment")
+
+
 @router.post("/enrollment/qr", response_class=HTMLResponse)
 def generate_qr(
     request: Request,
