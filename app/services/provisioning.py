@@ -60,11 +60,25 @@ def admin_extras(settings: Settings, secret: str) -> dict[str, str]:
 
     # With a self-signed development server the agent has no way to trust the TLS
     # certificate, and provisioning happens long before it could be told separately.
-    # A publicly-issued certificate needs none of this, so it is only included when
-    # a local one exists.
+    # A publicly-issued certificate needs none of this.
+    #
+    # ⚠️ **An explicit `False` wins over the file being there** (W143). Behind a
+    # proxy holding a publicly-issued certificate — an InfraTAK module behind
+    # Caddy — pinning this deployment's own CA makes every device fail the
+    # handshake during provisioning, with nothing on the tablet to explain why.
+    # `pki/server.crt` may still exist from the init step, so its presence cannot
+    # be the whole answer.
+    if settings.include_server_ca is False:
+        return extras
+
     tls_cert = Path(settings.pki_dir) / "server.crt"
     if tls_cert.exists():
         extras["server_ca_pem"] = tls_cert.read_text()
+    elif settings.include_server_ca is True:
+        raise ProvisioningError(
+            "include_server_ca is set, but no server certificate exists at "
+            f"{tls_cert}. Devices would be provisioned with nothing to trust."
+        )
 
     return extras
 

@@ -783,9 +783,29 @@ listener is gone.
    still checked afterwards, and there is a test that a stranger's certificate
    in the new encoding is still refused. Mutation-checked.
 
-   ⏳ Still to do here: drop ATLAS's own nginx from the module deployment (the
-   app speaks plain HTTP on loopback and Caddy terminates), move the device port
-   to **8449**, and stop the compose file publishing 80/443/9443/8080.
+   🐛 **The QR would have pinned the wrong CA, and nothing would have said
+   so.** `admin_extras` includes `server_ca_pem` when `pki/server.crt` exists —
+   correct for a self-signed standalone box. But `init` runs
+   `init-pki --dev-server-cert` **unconditionally**, so that file exists on
+   *every* deployment, including one whose TLS is terminated by Caddy with a
+   publicly-issued certificate. Every device would then pin a CA nobody serves
+   and fail the handshake **during provisioning**, with nothing on the tablet to
+   explain it.
+
+   `include_server_ca` makes it a stated decision instead of a consequence of a
+   build step nobody reads: `False` wins over the file being there, `True`
+   without a certificate is refused outright rather than shipping a QR that
+   cannot work. Mutation-checked.
+
+   ⚠️ **No compose change was needed to drop nginx**, which was the first
+   instinct. `api` already `depends_on` `db` and `init`, so
+   `docker compose up -d api` starts exactly those three and never touches the
+   proxy. A compose `profile` would have changed what the *existing* standalone
+   deployment does on its next `up`, for no gain.
+
+   ⏳ Still to do here: the module's `docker-compose.override.yml` — bind the
+   app to `127.0.0.1:8760`, drop `--dev-server-cert` from `init`, and set
+   `TAKMDM_INCLUDE_SERVER_CA=0` and the device-facing `TAKMDM_SERVER_URL`.
 4. **`modules/mdm.py`**: descriptor, `detect`, `deploy`, `uninstall`,
    `control_map`, version/update routes, following `tvr.py`.
 5. **Console page**: `templates/mdm.html`, `SERVICE_DOMAIN_DEFAULTS`, the

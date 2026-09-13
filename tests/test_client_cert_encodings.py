@@ -120,3 +120,54 @@ def test_an_unrelated_certificate_is_still_refused(client: TestClient, settings)
     )
 
     assert response.status_code == 401
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ What the QR tells a device to trust (W143)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_fronted_deployment_pins_no_ca(settings, tmp_path):
+    """⚠️ The trap behind Caddy, stated rather than left to a missing file.
+
+    `init` always runs `init-pki --dev-server-cert`, so `pki/server.crt` exists
+    even on a deployment whose TLS is terminated by a proxy holding a
+    *publicly-issued* certificate. Shipping that CA in the QR makes every device
+    fail the handshake at provisioning time, with nothing on the tablet to
+    explain it.
+    """
+    from app.services import provisioning
+
+    (tmp_path / "server.crt").write_text("-----BEGIN CERTIFICATE-----\nnot-used\n")
+    fronted = settings.model_copy(
+        update={"pki_dir": str(tmp_path), "include_server_ca": False}
+    )
+
+    extras = provisioning.admin_extras(fronted, "secret")
+
+    assert "server_ca_pem" not in extras
+
+
+def test_a_standalone_deployment_still_pins_its_own(settings, tmp_path):
+    """The self-signed case, unchanged: the agent has no other way to trust it."""
+    from app.services import provisioning
+
+    (tmp_path / "server.crt").write_text("-----BEGIN CERTIFICATE-----\nlocal\n")
+    standalone = settings.model_copy(update={"pki_dir": str(tmp_path)})
+
+    assert "server_ca_pem" in provisioning.admin_extras(standalone, "secret")
+
+
+def test_asking_to_pin_nothing_is_refused(settings, tmp_path):
+    """⚠️ `include_server_ca: True` with no certificate would provision devices
+    with nothing to trust. Louder than shipping a QR that cannot work."""
+    from app.services import provisioning
+
+    misconfigured = settings.model_copy(
+        update={"pki_dir": str(tmp_path), "include_server_ca": True}
+    )
+
+    with pytest.raises(provisioning.ProvisioningError) as raised:
+        provisioning.admin_extras(misconfigured, "secret")
+
+    assert "nothing to trust" in str(raised.value)

@@ -65,6 +65,22 @@ class Settings(BaseSettings):
     # proxy, and the app must never be exposed directly to the internet.
     client_cert_header: str = "x-ssl-client-cert"
 
+    # Whether provisioning tells the agent to pin a CA for the *server's* TLS.
+    #
+    # None means decide by looking: pin when this deployment generated its own
+    # self-signed certificate, and say nothing when it did not. That is right for
+    # a standalone install and wrong the moment a real proxy with a
+    # publicly-issued certificate is in front, because `pki/server.crt` can still
+    # be sitting there from the init step and would pin a CA nobody serves.
+    #
+    # ⚠️ **False is how a fronted deployment says so out loud** (W143). An
+    # InfraTAK module puts Caddy in front with a public certificate; a QR that
+    # pinned ATLAS's own CA would make every device fail the TLS handshake, at
+    # provisioning time, with nothing on the device to explain it. Leaving that
+    # to the absence of a file made the failure depend on a build step nobody
+    # reads.
+    include_server_ca: bool | None = None
+
     # --- Admin authentication (Authentik forward auth) -----------------------
     # "disabled" for local development, "forward_auth" behind an Authentik proxy
     # provider. There is deliberately no middle setting.
