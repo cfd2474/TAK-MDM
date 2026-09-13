@@ -48,12 +48,15 @@ def test_with_nothing_to_go_on_it_says_unknown(monkeypatch, tmp_path):
     running. A missing one is merely unhelpful, which is the safer failure.
     """
     monkeypatch.delenv("TAKMDM_BUILD", raising=False)
+    monkeypatch.delenv("TAKMDM_VERSION", raising=False)
     monkeypatch.setattr(build_version, "BUILD_FILE", tmp_path / "BUILD")
+    monkeypatch.setattr(build_version, "VERSION_FILE", tmp_path / "VERSION")
     monkeypatch.setattr(build_version, "_ROOT", tmp_path)
 
     info = build_info()
 
     assert info.known is False
+    assert info.version is None
     assert info.label == "build unknown"
     assert info.source == "none"
 
@@ -81,11 +84,19 @@ def test_the_shipped_file_is_what_production_reads(monkeypatch, tmp_path):
         BuildInfo(revision="abc1234", committed="2026-09-08", dirty=False),
     )
     monkeypatch.delenv("TAKMDM_BUILD", raising=False)
+    monkeypatch.delenv("TAKMDM_VERSION", raising=False)
     monkeypatch.setattr(build_version, "BUILD_FILE", path)
+    monkeypatch.setattr(build_version, "VERSION_FILE", tmp_path / "absent")
+    # ⚠️ And no git either: _resolve_version falls back to `git describe`, so
+    # leaving _ROOT pointed at the real checkout would let this repo's own tag
+    # answer a question the test is asking about a deployment without one.
+    monkeypatch.setattr(build_version, "_ROOT", tmp_path)
 
     info = build_info()
 
     assert (info.revision, info.committed, info.source) == ("abc1234", "2026-09-08", "file")
+    # ⚠️ The BUILD file carries the revision, not the release number (W144) —
+    # so an unversioned build still reports the commit rather than inventing one.
     assert info.label == "build abc1234 · 2026-09-08"
 
 
@@ -121,10 +132,17 @@ def test_a_dirty_tree_says_so(monkeypatch, tmp_path):
 def test_every_page_carries_the_footer(client: TestClient):
     """Injected centrally, for the reason the CSRF token is: a page that forgot
     would show nothing rather than fail, so nobody would ever notice."""
+    from app.version import build_info
+
+    label = build_info().label
     for path in ("/", "/apps", "/policies", "/admin"):
         body = client.get(path).text
         assert "site-footer" in body, path
-        assert "build " in body, path
+        # The release label (W144), whatever it resolved to — asserting the
+        # literal text here would just restate the implementation.
+        assert label in body, path
+        # ⚠️ And the revision stays reachable, in the tooltip.
+        assert "revision " in body, path
 
 
 # --------------------------------------------------------------------------- #
