@@ -21,15 +21,15 @@
   <h2>Create a group</h2>
   <form method="post" action="/groups" class="stack">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="row">
+    <div>
       <label for="group-name">Name</label>
       <input type="text" id="group-name" name="name" maxlength="128"
-             required autocomplete="off" style="min-width:260px">
+             required autocomplete="off" class="field-full">
     </div>
-    <div class="row">
+    <div>
       <label for="group-desc">Description</label>
       <input type="text" id="group-desc" name="description" maxlength="500"
-             autocomplete="off" style="min-width:360px">
+             autocomplete="off" class="field-full">
     </div>
     <div>
       <button type="submit">Create group</button>

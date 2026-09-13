@@ -126,12 +126,12 @@
     </p>
     <form method="post" action="/groups" class="stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <div class="row">
+      <div>
         <label for="groups-name">Name</label>
         <input type="text" id="groups-name" name="name" maxlength="128"
                required autocomplete="off" style="min-width:260px">
       </div>
-      <div class="row">
+      <div>
         <label for="groups-desc">Description</label>
         <input type="text" id="groups-desc" name="description" maxlength="500"
                autocomplete="off" style="min-width:360px">

@@ -233,14 +233,20 @@
       #}
       <form method="post" action="/storefronts" class="stack" style="margin-bottom:18px">
         {{ csrf_field(csrf_token) }}
-        <div class="row">
-          <label for="sf-new-name">Name</label>
-          <input type="text" id="sf-new-name" name="name" maxlength="128" required
-                 autocomplete="off" style="min-width:240px">
-          <label for="sf-new-desc">Description</label>
-          <input type="text" id="sf-new-desc" name="description" maxlength="500"
-                 autocomplete="off" style="min-width:300px">
-          <button type="submit">Create storefront</button>
+        <div class="row stacked">
+          <div>
+            <label for="sf-new-name">Name</label>
+            <input type="text" id="sf-new-name" name="name" maxlength="128" required
+                   autocomplete="off" class="field-full">
+          </div>
+          <div>
+            <label for="sf-new-desc">Description</label>
+            <input type="text" id="sf-new-desc" name="description" maxlength="500"
+                   autocomplete="off" class="field-full">
+          </div>
+          <div style="margin-top:12px">
+            <button type="submit">Create storefront</button>
+          </div>
         </div>
         <p class="field-tip">
           You will land on its page, where its apps and their builds are chosen.

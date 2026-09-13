@@ -131,7 +131,7 @@
   {% else %}
   <form method="post" action="{{ prefix }}/{{ container.id }}/assignments" class="stack">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="row">
+    <div>
       <label for="assign-policy">Policy</label>
       <select id="assign-policy" name="policy_id" required style="min-width:280px">
         {% for p in assignable %}
@@ -139,10 +139,10 @@
         {% endfor %}
       </select>
     </div>
-    <div class="row">
+    <div>
       <label for="assign-rank">Rank</label>
       <input type="number" id="assign-rank" name="rank" value="0" style="width:90px">
-      <span class="field-tip">Higher wins when two policies set the same field.</span>
+      <p class="field-tip">Higher wins when two policies set the same field.</p>
     </div>
     <div><button type="submit">Assign to {{ label }}</button></div>
   </form>

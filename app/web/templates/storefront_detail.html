@@ -19,12 +19,12 @@
   <h2>Name</h2>
   <form method="post" action="/storefronts/{{ storefront.id }}" class="stack">
     {{ csrf_field(csrf_token) }}
-    <div class="row">
+    <div>
       <label for="sf-name">Name</label>
       <input type="text" id="sf-name" name="name" maxlength="128" required
              value="{{ storefront.name }}" style="min-width:260px">
     </div>
-    <div class="row">
+    <div>
       <label for="sf-desc">Description</label>
       <input type="text" id="sf-desc" name="description" maxlength="500"
              value="{{ storefront.description or '' }}" style="min-width:360px">

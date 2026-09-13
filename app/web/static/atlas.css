@@ -257,6 +257,15 @@ label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 12.5
 .row { display: flex; gap: 16px; flex-wrap: wrap; }
 .row > * { flex: 1 1 320px; min-width: 0; }
 
+/* One field per line, label directly above its input (W147).
+   ⚠️ For name-and-description forms. Spread across columns, a label sits at the
+   left of a 320px track while its input starts wherever the text ended, which
+   reads as two unrelated things — the wider the panel, the further apart they
+   look. The column gap goes too: `label` already carries its own top margin,
+   and adding 16px on top of it double-spaces the list. */
+.row.stacked { flex-direction: column; gap: 0; }
+.row.stacked > * { flex: 0 0 auto; width: 100%; }
+
 .field-full { width: 100%; }
 
 /* An input paired with a button, e.g. the Wi-Fi password's show/hide toggle. */
