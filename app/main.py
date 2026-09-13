@@ -328,6 +328,41 @@ app.mount(
 )
 
 
+#: What this service calls itself when something asks. Stable: an orchestrator
+#: matches on it to be sure it is talking to ATLAS and not to whatever else
+#: happens to answer on that port.
+SERVICE_NAME = "atlas-mdm"
+
+
 @app.get("/healthz", tags=["ops"])
 def healthz():
-    return {"status": "ok"}
+    """Liveness, plus the version actually running.
+
+    ⚠️ The version here comes from the *running process*, which is the whole
+    point. A deployment's checkout can say 1.2.2 while the container still
+    serves 1.0.0 — `docker compose up -d` without `--build` keeps the old image,
+    and that has bitten this project before. Reading the repo cannot tell the
+    difference; reading this can.
+    """
+    return {"status": "ok", "service": SERVICE_NAME, "version": build_info().version or ""}
+
+
+@app.get("/version", tags=["ops"])
+def version():
+    """The running version, for an orchestrator to verify a deploy against.
+
+    Unauthenticated, like `/healthz`, because the thing that needs it runs
+    beside the container rather than through the console's login. It discloses
+    a version string and nothing else — the same string already printed in the
+    footer of every page to anyone who can see the console at all.
+
+    `revision` is included because a tag can move and a commit cannot; an
+    orchestrator comparing releases wants `version`, a human chasing a specific
+    build wants `revision`.
+    """
+    info = build_info()
+    return {
+        "service": SERVICE_NAME,
+        "version": info.version or "",
+        "revision": info.revision,
+    }

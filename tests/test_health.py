@@ -23,4 +23,7 @@ def test_healthz_returns_ok():
     response = client.get("/healthz")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    # ⚠️ The liveness contract is `status: ok`, not the exact shape of the body.
+    # /healthz also reports the running version now (W151), and an equality check
+    # here would make every future ops field a test failure rather than a change.
+    assert response.json()["status"] == "ok"
