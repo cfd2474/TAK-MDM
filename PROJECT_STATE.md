@@ -848,8 +848,35 @@ listener is gone.
    The agent package gets an `http://` site block so Caddy's automatic TLS
    redirect stays off that one path — an Android setup wizard follows no
    redirect there.
-6. **Install on the dev box from the fork**, end to end, and enrol a device
-   against it.
+6. ✅ **The tile is live on the dev box.** The fork's `dev` carries the module,
+   the box tracks that branch, and the console came back **active** at
+   `VERSION=10.1.70-alpha git=de442591eb`. Verified on the box itself:
+   registers as `atlas`, priority 16, `ports: ['8449/tcp']`, `detect` returns
+   `{'installed': False, 'running': False}` — which is exactly the state that
+   puts an uninstalled tile on the Marketplace — and the install directory
+   resolves to `/root/atlas`, the root-based layout this box actually uses.
+
+   🐛 **Registering a descriptor puts a module nowhere.** `detect_modules()`
+   *enumerates* modules with a hand-written block each rather than iterating the
+   registry, and the Marketplace renders whatever that function reports as
+   uninstalled. Without a block the module loads, validates, serves its four API
+   routes — and is invisible. The page route is hand-written per module too: the
+   registry generates the API, not the page that calls it.
+
+   ⚠️ **The box moved from v10.1.68-alpha to v10.1.70-alpha.** Tracking the
+   fork's `dev` means taking upstream's cycle with it; that is an upgrade of a
+   box running TAK Server, Authentik, CloudTAK and EUD Remote Assist behind one
+   Caddy. Rollback point recorded on the box at
+   `/root/infratak-rollback-<stamp>.txt` (`1ba0862`), and `app.py`'s pre-fork
+   copy is still beside it.
+
+   ⚠️ The in-place `app.py` edits from chunk 1 are **gone and that is
+   correct** — the same change is now a commit on the fork, so a pull no longer
+   reverts the box to following upstream.
+
+7. ⏳ **Still to install**: a read-only deploy key on `TAK-MDM` and a `v0.1.0`
+   tag for the module to pin to. Until then the tile deploys as far as the clone
+   and stops there.
 
 ### ✅ W142 — A blank ATAK section ticked its own box
 
