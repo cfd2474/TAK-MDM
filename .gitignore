@@ -21,6 +21,12 @@ agent/build/
 agent/*/build/
 agent/local.properties
 *.apk
+# ...except the two applications a deployment ships with. They are release
+# artifacts of the tagged version, not build products: an InfraTAK module
+# installs by cloning this repository at a tag, the box has no Android
+# toolchain, and a private repo's release assets cannot be fetched with the
+# read-only SSH deploy key the module clones with. See dist/README.md.
+!dist/*.apk
 
 # Release signing for the agent. The key is the fleet's identity — a signature
 # change cannot be delivered over the update channel, so this is closer to the
