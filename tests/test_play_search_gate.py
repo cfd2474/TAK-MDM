@@ -134,3 +134,52 @@ def test_every_tab_link_points_at_a_tab_that_exists():
 
     unknown = wanted - known
     assert not unknown, f"links point at tabs that do not exist: {sorted(unknown)}"
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ Said once, not twice (W149)
+# --------------------------------------------------------------------------- #
+
+
+def _words(panel: str) -> str:
+    import html as _html
+    import re
+
+    return _html.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", panel)))
+
+
+def test_the_unlinked_panel_says_each_thing_once(client: TestClient):
+    """The panel opened with a paragraph describing how fetches work and then,
+    with nothing linked, explained the same account and the same device profile
+    again — two versions of one fact, the first describing a capability the page
+    did not have."""
+    text = _words(_play_panel(client.get("/apps").text))
+
+    for phrase in ("Admin", "device profile", "CPU architecture", "held"):
+        assert text.count(phrase) == 1, f"{phrase!r} appears {text.count(phrase)} times"
+
+
+def test_the_unlinked_panel_does_not_describe_fetching(client: TestClient):
+    """⚠️ The intro is written in the present tense about something this
+    deployment cannot do yet. It belongs to the linked state only."""
+    text = _words(_play_panel(client.get("/apps").text))
+
+    assert "Fetches as the account linked under" not in text
+    assert "No Google account is linked" in text
+
+
+def test_the_linked_panel_still_explains_itself(client: TestClient, db, token_vault):
+    """⚠️ Removing the duplicate must not cost the explanation. Once linked,
+    the intro is the only place that says what the device profile decides."""
+    google_play_link.link_account(
+        db, token_vault, email="ops@example.com",
+        oauth_token="oauth2_4/" + "x" * 20, runner=_Apkeep(),
+    )
+    db.commit()
+
+    text = _words(_play_panel(client.get("/apps").text))
+
+    assert "Fetches as the account linked under" in text
+    assert "No Google account is linked" not in text
+    for phrase in ("device profile", "CPU architecture", "held"):
+        assert text.count(phrase) == 1, f"{phrase!r} appears {text.count(phrase)} times"
