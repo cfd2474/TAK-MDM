@@ -18,6 +18,10 @@
 proxy need. The app would create the device CA and bundle key lazily on first use,
 but nginx has to read the CA certificate *at startup* to verify client
 certificates — so in a containerized stack something must create it first.
+
+``python -m app.cli seed-packages`` loads the applications shipped in ``dist/``
+into the library, so a fresh deployment can enrol a device without an operator
+uploading the agent by hand first.
 """
 
 from __future__ import annotations
@@ -126,6 +130,60 @@ def init_pki(args: argparse.Namespace) -> int:
     return 0
 
 
+def seed_packages(args: argparse.Namespace) -> int:
+    """Ingest the applications bundled with the source. Idempotent, best-effort.
+
+    ⚠️ **A fresh deployment cannot enrol anything until the agent is in here.**
+    The provisioning QR carries the signing checksum of the agent APK this server
+    serves, so with an empty library there is no checksum to carry and the token
+    page refuses outright — which an operator meets several screens away from
+    anything that mentions an upload.
+
+    Idempotence rests on ``ingest`` refusing a version code it already holds: a
+    restart re-runs this and every build reports "already present". That is also
+    why a rebuilt APK needs a *higher* version code to take effect; same code
+    means same build, as far as the library is concerned.
+
+    ⚠️ Never fatal. This runs on the startup path, and a deployment that
+    refused to boot because a bundled APK could not be read would be far worse
+    than one that starts with an empty library and says so.
+    """
+    from app.api.deps import _artifact_storage
+    from app.db.base import SessionLocal
+    from app.services import packages as package_service
+
+    settings = get_settings()
+    seed_dir = Path(args.directory or "/seed")
+    if not seed_dir.is_dir():
+        print(f"seed: {seed_dir} is not a directory — nothing to load")
+        return 0
+
+    files = sorted(
+        p for p in seed_dir.iterdir()
+        if p.suffix.lower() in (".apk", ".xapk", ".apks")
+    )
+    if not files:
+        print(f"seed: no applications in {seed_dir}")
+        return 0
+
+    storage = _artifact_storage(str(settings.artifact_dir))
+    for path in files:
+        try:
+            with SessionLocal() as session:
+                result = package_service.ingest(session, storage, path.read_bytes())
+                name = result.package.package_name
+                version_name = result.version.version_name
+                version_code = result.version.version_code
+                session.commit()
+                print(f"seed: loaded {name} {version_name} (versionCode {version_code})")
+        except package_service.PackageError as exc:
+            # The ordinary case on every restart after the first.
+            print(f"seed: {path.name} not loaded — {exc}")
+        except Exception as exc:  # noqa: BLE001 - startup must survive this
+            print(f"seed: {path.name} FAILED — {type(exc).__name__}: {exc}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="app.cli", description="ATLAS operations")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -151,6 +209,17 @@ def main(argv: list[str] | None = None) -> int:
         help="reissue the dev TLS cert even if one exists (leaves the device CA alone)",
     )
     init.set_defaults(func=init_pki)
+
+    seed = subparsers.add_parser(
+        "seed-packages", help="load the applications bundled in dist/ into the library"
+    )
+    seed.add_argument(
+        "directory",
+        nargs="?",
+        default=None,
+        help="directory of APKs to load (default: /seed)",
+    )
+    seed.set_defaults(func=seed_packages)
 
     args = parser.parse_args(argv)
     return args.func(args)

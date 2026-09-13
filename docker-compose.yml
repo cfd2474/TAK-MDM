@@ -88,6 +88,9 @@ services:
       # re-downloaded 184 MB from F-Droid and the first search afterwards took 35
       # seconds. A cache wiped on every deploy is not a cache.
       - ./cache:/cache
+      # The applications shipped with the source. Read-only: the seeder copies
+      # them into the artifact store, and nothing should ever write back here.
+      - ./dist:/seed:ro
     # ⚠️ **No published port.** The app is reachable only through the proxy, on
     # the compose network. A `127.0.0.1:8000:8000` binding stood here — loopback
     # only, but it bypasses the proxy and therefore bypasses mTLS, which is the
