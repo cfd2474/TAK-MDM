@@ -1099,10 +1099,28 @@ listener is gone.
       box is four months old and predates ATLAS. Docker's 21.9 GB build cache is
       shared with every other module and is not ATLAS's to prune.
 
-16. ⏳ **Still open**: enrol a real device against the module deployment; make
-    `cfd2474/TAK-MDM` public and drop the deploy-key parameter; report upstream
-    that `ctx['_get_service_domain']` is documented but missing from the ctx
-    dict.
+16. ✅ **Landed on the fork's `main`** as PR #1, two commits (the module, then
+    the `app.py` hooks — the split §11 of the contract suggests).
+
+    ⚠️ **The PR reported conflicts on every file, and the cause was mine.** The
+    fork's `dev` had been created from a *shallow* clone, so its oldest commit
+    had no parent: 33 commits against `main`'s 1719, **no merge base at all**.
+    GitHub cannot three-way-merge unrelated histories, so it called everything a
+    conflict. The content was never in conflict — rebuilding the work on a
+    branch cut from `main` applied the `app.py` hooks *cleanly*, even though
+    `main` had added 207 lines to that file since our base.
+
+    `dev` is deleted; its tip is kept as the tag `dev-shallow-archive`
+    (`d87ec2e`) and every ATLAS file was byte-identical to `main`'s before it
+    went. ⚠️ A box tracking `origin/dev` must be repointed at `main` — the branch
+    is gone, so a pull there now fails outright.
+
+17. ⏳ **Still open**: **enrol a real device** against the module deployment —
+    the one thing the whole W143/W144 effort exists to enable and the only part
+    never exercised: the agent download over Caddy's plain-HTTP route, mutual
+    TLS on 8449, the staged device CA, and enrolment itself. Also: report
+    upstream that `ctx['_get_service_domain']` is documented but missing from
+    the ctx dict, and rotate the GitHub token used throughout this work.
 
 ### ✅ W142 — A blank ATAK section ticked its own box
 
