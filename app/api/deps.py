@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import uuid
 from functools import lru_cache
+import base64
 from urllib.parse import unquote
 
 from cryptography import x509
@@ -133,6 +134,38 @@ def fetch_or_404(session: Session, model: type, entity_id: uuid.UUID, label: str
     return entity
 
 
+def _load_client_certificate(raw: str) -> x509.Certificate:
+    """The verified client certificate, in whichever shape the proxy sends it.
+
+    Three encodings, because two different proxies front this application and a
+    header is all they have in common (W143):
+
+    * **URL-encoded PEM** — nginx's `$ssl_client_escaped_cert`, the standalone
+      deployment.
+    * **Raw PEM** — passes through `unquote` unchanged, so it always worked.
+    * **base64 DER on one line** — Caddy's
+      `{http.request.tls.client.certificate_der_base64}`, which is what an
+      InfraTAK module gets.
+
+    ⚠️ **Caddy's PEM placeholder is not usable and that is why this exists.**
+    `{...certificate_pem}` contains real newlines, and a header value cannot;
+    the DER form is the single-line one. Accepting it here costs a few lines and
+    saves inventing an encoding for the Caddyfile to perform.
+
+    ⚠️ **Shape only — this decides nothing about trust.** The caller still
+    verifies issuer, signature, validity and revocation, and the proxy is still
+    what proves the caller holds the private key.
+    """
+    text = unquote(raw).strip()
+    if "BEGIN CERTIFICATE" in text:
+        return x509.load_pem_x509_certificate(text.encode())
+
+    # Whitespace is stripped rather than rejected: a proxy that folds a long
+    # header is doing something legal, and the payload survives it intact.
+    der = base64.b64decode("".join(text.split()), validate=True)
+    return x509.load_der_x509_certificate(der)
+
+
 def authenticated_device(
     request: Request,
     session: Session = Depends(get_db),
@@ -157,9 +190,7 @@ def authenticated_device(
         )
 
     try:
-        # nginx's $ssl_client_escaped_cert is URL-encoded; a raw PEM passes through
-        # unquote unchanged.
-        certificate = x509.load_pem_x509_certificate(unquote(raw).encode())
+        certificate = _load_client_certificate(raw)
     except Exception as exc:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "client certificate is malformed"

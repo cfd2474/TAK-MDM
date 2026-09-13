@@ -754,6 +754,38 @@ listener is gone.
 3. **Packaging ATLAS for a module**: the compose stack has to be installable by
    `git clone` at a pinned SHA, bind the console to loopback, take its
    Postgres password from generated config, and stop using ports 80/443.
+
+   ✅ **Distribution settled: a read-only deploy key now, public at the end.**
+   The infra-TAK fork is *public*, so a credential in `modules/atlas.py` would be
+   world-readable as well as a rule-5 hard fail. The module takes the key as a
+   deploy parameter and stores it in `settings.json` (mode 600), which is where
+   the contract puts secrets. When ATLAS goes public the parameter disappears.
+
+   ✅ **Caddy can terminate the device channel, and neither side needs
+   convincing.** Two findings, both already written into this codebase before
+   InfraTAK existed:
+
+   * The agent's `trustManager()` uses a pinned CA *"when provisioning supplied
+     one — the self-signed development server. Otherwise the platform trust
+     store applies, **which is what a real deployment with a publicly-issued
+     certificate wants**."* Caddy's certificate is publicly issued, so omitting
+     the CA from the QR is all it takes. **No agent change.**
+   * `deps.py` already noted that *"a raw PEM passes through `unquote`
+     unchanged"*, so it accepted two encodings without knowing it.
+
+   ⚠️ **The one real gap was newlines.** Caddy's
+   `{http.request.tls.client.certificate_pem}` contains them and a header value
+   cannot; its single-line form is base64 DER. So `_load_client_certificate`
+   accepts three shapes — URL-encoded PEM (nginx), raw PEM, and base64 DER
+   (Caddy) — and folded whitespace survives, because a proxy wrapping a long
+   header is doing something legal and should not become a 401 nobody can
+   explain. **Encoding only**: issuer, signature, validity and revocation are
+   still checked afterwards, and there is a test that a stranger's certificate
+   in the new encoding is still refused. Mutation-checked.
+
+   ⏳ Still to do here: drop ATLAS's own nginx from the module deployment (the
+   app speaks plain HTTP on loopback and Caddy terminates), move the device port
+   to **8449**, and stop the compose file publishing 80/443/9443/8080.
 4. **`modules/mdm.py`**: descriptor, `detect`, `deploy`, `uninstall`,
    `control_map`, version/update routes, following `tvr.py`.
 5. **Console page**: `templates/mdm.html`, `SERVICE_DOMAIN_DEFAULTS`, the
