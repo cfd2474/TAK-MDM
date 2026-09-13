@@ -806,10 +806,48 @@ listener is gone.
    ⏳ Still to do here: the module's `docker-compose.override.yml` — bind the
    app to `127.0.0.1:8760`, drop `--dev-server-cert` from `init`, and set
    `TAKMDM_INCLUDE_SERVER_CA=0` and the device-facing `TAKMDM_SERVER_URL`.
-4. **`modules/mdm.py`**: descriptor, `detect`, `deploy`, `uninstall`,
-   `control_map`, version/update routes, following `tvr.py`.
-5. **Console page**: `templates/mdm.html`, `SERVICE_DOMAIN_DEFAULTS`, the
-   `generate_caddyfile()` vhost, sidebar and dashboard wiring in `app.py`.
+4. ✅ **`modules/atlas.py` written**, on branch `feat/atlas-mdm-module` of the
+   fork. Descriptor, `detect`, `deploy` (7 steps), `uninstall`, `control_map`,
+   logs/version routes. Loaded through the **real registry validator** rather
+   than eyeballed: it registers, all three callables are callable, and the
+   descriptor's fields come back as declared.
+
+   ⚠️ **Two helper signatures were wrong and would have shipped.** Checking
+   `app.py` rather than copying `tvr.py`'s call sites found them:
+
+   * `_write_priv(path, content, mode='w', perm=None)` — `mode` is the *open*
+     mode. Passing `0o600` there writes the file in mode `"384"` and leaves the
+     **deploy key world-readable**.
+   * `_fw_allow(port, proto)` returns `(ok, msg)`, not a bare value.
+
+   ⚠️ **`ctx['_get_service_domain']` does not exist.** The developer guide
+   instructs modules to resolve hostnames with it and never build them by hand
+   — and the key was never in the ctx dict, so a module that follows the
+   instruction raises `KeyError` on its first deploy. Added as a seam rather
+   than worked around, because hardcoding a hostname breaks the per-box override
+   the rule exists to protect. Worth reporting upstream.
+
+5. ✅ **Console page and `app.py` hooks done**: `templates/atlas.html`,
+   `SERVICE_DOMAIN_DEFAULTS['atlas']`, a sidebar entry, and three Caddy vhosts.
+
+   ⚠️ **`client_auth mode` is `verify_if_given`, not `require_and_verify`.**
+   ATLAS's nginx uses `ssl_verify_client optional` because a device enrolling
+   for the first time *has no certificate yet* and calls `/api/v1/enroll`
+   without one. Requiring a certificate at the listener makes enrolment
+   impossible — the application decides which paths need an identity. This is
+   the single easiest thing to get wrong here and it fails only for **new**
+   devices, so a test fleet of already-enrolled tablets would look fine.
+
+   ⚠️ **Caddy runs unprivileged and cannot read the install directory**, so
+   the device CA is staged into Caddy's own data dir on every Caddyfile
+   regeneration — the same shape as the custom-certificate copy beside it. Only
+   the certificate: verifying signatures needs the public half, and a
+   web-server-readable copy of the CA key is a fleet's device identity one
+   file-read away.
+
+   The agent package gets an `http://` site block so Caddy's automatic TLS
+   redirect stays off that one path — an Android setup wizard follows no
+   redirect there.
 6. **Install on the dev box from the fork**, end to end, and enrol a device
    against it.
 
