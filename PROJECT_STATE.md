@@ -586,6 +586,93 @@ Device Owner still installed, certificate revoked, `deps.py` answering
 0.55.0 can be disenrolled to prove it, which is worth doing on a tablet that is
 due a reset anyway.
 
+### 🚧 W143 — ATLAS as an InfraTAK module
+
+Operator, 2026-09-12: make this MDM a deployable InfraTAK module, tested against
+their own fork and their own dev box before it goes upstream.
+
+#### What the contract actually demands
+
+`docs/MODULE-DEVELOPMENT.md` on `takwerx/infra-TAK@dev` is specific. A module is
+**one file**, `modules/<key>.py`, auto-imported at console startup, calling
+`register_module({...})` exactly once with `detect` / `deploy` / `uninstall` /
+`control_map`. Everything it is allowed to touch arrives through a `ctx` dict —
+**rule 10: "Module imports nothing from `app.py`"**. Twelve hard gates block a
+merge; the ones that bite this project hardest:
+
+* **Caddy fronts every web UI**, and an app bound to `0.0.0.0` on a Caddy port
+  is an automatic review failure. The console must bind `127.0.0.1`.
+* **Public ports must be declared, opened through `_fw_allow`, and justified.**
+* **External code pinned to tag + commit SHA**, verified after fetch.
+* Multiplatform: Ubuntu 22.04, Rocky 9, **and ARM64**.
+* Secrets only in `.config/settings.json` (mode 600), never logged.
+
+`modules/tvr.py` (662 lines) is the reference implementation and the closest
+shape: a git-cloned compose app with its own database and a Caddy-fronted UI.
+
+#### ⚠️ Every public port ATLAS uses today is already taken on that box
+
+Surveyed the operator's dev host directly rather than reasoning from the docs:
+
+| ATLAS today | What it is | On the InfraTAK box |
+|---|---|---|
+| **8443/tcp** | device API over **mTLS** | ❌ **TAK Server** (`java`) |
+| **8080/tcp** | provisioning APK, plaintext | ❌ a `python3` service |
+| **80/tcp** | the same APK on a friendly port | ❌ **Caddy** (ACME + vhosts) |
+| **443/tcp** | console, Let's Encrypt | ❌ **Caddy** |
+| 9443/tcp | console, self-signed | ⚠️ Authentik holds `127.0.0.1:9443` |
+
+Caddy also already answers on **8448**, which is EUD Remote Assist's device
+port — confirming the contract's "second vhost on a separate TLS port for device
+APIs that bypass SSO" is a live pattern here and not just documentation.
+
+⚠️ **The mTLS port is the hard one.** ATLAS's nginx terminates TLS, verifies
+the client certificate against **ATLAS's own device CA**, and passes it to the
+app as `X-SSL-Client-Cert`; every enrolled device pins that CA. That is not a
+port to relocate casually, and it is not obviously Caddy's job — Caddy can do
+client auth, but the header contract and the CA are ATLAS's.
+
+⚠️ **The APK port must move and cannot be TLS.** Android's setup wizard cannot
+trust a self-signed certificate, so provisioning downloads the agent over plain
+HTTP and integrity comes from the signature checksum inside the QR. Port 80 is
+Caddy's, so the friendly-port fallback for restrictive networks is simply gone.
+
+#### ⏳ Blocked on the operator's ports document
+
+They linked one; it is a claude.ai artifact this session cannot read — *"served
+to you as a public (non-member) reader, and reading public artifacts that way is
+not enabled yet"*. The port numbers are the one decision that cannot be guessed:
+they determine the firewall rules, the QR payload every device is provisioned
+with, and the nginx/Caddy split.
+
+#### Facts recorded from the dev box
+
+* Ubuntu 22.04.5, x86_64, InfraTAK at **`/root/infra-TAK`** — a *root-based*
+  install, which the contract calls out as the legacy layout to detect and
+  handle (`~/<key>` vs `/root/<key>`).
+* Console runs **as root** (`User=root`), gunicorn on `0.0.0.0:5001`. The
+  contract's `takwerx` unprivileged-user reasoning still applies to the code,
+  but this box will not exercise it.
+* Checkout is detached at `v10.1.68-alpha` on `takwerx/infra-TAK`.
+* ⚠️ **The fork has no `dev` branch** — `cfd2474/infra-TAK` carries only `main`,
+  while the module contract and every reference module live on `dev`.
+
+#### Chunk plan
+
+1. **Groundwork**: fork gets a `dev` branch from upstream; dev box re-pointed at
+   the fork; connection details recorded in `docs/`.
+2. **Port design**: settled with the operator's document, then written down
+   before any code depends on it.
+3. **Packaging ATLAS for a module**: the compose stack has to be installable by
+   `git clone` at a pinned SHA, bind the console to loopback, take its
+   Postgres password from generated config, and stop using ports 80/443.
+4. **`modules/mdm.py`**: descriptor, `detect`, `deploy`, `uninstall`,
+   `control_map`, version/update routes, following `tvr.py`.
+5. **Console page**: `templates/mdm.html`, `SERVICE_DOMAIN_DEFAULTS`, the
+   `generate_caddyfile()` vhost, sidebar and dashboard wiring in `app.py`.
+6. **Install on the dev box from the fork**, end to end, and enrol a device
+   against it.
+
 ### ✅ W142 — A blank ATAK section ticked its own box
 
 Operator, 2026-09-12: *"the atak core and plugins module is showing data (green

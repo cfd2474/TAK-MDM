@@ -36,6 +36,43 @@ first for those.
 
 ---
 
+## 1b. The InfraTAK dev host (W143)
+
+A **second** host, added 2026-09-12 for the InfraTAK module work. Everything in
+section 1 is about `209.182.235.108` and does not describe this box.
+
+| | |
+|---|---|
+| Address | `199.241.139.160` |
+| SSH port | **2222** — ⚠️ port 22 is refused, not filtered |
+| User | `root` |
+| Password | `4qKDPhmbWb` |
+| SSH host key | `SHA256:p7DMadNOaIoZH1J3j+Yfe18dZPhSiTe3QsZsqQtYscs` |
+| OS / arch | Ubuntu 22.04.5, x86_64 |
+| InfraTAK | `/root/infra-TAK`, console as **root**, gunicorn on `0.0.0.0:5001` |
+
+```bash
+"/c/Program Files/PuTTY/plink" -batch -ssh -P 2222   -pw '4qKDPhmbWb'   -hostkey "SHA256:p7DMadNOaIoZH1J3j+Yfe18dZPhSiTe3QsZsqQtYscs"   root@199.241.139.160 "uptime"
+```
+
+⚠️ **`-P 2222` is as load-bearing as `-batch` and `-hostkey`.** Port 22 answers
+with a connection refused, which reads like an unreachable host rather than a
+moved service.
+
+### What is authorised here
+
+The operator described this box as *"my dev server (safe for testing, no
+security risks)"* and supplied the credentials to do the InfraTAK module work on
+it. That is authorisation for **this** host, for that work.
+
+It does not extend to `209.182.235.108`, and the reverse is equally true: the
+standing OK in section 1 was never about this machine. ⚠️ This box runs a live
+InfraTAK stack — TAK Server, Authentik, CloudTAK, EUD Remote Assist, TAK Portal
+and Caddy are all up. "Safe for testing" means the box is expendable, not that
+the services on it are; breaking Caddy takes every one of them down at once.
+
+---
+
 ## 2. Connecting
 
 Use **PuTTY's `plink`/`pscp`**, not `ssh`/`scp`. OpenSSH is not reliably present
