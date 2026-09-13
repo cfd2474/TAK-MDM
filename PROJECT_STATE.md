@@ -874,9 +874,57 @@ listener is gone.
    correct** — the same change is now a commit on the fork, so a pull no longer
    reverts the box to following upstream.
 
-7. ⏳ **Still to install**: a read-only deploy key on `TAK-MDM` and a `v0.1.0`
-   tag for the module to pin to. Until then the tile deploys as far as the clone
-   and stops there.
+7. ✅ **Deploy key and tags installed.** `v0.1.0`, then `v0.1.1`, pinned by tag
+   *and* commit SHA. ⚠️ `git rev-parse v0.1.1` returns the **tag object**, not
+   the commit — the pin check refused its own deployment until it was written as
+   `git rev-parse 'v0.1.1^{}'`.
+
+8. ✅ **The deploy runs end to end on the dev box** — all seven steps, verified
+   by driving the module's real `deploy()` through the registry rather than
+   trusting a manual `docker compose` run. Four failures had to be found first,
+   each invisible from the console's own error text:
+
+   * **`_broker_compose` splits its argument.** It does `shlex.split(action)`, so
+     `action` is a *string*; the neighbouring `control_map` seam takes an argv
+     *list*. Passing a list produced `'list' object has no attribute 'read'` at
+     step 4, which names neither the cause nor the file.
+   * ⚠️ **The container is not root and the bind mounts were.** ATLAS drops to
+     uid 1000; the console creates the install directory as root and Docker
+     creates any missing mount source as root too. The first thing the stack does
+     is write its device CA, so `init` died on
+     `PermissionError: [Errno 13] Permission denied: '/pki/ca.crt'` and `api`
+     never started. `pki`, `artifacts` and `cache` are now created and chowned
+     before anything runs. A TAK-MDM test asserts the writable-mount set has not
+     grown, because a new one would break *only* the InfraTAK deployment.
+   * ⚠️ **A failed deploy locked out its own database.** The generated Postgres
+     password was saved in step 6, but step 4 is what bakes it into the volume —
+     Postgres applies `POSTGRES_PASSWORD` only on first init and ignores it ever
+     after. Any deploy that failed in between generated a fresh password on
+     retry and hit `FATAL: password authentication failed for user "takmdm"`
+     forever, with the API stuck on "waiting for database...". The password is
+     now persisted *before* it is used. Repaired on the box with `ALTER USER`
+     rather than by deleting the volume.
+   * ⚠️ **Nothing registered the console with Authentik**, so `forward_auth` was
+     never emitted and ATLAS answered 401 to everyone, permanently. Step 7 now
+     creates the proxy provider and application through a new
+     `_ensure_authentik_atlas_app` ctx seam, modelled on `_ensure_authentik_tvr_app`.
+     InfraTAK's access-policy converge is **default-deny**, so registering the
+     application is also what makes the console admin-only — nothing new to bind.
+
+     ⚠️ `TAKMDM_ADMIN_GROUP` was `${VAR:-takmdm-admins}`; the colon form turns an
+     *explicitly empty* value back into the default, so "let Authentik decide"
+     could not be expressed and every administrator would have been refused for
+     want of a group no Authentik has. Now `${VAR-takmdm-admins}`.
+
+9. ✅ **Verified from outside**, against the live box: console `401`→SSO, device
+   paths `404` on 443, `/api/v1/enroll` on `:8449` reaches ATLAS through mutual
+   TLS, plain HTTP redirects, and `tak.leckliter.net` still answers — the module
+   does not disturb the TAK stack sharing that Caddy.
+
+10. ⏳ **Still open**: enrol a real device against the module deployment; make
+    `cfd2474/TAK-MDM` public and drop the deploy-key parameter; report upstream
+    that `ctx['_get_service_domain']` is documented but missing from the ctx
+    dict.
 
 ### ✅ W142 — A blank ATAK section ticked its own box
 

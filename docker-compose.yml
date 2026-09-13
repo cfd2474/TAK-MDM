@@ -63,7 +63,16 @@ services:
       # Set to forward_auth once an Authentik proxy provider is in front; see
       # docker/nginx/admin.conf.example.
       TAKMDM_ADMIN_AUTH_MODE: ${TAKMDM_ADMIN_AUTH_MODE:-disabled}
-      TAKMDM_ADMIN_GROUP: ${TAKMDM_ADMIN_GROUP:-takmdm-admins}
+      # ⚠️ `-` and not `:-`, so an explicitly empty value survives.
+      #
+      # Blank means "any user the identity provider let through", which is the
+      # right answer when the proxy already restricts the application — an
+      # InfraTAK deployment binds its ATLAS app to the admins policy, and a
+      # second group defined here would be a place to manage access that nobody
+      # would think to look at. With `:-` an empty value silently became
+      # `takmdm-admins`, a group no Authentik has, and every administrator was
+      # refused with nothing to explain why.
+      TAKMDM_ADMIN_GROUP: ${TAKMDM_ADMIN_GROUP-takmdm-admins}
       # The console's public origin, used to reject cross-origin unsafe
       # requests. Blank disables that check; the app warns loudly at startup
       # when auth is on and this is unset.

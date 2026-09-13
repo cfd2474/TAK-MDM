@@ -198,3 +198,48 @@ def test_the_database_password_is_not_a_literal():
 
     assert "POSTGRES_PASSWORD: ${TAKMDM_DB_PASSWORD:-takmdm}" in compose
     assert "postgresql+psycopg://takmdm:${TAKMDM_DB_PASSWORD:-takmdm}@db" in compose
+
+
+def test_the_admin_group_can_be_explicitly_blank():
+    """⚠️ `-`, not `:-`. A deployment whose proxy already restricts the
+    application sets this empty to mean "trust the identity provider"; with the
+    colon form that empty value became `takmdm-admins`, a group the proxy has
+    never heard of, and every administrator was refused."""
+    import io
+
+    compose = io.open("docker-compose.yml", encoding="utf-8").read()
+
+    assert "TAKMDM_ADMIN_GROUP: ${TAKMDM_ADMIN_GROUP-takmdm-admins}" in compose
+
+
+def test_the_image_runs_as_uid_1000():
+    """The InfraTAK module chowns the bind mounts to this uid before starting
+    anything. If the image ever moved, every deploy would fail writing its own
+    device CA — and the compose output would not say the word "permission"."""
+    import io
+
+    dockerfile = io.open("Dockerfile", encoding="utf-8").read()
+
+    assert "--uid 1000" in dockerfile
+
+
+def test_the_writable_host_directories_are_the_three_we_prepare():
+    """⚠️ A new writable bind mount is a new root-owned directory the container
+    cannot write. Adding one here without telling the module about it breaks
+    deployment on the InfraTAK side only, where nothing runs as root."""
+    import io
+
+    import yaml
+
+    compose = yaml.safe_load(io.open("docker-compose.yml", encoding="utf-8").read())
+    writable = set()
+    for name in ("api", "init"):
+        for volume in compose["services"][name].get("volumes") or []:
+            host = volume.split(":")[0]
+            if host.startswith("./") and ":ro" not in volume:
+                writable.add(host[2:].rstrip("/"))
+
+    assert writable == {"pki", "artifacts", "cache"}, (
+        f"writable bind mounts changed to {sorted(writable)} — teach the InfraTAK "
+        f"module's WRITABLE_DIRS about it, or the container cannot write them"
+    )
