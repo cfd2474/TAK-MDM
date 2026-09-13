@@ -1013,7 +1013,33 @@ listener is gone.
     only `atlas_enabled: False`. Authentik kept its 7 applications throughout;
     Caddy stayed valid; `tak`, `authentik` and `map` never moved.
 
-14. ⏳ **Still open**: enrol a real device against the module deployment; make
+14. ✅ **The agent and the launcher ship with the install.** The operator asked
+    for the DPC and the ATLAS launcher to be part of it. `dist/` now carries
+    both release artifacts and the `api` entrypoint loads them after migrations.
+
+    ⚠️ **A blanket `*.apk` rule in `.gitignore` swallowed both files**, so the
+    first tagged attempt shipped a README describing two files that were not
+    there and the seeder would have found an empty directory on every install.
+    Caught by reading `git show --stat` rather than trusting the commit; the
+    tag was rebuilt on the corrected commit. The exception is narrow (`!dist/*.apk`).
+
+    Committing build outputs is deliberate here: an InfraTAK module installs by
+    cloning at a tag, the box has no Android toolchain, and a private repo's
+    release assets cannot be fetched with the read-only SSH deploy key the
+    module clones with. When the repo goes public, release assets become the
+    better home.
+
+    Idempotence rests on `ingest` refusing a version code it already holds, so a
+    rebuilt APK needs a **higher** version code to take effect. Seeding is never
+    fatal — a deployment that refused to boot over an unreadable bundled APK
+    would be worse than one that starts empty and says so.
+
+    **Verified on the box** against a library that was genuinely empty: both
+    loaded, a QR minted with no manual upload (checksum
+    `IJS8zAVM…`, agent served at 21,365,714 bytes), and a restart reported
+    *"version code … is already uploaded"* for both rather than duplicating.
+
+15. ⏳ **Still open**: enrol a real device against the module deployment; make
     `cfd2474/TAK-MDM` public and drop the deploy-key parameter; report upstream
     that `ctx['_get_service_domain']` is documented but missing from the ctx
     dict.
