@@ -985,7 +985,35 @@ listener is gone.
     config still valid); 8449 neither listening nor in ufw; the Authentik
     application deregistered. `tak`, `authentik` and `map` all still answer.
 
-13. ⏳ **Still open**: enrol a real device against the module deployment; make
+13. ✅ **Uninstall now removes everything, on the operator's instruction.** It
+    previously kept the install directory, database volume and device CA, on the
+    reasoning that destroying a fleet's enrolment should be a separate act.
+    ⚠️ In practice the leftovers were not inert: Postgres honours
+    `POSTGRES_PASSWORD` only on an empty volume, so a surviving database
+    silently decided the *next* install's fate — the exact failure this module
+    already had to fix once.
+
+    Uninstall now takes containers, images, the `takmdm_pgdata` volume, the
+    install directory (device CA, bundle signing key, artifacts, `.env`),
+    Caddy's staged CA copy, the firewall rule, every generated setting, and the
+    ATLAS application in Authentik. The modal says so in red, naming the
+    consequence rather than the mechanism.
+
+    ⚠️ **The deploy key is the one exception**, and deliberately: it lives
+    *beside* the install directory rather than inside it because it is the
+    credential for fetching ATLAS, not part of ATLAS. Removing it would fail the
+    next install at `git clone` with nothing on the page to explain it.
+
+    **Proved by running the whole cycle on the box**, auditing between each
+    stage rather than trusting the step list: from a genuinely empty state the
+    install re-cloned, regenerated `ca.crt` / `ca.key` / `bundle_signing.key`,
+    rebuilt the database, and created the Authentik application — whose admins
+    binding reported *"restricted"* rather than *"already bound"*, which is what
+    proves the deploy-time binder works on a new application. Uninstall then left
+    only `atlas_enabled: False`. Authentik kept its 7 applications throughout;
+    Caddy stayed valid; `tak`, `authentik` and `map` never moved.
+
+14. ⏳ **Still open**: enrol a real device against the module deployment; make
     `cfd2474/TAK-MDM` public and drop the deploy-key parameter; report upstream
     that `ctx['_get_service_domain']` is documented but missing from the ctx
     dict.
