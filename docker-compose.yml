@@ -69,11 +69,16 @@ services:
       # re-downloaded 184 MB from F-Droid and the first search afterwards took 35
       # seconds. A cache wiped on every deploy is not a cache.
       - ./cache:/cache
-    ports:
-      # Bound to loopback only. This port bypasses the proxy and therefore bypasses
-      # mTLS — convenient for admin curl during development, and exactly the
-      # exposure that must never exist in production (R7).
-      - "127.0.0.1:8000:8000"
+    # ⚠️ **No published port.** The app is reachable only through the proxy, on
+    # the compose network. A `127.0.0.1:8000:8000` binding stood here — loopback
+    # only, but it bypasses the proxy and therefore bypasses mTLS, which is the
+    # exposure R7 exists to forbid. InfraTAK's module scan treats a listener
+    # that bypasses mutual TLS as a **High finding if it ships**, and High is a
+    # hard fail rather than a negotiation (W143).
+    #
+    # For local development, `docker compose -f docker-compose.yml -f
+    # docker-compose.dev.yml up` puts it back. Opt-in, so the production build
+    # cannot acquire it by forgetting to take something out.
     depends_on:
       db:
         condition: service_healthy

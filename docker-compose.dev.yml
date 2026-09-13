@@ -1,0 +1,12 @@
+# Local development only — never deployed.
+#
+# ⚠️ Publishes the app directly, bypassing the proxy and therefore bypassing
+# mTLS. That is convenient for `curl` on a laptop and is exactly the exposure
+# R7 forbids in production, which is why it lives in an opt-in file rather than
+# as something the production build has to remember to remove (W143).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+services:
+  api:
+    ports:
+      - "127.0.0.1:8000:8000"

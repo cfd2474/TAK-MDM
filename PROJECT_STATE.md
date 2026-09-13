@@ -657,6 +657,75 @@ with, and the nginx/Caddy split.
 * ⚠️ **The fork has no `dev` branch** — `cfd2474/infra-TAK` carries only `main`,
   while the module contract and every reference module live on `dev`.
 
+#### ✅ The port design, settled by the reviewers
+
+Their response landed before any code depended on the wrong shape, which is the
+whole value of having asked. **Six inbound rules become two**, and the sheet's
+framing — a standalone appliance owning the host's web tier — becomes a
+co-tenant behind Caddy.
+
+| Function | Bind | Firewall | Auth |
+|---|---|---|---|
+| Device management channel | `127.0.0.1` → Caddy vhost on its own TLS port | `_fw_allow` | **mTLS**, client certificate |
+| Agent download, well-known port | Caddy `:80` path route | already open | none, by design |
+| Administration console | `127.0.0.1` → `atlas.<fqdn>:443` | none | Authentik, admin-only |
+| Database | container bridge, no host binding | none | — |
+| Console by IP · direct app server · SSH | **removed** | — | — |
+
+⚠️ **Port 80 was the one hard blocker and it dissolved rather than being
+conceded.** ATLAS asked for `:80` to run its own ACME and to stay reachable on
+the well-known port for devices on restricted networks. Caddy is already the
+single ACME client for the entire box — TAK Server's 8446 certificate,
+Authentik, TAK Portal, Node-RED, CloudTAK, MediaMTX all renew through it — and
+*"two ACME clients contending for :80 does not resolve in a config file. It
+means one of them quietly stops renewing"*, which has already taken out TAK
+Server's API on a live deployment. So ATLAS never speaks ACME, and Caddy serves
+the agent package on `:80` as a path route with no redirect to TLS. **The
+reachability requirement is kept in full; only the certificate half is gone.**
+
+✅ **And the cleartext reasoning gets better, not worse.** The sheet argued the
+download must be plaintext because a device in out-of-box setup cannot trust a
+self-signed certificate. True — but Caddy's certificate is *publicly trusted*.
+On a box with an FQDN the download can go over TLS and the signature checksum
+becomes defence in depth rather than the only integrity control. On an IP-only
+box there is no DNS name and no certificate, so cleartext plus checksum is
+right. **One Caddy route covers both.**
+
+#### ✅ Two things ATLAS already had
+
+* **SSO: Pattern B, built and reasoned.** `admin_auth.py` reads identity headers
+  from an Authentik proxy provider and *"deliberately implements no OIDC
+  itself"* — discovery, PKCE, token exchange and refresh being security-critical
+  code solving a problem the IdP already solves. Its trust model is written to
+  match the mTLS one: the proxy is authoritative, it must strip inbound copies
+  of the headers, and the app must never be directly reachable.
+* **Admin-only is the default.** The gate is a *user-visible allowlist* with
+  default-deny, not a list of things to lock down — the comment in `app.py`
+  records that enumerating what to restrict is *"a losing game"* after four
+  modules landed in neither list. ATLAS simply stays off `user_visible_slugs`.
+
+#### ⚠️ Where "degrade gracefully without Authentik" points somewhere bad
+
+The contract wants a module to work when Authentik is absent. ATLAS has exactly
+two auth modes on purpose — *"a partial or best-effort mode would be a mode
+nobody can reason about"* — so no Authentik means `disabled`, which is an
+**unauthenticated admin console** on a Caddy vhost. That is the High finding,
+reached by following the rule.
+
+Proposed: with Authentik absent the module still deploys and runs, but the
+console vhost is **not generated**, and the page says so. The console is then
+reachable exactly one way — the SSH tunnel the reviewers already endorsed when
+they removed the console-by-IP row. Nothing is half-protected.
+
+#### ✅ Done already: the direct app server is gone from the build
+
+Item 4 of *what unblocks you*. `127.0.0.1:8000:8000` is out of
+`docker-compose.yml`; `docker-compose.dev.yml` puts it back for a laptop.
+⚠️ **Opt-in rather than remove-before-shipping**, so the production build cannot
+acquire it by someone forgetting. `detect()` must not probe it either — the
+review warns that would make the module report itself not running once the
+listener is gone.
+
 #### Chunk plan
 
 1. **Groundwork**: fork gets a `dev` branch from upstream; dev box re-pointed at
