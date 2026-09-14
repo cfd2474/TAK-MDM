@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.services import clock
+
 from app.db.models import (
     AppPackage,
     Assignment,
@@ -52,8 +54,16 @@ class Report:
     build: Callable[[Session], Rows]
 
 
-def _dt(value) -> str:
-    return value.strftime("%Y-%m-%d %H:%M") if value else ""
+def _dt(value, tz) -> str:
+    """One timestamp, in the console's configured zone.
+
+    ⚠️ `tz` is required rather than defaulted (W165). Every report renders
+    through here, and a default would let a new report be written that silently
+    prints UTC beside five others printing local — the same failure that reached
+    an operator through the location-history map. A missing argument is a
+    TypeError at import of the report, which is a failure somebody sees.
+    """
+    return clock.format(value, tz, "%Y-%m-%d %H:%M")
 
 
 # --------------------------------------------------------------------------- #
@@ -62,6 +72,7 @@ def _dt(value) -> str:
 
 
 def _fleet_inventory(session: Session) -> Rows:
+    tz = clock.configured(session)
     columns = [
         "Name", "Serial", "Model", "OS", "Agent", "State", "Last check-in", "Enrolled",
     ]
@@ -74,13 +85,14 @@ def _fleet_inventory(session: Session) -> Rows:
             d.os_version or "",
             d.agent_version or "",
             d.enrollment_state.value,
-            _dt(d.last_checkin_at),
-            _dt(d.created_at),
+            _dt(d.last_checkin_at, tz),
+            _dt(d.created_at, tz),
         ])
     return columns, rows
 
 
 def _convergence_and_compliance(session: Session) -> Rows:
+    tz = clock.configured(session)
     columns = [
         "Name", "Serial", "Server version", "Applied version", "Lag",
         "Compliance", "Detail", "Last check-in",
@@ -95,7 +107,7 @@ def _convergence_and_compliance(session: Session) -> Rows:
             d.state_version - d.acked_state_version,
             d.compliance_status.value,
             (d.compliance_detail or "").replace("\n", " ")[:200],
-            _dt(d.last_checkin_at),
+            _dt(d.last_checkin_at, tz),
         ])
     return columns, rows
 
@@ -134,6 +146,7 @@ def _policy_deployment(session: Session) -> Rows:
 
 
 def _command_history(session: Session) -> Rows:
+    tz = clock.configured(session)
     columns = ["Serial", "Command", "Status", "Attempts", "Created", "Completed", "Error"]
     rows = []
     q = (
@@ -147,8 +160,8 @@ def _command_history(session: Session) -> Rows:
             command.command_type.value,
             command.status.value,
             f"{command.attempts}/{command.max_attempts}",
-            _dt(command.created_at),
-            _dt(command.completed_at),
+            _dt(command.created_at, tz),
+            _dt(command.completed_at, tz),
             (command.error or "")[:200],
         ])
     return columns, rows
@@ -170,6 +183,7 @@ def _app_inventory(session: Session) -> Rows:
 
 
 def _file_selections(session: Session) -> Rows:
+    tz = clock.configured(session)
     columns = ["Serial", "File", "Chosen at"]
     rows = []
     q = (
@@ -179,7 +193,7 @@ def _file_selections(session: Session) -> Rows:
         .order_by(DeviceFileSelection.applied_at.desc())
     )
     for selection, serial, file_name in session.execute(q):
-        rows.append([serial, file_name, _dt(selection.applied_at)])
+        rows.append([serial, file_name, _dt(selection.applied_at, tz)])
     return columns, rows
 
 

@@ -449,6 +449,69 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W165 — The half of the page the template scan could not see (v1.14.2)
+
+Operator, 2026-09-14, after setting the zone to `America/Los_Angeles`: *"the
+location history logs of my device still show a UTC reporting time"*.
+
+#### ⚠️ A guard that only looks where you already looked finds nothing
+
+W163 moved all 22 template timestamps onto `|localtime` and added a scan to keep
+them there. The scan reads `app/web/templates/`. The location-history **map
+popups** are built in `routes.py`:
+
+```python
+"when": p.recorded_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
+```
+
+So one page rendered the same instants twice — the table through the filter, the
+map through hard-coded UTC — and labelled neither. That is exactly the failure the
+filter was introduced to prevent, sitting in the half of the page the guard was not
+pointed at.
+
+Three genuine gaps, all Python-side:
+
+| Where | Was |
+|---|---|
+| Location-history map popups | Hard-coded `UTC` suffix |
+| Every report (`reports._dt`) | Formatted straight off the model |
+| The From/To date boxes | UTC dates, parsed as UTC midnight |
+
+#### ⚠️ A typed date now means the operator's day
+
+`_parse_day` read a `type=date` value as **midnight UTC**. With the page printing
+Los Angeles times, a window asked for as "14 September" began at 17:00 on the 13th
+locally — so the page showed times falling outside the window it claimed to be
+showing. It now reads the date in the display zone and converts, and the page's own
+help text, which said *"taken at midnight, UTC"*, was corrected with it. That
+sentence was found by an assertion, not by reading.
+
+#### ⚠️ My W163 test for this page was passing trivially
+
+`test_location_history_follows_the_setting` asserted a `%Y-%m-%d` string appeared
+in the page — which is true of UTC and Tokyo alike whenever they share a date. It
+could not have caught this. The replacements assert a shared local **hour** across
+both the table and the map payload, and that no rendered timestamp on the page ends
+in `UTC`.
+
+#### The guard now covers Python too
+
+`app/**/*.py` may not call `.strftime()` outside `clock.py` unless the line carries
+a `utc-by-design` marker and a reason. One place does: the location-history **CSV
+rows**, whose headers say `recorded_at_utc` in so many words — an export outlives
+the setting that produced it, and a spreadsheet of local times with no zone
+recorded cannot be checked later or lined up against another device's. The download
+*filename* is local, because a file fetched at 12:46 that calls itself 19:46 looks
+like it came from somewhere else.
+
+`reports._dt` takes the zone as a **required** argument. A default would let the
+next report print UTC beside five printing local, which is how this reached an
+operator in the first place.
+
+**1747 server tests.** Five mutation checks, all caught — the first of them being
+the operator's exact bug.
+
+
 ### ✅ W164 — The fleet that was already there (v1.14.1)
 
 Operator, 2026-09-14: *"lets address the outstanding"*.

@@ -26,6 +26,8 @@ from __future__ import annotations
 import io
 import pathlib
 import re
+
+import pytest
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
@@ -234,3 +236,184 @@ def test_no_template_formats_a_timestamp_behind_the_filters_back():
         "these render a timestamp without |localtime, so they will print UTC:\n"
         + "\n".join(offenders)
     )
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ What W163 missed: the timestamps Python formats (W165)
+#
+# The filter covered the templates and a scan enforced it, and the operator still
+# found UTC on the location-history page — because the map popups beside the table
+# are built in `routes.py`, and reports render pre-formatted strings. A guard that
+# only looks where you already looked finds nothing.
+# --------------------------------------------------------------------------- #
+
+APP = pathlib.Path("app")
+
+#: A `.strftime(` in app code is allowed only where the zone is deliberate and
+#: said out loud. The marker goes on or just above the line.
+_UTC_MARKER = "utc-by-design"
+
+
+def test_no_python_formats_a_timestamp_outside_the_clock_service():
+    """⚠️ The companion to the template scan, and the half that was missing.
+
+    `clock.py` is the one place allowed to call `strftime`. Anywhere else, a
+    timestamp formatted in Python is one the display zone cannot reach — and it
+    will sit next to one that it can, on the same page, labelled neither.
+    """
+    offenders = []
+    for path in sorted(APP.rglob("*.py")):
+        if path == pathlib.Path("app/services/clock.py"):
+            continue
+        lines = io.open(path, encoding="utf-8").read().splitlines()
+        for number, line in enumerate(lines, 1):
+            if ".strftime(" not in line:
+                continue
+            stripped = line.strip()
+            # Prose, not code: a comment, or a docstring quoting the call in
+            # backticks — including the ones that explain why this scan exists.
+            if stripped.startswith("#") or "`" in line:
+                continue
+            window = "\n".join(lines[max(0, number - 10):number])
+            if _UTC_MARKER in window:
+                continue
+            offenders.append(f"{path}:{number}: {stripped}")
+
+    assert not offenders, (
+        "these format a timestamp outside the display zone. Use "
+        "`clock.format(value, tz, fmt)`, or mark the line `utc-by-design` with a "
+        "reason if UTC is genuinely intended:\n" + "\n".join(offenders)
+    )
+
+
+def test_the_map_popup_is_in_the_configured_zone(client: TestClient, db, enrolled, mtls_headers):
+    """⚠️ The exact bug an operator reported: the table said one zone, the map
+    beside it said another, and the page gave no way to tell."""
+    from tests.test_checkin import checkin
+    from tests.test_locations import _report
+
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    checkin(client, headers, locations=[_report(3)])
+
+    client.post(
+        "/admin/settings/general",
+        data={"general.timezone": "America/Los_Angeles"},
+        follow_redirects=False,
+    )
+
+    page = client.get(
+        f"/devices/{result['device_id']}/location-history", headers=ADMIN_HEADERS
+    ).text
+
+    assert "PDT" in page or "PST" in page, (
+        "the map popup does not name the configured zone; it is built in "
+        "routes.py, which the template scan cannot see"
+    )
+    # ⚠️ Matched against a *rendered timestamp*, not the bare word. The page's own
+    # help text mentions UTC to explain what the dates are not, and a blunter
+    # assertion would forbid the sentence that prevents the confusion.
+    stamped_utc = re.search(r"\d\d:\d\d(:\d\d)?\s*UTC", page)
+    assert not stamped_utc, (
+        f"a timestamp on this page is still in UTC: {stamped_utc.group(0)!r}"
+    )
+
+
+def test_the_table_and_the_map_agree(client: TestClient, db, enrolled, mtls_headers):
+    """Two renderings of one instant on one page. If they disagree, the page is
+    lying about at least one of them."""
+    from tests.test_checkin import checkin
+    from tests.test_locations import _report
+
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    checkin(client, headers, locations=[_report(3)])
+
+    client.post(
+        "/admin/settings/general",
+        data={"general.timezone": "Asia/Tokyo"},
+        follow_redirects=False,
+    )
+    page = client.get(
+        f"/devices/{result['device_id']}/location-history", headers=ADMIN_HEADERS
+    ).text
+
+    expected = clock.format(
+        datetime.now(timezone.utc), clock.zone("Asia/Tokyo"), "%Y-%m-%d %H:"
+    )
+    # Both the table cell and the map payload carry the same local hour.
+    assert page.count(expected) >= 2, (
+        f"expected the local hour {expected!r} in both the table and the map"
+    )
+
+
+def test_a_report_renders_in_the_configured_zone(client: TestClient, db, enrolled, mtls_headers):
+    """Reports build their strings in Python, so the filter never saw them."""
+    from tests.test_checkin import checkin
+
+    result = enrolled()
+    checkin(client, mtls_headers(result["certificate_pem"]))
+
+    client.post(
+        "/admin/settings/general",
+        data={"general.timezone": "Asia/Tokyo"},
+        follow_redirects=False,
+    )
+
+    page = client.get("/reports/fleet-inventory", headers=ADMIN_HEADERS).text
+    expected = clock.format(
+        datetime.now(timezone.utc), clock.zone("Asia/Tokyo"), "%Y-%m-%d %H:"
+    )
+    assert expected in page, "the report is still in UTC"
+
+
+def test_a_report_cannot_be_written_that_forgets_the_zone():
+    """⚠️ `_dt` takes the zone as a required argument on purpose.
+
+    A default would let a new report print UTC beside five printing local, which
+    is precisely how this reached an operator in the first place.
+    """
+    from app.services import reports
+
+    with pytest.raises(TypeError):
+        reports._dt(datetime.now(timezone.utc))
+
+
+# --------------------------------------------------------------------------- #
+# The window an operator asks for is their own day
+# --------------------------------------------------------------------------- #
+
+
+def test_a_typed_date_is_read_in_the_display_zone(client: TestClient, db):
+    """⚠️ Midnight local, not midnight UTC.
+
+    With UTC edges, an operator in Los Angeles asking for "14 September" gets a
+    window starting at 17:00 on the 13th their time — so the page shows times that
+    fall outside the window it says it is showing.
+    """
+    from app.web.routes import _parse_day
+
+    la = clock.zone("America/Los_Angeles")
+    parsed = _parse_day("2026-09-14", la)
+
+    assert parsed is not None
+    assert clock.format(parsed, la, "%Y-%m-%d %H:%M") == "2026-09-14 00:00"
+    # Which is 07:00 UTC that day — the boundary the query actually uses.
+    assert parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M") == "2026-09-14 07:00"
+
+
+def test_no_zone_still_means_utc_midnight(client: TestClient):
+    """The default deployment is unchanged."""
+    from app.web.routes import _parse_day
+
+    parsed = _parse_day("2026-09-14")
+
+    assert parsed is not None
+    assert parsed.strftime("%Y-%m-%d %H:%M %Z") == "2026-09-14 00:00 UTC"
+
+
+def test_a_malformed_date_still_reads_as_absent(client: TestClient):
+    from app.web.routes import _parse_day
+
+    for junk in (None, "", "not-a-date", "2026-13-45"):
+        assert _parse_day(junk, clock.zone("America/Los_Angeles")) is None

@@ -365,12 +365,19 @@ def dashboard(
 _DEFAULT_HISTORY_HOURS = 48
 
 
-def _parse_day(value: str | None) -> datetime | None:
-    """A `type=date` value at midnight UTC, or None if it is absent or malformed.
+def _parse_day(value: str | None, tz=None) -> datetime | None:
+    """A `type=date` value at midnight in the console's zone, as a UTC instant.
 
     ⚠️ Malformed reads as absent rather than as an error. The field is a date
     picker; anything else in it came from a hand-edited URL, and falling back to
     the default window is more useful than a 422 on a read-only page.
+
+    ⚠️ **Midnight local, not midnight UTC** (W165). The page now prints times in
+    the console's zone, so a window whose edges were UTC midnight would not line up
+    with the times displayed inside it: an operator in Los Angeles asking for
+    "14 September" would get a window that began at 17:00 on the 13th their time
+    and ended before their evening. Reading the typed date in the same zone the
+    page is written in is what makes "today" mean today.
     """
     if not value:
         return None
@@ -378,7 +385,7 @@ def _parse_day(value: str | None) -> datetime | None:
         parsed = datetime.strptime(value, "%Y-%m-%d")
     except ValueError:
         return None
-    return parsed.replace(tzinfo=timezone.utc)
+    return parsed.replace(tzinfo=tz or timezone.utc).astimezone(timezone.utc)
 
 
 @router.get("/devices/{device_id}/location-history", response_class=HTMLResponse)
@@ -396,9 +403,10 @@ def location_history(
     if device is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
 
+    tz = clock.configured(session)
     now = datetime.now(timezone.utc)
-    newest = now if from_mode != "date" else (_parse_day(from_date) or now)
-    oldest = _parse_day(to_date) or (now - timedelta(hours=_DEFAULT_HISTORY_HOURS))
+    newest = now if from_mode != "date" else (_parse_day(from_date, tz) or now)
+    oldest = _parse_day(to_date, tz) or (now - timedelta(hours=_DEFAULT_HISTORY_HOURS))
 
     range_error = None
     if oldest > newest:
@@ -416,13 +424,16 @@ def location_history(
         request,
         "location_history.html",
         identity=identity,
+        tz=tz,
         device=device,
         points=points,
         total=len(stored),
         thinned=len(points) < len(stored),
         from_mode="date" if from_mode == "date" else "now",
-        from_date=(newest.strftime("%Y-%m-%d")),
-        to_date=oldest.strftime("%Y-%m-%d"),
+        # Echoed back in the same zone they are read in, or the boxes would
+        # disagree with the window they produced.
+        from_date=clock.format(newest, tz, "%Y-%m-%d"),
+        to_date=clock.format(oldest, tz, "%Y-%m-%d"),
         range_error=range_error,
         map_json=json.dumps(
             {
@@ -437,7 +448,15 @@ def location_history(
                         "number": p.number,
                         "latitude": p.latitude,
                         "longitude": p.longitude,
-                        "when": p.recorded_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                        # ⚠️ The popup is the reason W165 exists. The table beside
+                        # it went through `|localtime` while this stayed hard-coded
+                        # UTC, so one page showed the same instant in two zones and
+                        # labelled neither — exactly the failure the filter was
+                        # introduced to prevent, hiding in the half of the page the
+                        # template scan could not see.
+                        "when": clock.format(
+                            p.recorded_at, tz, "%Y-%m-%d %H:%M:%S %Z"
+                        ),
                     }
                     for p in points
                 ],
@@ -477,6 +496,11 @@ def location_history_csv(
             buffer.truncate(0)
             writer.writerow([
                 index,
+                # utc-by-design: the headers above say `recorded_at_utc` and
+                # `received_at_utc` in so many words. An export outlives the
+                # setting that produced it, and a spreadsheet of local times with
+                # no zone recorded anywhere is not something anyone can check
+                # later — or line up against another device's export.
                 point.recorded_at.strftime("%Y-%m-%d %H:%M:%S"),
                 point.received_at.strftime("%Y-%m-%d %H:%M:%S"),
                 f"{point.latitude:.6f}",
@@ -487,7 +511,14 @@ def location_history_csv(
             ])
             yield buffer.getvalue()
 
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    # Named in the console's zone: a file downloaded at 12:46 that calls itself
+    # 19:46 looks like it came from somewhere else.
+    #
+    # ⚠️ The rows inside stay UTC, deliberately. Their column headers say
+    # `recorded_at_utc` in so many words, an export outlives the setting that
+    # produced it, and a spreadsheet carrying local times with no zone recorded is
+    # not something anyone can check later.
+    stamp = clock.format(datetime.now(timezone.utc), clock.configured(session), "%Y%m%d-%H%M%S")
     name = f"location-history-{device.serial_number}-{stamp}.csv"
     return StreamingResponse(
         rows(),
