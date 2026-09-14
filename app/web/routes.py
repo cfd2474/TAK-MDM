@@ -273,6 +273,21 @@ def _localtime(ctx: Any, moment: Any, fmt: str = "%Y-%m-%d %H:%M") -> str:
 _TEMPLATES.env.filters["localtime"] = _localtime
 
 
+@pass_context
+def _zone_label(ctx: Any, moments: Any = ()) -> str:
+    """Jinja's `zone_label(...)`: what to call the zone a column of times is in.
+
+    ⚠️ Pass the moments the column actually contains. Without them the header
+    names *today's* abbreviation, which is wrong for any row on the other side of
+    a daylight-saving transition — and a header is the only thing saying what zone
+    a bare `13:23:19` is in.
+    """
+    return clock.label(ctx.get("tz") or clock.UTC, moments or ())
+
+
+_TEMPLATES.env.globals["zone_label"] = _zone_label
+
+
 def _render(
     request: Request, template: str, identity: AdminIdentity | None = None, **context: Any
 ) -> HTMLResponse:

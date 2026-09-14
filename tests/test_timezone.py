@@ -194,7 +194,12 @@ def test_location_history_follows_the_setting(client: TestClient, db, enrolled, 
     page = client.get(
         f"/devices/{result['device_id']}/location-history", headers=ADMIN_HEADERS
     ).text
-    tokyo = clock.format(datetime.now(timezone.utc), clock.zone("Asia/Tokyo"), "%Y-%m-%d")
+    # ⚠️ The **hour**, not just the date. This asserted a `%Y-%m-%d` string until
+    # W165, which is true of UTC and Tokyo alike whenever the two share a date —
+    # so it passed throughout the whole period the page was wrong.
+    tokyo = clock.format(
+        datetime.now(timezone.utc), clock.zone("Asia/Tokyo"), "%Y-%m-%d %H:"
+    )
     assert tokyo in page, "the history table is not in the configured zone"
 
 
@@ -417,3 +422,129 @@ def test_a_malformed_date_still_reads_as_absent(client: TestClient):
 
     for junk in (None, "", "not-a-date", "2026-13-45"):
         assert _parse_day(junk, clock.zone("America/Los_Angeles")) is None
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ What W165 missed: the label, not the times (W166)
+#
+# The times moved to the operator's zone and the column header still read
+# "(UTC)" — a column of correct numbers under a wrong label, which is worse than
+# the all-UTC table it replaced, because the numbers now look authoritative. The
+# scans were checking how timestamps are *formatted*; nothing was checking what
+# the page *calls* the zone.
+# --------------------------------------------------------------------------- #
+
+#: A template may name UTC only inside a Jinja comment, or under this marker.
+_TEMPLATE_UTC_MARKER = "utc-by-design"
+
+
+def _jinja_comment_lines(text: str) -> set[int]:
+    """Line numbers inside `{# ... #}` blocks, which are design prose."""
+    inside = set()
+    depth = 0
+    for number, line in enumerate(text.splitlines(), 1):
+        opens, closes = line.count("{#"), line.count("#}")
+        if depth or opens:
+            inside.add(number)
+        depth += opens - closes
+        depth = max(depth, 0)
+    return inside
+
+
+def test_no_template_labels_a_zone_it_does_not_know():
+    """⚠️ The companion to the two formatting scans, and the third thing missed.
+
+    A hard-coded zone name is not a formatting bug — it survives every check that
+    looks at how a timestamp is rendered — and it is the only thing telling a
+    reader what a bare `13:23:19` means.
+    """
+    offenders = []
+    for path in sorted(TEMPLATES.rglob("*.html")):
+        text = io.open(path, encoding="utf-8").read()
+        prose = _jinja_comment_lines(text)
+        lines = text.splitlines()
+        for number, line in enumerate(lines, 1):
+            if "UTC" not in line or number in prose:
+                continue
+            window = "\n".join(lines[max(0, number - 10):number])
+            if _TEMPLATE_UTC_MARKER in window:
+                continue
+            offenders.append(f"{path}:{number}: {line.strip()}")
+
+    assert not offenders, (
+        "these name a zone the page may not actually be in. Use "
+        "`zone_label(...)`, or mark it `utc-by-design` with a reason:\n"
+        + "\n".join(offenders)
+    )
+
+
+def test_the_history_column_header_names_the_configured_zone(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """The operator's report: the times updated, the header did not."""
+    from tests.test_checkin import checkin
+    from tests.test_locations import _report
+
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+    checkin(client, headers, locations=[_report(3)])
+
+    url = f"/devices/{result['device_id']}/location-history"
+
+    assert "Date / time (UTC)" in client.get(url, headers=ADMIN_HEADERS).text
+
+    client.post(
+        "/admin/settings/general",
+        data={"general.timezone": "America/Los_Angeles"},
+        follow_redirects=False,
+    )
+
+    page = client.get(url, headers=ADMIN_HEADERS).text
+    assert "Date / time (PDT)" in page or "Date / time (PST)" in page, (
+        "the column header still does not name the console's zone"
+    )
+    assert "Date / time (UTC)" not in page
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ One header cannot be right for rows in two different offsets
+# --------------------------------------------------------------------------- #
+
+
+def test_the_abbreviation_is_used_when_every_row_agrees():
+    denver = clock.zone("America/Denver")
+    summer = [
+        datetime(2026, 7, 1, 19, 0, tzinfo=timezone.utc),
+        datetime(2026, 7, 2, 19, 0, tzinfo=timezone.utc),
+    ]
+
+    assert clock.label(denver, summer) == "MDT"
+
+
+def test_a_column_spanning_a_transition_falls_back_to_the_zone_name():
+    """⚠️ The case an abbreviation cannot describe.
+
+    A window over the November change contains both MDT and MST rows. Labelling
+    the column either one is wrong for half of it, and nothing in the table would
+    say which half — so the header names the zone instead, which is true of every
+    row beneath it.
+    """
+    denver = clock.zone("America/Denver")
+    across = [
+        datetime(2026, 11, 1, 6, 0, tzinfo=timezone.utc),   # MDT
+        datetime(2026, 11, 2, 19, 0, tzinfo=timezone.utc),  # MST
+    ]
+
+    assert clock.label(denver, across) == "America/Denver"
+
+
+def test_an_empty_column_still_gets_a_header():
+    """Nothing is being mislabelled, so today's abbreviation is honest enough."""
+    assert clock.label(clock.UTC, []) == "UTC"
+    assert clock.label(clock.zone("America/Denver"), []) in {"MST", "MDT"}
+
+
+def test_utc_is_still_called_utc():
+    moments = [datetime(2026, 7, 1, 19, 0, tzinfo=timezone.utc)]
+
+    assert clock.label(clock.UTC, moments) == "UTC"

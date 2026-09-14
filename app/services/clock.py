@@ -36,6 +36,7 @@ timestamp in the console into an exception.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
@@ -114,6 +115,28 @@ def to_zone(moment: datetime, tz: ZoneInfo | timezone) -> datetime:
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=UTC)
     return moment.astimezone(tz)
+
+
+def label(tz: ZoneInfo | timezone, moments: Iterable[datetime | None] = ()) -> str:
+    """How to name this zone where a column of times is labelled once.
+
+    A table whose rows carry no suffix needs its header to say which zone they
+    are in, and the obvious answer — the current abbreviation — is wrong for a
+    column that spans a daylight-saving transition. Half the rows would be PDT
+    under a header reading PST, with nothing to indicate it.
+
+    ⚠️ So the abbreviation is used **only when every row agrees on it**. When
+    they do not, the header falls back to the zone's full name, which is true of
+    all of them. The cost is a longer header twice a year; the alternative is a
+    header that is silently wrong for some of the rows beneath it.
+    """
+    seen = {to_zone(m, tz).strftime("%Z") for m in moments if m is not None}
+    if len(seen) == 1:
+        return seen.pop()
+    if not seen:
+        # An empty table still needs a header. Nothing is being mislabelled.
+        return datetime.now(UTC).astimezone(tz).strftime("%Z")
+    return getattr(tz, "key", None) or DEFAULT_TIMEZONE
 
 
 def format(moment: datetime | None, tz: ZoneInfo | timezone, fmt: str) -> str:

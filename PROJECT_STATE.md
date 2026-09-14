@@ -449,6 +449,50 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W166 — The label over the column, not the times in it (v1.14.3)
+
+Operator, 2026-09-14, with a screenshot: *"The times are updated, but the column
+label still reads UTC. it needs to reflect the admin default label."*
+
+`location_history.html` carried `<th>Date / time (UTC)</th>` as static text. The
+rows beneath it had moved to the console's zone in W163 — so the column held
+correct numbers under a wrong label, which is **worse than the all-UTC table it
+replaced**, because the numbers now look authoritative.
+
+#### ⚠️ Three scans, and none of them was looking for this
+
+W163 scanned templates for `.strftime(`. W165 added the same scan over `app/**`.
+Both check how a timestamp is **formatted**. A hard-coded zone *name* is not a
+formatting call, so it survived both — and it is the only thing telling a reader
+what a bare `13:23:19` means. The third scan now forbids a template naming UTC at
+all outside a Jinja comment, unless the line carries `utc-by-design` and a reason.
+One line qualifies: the help text that mentions UTC precisely to say what the date
+boxes are *not* read as.
+
+#### ⚠️ One header cannot be right for rows in two offsets
+
+The obvious fix — print the current abbreviation — is wrong for a column spanning
+a daylight-saving change: half the rows are PDT under a header reading PST, with
+nothing in the table to say so. `clock.label()` uses the abbreviation **only when
+every row in view agrees on it**, and otherwise falls back to the zone's full name,
+which is true of all of them. The cost is a longer header twice a year; the
+alternative is a header silently wrong for some of the rows beneath it.
+
+That is also why `zone_label()` takes the moments the column contains rather than
+reading the clock — a header that names today is wrong for every row on the other
+side of a transition.
+
+#### ⚠️ A test that had never been able to fail
+
+`test_location_history_follows_the_setting` asserted a `%Y-%m-%d` string appeared
+in the page, which is true of UTC and Tokyo alike whenever they share a date. It
+passed throughout the entire period the page was wrong. It now asserts the local
+**hour**. A test that cannot fail is worse than no test, because it is counted.
+
+**1753 server tests.** Three mutation checks, all caught, the first being the
+operator's exact screenshot.
+
+
 ### ✅ W165 — The half of the page the template scan could not see (v1.14.2)
 
 Operator, 2026-09-14, after setting the zone to `America/Los_Angeles`: *"the

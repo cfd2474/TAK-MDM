@@ -32,6 +32,7 @@
     range whose ends are the other way round to the reader's expectation is a
     silent way to look at the wrong window and believe it.
   #}
+  {# utc-by-design: naming UTC to say what the dates are *not* taken at. #}
   <p class="field-tip">
     <strong>From</strong> is the most recent bound; <strong>To</strong> is further
     back in time. Calendar dates are taken at midnight in the console's timezone,
@@ -101,7 +102,14 @@
         <thead>
           <tr>
             <th>#</th>
-            <th>Date / time (UTC)</th>
+            {#
+              ⚠️ The rows below carry no zone of their own, so this header is the
+              only thing that says what `13:23:19` means. It read "(UTC)" while the
+              times beneath it had already moved to the console's zone — a column
+              of correct numbers under a wrong label, which is worse than the
+              all-UTC table it replaced.
+            #}
+            <th>Date / time ({{ zone_label(points | map(attribute='recorded_at') | list) }})</th>
             <th>Coordinates</th>
             <th>Accuracy</th>
             <th>Source</th>
