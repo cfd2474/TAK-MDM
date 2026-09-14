@@ -270,6 +270,29 @@ Knox is strictly additive.
 
 ## Operational notes — read before debugging anything "impossible"
 
+### ⚠️ Unexplained intermittent: `test_history_bounds_read_newest_to_oldest` (2026-09-14)
+
+Failed **once**, in a full-suite run during W172 chunk 1, and has not reproduced
+in three subsequent full runs, three runs of its own file, or in isolation. It is
+recorded rather than forgotten because an intermittent failure returns, and the
+next person to see it should not start from zero.
+
+What was ruled out:
+
+* **Test ordering.** No `pytest-randomly`, no `xdist`, no `pytest.ini` — order is
+  deterministic, so it is not a neighbour polluting it.
+* **The window arithmetic.** The points are at 180, 90 and 5 minutes old and the
+  window is 30–120 minutes; for the assertion to fail on timing, ~25 minutes would
+  have to pass between building the report and running the query.
+* **Cross-test database state.** The `db` fixture is a per-test in-memory SQLite.
+* **`history()` itself.** A bounded, ordered query — deterministic given its rows.
+
+Which leaves the row count from the check-in, and no mechanism found for that
+varying. ⚠️ **Do not treat "it passes now" as the answer** — the next occurrence
+should be captured with `-x --tb=long` and the stored rows dumped, because the
+interesting question is how many points landed, not what the query returned.
+
+
 ### ⚠️ The deploy tarball shipped `./cache` and broke it silently (2026-09-11)
 
 Noticed while verifying the W135 deploy. `cache/` is gitignored but **was not in
