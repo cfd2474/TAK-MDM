@@ -449,6 +449,58 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W168 — Security audit (v1.15.1)
+
+Operator, 2026-09-14: *"perform a security audit of this project. publish the
+findings in a document called SEC_AUDIT.md … a list of vulnerabilities,
+categorized in a range from severe to minor."*
+
+[SEC_AUDIT.md](SEC_AUDIT.md) — static review, **18 findings: 2 severe, 3 high,
+8 medium, 5 low**. Every one traced to a file and line and read rather than
+inferred.
+
+#### The two severe findings
+
+* **S-1 — admin auth is header-trust with nothing verifying the proxy.**
+  `identify()` reads `x-authentik-username` and the groups header and believes
+  them. A grep for a trusted-proxy check, client-IP allowlist, shared secret or
+  `forwarded_allow_ips` returns nothing. Anything that can reach the app port is
+  a full administrator by sending two headers — and `docker-compose.yml` declares
+  no `networks:` block, so every other container on the InfraTAK box shares the
+  default network. `R7` records exactly this for the *device* API; nobody had
+  written it down for the **admin** surface.
+* **S-2 — five private keys, one directory, none encrypted.** `ca.key`,
+  `token_vault.key`, and the CSRF, QR and bundle-signing keys. `R8` and `R12`
+  cover the first two; the other three are tracked nowhere. The accepted-risk
+  argument holds key-by-key and fails in aggregate: one directory read defeats
+  every independent control at once, including the ones meant to detect it.
+
+#### ⚠️ The most valuable finding is the one with no answer yet
+
+**H-3**: dependencies pinned to late-2024 versions, no CI, no scanning, no
+pre-commit. `pip-audit` has **not** been run — the finding records the version
+ages as fact and explicitly refuses to assert CVEs from memory. It is first in
+the recommended order because it is the only item whose real size is unknown.
+
+#### What the audit did not do, stated in the document
+
+No dynamic testing, no exploitation, no CVE scan, and only a selective read of
+the agent. Severity is reasoned from code, not demonstrated — said plainly at the
+top, because an audit that reads as confirmed-exploitable when it is not is worse
+than no audit.
+
+#### Not all faults
+
+The document carries a *What is done well* section, verified rather than assumed:
+device mTLS checks issuer/known/revoked/enrolled and takes identity from the
+certificate rather than the path (no IDOR); the agent's extractor stops zip-slip
+with a canonical-path check; artifact storage validates the digest before building
+a path; subprocess calls are list-form with the durable Play token in a `0600` ini
+rather than argv; admin routes are guarded at registration so a new route is
+protected by default. Several findings were quicker to confirm *because* the code
+documents its own accepted risks.
+
+
 ### ✅ W167 — The policy name on the device page opens the editor (v1.15.0)
 
 Operator, 2026-09-14: *"on the device details page, clicking on the policy name,

@@ -1,0 +1,572 @@
+# ATLAS — Security Audit
+
+**Date:** 2026-09-14 · **Version audited:** v1.15.0 (`54e22fa`) · **Method:** source review
+
+A static review of the ATLAS server, the Android agent, the deployment
+configuration, and the InfraTAK module. Every finding below is traced to a file
+and line and was read rather than inferred.
+
+---
+
+## Scope and method
+
+**Reviewed:** `app/` (114 Python modules), `agent/` (Kotlin agent and launcher),
+`alembic/`, `docker/`, `docker-compose.yml`, `requirements.txt`, and the public
+`modules/atlas.py` in the infra-TAK fork.
+
+**Not done, and it matters when reading this:**
+
+- **No dynamic testing.** Nothing was exploited, fuzzed, or run against a live
+  host. Severity ratings are reasoned from code, not demonstrated.
+- **No dependency CVE scan was executed.** Finding **H-3** records the version
+  ages as fact; it does not assert specific CVEs from memory. Run `pip-audit`
+  to turn that finding into a list.
+- **The Android agent was reviewed selectively** — manifest, exported
+  components, file deployment, location, and the command handlers. The
+  provisioning and kiosk paths were not read line by line.
+- **No review of Authentik, Caddy, or the InfraTAK host** beyond how ATLAS
+  depends on them.
+
+### Severity
+
+| | Meaning |
+|---|---|
+| **Severe** | Total compromise of the fleet or the server if the condition is met. |
+| **High** | Significant compromise, or a systemic weakness with wide reach. |
+| **Medium** | Real exposure, bounded by privilege required or by blast radius. |
+| **Low** | Hardening gaps and latent issues with no current exploit path. |
+
+⚠️ **Privilege matters throughout.** An ATLAS administrator can already install
+arbitrary applications on every device in the fleet. Findings that require
+administrator access are therefore rated on *what they add* to that — reach
+beyond the fleet, persistence, or evasion of the audit trail — not on the
+device-level access an admin has by design.
+
+---
+
+## Summary
+
+| ID | Severity | Finding |
+|---|---|---|
+| S-1 | **Severe** | Admin authentication trusts request headers with no proxy verification |
+| S-2 | **Severe** | Five private keys sit unencrypted in one directory |
+| H-1 | High | Fleet authorization is delegated entirely to Authentik, with no check in ATLAS |
+| H-2 | High | The agent signing key is an unrecoverable single point of failure |
+| H-3 | High | Dependencies pinned two years back, with no scanning and no CI |
+| M-1 | Medium | Uploads are read whole into memory with no size limit |
+| M-2 | Medium | Server-side fetch of operator-supplied URLs, following redirects (SSRF) |
+| M-3 | Medium | Private key files are created before they are made private (TOCTOU) |
+| M-4 | Medium | A fleet-takeover receiver is exported in release builds |
+| M-5 | Medium | Outbound credentials stored in plaintext in the database |
+| M-6 | Medium | No security response headers anywhere |
+| M-7 | Medium | The permanent enrollment QR is a non-expiring credential in a printable image |
+| M-8 | Medium | No rate limiting on any endpoint |
+| L-1 | Low | DTED archive paths pass through the server unsanitised |
+| L-2 | Low | CSRF cookie is readable by JavaScript for no reason |
+| L-3 | Low | Markdown link URLs are injected into an attribute without quote escaping |
+| L-4 | Low | Exported agent activities have no caller check |
+| L-5 | Low | Enrollment token hashes are unsalted |
+
+**18 findings: 2 severe, 3 high, 8 medium, 5 low.**
+
+---
+
+## Severe
+
+### S-1 — Admin authentication trusts request headers with no proxy verification
+
+**Where:** [app/security/admin_auth.py:95–134](app/security/admin_auth.py#L95-L134)
+
+In `forward_auth` mode the entire administrative identity is read from request
+headers:
+
+```python
+username = request.headers.get(settings.admin_user_header)   # x-authentik-username
+groups   = _split_groups(request.headers.get(settings.admin_groups_header))
+```
+
+Nothing establishes that the request came from the Authentik proxy. I searched
+for a trusted-proxy source check, a shared secret, a client-IP allowlist, and
+`forwarded_allow_ips` — **there is none**:
+
+```
+$ grep -rn "trusted_prox|client.host|REMOTE_ADDR|X-Forwarded-For|forwarded_allow" app/
+(no matches)
+```
+
+Anyone able to make an HTTP request directly to the application port is a full
+administrator by sending two headers. There is no audit distinction between that
+and a genuine sign-in.
+
+**Why this is Severe rather than theoretical.** The only control is network
+placement, and it is a single line in a compose override
+(`127.0.0.1:{app_port}:8000`). The failure modes are ordinary:
+
+- A compose override, debug session, or port-forward that publishes the port.
+- Any other container on the host reaching the app over Docker's network — the
+  InfraTAK box runs Authentik, CloudTAK, TAK Portal, netbird and more alongside
+  ATLAS, and `docker-compose.yml` declares no `networks:` block, so containers
+  share the default project network.
+- **An SSRF in any other service on that host** becomes ATLAS administrator.
+- Caddy misconfigured, replaced, or bypassed.
+
+`R7` in `PROJECT_STATE.md` records this for the *device* API and notes "the app
+does not refuse to start when no trusted proxy is configured." The same hole
+exists on the **admin** surface and is not recorded there.
+
+**Recommendation.** Defence in depth, cheapest first:
+
+1. A shared secret header minted at deploy and checked on every admin request —
+   the module already generates a DB password this way, so the plumbing exists.
+2. Refuse to start in `forward_auth` mode without a configured trusted proxy
+   identity, the way `TAKMDM_CONSOLE_ORIGIN` already warns.
+3. Bind the app to a Unix socket, or place it on a dedicated Docker network with
+   only Caddy attached.
+
+---
+
+### S-2 — Five private keys sit unencrypted in one directory
+
+**Where:** [app/security/ca.py:124–136](app/security/ca.py#L124-L136),
+[token_vault.py:52–63](app/security/token_vault.py#L52-L63),
+[csrf.py:88–90](app/security/csrf.py#L88-L90),
+[enrollment_qr.py:74–76](app/security/enrollment_qr.py#L74-L76),
+[bundle.py:73–80](app/security/bundle.py#L73-L80)
+
+`pki/` holds, all unencrypted at rest:
+
+| File | What it grants |
+|---|---|
+| `ca.key` | Mint a client certificate for **any** device — full impersonation |
+| `token_vault.key` | Decrypt every stored enrollment token secret |
+| `bundle` signing key | Sign desired-state documents the agent trusts |
+| `csrf` key | Forge CSRF tokens for any administrator |
+| `enrollment_qr` key | Forge signed provisioning QR payloads |
+
+The CA key is written with `encryption_algorithm=serialization.NoEncryption()`
+and the code says so plainly. `R8` and `R12` record the first two; the other
+three are not tracked as risks anywhere.
+
+Read access to one directory is total compromise: impersonate devices, decrypt
+enrolment credentials, forge management payloads, and forge admin actions. The
+0600 mode is the only control, and the container runs as `APP_UID` with `pki/`
+bind-mounted from the host.
+
+**Why Severe and not accepted risk.** The existing acceptance ("acceptable on a
+single trusted host where the DB is equally exposed") holds for `ca.key` versus
+the database. It does not hold for the *aggregate*: this directory is a single
+object whose compromise defeats every independent control in the system at once,
+including the ones designed to detect compromise.
+
+**Recommendation.** The KMS/HSM answer `R8` already anticipates. Short of that,
+two cheap improvements: encrypt the CA key with a passphrase supplied at start
+(it is used rarely — at enrolment), and separate the signing keys from the CA so
+one directory read is not everything.
+
+---
+
+## High
+
+### H-1 — Fleet authorization is delegated entirely to Authentik
+
+**Where:** [app/security/admin_auth.py:115–127](app/security/admin_auth.py#L115-L127),
+and `TAKMDM_ADMIN_GROUP=` in the module's env template
+
+```python
+required = settings.admin_group
+if required and required not in groups:
+    raise HTTPException(403, ...)
+```
+
+When `admin_group` is empty the group check is skipped entirely — any identity
+Authentik forwards is a full ATLAS administrator. The InfraTAK module ships it
+**blank**, documented as "blank here means whoever Authentik let through".
+
+Authorization then rests wholly on the Authentik application binding that
+`_restrict_to_admins` creates. That binding was already found missing once
+(recorded in `PROJECT_STATE.md`: *"ATLAS app had no policy binding — verified
+live: `bindings: NONE`"*), and during that window every Authentik user was an
+ATLAS administrator. The binding is created by a module that runs at install; if
+it fails, is edited, or is lost in an Authentik restore, **ATLAS has no second
+check and no way to notice**.
+
+**Recommendation.** Set a default group and fail closed on it, or have ATLAS
+verify its own Authentik binding at startup and warn as loudly as it does for
+disabled auth. A second check that is merely *redundant* is the point.
+
+---
+
+### H-2 — The agent signing key is an unrecoverable single point of failure
+
+**Where:** `agent/keystore.properties`, recorded as `R15`
+
+Android refuses an update signed by a different key. Losing it means **no device
+can ever be updated again** without a factory reset of the entire fleet; stealing
+it means an attacker who also controls a distribution path can sign an agent the
+devices accept as genuine.
+
+W162 raised the stakes: OTA self-update is now the delivery mechanism, and this
+audit's own release process pushed a new signed APK. Signature continuity is
+verified at release time, which is good practice, and it also means the key is in
+routine use on a workstation.
+
+**Recommendation.** Belongs with `S-2` in the same key-management answer. At
+minimum: an offline backup of the keystore held separately from the build
+machine, and a documented recovery position for "the key is gone".
+
+---
+
+### H-3 — Dependencies pinned two years back, with no scanning and no CI
+
+**Where:** [requirements.txt](requirements.txt)
+
+The project operates in September 2026 against pins from late 2024:
+
+| Package | Pinned | Released |
+|---|---|---|
+| `fastapi` | 0.115.0 | Sept 2024 |
+| `cryptography` | 43.0.1 | Sept 2024 |
+| `jinja2` | 3.1.4 | May 2024 |
+| `uvicorn` | 0.30.6 | Aug 2024 |
+| `sqlalchemy` | 2.0.35 | Sept 2024 |
+| `python-multipart` | 0.0.12 | Oct 2024 |
+
+`cryptography` and `jinja2` both have publicly known security releases after
+these pins, and `python-multipart` — which parses every file upload — has had
+DoS advisories historically. ⚠️ **I have not verified which CVEs apply**; that
+requires `pip-audit` against the lockfile and is the single highest-value action
+in this report, because it is the one finding where the answer is a list rather
+than a judgement.
+
+There is **no CI** (`no .github/workflows`), **no pre-commit config**, and no
+dependency scanning of any kind. Pinning without scanning is the worst of both:
+the versions cannot drift *into* a fix on their own.
+
+**Recommendation.** `pip-audit` in CI, failing the build on a known-exploitable
+advisory; Dependabot or Renovate for the upgrade cadence. The 1753-test suite is
+what makes routine dependency bumps safe, and it is currently unused for that.
+
+---
+
+## Medium
+
+### M-1 — Uploads are read whole into memory with no size limit
+
+**Where:** [app/api/routers/packages.py:55](app/api/routers/packages.py#L55) and
+seven sites in [app/web/routes.py](app/web/routes.py) — `data = file.file.read()`
+
+Every upload path buffers the entire file in memory before inspection, and
+`inspect_apk` / `dted.plan` wrap that in `io.BytesIO(data)`. The application
+enforces **no size cap**. `docker/nginx/nginx.conf` sets `client_max_body_size`
+between 4 MB and 2048 MB depending on location — but the InfraTAK deployment
+fronts ATLAS with **Caddy**, and the vhost the module writes sets no request body
+limit at all.
+
+`app/artifacts/dted.py` documents a real operator sample at **726 MB compressed,
+1.75 GB inflated**. A handful of concurrent uploads exhausts the container's
+memory and takes the management plane down with it — which also stops every
+device check-in.
+
+**Recommendation.** A streaming read with a byte cap enforced in the application
+(it cannot be delegated to a proxy that varies by deployment), and a
+`request_body max_size` in the Caddy vhost.
+
+---
+
+### M-2 — Server-side fetch of operator-supplied URLs, following redirects
+
+**Where:** [app/services/geocoding.py:83–116](app/services/geocoding.py#L83-L116)
+
+```python
+url = endpoint(session)          # operator-set location.geocoder_url, unvalidated
+http = httpx.Client(timeout=..., follow_redirects=True)
+response = http.get(url, params={...})
+```
+
+`endpoint()` returns the stored setting with no scheme, host, or address
+validation. The same pattern applies to `location.suggest_url`. The server will
+fetch `http://169.254.169.254/...`, `http://localhost:9000/...`, or any container
+on the Docker network, and return part of the response to the console.
+
+⚠️ **`follow_redirects=True` widens this beyond the admin who set it.** Even a
+legitimate external geocoder — or an open redirect on one — can send the fetch to
+an internal address without the setting ever changing.
+
+Rated Medium rather than High because setting the URL requires administrator
+access. It is not Low because it reaches *beyond* the fleet an admin already
+controls, into the host's internal network.
+
+**Recommendation.** Validate the scheme, resolve the host and reject private and
+link-local ranges, and stop following redirects (or re-validate each hop).
+
+---
+
+### M-3 — Private key files are created before they are made private
+
+**Where:** all five key writers — e.g.
+[token_vault.py:61–62](app/security/token_vault.py#L61-L62)
+
+```python
+key_path.write_bytes(key)
+key_path.chmod(0o600)
+```
+
+Between those two statements the key exists with the process umask's permissions
+— commonly `0644`. The window is short but it is a real race on a host with other
+users or processes, and it applies to `ca.key`, `token_vault.key`, the CSRF key,
+the QR key, and the bundle signing key.
+
+**Recommendation.** `os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)`
+and write through that descriptor. One helper, five call sites.
+
+---
+
+### M-4 — A fleet-takeover receiver is exported in release builds
+
+**Where:** [agent/app/src/main/AndroidManifest.xml:304–311](agent/app/src/main/AndroidManifest.xml#L304-L311),
+[DebugConfigReceiver.kt](agent/app/src/main/java/com/taksolutions/atlasmdm/admin/DebugConfigReceiver.kt)
+
+`DebugConfigReceiver` accepts a broadcast that sets `server_url`,
+`enrollment_token`, and `server_ca_pem` — repointing the agent at an arbitrary
+management server. Its own docstring names it correctly: *"a receiver that can
+repoint an agent at an arbitrary server is a fleet takeover primitive."*
+
+It **is** guarded — `if (!BuildConfig.DEBUG) return` is the first statement. But
+the manifest declares it `exported="true"` `enabled="true"` in **all** build
+types, so the entire defence is one boolean at runtime. Any app on the device can
+send the broadcast; only that check stops it.
+
+For a primitive of this consequence, one line of runtime logic is thin. A build
+misconfiguration, a refactor that drops the guard, or a debug build reaching a
+real device are all ordinary events.
+
+**Recommendation.** Remove it from the release manifest — `tools:node="remove"`
+in a `release/AndroidManifest.xml`, or `android:enabled="${debugReceiver}"` from
+a manifest placeholder. Keep the runtime check as the second layer, not the only
+one. A signature-level custom permission would also work.
+
+---
+
+### M-5 — Outbound credentials stored in plaintext in the database
+
+**Where:** [app/services/settings_store.py:22–25](app/services/settings_store.py#L22-L25)
+
+SMTP, Active Directory bind, and SMS API credentials are stored unencrypted in
+`app_setting`. The module docstring documents this and rates it "next in danger
+to `pki/ca.key` and the token vault", which is a fair assessment.
+
+The console never echoes them back (verified: `test_blank_password_keeps_the_stored_one`),
+so the exposure is a database read — a backup, a dump, a read-only SQL injection
+elsewhere, or the Postgres container.
+
+Note the asymmetry: the Google Play AAS token **is** sealed in the token vault
+([google_play_link.py](app/services/google_play_link.py)), and the enrollment
+secrets are too. These three fields are the ones left behind.
+
+**Recommendation.** Seal them with the existing `TokenVault` — the mechanism is
+already in the codebase and already used for exactly this purpose.
+
+---
+
+### M-6 — No security response headers anywhere
+
+**Where:** [app/main.py](app/main.py) — no `add_middleware` call of any kind
+
+Neither the application nor `docker/nginx/nginx.conf` sets
+`Content-Security-Policy`, `X-Frame-Options`, `X-Content-Type-Options`,
+`Referrer-Policy`, or `Strict-Transport-Security`.
+
+The console's own XSS posture is good (autoescape on, `|safe` used in exactly
+three audited places), so CSP here is defence in depth rather than a fix for a
+known hole. `X-Frame-Options`/`frame-ancestors` is the more concrete gap:
+clickjacking a console that can wipe devices is worth preventing outright.
+
+**Recommendation.** One middleware setting all five. CSP can start in
+report-only; the console loads no third-party scripts, so a strict policy is
+achievable.
+
+---
+
+### M-7 — The permanent enrollment QR is a non-expiring credential
+
+**Where:** enrollment QR flow; documented in `app/web/guides/howto/01-enrolment.md`
+
+The default QR is a 15-minute derivative. The **permanent** option produces a
+code that never expires, designed to be printed and left on a provisioning
+bench. The guide states the trade-off in as many words.
+
+This is a deliberate, documented product decision and is recorded here for
+completeness rather than as an error. The residual risks are worth stating
+plainly: a photograph of that sheet enrols devices indefinitely; there is no
+per-use audit distinguishing legitimate from stolen use; and revocation is
+fleet-wide ("Retire & create new"), not per-credential.
+
+**Recommendation.** Not a code change — an operational one. Consider an optional
+expiry or use-count on permanent tokens, and surface "enrolments by token" so
+anomalous use is visible.
+
+---
+
+### M-8 — No rate limiting on any endpoint
+
+**Where:** [app/main.py](app/main.py) — no middleware; no limiter dependency
+
+Nothing limits request rate on enrolment, the device API, or the console.
+
+Credential brute force is **not** the practical risk: enrollment secrets are
+`secrets.token_urlsafe(32)` (256 bits), HMAC comparisons use
+`hmac.compare_digest`, and the bypass PIN has an attempt counter
+(`Device.bypass_attempts`). Those are all done correctly.
+
+The real exposure is resource exhaustion — unauthenticated requests to the
+device port, and the memory amplification in **M-1**.
+
+**Recommendation.** A limiter on the enrolment and device endpoints, sized well
+above a real fleet's check-in rate.
+
+---
+
+## Low
+
+### L-1 — DTED archive paths pass through the server unsanitised
+
+**Where:** [app/artifacts/dted.py:190–191](app/artifacts/dted.py#L190-L191)
+
+Entries not matching the cell pattern keep their raw archive name as the
+destination: `moves.append((name, normalised))`, with no rejection of `..`.
+`mission_package.py:332` does strip traversal segments; DTED does not.
+
+**This is not currently exploitable**, and the reason is good code elsewhere: the
+agent's extractor performs a canonical-path check and throws
+`SecurityException("archive entry escapes destination")`
+([FileDeployer.kt:163–168](agent/app/src/main/java/com/taksolutions/atlasmdm/files/FileDeployer.kt#L163-L168)).
+Zip-slip is stopped at the point of write, which is the right place.
+
+Recorded as Low because the server is planning paths it has not validated, and
+the only thing preventing arbitrary file write on every device is a check in a
+different codebase that ships on its own release cycle.
+
+**Recommendation.** Reject `..` and absolute paths in `plan_layout`, matching
+what `mission_package.py` already does.
+
+---
+
+### L-2 — CSRF cookie is readable by JavaScript for no reason
+
+**Where:** [app/web/routes.py:335](app/web/routes.py#L335) — `httponly=False`
+
+The token is also placed in a hidden form field, and `atlas.js` never reads the
+cookie (verified). `httponly=False` therefore grants an XSS payload the token for
+no functional benefit.
+
+**Recommendation.** Set `httponly=True`. If a form submit breaks, the double
+submit is relying on the cookie and the reason should be written down.
+
+---
+
+### L-3 — Markdown link URLs are injected into an attribute without quote escaping
+
+**Where:** [app/web/markdown_lite.py:38–42](app/web/markdown_lite.py#L38-L42)
+
+```python
+text = html.escape(text, quote=False)          # " is NOT escaped
+text = _LINK.sub(r'<a href="\2">\1</a>', text) # \2 lands inside an attribute
+```
+
+The module's docstring claims it "escapes all HTML first anyway". That is true
+for element context and **not** for the attribute this line creates: a link
+target containing `"` breaks out of the `href`. `javascript:` targets are also
+unfiltered. Output reaches the page via `{{ guide_body | safe }}`.
+
+Low because the input is repo-controlled markdown, not user input — there is no
+path by which an attacker supplies a guide. It is a latent issue that becomes a
+real one the day guides become editable.
+
+**Recommendation.** `html.escape(text, quote=True)`, and an allowlist of `http`,
+`https`, and relative schemes.
+
+---
+
+### L-4 — Exported agent activities have no caller check
+
+**Where:** [AndroidManifest.xml:192–198](agent/app/src/main/AndroidManifest.xml#L192-L198)
+(`DeviceSettingsActivity`), and `PowerTileActivity` at 169–175
+
+Both are `exported="true"` with no `android:permission` and no caller
+verification, so any app on the device can launch them.
+
+The impact is contained by design: `DeviceSettingsActivity` renders only what the
+kiosk policy permits (`DeviceSettingsPlan.offers(kiosk, ...)`), so a malicious app
+gains nothing the kiosk user was not already granted. The residual issue is that a
+settings surface intended to be reached from the ATLAS launcher can be summoned
+from anywhere.
+
+**Recommendation.** `exported="false"` if the launcher is same-signature, or a
+signature-level permission if not.
+
+---
+
+### L-5 — Enrollment token hashes are unsalted
+
+**Where:** [app/services/enrollment.py:55](app/services/enrollment.py#L55) —
+`hashlib.sha256(secret.encode()).hexdigest()`
+
+A single unsalted SHA-256, which would be a serious finding for user-chosen
+secrets. It is **not** here, because the input is `secrets.token_urlsafe(32)` —
+256 bits of entropy makes precomputation and brute force equally hopeless.
+
+Recorded only so a future change to shorter or operator-chosen tokens does not
+inherit the hashing unexamined.
+
+---
+
+## What is done well
+
+An audit that lists only faults misrepresents a codebase. These were verified,
+not assumed:
+
+- **Device authentication is thorough.** `require_certificate` verifies the CA
+  signature, that the serial is a known certificate, that it is not revoked, that
+  the device exists, and that it is `ENROLLED` — and identity comes from the
+  certificate, never from a path parameter, so there is no IDOR in the device API
+  ([deps.py:201–238](app/api/deps.py#L201-L238)).
+- **Zip-slip is correctly prevented** where extraction happens, with a canonical
+  path check and a clear exception.
+- **No `extractall` anywhere** in the server; archives are read into memory by
+  member name rather than written by path.
+- **Artifact storage validates the digest** before building a path
+  ([storage.py:86–92](app/artifacts/storage.py#L86-L92)), with a comment naming
+  the escape it prevents.
+- **Subprocess use is safe** — list-form arguments, no `shell=True` — and the
+  durable Google Play token is written to a `0600` ini rather than argv,
+  deliberately, because *"an AAS token passed as `-t …` sits in argv"*.
+- **Admin routes are guarded at registration**, not per endpoint, so a new route
+  is protected by default ([main.py:297–318](app/main.py#L297-L318)). This is the
+  right structural choice and it is rare to see.
+- **Jinja autoescape is on**, with `|safe` at three audited sites.
+- **Constant-time comparison** for every HMAC, and 256-bit secrets throughout.
+- **CSRF is identity-bound and origin-checked**, with a loud startup warning when
+  the origin is unset.
+- **Failure modes are documented in the code**, consistently, including the ones
+  that were accepted rather than fixed. Several findings above were faster to
+  confirm because the code said what it was doing and why.
+
+---
+
+## Recommended order of work
+
+1. **H-3** — run `pip-audit`. It is the only finding whose real size is unknown,
+   and the answer may reorder everything below it.
+2. **S-1** — add a proxy-trust check. Highest impact for the least code.
+3. **M-4**, **M-3**, **L-2**, **L-1** — small, self-contained hardening.
+4. **M-5** — seal the remaining credentials with the vault already in use.
+5. **M-1**, **M-2**, **M-6** — upload cap, SSRF validation, response headers.
+6. **S-2**, **H-1**, **H-2** — the key-management and authorization answer.
+   Architectural, and the only items here that need a decision rather than a
+   patch.
+
+---
+
+*Prepared by static review. No finding was exploited; none should be treated as
+confirmed-exploitable without testing, and none should be dismissed without it
+either.*
