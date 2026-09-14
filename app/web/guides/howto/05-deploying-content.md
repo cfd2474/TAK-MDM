@@ -10,8 +10,8 @@ upload so a policy can mark them for extraction.
 
 ## Where a file goes
 
-A file has no destination of its own — that lives on the **FILES** policy entry
-that places it. On the Content page each file lists every policy that deploys it
+A file has no destination of its own — that lives on the **File management**
+policy entry that places it. On the Content page each file lists every policy that deploys it
 and where. You can set **deployment defaults** (destination, persist, extract)
 that the policy editor pre-fills.
 
@@ -28,3 +28,14 @@ that the policy editor pre-fills.
   landing it as a `.zip`.
 
 The MDM never deletes a managed file from a device — deployment is write-only.
+
+## Data packages and DTED
+
+The File management category has two entry kinds besides plain files:
+
+- **Data packages** — a TAK data package (`.zip`) is validated on upload and
+  delivered into ATAK's `incoming/` directory, where ATAK imports it. ⚠️ ATAK
+  does not delete the package after importing, and delivery is once rather than
+  on every check-in; a device can be asked for it again from its detail page.
+- **DTED archives** — terrain archives, unpacked into the DTED tree rather than
+  landed as a zip.

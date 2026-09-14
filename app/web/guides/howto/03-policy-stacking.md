@@ -5,8 +5,8 @@ policy rather than picking a single winner.
 
 ## The rules
 
-- Every assignment has a **rank**. Higher rank wins. Scope (device vs group vs
-  tag) only breaks a tie between equal ranks.
+- Every assignment has a **rank**. Higher rank wins. Scope (device vs group)
+  only breaks a tie between equal ranks.
 - Merging is **per field**, using a strategy declared by the policy type:
   - password `min_length` merges by **MAX** — the strongest requirement wins.
   - restriction flags merge **most-restrictive** — any policy denying the camera

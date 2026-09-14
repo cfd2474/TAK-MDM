@@ -5,6 +5,11 @@
 No. Apps are sideloaded APK/XAPK. The agent installs them with `PackageInstaller`
 under Device Owner privilege.
 
+ATLAS can *fetch* from Google Play — Apps › Google Play, as one nominated
+account linked under Admin — but that is a download source, not managed Play.
+What arrives is an APK, held like every other upload, and it is still the agent
+that installs it.
+
 ## How quickly does a policy change reach a device?
 
 Immediately when the device is online — a long-poll "doorbell" wakes it in the

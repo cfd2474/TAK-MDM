@@ -5,9 +5,9 @@ the way unless a policy asks for lockdown.
 
 ## Engage
 
-Set `kiosk_package` in a policy's App Management section to the package name of
-the app the device should be locked to, and assign the policy. On the next
-check-in the agent:
+Set **Kiosk package** in a policy's **Kiosk** category to the app the device
+should be locked to, and assign the policy. (Kiosk is its own category — it is
+not part of App Management.) On the next check-in the agent:
 
 - allows that package into lock task,
 - makes itself the temporary home screen,
@@ -18,7 +18,7 @@ is still recoverable and still locks.
 
 ## Release
 
-Remove `kiosk_package` from the policy. Lock task, the allowlist and the home
+Clear **Kiosk package** in the policy's Kiosk category. Lock task, the allowlist and the home
 preference all clear within about 15 seconds — no cable needed.
 
 ## If a device is stuck

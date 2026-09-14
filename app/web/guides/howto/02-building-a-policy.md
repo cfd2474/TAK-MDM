@@ -1,8 +1,14 @@
 # Build a policy
 
-A **policy** in ATLAS is a composite: it bundles several single-concern settings
-— password, restrictions, apps, files — organised as tabs. Each tab you fill in
-becomes an independent stackable rule underneath.
+What **New Policy** builds is a **profile**: a composite that bundles several
+single-concern settings — password, restrictions, apps, files — as categories.
+Each category you fill in becomes an independent stackable **section**
+underneath, named `<profile> · <category>`.
+
+⚠️ **A section is assigned through its profile, never on its own.** Sections
+appear in the Policies list because they are real policies, but assigning one
+directly is refused — assign the profile and every section it owns applies
+together, at one rank.
 
 ## Steps
 
@@ -18,8 +24,11 @@ becomes an independent stackable rule underneath.
 
 ## Assigning it
 
-On the policy editor, use **Assign to devices** — pick devices, groups or tags and
-press Apply. The whole policy applies at one rank; unticking a box unassigns.
+On the policy editor, use **Assign to devices** — pick devices or groups and
+press Apply. The whole thing applies at one rank; unticking a box unassigns.
+
+You can also work from the other end: a group's page has an **Assign to this
+group** control listing both profiles and standalone policies.
 
 ## Templates
 
