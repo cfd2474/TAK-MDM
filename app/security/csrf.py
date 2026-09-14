@@ -43,6 +43,7 @@ import secrets
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
+from app.security import keyfiles
 
 logger = logging.getLogger(__name__)
 
@@ -84,10 +85,8 @@ class CsrfGuard:
         if key_path.exists():
             return cls(key_path.read_bytes().strip(), **kwargs)
 
-        key_path.parent.mkdir(parents=True, exist_ok=True)
         key = base64.urlsafe_b64encode(secrets.token_bytes(32))
-        key_path.write_bytes(key)
-        key_path.chmod(0o600)
+        keyfiles.write_private(key_path, key)
         logger.info("created CSRF signing key at %s", key_path)
         return cls(key, **kwargs)
 

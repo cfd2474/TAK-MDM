@@ -39,6 +39,7 @@ import logging
 from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
+from app.security import keyfiles
 
 logger = logging.getLogger(__name__)
 
@@ -56,10 +57,8 @@ class TokenVault:
         if key_path.exists():
             return cls(key_path.read_bytes().strip())
 
-        pki_dir.mkdir(parents=True, exist_ok=True)
         key = Fernet.generate_key()
-        key_path.write_bytes(key)
-        key_path.chmod(0o600)
+        keyfiles.write_private(key_path, key)
         logger.info("created token vault key at %s", key_path)
         return cls(key)
 

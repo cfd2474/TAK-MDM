@@ -449,6 +449,52 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W170 — SEC_AUDIT S-2, as far as the host allows (v1.17.0)
+
+Operator, 2026-09-14: *"lets address S2, then H-1"*.
+
+#### What was deliberately **not** done
+
+Encrypting the CA key with a passphrase. On this deployment the passphrase would
+live in `.env` — same directory, same backup, same host. That is the oldest
+anti-pattern in the subject, and shipping it would have looked like a fix while
+changing nothing. **S-2 stays Severe and open**; the answer is custody the
+application only *asks* of (`R8`).
+
+#### What did change
+
+* **`app/security/keyfiles.py`** — `write_private()` creates with
+  `os.open(..., O_CREAT|O_EXCL, 0o600)`. The old write-then-chmod left every key
+  at the process umask in between. Closes **M-3** as well.
+* **`pki/` is `0700`.** Measured on the box at `drwxr-xr-x`: keys correctly
+  `0600`, directory traversable, `ca.crt` world-readable.
+* **A startup audit** names any key whose mode has widened, and the remedy. It
+  reports rather than refuses — an outage leaves the keys no safer and removes the
+  console an operator would investigate from.
+
+#### ⚠️ The audit said five keys. There are six.
+
+`test_nothing_writes_a_private_key_outside_the_helper`, written to stop the old
+pattern returning, immediately found `app/cli.py` writing a development server
+key the same way. My own enumeration in SEC_AUDIT was wrong — which is a fair
+indication of how a seventh would fare. The audited list is now explicit, and a
+test builds every key through its real constructor and asserts the list matches
+what landed on disk.
+
+#### ⚠️ The tests that matter do not run on this workstation
+
+Windows reports `st_mode` as `0o666` whatever is asked for, so every mode
+assertion skips there. Running them in a `python:3.13-slim` container found **two
+of these tests broken** by constructor signatures — they had been passing by
+skipping. Full suite on Linux: **1786 passed, 1 skipped**, against 1780 passed /
+8 skipped on Windows.
+
+Six mutation checks, run on Linux, all caught. One needed a second test: removing
+`mode=` from `mkdir` left the same end state because the `chmod` still followed,
+so the **window** — the thing the change exists to close — was invisible.
+Neutralising the chmod is what made the creation mode observable.
+
+
 ### ✅ W169 — SEC_AUDIT S-1, as far as ATLAS can take it (v1.16.0)
 
 Operator, 2026-09-14: *"lets start with S-1. can we make it so it is only

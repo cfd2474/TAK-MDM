@@ -38,6 +38,7 @@ from typing import Any
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
+from app.security import keyfiles
 
 
 def canonical_json(payload: Any) -> bytes:
@@ -68,16 +69,15 @@ class BundleSigner:
                 raise ValueError(f"{key_path} is not an Ed25519 private key")
             return cls(private_key)
 
-        pki_dir.mkdir(parents=True, exist_ok=True)
         private_key = ed25519.Ed25519PrivateKey.generate()
-        key_path.write_bytes(
+        keyfiles.write_private(
+            key_path,
             private_key.private_bytes(
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PrivateFormat.PKCS8,
                 encryption_algorithm=serialization.NoEncryption(),
-            )
+            ),
         )
-        key_path.chmod(0o600)
         return cls(private_key)
 
     def public_key_base64(self) -> str:

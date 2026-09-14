@@ -237,6 +237,47 @@ enrolment credentials, forge management payloads, and forge admin actions. The
 0600 mode is the only control, and the container runs as `APP_UID` with `pki/`
 bind-mounted from the host.
 
+### ⚠️ Status: hardened in v1.17.0 — the finding stays **Severe** and open
+
+Nothing below reduces the severity, and it would be dishonest to present it as
+if it did. A key the application reads at runtime, on a host the attacker is
+assumed to have reached, is readable by that attacker. **Encrypting it with a
+passphrase kept on the same host is the oldest anti-pattern in the subject** — on
+this deployment the passphrase would live in `.env`, in the same directory, in
+the same backup. It was considered and deliberately not done, because shipping it
+would have looked like a fix.
+
+What did change, all of it worth doing and none of it the answer:
+
+* **No key is ever briefly world-readable.** All six writers now create the file
+  with `os.open(..., O_CREAT|O_EXCL, 0o600)` instead of writing it and chmodding
+  after. This also closes **M-3**.
+* **`pki/` is created `0700`.** Measured on the reference box at `drwxr-xr-x`:
+  the keys inside were correctly `0600`, but the directory was traversable and
+  `ca.crt` world-readable.
+* **A startup audit reports any key whose mode has widened**, naming the file and
+  the remedy. This is the realistic failure — a restore, a `cp -r`, an archive
+  unpacked at the default umask, a bind mount nobody tightened. None of them
+  announce themselves, so something has to look on every start. It reports rather
+  than refuses: an outage of the management plane leaves the keys no safer and
+  removes the console an operator would investigate from.
+
+⚠️ **The audit said five keys. There are six.** A guard written to stop the
+old pattern returning found `app/cli.py` writing a development server key the
+same way. The finding's own enumeration was wrong, which is a fair indication of
+how a seventh would fare — so the audited list is now explicit, and a test creates
+every key through its real constructor and asserts the list matches what appeared
+on disk.
+
+⚠️ **Verified on Linux, not on the workstation.** The mode assertions cannot
+run on Windows, where `st_mode` reports `0o666` whatever is asked for. Running
+them in a `python:3.13-slim` container found two of these tests broken by a
+constructor signature — they had been silently skipping. Full suite on Linux:
+**1786 passed**. Six mutation checks, all caught.
+
+**What still has to happen:** custody the application only *asks* of — a KMS or
+an HSM (`R8`). Until then one directory read is still total compromise.
+
 **Why Severe and not accepted risk.** The existing acceptance ("acceptable on a
 single trusted host where the DB is equally exposed") holds for `ca.key` versus
 the database. It does not hold for the *aggregate*: this directory is a single

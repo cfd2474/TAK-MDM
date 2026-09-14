@@ -40,6 +40,7 @@ import secrets
 import time
 import uuid
 from pathlib import Path
+from app.security import keyfiles
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +71,8 @@ class EnrollmentQrGuard:
         if key_path.exists():
             return cls(key_path.read_bytes().strip(), ttl_seconds=ttl_seconds)
 
-        key_path.parent.mkdir(parents=True, exist_ok=True)
         key = base64.urlsafe_b64encode(secrets.token_bytes(32))
-        key_path.write_bytes(key)
-        key_path.chmod(0o600)
+        keyfiles.write_private(key_path, key)
         logger.info("created enrollment QR signing key at %s", key_path)
         return cls(key, ttl_seconds=ttl_seconds)
 

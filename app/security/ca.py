@@ -38,6 +38,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
+from app.security import keyfiles
 
 
 class CertificateError(ValueError):
@@ -90,7 +91,7 @@ class CertificateAuthority:
             private_key = serialization.load_pem_private_key(key_path.read_bytes(), password=None)
             return cls(certificate, private_key)
 
-        pki_dir.mkdir(parents=True, exist_ok=True)
+        keyfiles.secure_dir(pki_dir)
         private_key = ec.generate_private_key(ec.SECP256R1())
         subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
         now = _utcnow()
@@ -122,18 +123,19 @@ class CertificateAuthority:
         )
 
         cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
-        key_path.write_bytes(
+        # ⚠️ The root key sits on disk unencrypted, and still does. It is the crown
+        # jewel — anyone holding it can mint a device identity — and encrypting it
+        # with a passphrase kept on the same host would be theatre. The answer is
+        # custody the application only *asks* of: a KMS or an HSM (R8, SEC_AUDIT
+        # S-2). What changed is that it is never briefly readable on the way out.
+        keyfiles.write_private(
+            key_path,
             private_key.private_bytes(
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PrivateFormat.PKCS8,
                 encryption_algorithm=serialization.NoEncryption(),
-            )
+            ),
         )
-        # The root key sits on disk unencrypted. Acceptable for a single self-hosted
-        # server where the DB is equally exposed, but it is the crown jewel: anyone
-        # holding it can mint a device identity. Restrict the directory, and move it
-        # behind a KMS or HSM before this leaves a trusted host.
-        key_path.chmod(0o600)
 
         return cls(certificate, private_key)
 

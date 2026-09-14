@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.version import build_info
 from app.security import admin_auth
+from app.security import keyfiles
 from app.services import notifications
 from app.web import routes as web_routes
 
@@ -99,6 +100,11 @@ async def lifespan(app: FastAPI):
     _make_our_logs_visible()
     notifications.bus.bind_loop(asyncio.get_running_loop())
     admin_auth.warn_if_unprotected(get_settings())
+    # ⚠️ Looked at on every start, because the realistic way a private key becomes
+    # world-readable is not this code — it is a restore, a `cp -r` that dropped
+    # the mode, or a bind mount nobody tightened. None of those announce
+    # themselves (SEC_AUDIT.md S-2).
+    keyfiles.warn_on_exposed_keys(get_settings().pki_dir)
     _start_catalog_backfill(app)
     _start_index_warmup(app)
     _start_location_retention(app)

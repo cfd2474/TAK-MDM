@@ -39,6 +39,7 @@ from cryptography.x509.oid import NameOID
 from app.config import get_settings
 from app.security.bundle import BundleSigner
 from app.security.ca import CertificateAuthority
+from app.security import keyfiles
 
 
 def _write_dev_server_cert(
@@ -86,14 +87,20 @@ def _write_dev_server_cert(
     cert_path = pki_dir / "server.crt"
     key_path = pki_dir / "server.key"
     cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
-    key_path.write_bytes(
+    # ⚠️ A sixth private key, found by the guard in `tests/test_key_custody.py`
+    # rather than by the audit that went looking for them — SEC_AUDIT S-2 counted
+    # five and there are six. The development server certificate is the least
+    # dangerous of them (it authenticates a dev listener, not a device or an
+    # operator), which is exactly why it was the one missed.
+    key_path.unlink(missing_ok=True)
+    keyfiles.write_private(
+        key_path,
         key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
-        )
+        ),
     )
-    key_path.chmod(0o600)
     return cert_path, key_path
 
 
