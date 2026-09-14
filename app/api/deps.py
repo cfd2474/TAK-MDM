@@ -36,7 +36,22 @@ from app.security.enrollment_qr import EnrollmentQrGuard
 from app.security.token_vault import TokenVault
 
 
-def get_db(session: Session = Depends(get_session)) -> Session:
+def get_db(request: Request, session: Session = Depends(get_session)) -> Session:
+    """The request's session, and a pointer to it on the request.
+
+    ⚠️ The pointer exists for `_render`, which needs one read (the console's
+    display timezone, W163) but is a plain function called from a hundred routes
+    rather than a dependency that could ask for a session of its own. Opening a
+    second session there instead looked simpler and was wrong twice over: it
+    doubles the connection a page holds, and it bypasses `get_session`'s test
+    override, so every rendered page in the suite went looking for the real
+    Postgres.
+
+    This wrapper is the right place because it is never itself overridden —
+    `get_session` is what a test substitutes — so the pointer is correct in both
+    worlds.
+    """
+    request.state.db = session
     return session
 
 

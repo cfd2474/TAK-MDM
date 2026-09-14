@@ -449,6 +449,114 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### 🚧 W163 — A default timezone, and a console that stops speaking only UTC
+
+Operator, 2026-09-14: *"in the admin section, lets add default timezone. put it in
+a tab called General, list it first. Based on the timezone selected, this will
+display times in the webUI (location history, etc) based on the default timezone
+instead of UTC"*.
+
+#### What the console does today
+
+Every timestamp is rendered by calling `.strftime()` on the model attribute, in
+**22 places across 10 templates**. All of them are UTC, because `UtcDateTime`
+hands back aware UTC and nothing converts it. Five of those sites print a literal
+`UTC` suffix; the other seventeen print a bare time that simply *is* UTC without
+saying so — which is the worse half, since a device that checked in at 08:30
+local reads as 14:30 with nothing to explain the gap.
+
+There is no client-side time rendering at all (`toLocaleString`, `new Date(` —
+no hits), so this is entirely a server-side question. Good: the browser's zone is
+the wrong answer anyway. The operator asked for *the configured default*, which is
+a property of the deployment, not of whoever is looking at it.
+
+#### ⚠️ The dependency that nothing declares
+
+`zoneinfo` needs an IANA database. `python:3.13-slim` does not carry one and
+neither does Windows, so both this workstation and the box work **only** because
+`tzdata` arrives as a transitive dependency of `psycopg`. Verified in the running
+container: 486 zones, `America/Denver` resolves. It works today entirely by
+accident, and a psycopg release that drops the dependency would turn every
+timestamp in the console into an exception. `requirements.txt` declares it
+directly.
+
+#### A filter, not 22 edits that have to be remembered
+
+The conversion lives in one Jinja filter. A template that renders a time cannot
+opt out of it without the change being visible, and a test scans the templates to
+make sure none does — because the failure mode of a missed site is not a crash, it
+is a page that quietly keeps showing UTC next to times that are local, which is
+worse than all-UTC was.
+
+`_render` resolves the zone once per page and puts it in the context; the filter
+reads it from there with `@pass_context`. ⚠️ It opens a short session of its own
+rather than threading one through 100+ call sites — one primary-key SELECT per
+render, against a page that already issues dozens.
+
+#### Chunk plan
+
+1. **`app/services/clock.py`** — the whole timezone concern: the setting key, the
+   zone list, `configured()` with a defensive fallback, and the formatting. ⚠️ An
+   unparseable or unknown zone falls back to UTC and says so in the log; it must
+   never raise, because this runs on *every page* and a typo in a settings box
+   would otherwise take the console down entirely.
+2. **A `general` settings group, declared first**, holding `general.timezone`.
+   Needs a new `select` field kind and a `choices` tuple on `Field` — 598 zones
+   is not something to type into a text box.
+3. **`General` first in the admin tab strip**, ahead of Certificates, and the tab
+   the page lands on.
+4. **The `localtime` filter**, registered on the Jinja env, and all 22 call sites
+   moved onto it. The five hard-coded `UTC` suffixes become `%Z`, which prints the
+   zone's own abbreviation and stays correct across DST.
+5. **Tests**: the fallback path, DST on both sides of a transition, the tab order,
+   a page rendering in a configured zone, and a template scan that fails on a
+   direct `.strftime(`.
+6. **Release**: `tzdata` declared, version bump, PROJECT_STATE, tag, push, pin.
+   No agent change; no APK rebuild.
+
+#### Status: ✅ done (v1.14.0)
+
+* `app/services/clock.py` owns the concern; `general.timezone` is a `select`
+  field — a new `Field` kind — offering all 598 zones with UTC lifted to the top.
+* **General leads the tab strip and is where `/admin` lands.** Certificates was
+  hard-coded first and is now second.
+* All **22** timestamp sites moved onto `|localtime`. The five hard-coded `UTC`
+  suffixes became `%Z`, so a page names the zone it is showing instead of leaving
+  the reader to assume.
+* **1730 server tests.** Six mutation checks, all caught — including the template
+  scan, which fails if any template goes back to a direct `.strftime(`.
+
+#### ⚠️ Opening a second session in `_render` took 309 tests down
+
+The first attempt gave `_render` its own `SessionLocal()` for the one settings
+read, reasoning that threading a session through a hundred call sites was worse.
+It was wrong twice: `SessionLocal` is bound to the **real** engine, and tests
+override `get_session`, so every rendered page in the suite went looking for
+production Postgres and got `password authentication failed`. In production it
+would have quietly doubled the connections each page holds.
+
+The seam that works was already there: `get_db` wraps `get_session` and is itself
+never overridden, so it publishes the request's session on `request.state` and
+`_render` reads it. A route that somehow has no session still renders, in UTC,
+rather than failing.
+
+#### ⚠️ The timezone database was never a declared dependency
+
+`zoneinfo` carries no data of its own, and neither `python:3.13-slim` nor Windows
+ships one. Both the box and this workstation resolved zones **only** because
+`tzdata` arrives as a transitive dependency of `psycopg` — verified in the running
+container (486 zones, `America/Denver` resolves). `requirements.txt` now names it
+directly.
+
+#### ⚠️ One test shares the blind spot it tests for
+
+`test_a_naive_timestamp_is_read_as_utc_not_as_the_servers_zone` passes either way
+on a host whose local zone is UTC, because the two readings agree there. It was
+mutation-checked on a host at UTC-7, where they do not. Recorded in the test
+itself, because the next person to run the suite on a UTC box will otherwise
+believe it is covered.
+
+
 ### 🚧 W162 — The agent has never once asked the GPS for a position
 
 Operator, 2026-09-14: *"when i click 'locate' on the device information page, is

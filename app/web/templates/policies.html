@@ -131,7 +131,7 @@
           <tr>
             <td><a href="/profiles/{{ pr.id }}">{{ pr.name }}</a></td>
             <td class="muted">{{ policy_contents(pr) }}</td>
-            <td class="muted">{{ pr.archived_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td class="muted">{{ pr.archived_at | localtime }}</td>
             <td>
               <form method="post" action="/profiles/{{ pr.id }}/restore" style="margin:0">
                 {{ csrf_field(csrf_token) }}
@@ -151,7 +151,7 @@
           <tr>
             <td><a href="/policies/{{ p.id }}">{{ p.name }}</a>{% if p.is_template %} <span class="pill">template</span>{% endif %}</td>
             <td><span class="pill">{{ p.policy_type }}</span></td>
-            <td class="muted">{{ p.archived_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td class="muted">{{ p.archived_at | localtime }}</td>
             <td>
               <form method="post" action="/policies/{{ p.id }}/restore" style="margin:0">
                 {{ csrf_field(csrf_token) }}

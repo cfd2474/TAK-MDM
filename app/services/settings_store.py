@@ -33,13 +33,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import AppSetting
+from app.services import clock
 
 
 @dataclass(frozen=True)
 class Field:
     key: str
     label: str
-    kind: str = "text"  # text | textarea | password | number | bool
+    kind: str = "text"  # text | textarea | password | number | bool | select
     help: str = ""
     #: What the form shows when nothing is stored.
     #:
@@ -48,6 +49,11 @@ class Field:
     #: an operator guess whether 30 was in force or whether the field was simply
     #: unset — and the two look identical until a month of history disappears.
     default: str = ""
+    #: The permitted answers, for `kind="select"`. Ignored by every other kind.
+    #:
+    #: A tuple rather than a list because `Field` is frozen and a mutable default
+    #: shared between instances is the oldest trap in the language.
+    choices: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -58,9 +64,32 @@ class Group:
     fields: list[Field] = field(default_factory=list)
 
 
+def _timezone_field() -> Field:
+    """The timezone picker, built from the IANA database at import.
+
+    ⚠️ Built lazily-ish — at import of this module rather than at class-definition
+    time of `Field` — so that a missing tz database fails here, loudly, with a
+    stack trace naming `zoneinfo`, rather than producing an empty dropdown that
+    looks like a rendering bug. `available()` on a system with no database returns
+    just `["UTC"]`, which is a usable console and an obvious symptom.
+    """
+    return Field(
+        "general.timezone", "Default timezone", "select",
+        "Times in the console — location history, check-ins, certificate dates — "
+        "are shown in this zone. Everything is still stored in UTC; this changes "
+        "only what is displayed. Devices are unaffected: the agent reports "
+        "absolute instants and never sees this setting.",
+        default=clock.DEFAULT_TIMEZONE,
+        choices=tuple(clock.available()),
+    )
+
+
 GROUPS: dict[str, Group] = {
     g.key: g
     for g in (
+        Group("general", "General",
+              "Settings that apply to the console as a whole.",
+              [_timezone_field()]),
         Group("eula", "End-user licence agreement",
               "Shown to a user during provisioning, if your agent build displays it.",
               [Field("eula.text", "EULA text", "textarea")]),

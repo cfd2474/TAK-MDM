@@ -113,7 +113,7 @@
     {% for v in policy.versions|reverse %}
       <tr>
         <td class="mono">v{{ v.version }}</td>
-        <td class="muted">{{ v.published_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td class="muted">{{ v.published_at | localtime }}</td>
         <td>
           {% set rows = v.spec | spec_rows(policy.policy_type, file_names) %}
           {% if rows %}

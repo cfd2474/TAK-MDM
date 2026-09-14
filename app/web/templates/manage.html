@@ -94,7 +94,7 @@
           <span class="pill {{ 'good' if c == 'compliant' else 'warn' if c == 'degraded' else 'bad' if c == 'failed' }}">{{ c }}</span>
         </td>
         <td class="muted">
-          {%- if d.last_checkin_at %}{{ d.last_checkin_at.strftime('%Y-%m-%d %H:%M') }}
+          {%- if d.last_checkin_at %}{{ d.last_checkin_at | localtime }}
           {%- elif d.id in stalled %}
             {# "never" is equally true of a device enrolled ten seconds ago. This
                one enrolled long enough ago that it is stuck, not starting. #}

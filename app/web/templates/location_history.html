@@ -109,7 +109,7 @@
           {% for point in points %}
           <tr class="location-history-row" data-point="{{ point.number }}">
             <td>{{ point.number }}</td>
-            <td class="mono">{{ point.recorded_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td class="mono">{{ point.recorded_at | localtime('%Y-%m-%d %H:%M:%S') }}</td>
             <td class="mono">
               {{ '%.5f'|format(point.latitude) }}, {{ '%.5f'|format(point.longitude) }}
             </td>

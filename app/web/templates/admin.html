@@ -6,22 +6,31 @@
 {% block content %}
 {{ page_header('Admin', 'Certificates, integration settings, and operator-defined device attributes.') }}
 
-{% set tab_items = [('certificates', 'Certificates')] %}
-{% for grp in setting_groups %}{% set _ = tab_items.append((grp.group.key, grp.group.title)) %}{% endfor %}
+{#
+  General leads, at the operator's request, and is therefore also where the page
+  lands. It is built from `setting_groups` like any other settings tab — named
+  explicitly here only so it can sit ahead of Certificates, which is otherwise
+  hard-coded first.
+#}
+{% set general = setting_groups | selectattr('group.key', 'equalto', 'general') | first %}
+{% set tab_items = [] %}
+{% if general %}{% set _ = tab_items.append(('general', general.group.title)) %}{% endif %}
+{% set _ = tab_items.append(('certificates', 'Certificates')) %}
+{% for grp in setting_groups if grp.group.key != 'general' %}{% set _ = tab_items.append((grp.group.key, grp.group.title)) %}{% endfor %}
 {% set _ = tab_items.append(('agent', 'Agent updates')) %}
 {% set _ = tab_items.append(('takgov', 'TAK.gov')) %}
 {% set _ = tab_items.append(('googleplay', 'Google Play')) %}
 {% set _ = tab_items.append(('attributes', 'Custom attributes')) %}
 {% set _ = tab_items.append(('integrations', 'Integrations')) %}
 {% set _ = tab_items.append(('environment', 'Environment')) %}
-{{ tabs(tab_items, active='certificates', scope='admin-tabs') }}
+{{ tabs(tab_items, active=('general' if general else 'certificates'), scope='admin-tabs') }}
 
 {% if request.query_params.get('saved') %}
   <div class="banner good">Saved {{ request.query_params.get('saved') }} settings.</div>
 {% endif %}
 
 <div id="admin-tabs">
-  <div class="tab-panel" data-tab-panel="certificates">
+  <div class="tab-panel" data-tab-panel="certificates" hidden>
     <div class="panel">
       <h2>Device certificate authority</h2>
       <p class="sub">
@@ -47,8 +56,8 @@
           <tr>
             <td><a href="/devices/{{ cert.device_id }}" class="mono">{{ serial }}</a></td>
             <td class="mono muted">{{ cert.serial_hex[:16] }}…</td>
-            <td class="muted">{{ cert.issued_at.strftime('%Y-%m-%d') }}</td>
-            <td class="muted">{{ cert.not_valid_after.strftime('%Y-%m-%d') }}</td>
+            <td class="muted">{{ cert.issued_at | localtime('%Y-%m-%d') }}</td>
+            <td class="muted">{{ cert.not_valid_after | localtime('%Y-%m-%d') }}</td>
             <td>
               {% if cert.revoked_at %}
                 <span class="pill bad">revoked</span>
@@ -73,7 +82,8 @@
   </div>
 
   {% for grp in setting_groups %}
-  <div class="tab-panel" data-tab-panel="{{ grp.group.key }}" hidden>
+  {# General is the landing tab, so its panel is the one that starts visible. #}
+  <div class="tab-panel" data-tab-panel="{{ grp.group.key }}"{{ '' if grp.group.key == 'general' else ' hidden' }}>
     <div class="panel">
       <h2>{{ grp.group.title }}</h2>
       <p class="sub">{{ grp.group.description }}</p>
@@ -88,6 +98,21 @@
             <label class="muted" style="display:flex; gap:8px; align-items:center">
               <input type="checkbox" name="{{ field.key }}" value="true" style="width:auto" {{ 'checked' if val == 'true' }}> enabled
             </label>
+          {% elif field.kind == 'select' %}
+            <select id="{{ field.key }}" name="{{ field.key }}" class="field-full">
+              {#
+                The stored value is listed even when it is not among the choices,
+                and selected. A zone the IANA database has since retired would
+                otherwise silently re-point the console at the first entry in the
+                list the moment someone opened this page to change something else.
+              #}
+              {% if val and val not in field.choices %}
+                <option value="{{ val }}" selected>{{ val }} (no longer a known zone)</option>
+              {% endif %}
+              {% for choice in field.choices %}
+                <option value="{{ choice }}"{{ ' selected' if choice == val else '' }}>{{ choice }}</option>
+              {% endfor %}
+            </select>
           {% elif field.kind == 'password' %}
             <input id="{{ field.key }}" name="{{ field.key }}" type="password" class="field-full"
                    placeholder="{{ '•••••••• (set — leave blank to keep)' if val else 'not set' }}">
@@ -143,7 +168,7 @@
           as <span class="mono">{{ googleplay.link.email }}</span>
           &middot; device profile <span class="mono">{{ googleplay.link.device_profile }}</span>
           {% if googleplay.link.linked_at %}
-            <span class="muted">since {{ googleplay.link.linked_at.strftime('%Y-%m-%d %H:%M') }}</span>
+            <span class="muted">since {{ googleplay.link.linked_at | localtime }}</span>
           {% endif %}
         </p>
         <p class="field-tip">
@@ -243,7 +268,7 @@
             as <span class="mono">{{ takgov.link.account_label }}</span>
           {% endif %}
           {% if takgov.link.linked_at %}
-            <span class="muted">since {{ takgov.link.linked_at.strftime('%Y-%m-%d %H:%M') }}</span>
+            <span class="muted">since {{ takgov.link.linked_at | localtime }}</span>
           {% endif %}
         </p>
         <div class="banner">
@@ -379,7 +404,7 @@
           <tr>
             <td class="mono">{{ v.version_code }}</td>
             <td>{{ v.version_name or '—' }}</td>
-            <td class="muted">{{ v.uploaded_at.strftime('%Y-%m-%d %H:%M') if v.uploaded_at else '—' }}</td>
+            <td class="muted">{{ v.uploaded_at | localtime or '—' }}</td>
             <td>
               {% if v.version_code == agent.rollout.published %}
                 <span class="pill good">published</span>
@@ -414,7 +439,7 @@
               {% else %}<span class="pill">{{ d.agent_version_code }}</span>{% endif %}
             </td>
             <td>{{ d.compliance_status.value }}</td>
-            <td class="muted">{{ d.last_checkin_at.strftime('%Y-%m-%d %H:%M') if d.last_checkin_at else 'never' }}</td>
+            <td class="muted">{{ d.last_checkin_at | localtime or 'never' }}</td>
           </tr>
         {% endfor %}
         </tbody>

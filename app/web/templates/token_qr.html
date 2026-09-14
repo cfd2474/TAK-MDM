@@ -112,7 +112,7 @@
           <p>
             <span class="pill warn" data-countdown="{{ qr_expires_in }}"
                   data-countdown-expired="expired — generate a new QR"
-                  title="expires {{ qr_expires_at.strftime('%H:%M:%S') }} UTC">
+                  title="expires {{ qr_expires_at | localtime('%H:%M:%S %Z') }}">
               expires in <span data-countdown-value>{{ '%d:%02d' % (qr_expires_in // 60, qr_expires_in % 60) }}</span>
             </span>
             <span class="muted">— good for any number of devices until then.</span>
@@ -166,7 +166,7 @@
             {% if persistent %}
               QR secret — this is the token itself, and it does not expire
             {% else %}
-              QR secret (expires {{ qr_expires_at.strftime('%H:%M:%S') }} UTC)
+              QR secret (expires {{ qr_expires_at | localtime('%H:%M:%S %Z') }})
             {% endif %}
           </summary>
           <pre style="margin-top:8px">{{ secret }}</pre>

@@ -9,7 +9,7 @@
 {% if device.name %}<p class="sub mono">{{ device.serial_number }}</p>{% endif %}
 <p class="sub">
   <a href="/devices/{{ device.id }}#logs">← back to device</a> ·
-  collected {{ bundle.collected_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC ·
+  collected {{ bundle.collected_at | localtime('%Y-%m-%d %H:%M:%S %Z') }} ·
   agent {{ bundle.agent_version or '—' }} ·
   {{ '%.1f'|format(bundle.size_bytes / 1024) }} KB
 </p>

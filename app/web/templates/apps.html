@@ -188,7 +188,7 @@
                         <span class="mono" title="Installs only on these architectures.">{{ v.abis.replace(',', ', ') }}</span>
                       {% endif %}
                     </td>
-                    <td class="muted">{{ v.uploaded_at.strftime('%Y-%m-%d %H:%M') if v.uploaded_at else '—' }}</td>
+                    <td class="muted">{{ v.uploaded_at | localtime or '—' }}</td>
                     <td>
                       {# The Publish / Hold buttons stood here. They set a flag
                          meaning "may be chosen automatically", and nothing is

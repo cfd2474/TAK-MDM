@@ -67,6 +67,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.templating import Jinja2Templates
+from jinja2 import pass_context
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -114,6 +115,7 @@ from app.policies import creator_catalog
 from app.policies import form_parse, form_schema
 from app.policies.registry import PolicyTypeError, registry
 from app.services import agent_update as agent_update_service
+from app.services import clock
 from app.services import device_health
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
@@ -250,6 +252,27 @@ def _declared_plugin_api(package) -> str | None:
 _TEMPLATES.env.filters["plugin_api"] = _declared_plugin_api
 
 
+@pass_context
+def _localtime(ctx: Any, moment: Any, fmt: str = "%Y-%m-%d %H:%M") -> str:
+    """Jinja's `|localtime`: one instant, in the console's configured zone.
+
+    ⚠️ **Every rendered timestamp goes through here**, and that is the point rather
+    than tidiness. Before W163 each template called `.strftime()` on the model
+    attribute directly — 22 sites — and a site that was missed would not fail, it
+    would quietly keep printing UTC beside times that had become local. A page
+    showing two zones with no way to tell them apart is worse than one honestly
+    showing UTC everywhere, so `tests/test_timezone.py` scans the templates and
+    fails on a direct `.strftime(`.
+
+    The zone comes from the render context rather than a lookup here, because a
+    filter runs once per timestamp and a page can carry hundreds.
+    """
+    return clock.format(moment, ctx.get("tz") or clock.UTC, fmt)
+
+
+_TEMPLATES.env.filters["localtime"] = _localtime
+
+
 def _render(
     request: Request, template: str, identity: AdminIdentity | None = None, **context: Any
 ) -> HTMLResponse:
@@ -265,6 +288,16 @@ def _render(
     # reason the CSRF token is: every page needs it, and a page that forgot would
     # simply show nothing rather than fail, so nobody would notice.
     context["build"] = build_info()
+    # The display zone, resolved once per page (W163).
+    #
+    # ⚠️ From the request's own session, published by `get_db`. Opening a second
+    # session here read the *real* Postgres instead of a test's database and took
+    # 309 tests down with it — and in production it would have doubled the
+    # connections a page holds for one primary-key read. A route that somehow has
+    # no session still renders, in UTC, rather than failing.
+    if "tz" not in context:
+        session = getattr(request.state, "db", None)
+        context["tz"] = clock.configured(session) if session is not None else clock.UTC
     settings = get_settings()
 
     token = admin_auth.issue_csrf_token(identity, settings) if identity else ""

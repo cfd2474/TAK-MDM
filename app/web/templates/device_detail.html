@@ -217,7 +217,7 @@
         <span class="muted">
           &mdash; as of
           {% if device.last_checkin_at %}
-            {{ device.last_checkin_at.strftime('%Y-%m-%d %H:%M UTC') }}
+            {{ device.last_checkin_at | localtime('%Y-%m-%d %H:%M %Z') }}
           {% else %}
             its last check-in
           {% endif %}
@@ -315,7 +315,7 @@
           agent reports last-known rather than a live fix. A position from
           yesterday drawn on a map looks exactly like one from a minute ago.
         #}
-        <span title="{{ latest_location.recorded_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}">
+        <span title="{{ latest_location.recorded_at | localtime('%Y-%m-%d %H:%M:%S %Z') }}">
           {{ location_age }}
         </span>
         {% if location_stale %}
@@ -532,7 +532,7 @@
   {% if disenrolling %}
     <div class="banner warn">
       <strong>Factory reset queued.</strong>
-      Sent at {{ disenrolling.created_at.strftime('%Y-%m-%d %H:%M') }}. The device
+      Sent at {{ disenrolling.created_at | localtime }}. The device
       resets when it next checks in and acknowledges the command — and this record
       is removed at that moment, because nothing can report back afterwards.
     </div>
@@ -618,8 +618,8 @@
           {% else %}<span class="pill">{{ i.kind.value }}</span>{% endif %}
         </td>
         <td class="mono">{{ i.value }}</td>
-        <td class="muted">{{ i.first_seen_at.strftime('%Y-%m-%d %H:%M') }}</td>
-        <td class="muted">{{ i.last_seen_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td class="muted">{{ i.first_seen_at | localtime }}</td>
+        <td class="muted">{{ i.last_seen_at | localtime }}</td>
       </tr>
     {% endfor %}
     </tbody>
@@ -674,7 +674,7 @@
     <tbody>
     {% for bundle in log_bundles %}
       <tr>
-        <td class="mono">{{ bundle.collected_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC</td>
+        <td class="mono">{{ bundle.collected_at | localtime('%Y-%m-%d %H:%M:%S %Z') }}</td>
         <td class="muted">
           {{ '%.1f'|format(bundle.size_bytes / 1024) }} KB
           {% if bundle.truncated %}<span class="pill warn">truncated</span>{% endif %}
