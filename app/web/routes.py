@@ -962,6 +962,19 @@ def _render_group_detail(
         )
     )
 
+    # ⚠️ Profiles belong in the picker, and this is the whole point of the
+    # exclusion above. `/policies/new` is the guided *profile* creator, so what
+    # an operator calls "a policy" is usually a profile — and with sections
+    # rightly removed from this list, a group with no profile option would have
+    # nothing at all to offer for the thing they had just made.
+    assignable_profiles = list(
+        session.scalars(
+            select(PolicyProfile)
+            .where(PolicyProfile.archived_at.is_(None))
+            .order_by(PolicyProfile.name)
+        )
+    )
+
     assignable = list(
         session.scalars(
             select(Policy)
@@ -992,6 +1005,10 @@ def _render_group_detail(
         member_count=len(member_ids),
         token_count=token_count,
         assignable=assignable,
+        assignable_profiles=[
+            p for p in assignable_profiles
+            if p.id not in {a.profile_id for a in profile_assignments}
+        ],
         profile_assignments=[
             {"assignment": a, "profile": a.profile} for a in profile_assignments
         ],
@@ -1058,6 +1075,33 @@ def _assign_policy_to_group(
             AssignmentCreate(
                 policy_id=policy_id, scope="group", target_id=group_id, rank=rank
             ),
+            session,
+        )
+    except HTTPException as exc:
+        return _redirect(f"/groups/{group_id}?error=" + _quote(str(exc.detail)))
+
+    return _redirect(f"/groups/{group_id}?assigned=1")
+
+
+def _assign_profile_to_group(
+    session: Session, group_id: uuid.UUID, profile_id: uuid.UUID, rank: int
+) -> RedirectResponse:
+    """Add this group to a profile's targets, leaving its other targets alone.
+
+    ⚠️ `mode="add"`. The profile targets endpoint defaults to *replace*, which
+    describes a profile's complete target set — using that here would silently
+    unassign every other group and device the profile reached, from a page whose
+    only visible action was "add one group".
+    """
+    from app.api.routers.profiles import set_profile_targets
+    from app.api.schemas import PolicyTargets
+
+    _group_or_404(session, group_id)
+
+    try:
+        set_profile_targets(
+            profile_id,
+            PolicyTargets(mode="add", group_ids=[group_id], rank=rank),
             session,
         )
     except HTTPException as exc:
@@ -1184,12 +1228,29 @@ def set_group_devices_form(
 @router.post("/groups/{group_id}/assignments")
 def assign_policy_to_group_form(
     group_id: uuid.UUID,
-    policy_id: uuid.UUID = Form(...),
+    policy_id: str = Form(...),
     rank: int = Form(default=0),
     session: Session = Depends(get_db),
     identity: AdminIdentity = Depends(admin_required),
 ) -> RedirectResponse:
-    return _assign_policy_to_group(session, group_id, policy_id, rank)
+    """Attach a policy *or* a profile to this group.
+
+    ⚠️ One control, two kinds. The field carries a `policy:` or `profile:`
+    prefix because they live in different tables and an operator should not have
+    to know that — they picked a thing and want it attached. A bare UUID is
+    still read as a policy, so anything posting the old shape keeps working.
+    """
+    kind, _, raw = policy_id.partition(":")
+    if not raw:
+        kind, raw = "policy", policy_id
+    try:
+        target = uuid.UUID(raw)
+    except ValueError:
+        return _redirect(f"/groups/{group_id}?error=" + _quote("pick something to assign"))
+
+    if kind == "profile":
+        return _assign_profile_to_group(session, group_id, target, rank)
+    return _assign_policy_to_group(session, group_id, target, rank)
 
 
 @router.post("/groups/{group_id}/assignments/{assignment_id}/remove")

@@ -128,12 +128,16 @@ def test_both_doors_use_the_same_rule():
 
 
 def test_the_group_picker_omits_sections(client: TestClient):
+    """⚠️ Checked by id, not by name. The profile itself is now offered and
+    shares the name, so matching on text would pass while the section was still
+    listed — or fail once the profile appeared, which is what it did."""
     section, group = _section_and_group(client)
 
     body = client.get(f"/groups/{group}").text
-    options = re.findall(r'<option value="([^"]+)"[^>]*>([^<]*)</option>', body)
+    values = re.findall(r'<option value="([^"]+)"', body)
 
-    assert not [o for o in options if "ATAK Test" in o[1]]
+    assert section not in values
+    assert f"policy:{section}" not in values
 
 
 def test_an_ordinary_policy_is_still_offered_and_assignable(client: TestClient, db):
@@ -229,3 +233,124 @@ def test_an_empty_group_still_says_nothing_is_assigned(client: TestClient):
     ).json()
 
     assert "Nothing assigned to this" in client.get(f"/groups/{group['id']}").text
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ The operator's actual journey (W157)
+#
+# "i made a policy. i then made a group. i went into the group to add the
+# policy and got that error. i went into the policy and assigned it to the
+# group." — /policies/new is the guided *profile* creator, so the thing they
+# made was a profile. Its sections are not assignable, which is right; what was
+# wrong is that the group had nothing else to offer them.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_group_can_be_given_the_thing_the_creator_makes(client: TestClient):
+    """End to end, by the route the operator took."""
+    profile, group = _profile_only(client)
+
+    body = client.get(f"/groups/{group}").text
+    options = re.findall(r'<option value="([^"]+)"[^>]*>\s*([^<]*?)\s*</option>', body)
+
+    assert options, "the group offered nothing to assign"
+    assert any(o[0] == f"profile:{profile}" for o in options)
+
+    response = client.post(
+        f"/groups/{group}/assignments",
+        data={"policy_id": f"profile:{profile}", "rank": "0"},
+        follow_redirects=False,
+    )
+
+    assert "assigned=1" in response.headers["location"]
+    assert "ATAK Test" in client.get(f"/groups/{group}").text
+
+
+def _profile_only(client: TestClient) -> tuple[str, str]:
+    """A deployment whose only policy work is one profile — the usual case."""
+    profile = client.post(
+        "/api/v1/profiles", json={"name": "ATAK Test"}, headers=ADMIN_HEADERS
+    ).json()
+    client.put(
+        f"/api/v1/profiles/{profile['id']}/sections/app_management",
+        json={"spec": {"blocked_packages": ["com.example.x"]}},
+        headers=ADMIN_HEADERS,
+    )
+    group = client.post(
+        "/api/v1/groups", json={"name": "G1"}, headers=ADMIN_HEADERS
+    ).json()
+    return profile["id"], group["id"]
+
+
+def test_the_form_is_not_hidden_when_only_profiles_exist(client: TestClient):
+    """⚠️ The regression my own section-exclusion would have caused. The form
+    was gated on standalone policies existing, so removing sections from the
+    list left "No policies exist yet" and no form at all."""
+    _profile_only(client)
+    group = client.post(
+        "/api/v1/groups", json={"name": "G2"}, headers=ADMIN_HEADERS
+    ).json()
+
+    body = client.get(f"/groups/{group['id']}").text
+
+    assert 'id="assign-policy"' in body
+    assert "Nothing to assign yet" not in body
+
+
+def test_an_already_assigned_profile_is_not_offered_again(client: TestClient):
+    profile, group = _profile_only(client)
+    client.post(
+        f"/groups/{group}/assignments",
+        data={"policy_id": f"profile:{profile}", "rank": "0"},
+        follow_redirects=False,
+    )
+
+    body = client.get(f"/groups/{group}").text
+    options = re.findall(r'<option value="([^"]+)"', body)
+
+    assert f"profile:{profile}" not in options
+
+
+def test_assigning_a_profile_here_keeps_its_other_targets(client: TestClient):
+    """⚠️ The profile targets endpoint defaults to *replace*. Using that from a
+    page whose only visible action is "add one group" would silently unassign
+    every other group and device the profile reached."""
+    profile, group = _profile_only(client)
+    other = client.post(
+        "/api/v1/groups", json={"name": "Other"}, headers=ADMIN_HEADERS
+    ).json()
+    client.put(
+        f"/api/v1/profiles/{profile}/targets",
+        json={"mode": "replace", "group_ids": [other["id"]]},
+        headers=ADMIN_HEADERS,
+    )
+
+    client.post(
+        f"/groups/{group}/assignments",
+        data={"policy_id": f"profile:{profile}", "rank": "0"},
+        follow_redirects=False,
+    )
+
+    assert "ATAK Test" in client.get(f"/groups/{other['id']}").text
+    assert "ATAK Test" in client.get(f"/groups/{group}").text
+
+
+def test_a_bare_uuid_is_still_read_as_a_policy(client: TestClient, db):
+    """Anything posting the old field shape keeps working."""
+    policy = client.post(
+        "/api/v1/policies",
+        json={"name": "Normal", "policy_type": "APP_CATALOG"},
+        headers=ADMIN_HEADERS,
+    ).json()
+    group = client.post(
+        "/api/v1/groups", json={"name": "G3"}, headers=ADMIN_HEADERS
+    ).json()
+
+    response = client.post(
+        f"/groups/{group['id']}/assignments",
+        data={"policy_id": policy["id"], "rank": "0"},
+        follow_redirects=False,
+    )
+
+    assert "assigned=1" in response.headers["location"]
+    assert len(db.scalars(select(Assignment)).all()) == 1

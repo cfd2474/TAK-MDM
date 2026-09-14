@@ -153,19 +153,41 @@
   {% endif %}
 
   <hr>
-  <h3>Assign a policy to this {{ label }}</h3>
-  {% if not assignable %}
-    <p class="muted">No policies exist yet. Create one on the
+  <h3>Assign to this {{ label }}</h3>
+  {#
+    ⚠️ Gated on both lists. This asked only whether standalone *policies*
+    existed, so a deployment whose only policy work was a profile — the usual
+    case, since /policies/new is the guided profile creator — saw "No policies
+    exist yet" and had no form at all, while the profile sat there assignable.
+  #}
+  {% if not assignable and not assignable_profiles %}
+    <p class="muted">Nothing to assign yet. Create a policy or a profile on the
       <a href="/policies">Policies</a> page.</p>
   {% else %}
   <form method="post" action="{{ prefix }}/{{ container.id }}/assignments" class="stack">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div>
-      <label for="assign-policy">Policy</label>
+      <label for="assign-policy">Policy or profile</label>
+      {#
+        ⚠️ Profiles and policies in one control. `/policies/new` is the guided
+        *profile* creator, so what an operator calls "a policy" is usually a
+        profile — and its sections are deliberately not listed, because a
+        section is assigned through its profile. Offering only policies here
+        left nothing to pick for the thing they had just made.
+      #}
       <select id="assign-policy" name="policy_id" required style="min-width:280px">
+        {% if assignable_profiles %}
+        <optgroup label="Profiles">
+          {% for p in assignable_profiles %}
+            <option value="profile:{{ p.id }}">{{ p.name }} ({{ p.sections | length }} section{{ '' if p.sections | length == 1 else 's' }})</option>
+          {% endfor %}
+        </optgroup>
+        {% endif %}
+        <optgroup label="Policies">
         {% for p in assignable %}
-          <option value="{{ p.id }}">{{ p.name }} ({{ p.policy_type }})</option>
+          <option value="policy:{{ p.id }}">{{ p.name }} ({{ p.policy_type }})</option>
         {% endfor %}
+        </optgroup>
       </select>
     </div>
     <div>
