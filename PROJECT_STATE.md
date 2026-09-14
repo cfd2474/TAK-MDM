@@ -449,6 +449,55 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W164 — The fleet that was already there (v1.14.1)
+
+Operator, 2026-09-14: *"lets address the outstanding"*.
+
+W161 turned location reporting on for every enrolled device by injecting the fleet
+default at resolve time. It reached every device enrolled **after** the update and
+silently skipped the ones already in the field — the worst possible split, because
+it works perfectly on whatever device you happen to test with.
+
+#### ⚠️ Nothing in an ATLAS update invalidates the policy cache
+
+`get_effective` answers from `effective_policy_cache` unless the row is marked
+stale, and the row lives in Postgres and survives the rebuild. Checked: not the
+lifespan hooks, not the seeder, not `docker compose up`. There was a manual way
+round it — saving Admin → Location calls `invalidate_all` — but a feature whose
+delivery depends on the operator knowing an undocumented ritual is not delivered.
+
+`alembic upgrade head` runs from `docker/entrypoint.sh` on every api container
+start, so a migration is a vehicle that actually arrives. `g4i6k8m0o2q4` marks
+every cache row stale, once, on the deploy that carries the change.
+
+⚠️ **Stale, not deleted.** The payload is the baseline `refresh` compares against
+to decide whether `state_version` moves; dropping the rows would make every device
+look changed and wake the whole fleet over nothing. A device already covered by a
+tracking policy recomputes, compares equal, and is left alone.
+
+The migration also deletes settings rows holding an **empty string** for the two
+keys that gained a displayed default. Blank and absent have always behaved
+identically for those (both fall back), but only absent renders the default — so
+on a box where the Location group had ever been saved, retention showed an empty
+box beside help text promising 30. Scoped to those two keys: a blank SMTP host or
+tile URL means something, and clearing those would be a settings change nobody
+asked for.
+
+#### ⚠️ The previous migration was covered by grepping its own source
+
+`test_strict_list_removed.py` asserts that certain strings appear in the migration
+file and then re-implements the transformation in the test. That cannot fail for a
+migration whose SQL is wrong — which is the entire risk, since a migration runs
+once, unattended, on a deployment nobody is watching.
+
+`tests/test_location_default_migration.py` runs the real `upgrade()` instead, with
+`op.get_bind()` pointed at the test database. ⚠️ The migration has to be loaded by
+**path**: `alembic/versions/` is not a package, so `import alembic.versions...`
+resolves to the installed library and fails in a way that names nothing useful.
+Ten tests, four mutation checks — all caught, including deleting rows instead of
+marking them and clearing settings outside the two intended keys.
+
+
 ### 🚧 W163 — A default timezone, and a console that stops speaking only UTC
 
 Operator, 2026-09-14: *"in the admin section, lets add default timezone. put it in
