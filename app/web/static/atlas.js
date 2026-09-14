@@ -369,6 +369,12 @@
 
     panelsRoot.addEventListener("input", refresh);
     panelsRoot.addEventListener("change", refresh);
+    /* ⚠️ A recount that is not an edit. Code that rebuilds a control after the
+       page has loaded needs the rail to look again, but firing a synthetic
+       `input` to get that also told the unsaved-changes guard the operator had
+       typed something — so leaving a freshly saved policy warned about changes
+       nobody made. Anything programmatic asks for a recount by name. */
+    panelsRoot.addEventListener("atlas:recount", refresh);
     // A removed row fires no event of its own, and an added one is empty until
     // typed into; both still need the rail to catch up.
     panelsRoot.addEventListener("click", function () { setTimeout(refresh, 0); });
@@ -1939,7 +1945,12 @@
         table.warn(schema.warnings);
         // The rail's completion checks ran long before this resolved, against
         // the fallback inputs that have just been replaced.
-        host.dispatchEvent(new Event("input", { bubbles: true }));
+        //
+        // ⚠️ `atlas:recount`, not `input`. This fires on *load*, with no
+        // operator involvement, and a synthetic `input` here marked the form
+        // dirty — so saving a policy and then navigating away warned about
+        // unsaved changes that did not exist.
+        host.dispatchEvent(new Event("atlas:recount", { bubbles: true }));
       })
       .catch(function () {
         if (!status) return;
