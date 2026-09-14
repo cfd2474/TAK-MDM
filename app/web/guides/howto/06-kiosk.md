@@ -36,8 +36,8 @@ reachable from anywhere on the home screen.
 disagree — a dock tile naming an app the kiosk does not permit — and that tile
 would refuse to open, which reads as a broken device rather than a bad policy.
 
-Docked apps spread evenly across the bar, up to six across; beyond that the dock
-wraps to a second row and grows rather than hiding the overflow. A favourite
+Docked apps spread evenly across the bar, up to five across; beyond that the
+dock wraps to a second row and grows rather than hiding the overflow. A favourite
 naming an app the device does not actually have is dropped, so the bar never
 appears empty.
 

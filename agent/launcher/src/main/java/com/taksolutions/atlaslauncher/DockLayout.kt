@@ -24,7 +24,7 @@ package com.taksolutions.atlaslauncher
  * four icons sat bunched in the bottom-left corner with the rest of the screen
  * empty. A `GridLayoutManager` whose span count equals the number of tiles gives
  * each an equal share of the width, and the tile centres its icon inside that
- * share — so the dock reads as evenly spaced whether it holds two apps or six.
+ * share — so the dock reads as evenly spaced whether it holds two apps or five.
  *
  * Pure and separate from the activity because it is a rule, and rules are worth
  * testing without a device.
@@ -32,11 +32,15 @@ package com.taksolutions.atlaslauncher
 object DockLayout {
 
     /**
-     * Above this the tiles would be narrower than the icon they hold, so the grid
-     * wraps to a second row instead. The dock is `wrap_content` tall and grows;
-     * clipping the overflow would hide apps exactly as the old bug did.
+     * Above this the grid wraps to a second row instead of narrowing further. The
+     * dock is `wrap_content` tall and grows; clipping the overflow would hide
+     * apps exactly as the old bug did.
+     *
+     * Five rather than the six this started at: the operator's call, and it
+     * leaves each tile wider than the icon it holds with room for a label, which
+     * six only just managed on the narrowest supported screen.
      */
-    const val MAX_SPAN = 6
+    const val MAX_SPAN = 5
 
     /** Columns for [count] docked apps. Never zero — a grid cannot have no spans. */
     fun spanFor(count: Int): Int = count.coerceIn(1, MAX_SPAN)

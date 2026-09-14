@@ -205,20 +205,20 @@ def test_the_kiosk_guide_covers_the_multi_app_launcher():
 
 
 def test_the_kiosk_guide_states_the_real_dock_capacity():
-    """⚠️ Not four. `DockLayout.MAX_SPAN` is 6, and beyond it the dock wraps to a
-    second row rather than clipping — so a guide promising a limit of four would
-    describe a restriction the launcher does not impose."""
+    """⚠️ Read from the launcher, not restated. `DockLayout.MAX_SPAN` is the
+    only place the number lives; a guide that hardcoded it would drift the next
+    time it moved — as it just did, from six to five."""
     from pathlib import Path
 
     layout = Path(
         "agent/launcher/src/main/java/com/taksolutions/atlaslauncher/DockLayout.kt"
     ).read_text(encoding="utf-8")
 
-    assert "MAX_SPAN = 6" in layout
+    assert "MAX_SPAN = 5" in layout
 
     plain = _plain(GUIDES / "howto" / "06-kiosk.md")
-    assert "six across" in plain
-    assert "up to 4" not in plain and "up to four" not in plain
+    assert "five across" in plain
+    assert "six across" not in plain
 
 
 def test_the_kiosk_guide_warns_about_the_power_menu():

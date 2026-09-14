@@ -127,6 +127,16 @@ class TileLayoutTest {
     }
 
     @Test
+    fun `the dock holds five across before it wraps`() {
+        // The number itself, not just the rule. It moved from six to five on the
+        // operator's call, and the kiosk guide states it — a symbolic assertion
+        // alone would let the two drift apart silently.
+        assertEquals(5, DockLayout.MAX_SPAN)
+        assertEquals(5, DockLayout.spanFor(5))
+        assertEquals(5, DockLayout.spanFor(6))
+    }
+
+    @Test
     fun `a very full dock wraps instead of shrinking past the icon`() {
         // Beyond this the cell is narrower than the 64dp icon in it. The dock is
         // wrap_content tall, so a second row grows it; clipping would hide apps
