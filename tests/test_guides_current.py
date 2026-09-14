@@ -46,6 +46,18 @@ def _text(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _plain(path: pathlib.Path) -> str:
+    """The prose, with emphasis and line wrapping taken out.
+
+    ⚠️ Both matter. Markdown wraps at the margin, so a phrase the guide states
+    plainly is split across a newline in the file — and asserting on the raw
+    text fails on where the paragraph happened to break. Emphasis does the same
+    with asterisks. A test that breaks when prose is rewrapped teaches people to
+    weaken it.
+    """
+    return " ".join(re.sub(r"[*_`]", "", _text(path)).split())
+
+
 # --------------------------------------------------------------------------- #
 # ⚠️ Concepts the model no longer has
 # --------------------------------------------------------------------------- #
@@ -116,7 +128,7 @@ def test_the_app_guide_describes_storefronts_and_pinned_builds():
     # storefront", so a literal phrase check fails on the asterisks rather than
     # on the claim — and a test that breaks when prose is emphasised teaches
     # people to weaken it.
-    plain = re.sub(r"[*_`]", "", text).lower()
+    plain = _plain(GUIDES / "howto" / "04-uploading-an-app.md").lower()
 
     assert "storefront" in plain
     assert "one storefront" in plain, "the one-per-policy limit must be stated"
@@ -155,6 +167,8 @@ def test_backticked_field_names_exist_in_some_spec():
         "dest_path", "availability", "persist", "extract", "extract_to",
         "package_name", "min_version_code", "artifact_sha256", "auto_update",
         "file_id", "required", "optional", "disabled", "android_id", "logcat",
+        # KioskApp's own fields — a sub-model, so not in any form_fields() list.
+        "favorite", "activity",
     }
 
     unknown: dict[str, list[str]] = {}
@@ -174,3 +188,89 @@ def test_every_guide_still_renders(path, client):
     response = client.get(f"/guides/{section}/{slug}")
 
     assert response.status_code == 200, f"{section}/{slug}"
+
+
+# --------------------------------------------------------------------------- #
+# Multi-app kiosk and identification (W159)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_kiosk_guide_covers_the_multi_app_launcher():
+    text = _text(GUIDES / "howto" / "06-kiosk.md")
+    plain = _plain(GUIDES / "howto" / "06-kiosk.md")
+
+    assert "Kiosk apps" in plain
+    assert "ATLAS launcher" in plain
+    assert "dock" in plain.lower()
+
+
+def test_the_kiosk_guide_states_the_real_dock_capacity():
+    """⚠️ Not four. `DockLayout.MAX_SPAN` is 6, and beyond it the dock wraps to a
+    second row rather than clipping — so a guide promising a limit of four would
+    describe a restriction the launcher does not impose."""
+    from pathlib import Path
+
+    layout = Path(
+        "agent/launcher/src/main/java/com/taksolutions/atlaslauncher/DockLayout.kt"
+    ).read_text(encoding="utf-8")
+
+    assert "MAX_SPAN = 6" in layout
+
+    plain = _plain(GUIDES / "howto" / "06-kiosk.md")
+    assert "six across" in plain
+    assert "up to 4" not in plain and "up to four" not in plain
+
+
+def test_the_kiosk_guide_warns_about_the_power_menu():
+    """⚠️ It cannot be granted from a locked device, so the order matters more
+    than the setting does."""
+    plain = _plain(GUIDES / "howto" / "06-kiosk.md")
+
+    assert "accessibility" in plain.lower()
+    assert "cannot be done from a locked device" in plain
+
+
+def test_the_kiosk_guide_does_not_call_radios_off_airplane_mode():
+    plain = _text(GUIDES / "howto" / "06-kiosk.md")
+
+    assert "not" in plain and "airplane mode" in plain
+    assert "Radios off" in re.sub(r"[*_`]", "", plain)
+
+
+def test_the_identification_guide_exists_and_is_listed():
+    from app.services import guides as guide_service
+
+    slugs = {g.slug for g in guide_service.list_guides("howto")}
+
+    assert "identification" in slugs
+
+
+def test_identification_covers_wallpaper_and_the_label():
+    plain = _plain(GUIDES / "howto" / "07-identification.md")
+
+    assert "Tablet wallpaper" in plain and "Phone wallpaper" in plain
+    assert "Device ID label" in plain
+    assert "Usage access" in plain, "the label needs a human to grant it once"
+
+
+def test_identification_is_honest_about_the_lock_screen():
+    """⚠️ The overlay is *not* on the lock screen — the panel sits below the
+    keyguard and no app can draw above it. The guide has to send people to the
+    Customizations message instead, or they will look for a setting that cannot
+    exist."""
+    plain = _plain(GUIDES / "howto" / "07-identification.md")
+
+    assert "not shown on the lock screen" in plain.lower()
+    assert "{device}" in _text(GUIDES / "howto" / "07-identification.md")
+    assert "Lock screen message" in plain
+
+
+def test_the_device_token_matches_the_spec():
+    """The substitution the guide promises must be the one the field documents."""
+    from app.policies.form_schema import form_fields
+
+    field = next(
+        f for f in form_fields("CUSTOMIZATIONS") if f.name == "lock_screen_message"
+    )
+
+    assert "{device}" in field.help
