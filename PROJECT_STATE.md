@@ -449,6 +449,96 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### 🚧 W172 — An offline root, so a stolen CA is recoverable (SEC_AUDIT S-2)
+
+Operator, 2026-09-14: *"how do we address S2 to secure it?"* — then, given the
+options, **offline root + on-box intermediate**.
+
+#### What is off the table, verified rather than assumed
+
+| Approach | Why not |
+|---|---|
+| Hardware HSM | The box is a **KVM guest** (`systemd-detect-virt: kvm`). A hosted VPS cannot have a USB HSM plugged into it. |
+| TPM sealing | No TPM device exposed (`/dev/tpm*` absent). |
+| Passphrase in `.env` | Same directory, same backup, same host. Theatre. |
+| Passphrase at boot | Breaks unattended restart. For an MDM managing field devices that is a worse failure than the one it prevents. |
+
+#### The actual lever is PKI structure, not storage
+
+`ca.key` is today a **3650-day root on an internet-facing VPS**. Stealing it is
+permanent and unrecoverable: the only remedy is re-enrolling every device.
+
+Split it and the same theft becomes bounded and revocable — revoke the
+intermediate, issue a new one from the offline root, and **no device re-enrols**,
+because they chain to a root that never changed.
+
+#### ⚠️ The migration has no device impact, and that is the whole reason it is safe
+
+The **existing** root stays the trust anchor. Certificates already issued keep
+verifying against it. An intermediate is generated *from* it, takes over signing,
+and the root key then leaves the box. Nothing on any tablet changes.
+
+#### Three facts that decide feasibility, all checked
+
+* `CertificateAuthority.verify()` is single-level (`issuer != subject`) but does
+  verify the signature cryptographically — it is correct, just flat. It needs a
+  trust store rather than one certificate.
+* Caddy's `trust_pool file { pem_file }` accepts a **bundle**, so root plus
+  intermediates drop in with no Caddy change.
+* Devices do not pin the device CA, so rotating the intermediate never touches
+  them.
+
+#### ⚠️ The one catastrophic failure to design against
+
+`load_or_create` currently **generates a root when the key is missing**. After the
+root goes offline that is exactly the state the box is in — so as written it would
+mint a brand-new CA, and every enrolled device would fail authentication at once.
+Refusing to regenerate when `ca.crt` exists is the single most important line in
+this work.
+
+#### Chunk plan
+
+1. **Trust store and chain verification.** `CertificateAuthority` holds a signing
+   identity and a set of trusted certificates; `verify()` finds the issuer,
+   verifies the signature, and validates the issuer's own chain to a root. Depth
+   capped at 2 by `path_length=0`. Legacy single-level deployments keep working.
+2. **Intermediate issuance.** A CLI command that signs an intermediate with the
+   root, and signing that prefers the intermediate when one is present.
+3. **Running with no root key.** Load, verify and issue from the intermediate and
+   the trust bundle alone — and **refuse to regenerate** a CA when `ca.crt`
+   exists, loudly.
+4. **The trust bundle reaches Caddy.** `sync_device_ca_for_caddy` copies root plus
+   intermediates, not just `ca.crt`.
+5. **The ceremony, written down.** Generating the intermediate, where the root
+   goes, annual renewal, and recovery when the intermediate is lost.
+6. **Release.** Version, audit status, module pin.
+
+#### ✅ Chunk 1 done — trust store and chain verification (v1.18.0)
+
+`CertificateAuthority` now separates **what it signs with** from **what it
+trusts**. `verify()` walks device → issuer → anchor, proving each signature and
+checking the dates of *every* link, not just the leaf.
+
+* ⚠️ **An expired intermediate now stops its devices.** Without that, moving the
+  root offline would buy nothing — the short life of the intermediate is the whole
+  mechanism.
+* ⚠️ **A matching issuer name is not evidence.** `ca.crt` is public; anyone can
+  type the right name into an issuer field. Only the signature decides, and there
+  is a test that forges exactly that.
+* ⚠️ **Retired intermediates stay in the store.** The certificates they signed
+  remain valid until they expire; dropping the issuer would lock out every device
+  that had not yet renewed — a fleet-wide outage caused by tidying up.
+* The walk is bounded by a `for range()`, so a tampered trust store cannot hang an
+  authentication request. ATLAS never issues a chain that deep (`path_length=0`),
+  so the cap defends against the store, not against our own output.
+
+Legacy deployments are untouched: with no trust store given, the CA trusts exactly
+what it signs with, which is the old behaviour exactly. **1796 tests** (13 new).
+Five mutation checks on the chain logic, all caught.
+
+**Status: chunks 2–6 to go.**
+
+
 ### ✅ W171 — SEC_AUDIT H-1: notice when the access control goes (v1.17.1)
 
 The empty `TAKMDM_ADMIN_GROUP` stays. A group ATLAS required would be a second

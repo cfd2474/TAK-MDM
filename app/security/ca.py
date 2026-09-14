@@ -39,6 +39,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 from app.security import keyfiles
+from typing import Sequence
 
 
 class CertificateError(ValueError):
@@ -70,12 +71,87 @@ class IssuedCertificate:
         return self.certificate.public_bytes(serialization.Encoding.PEM).decode()
 
 
-class CertificateAuthority:
-    """Signs and verifies device certificates."""
+#: How many certificates a chain may contain before we stop walking.
+#:
+#: Three: device, intermediate, root. ⚠️ A bound rather than a `while` because the
+#: trust store is read from disk and a malformed or hostile entry that names
+#: itself as its own issuer would otherwise loop forever inside an authentication
+#: request — a denial of service reachable before any credential is checked.
+_MAX_CHAIN_DEPTH = 3
 
-    def __init__(self, certificate: x509.Certificate, private_key: ec.EllipticCurvePrivateKey):
+
+def _verify_signed_by(certificate: x509.Certificate, issuer: x509.Certificate) -> None:
+    """Prove `issuer` actually signed `certificate`, or raise.
+
+    ⚠️ Name matching is not evidence. An issuer field is a string the presenter
+    chose; only the signature says who issued it.
+    """
+    try:
+        issuer.public_key().verify(
+            certificate.signature,
+            certificate.tbs_certificate_bytes,
+            ec.ECDSA(certificate.signature_hash_algorithm),
+        )
+    except Exception as exc:
+        raise CertificateError("certificate signature does not verify") from exc
+
+
+class CertificateAuthority:
+    """Signs device certificates, and verifies them against a trust store.
+
+    ⚠️ **The signing certificate and the trust anchor need not be the same one**
+    (W172, SEC_AUDIT S-2). A deployment that has moved its root offline signs with
+    an *intermediate* and still has to accept certificates the root issued
+    directly, before the split. So there are two things here, not one:
+
+    * ``certificate`` / ``private_key`` — what this process signs new certificates
+      with. On a legacy deployment that is the root; on a split one it is the
+      intermediate, and the root's private key is not on this machine at all.
+    * ``trusted`` — every certificate a device's chain may terminate at or pass
+      through. The root, plus each intermediate that has ever signed.
+
+    Keeping retired intermediates in the store is deliberate: the certificates
+    they signed stay valid until they expire, and dropping the issuer would lock
+    out every device that has not yet renewed.
+    """
+
+    def __init__(
+        self,
+        certificate: x509.Certificate,
+        private_key: ec.EllipticCurvePrivateKey,
+        trusted: Sequence[x509.Certificate] | None = None,
+    ):
         self._certificate = certificate
         self._private_key = private_key
+        # A legacy deployment trusts exactly what it signs with.
+        self._trusted: tuple[x509.Certificate, ...] = tuple(trusted or (certificate,))
+
+    @property
+    def trusted(self) -> tuple[x509.Certificate, ...]:
+        return self._trusted
+
+    def trust_bundle_pem(self) -> str:
+        """Every trusted certificate, as one PEM file.
+
+        This is what a TLS terminator needs for `client_auth`: Caddy's
+        ``trust_pool file`` reads a bundle, so root and intermediates go in
+        together and no proxy configuration has to change when one is added.
+        """
+        return "".join(
+            c.public_bytes(serialization.Encoding.PEM).decode() for c in self._trusted
+        )
+
+    def _issuer_of(self, certificate: x509.Certificate) -> x509.Certificate | None:
+        """The trusted certificate whose subject matches this one's issuer.
+
+        ⚠️ Matched on name *and* then proven by signature. A name match alone
+        proves nothing — anyone can put any string in an issuer field — so the
+        caller must verify the signature before believing this answer.
+        """
+        for candidate in self._trusted:
+            if candidate.subject == certificate.issuer:
+                return candidate
+        return None
 
     # -- lifecycle --------------------------------------------------------- #
 
@@ -206,28 +282,56 @@ class CertificateAuthority:
     # -- verification ------------------------------------------------------ #
 
     def verify(self, certificate: x509.Certificate) -> None:
-        """Check issuer, signature, and validity window. Raises on failure.
+        """Walk this certificate's chain to a trusted root. Raises on failure.
 
         Revocation is *not* checked here — that is a database concern, handled by
         the authentication dependency (D25).
+
+        ⚠️ **Every certificate in the chain is checked, not just the leaf.** An
+        expired intermediate must stop working, or moving the root offline would
+        buy nothing: the whole point of a short-lived intermediate is that it stops
+        being usable on its own schedule.
+
+        ⚠️ **Depth is capped.** The intermediate is issued with
+        ``path_length=0``, so the only shapes accepted are device→root (legacy)
+        and device→intermediate→root. The loop below cannot run away on a
+        self-issued certificate claiming to be its own issuer, which is what an
+        unbounded walk does when handed a cycle.
         """
-        if certificate.issuer != self._certificate.subject:
-            raise CertificateError("certificate was not issued by this CA")
+        chain: list[x509.Certificate] = []
+        current = certificate
+
+        for _ in range(_MAX_CHAIN_DEPTH):
+            issuer = self._issuer_of(current)
+            if issuer is None:
+                raise CertificateError("certificate was not issued by this CA")
+
+            _verify_signed_by(current, issuer)
+            chain.append(current)
+
+            if issuer.subject == issuer.issuer:
+                # A self-issued trusted certificate is the anchor: stop here and
+                # check the anchor's own dates along with the rest.
+                chain.append(issuer)
+                break
+            current = issuer
+        else:
+            raise CertificateError("certificate chain is too long to be one of ours")
 
         now = _utcnow()
-        if now < _aware(certificate.not_valid_before_utc):
-            raise CertificateError("certificate is not yet valid")
-        if now > _aware(certificate.not_valid_after_utc):
-            raise CertificateError("certificate has expired")
-
-        try:
-            self._certificate.public_key().verify(
-                certificate.signature,
-                certificate.tbs_certificate_bytes,
-                ec.ECDSA(certificate.signature_hash_algorithm),
-            )
-        except Exception as exc:
-            raise CertificateError("certificate signature does not verify") from exc
+        for link in chain:
+            if now < _aware(link.not_valid_before_utc):
+                raise CertificateError(
+                    "certificate is not yet valid"
+                    if link is certificate
+                    else "an issuing certificate is not yet valid"
+                )
+            if now > _aware(link.not_valid_after_utc):
+                raise CertificateError(
+                    "certificate has expired"
+                    if link is certificate
+                    else "an issuing certificate has expired"
+                )
 
     @staticmethod
     def device_id_from(certificate: x509.Certificate) -> uuid.UUID:
