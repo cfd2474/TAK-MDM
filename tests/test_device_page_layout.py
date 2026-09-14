@@ -24,8 +24,11 @@ nothing about the page says which one you touched.
 from __future__ import annotations
 
 import io
+import re
 
 from fastapi.testclient import TestClient
+
+from tests.conftest import ADMIN_HEADERS
 
 
 # --------------------------------------------------------------------------- #
@@ -133,3 +136,104 @@ def test_the_compliance_pill_uses_the_real_field(client: TestClient, enrolled):
     # happy state would have passed only by accident on a device that had
     # reported in.
     assert any(state.value in body for state in ComplianceStatus)
+
+
+# --------------------------------------------------------------------------- #
+# "Policies reaching this device" goes somewhere (W167)
+#
+# The table answers "why is the device doing that", and the next question is
+# always "let me change it". The names were plain text, so the answer was: read
+# the name, go to Policies, find it again by eye.
+# --------------------------------------------------------------------------- #
+
+
+def _assign(client: TestClient, policy_id: str, device_id: str, rank: int = 1):
+    response = client.post(
+        "/api/v1/assignments",
+        json={
+            "policy_id": policy_id,
+            "scope": "device",
+            "target_id": device_id,
+            "rank": rank,
+        },
+    )
+    assert response.status_code in (200, 201), response.text
+
+
+def test_the_policy_name_links_to_its_editor(client: TestClient, enrolled, make_policy):
+    device = enrolled(serial="LINK-1")
+    policy = make_policy("Baseline", "PASSWORD", {"min_length": 8})
+    _assign(client, policy["id"], device["device_id"])
+
+    page = client.get(f"/devices/{device['device_id']}", headers=ADMIN_HEADERS).text
+
+    assert f'<a href="/policies/{policy["id"]}">Baseline</a>' in page
+
+
+def test_the_link_actually_opens_the_editor(client: TestClient, enrolled, make_policy):
+    """⚠️ Asserting the href alone would pass for a link to a 404.
+
+    The point of the change is arriving at the editor, so the test follows it.
+    """
+    device = enrolled(serial="LINK-2")
+    policy = make_policy("Baseline", "PASSWORD", {"min_length": 8})
+    _assign(client, policy["id"], device["device_id"])
+
+    page = client.get(f"/devices/{device['device_id']}", headers=ADMIN_HEADERS).text
+    href = re.search(r'<a href="(/policies/[^"]+)">Baseline</a>', page)
+    assert href, "no link to follow"
+
+    editor = client.get(href.group(1), headers=ADMIN_HEADERS, follow_redirects=True)
+
+    assert editor.status_code == 200
+    assert "Baseline" in editor.text
+
+
+def test_a_profile_section_lands_on_the_profile_editor(
+    client: TestClient, db, enrolled
+):
+    """⚠️ A section is only editable through the composite that owns it (W21).
+
+    Linking one to somewhere it cannot be edited would be worse than not linking
+    it at all. `/policies/{id}` redirects when the policy has a `profile_id`, and
+    that redirect is what lets a single link be correct for both kinds of row.
+    """
+    from app.services import profiles as profile_service
+
+    device = enrolled(serial="LINK-3")
+    profile = profile_service.create_profile(
+        db,
+        name="ATAK Test",
+        description=None,
+        sections={"password": {"quality": 4, "min_length": 6}},
+    )
+    db.commit()
+
+    client.post(
+        f"/profiles/{profile.id}/targets",
+        data={"rank": "5", "device_ids": [device["device_id"]]},
+        follow_redirects=True,
+    )
+
+    page = client.get(f"/devices/{device['device_id']}", headers=ADMIN_HEADERS).text
+    href = re.search(r'<a href="(/policies/[^"]+)">ATAK Test[^<]*</a>', page)
+    assert href, f"the section row is not linked:\n{page[:200]}"
+
+    hop = client.get(href.group(1), headers=ADMIN_HEADERS, follow_redirects=False)
+    assert hop.status_code in (302, 303, 307)
+    assert hop.headers["location"] == f"/profiles/{profile.id}"
+
+    editor = client.get(href.group(1), headers=ADMIN_HEADERS, follow_redirects=True)
+    assert editor.status_code == 200
+
+
+def test_the_remove_button_is_unaffected(client: TestClient, enrolled, make_policy):
+    """The row still does what it did. A link in the first cell must not have
+    turned the last one into part of it."""
+    device = enrolled(serial="LINK-4")
+    policy = make_policy("Baseline", "PASSWORD", {"min_length": 8})
+    _assign(client, policy["id"], device["device_id"])
+
+    page = client.get(f"/devices/{device['device_id']}", headers=ADMIN_HEADERS).text
+
+    assert "/assignments/" in page and "Remove" in page

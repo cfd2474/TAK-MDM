@@ -449,6 +449,40 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W167 — The policy name on the device page opens the editor (v1.15.0)
+
+Operator, 2026-09-14: *"on the device details page, clicking on the policy name,
+under policies reaching this device, should open that policy in the policy
+editor."*
+
+The table answers *why is this device doing that*, and the next question is always
+*let me change it* — which meant reading the name, going to Policies, and finding
+it again by eye. The names are now links.
+
+#### One link is correct for both kinds of row, because the route already knew
+
+A row may be a standalone policy **or** a section of a profile, and a section is
+only editable through the composite that owns it (W21). `/policies/{id}` already
+redirects to `/profiles/{profile_id}` when the policy carries one, so a single
+`href` lands correctly either way. Linking sections to somewhere they cannot be
+edited would have been worse than leaving them as text.
+
+#### ⚠️ Two of the W165/W166 tests were clock-sensitive, and it showed here
+
+`test_location_history_follows_the_setting` and `test_the_table_and_the_map_agree`
+compared the page against `datetime.now()` formatted to the hour, while the page
+renders a point recorded minutes earlier. They passed when written and failed on
+this run, for no reason connected to this change: the two had fallen either side
+of an hour boundary. Now anchored to the **stored row** the page is actually
+rendering. A test that depends on what time it is run produces failures that look
+like bugs in the code — and the next person would have gone looking in the wrong
+place, exactly as I briefly did.
+
+**1757 server tests.** Two mutation checks on the link, both caught; the
+follow-the-link test loads the editor rather than asserting an `href` that could
+point at a 404.
+
+
 ### ✅ W166 — The label over the column, not the times in it (v1.14.3)
 
 Operator, 2026-09-14, with a screenshot: *"The times are updated, but the column

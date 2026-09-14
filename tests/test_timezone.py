@@ -31,11 +31,30 @@ import pytest
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.services import clock
 from tests.conftest import ADMIN_HEADERS
 
 TEMPLATES = pathlib.Path("app/web/templates")
+
+
+def _stored_point(db):
+    """The location row the page is actually rendering.
+
+    ⚠️ Assertions compare against this rather than against `datetime.now()`.
+    A point recorded minutes ago and the current clock can sit either side of an
+    hour boundary, and a test that depends on what time it is run produces
+    failures that look like bugs in the code.
+    """
+    from app.db.models import DeviceLocation
+
+    point = db.scalars(
+        select(DeviceLocation).order_by(DeviceLocation.recorded_at.desc())
+    ).first()
+    assert point is not None, "no location was stored for this test to check"
+    return point
+
 
 
 # --------------------------------------------------------------------------- #
@@ -197,8 +216,13 @@ def test_location_history_follows_the_setting(client: TestClient, db, enrolled, 
     # ⚠️ The **hour**, not just the date. This asserted a `%Y-%m-%d` string until
     # W165, which is true of UTC and Tokyo alike whenever the two share a date —
     # so it passed throughout the whole period the page was wrong.
+    #
+    # ⚠️ And measured against the *stored point*, not against `now`. Taking the
+    # hour from the clock made this fail whenever the two fell either side of an
+    # hour boundary: a test that passes depending on what time it is run is worse
+    # than no test, because the failure looks like a bug in the code.
     tokyo = clock.format(
-        datetime.now(timezone.utc), clock.zone("Asia/Tokyo"), "%Y-%m-%d %H:"
+        _stored_point(db).recorded_at, clock.zone("Asia/Tokyo"), "%Y-%m-%d %H:"
     )
     assert tokyo in page, "the history table is not in the configured zone"
 
@@ -343,8 +367,9 @@ def test_the_table_and_the_map_agree(client: TestClient, db, enrolled, mtls_head
         f"/devices/{result['device_id']}/location-history", headers=ADMIN_HEADERS
     ).text
 
+    # From the stored point, never from the clock — see the note above.
     expected = clock.format(
-        datetime.now(timezone.utc), clock.zone("Asia/Tokyo"), "%Y-%m-%d %H:"
+        _stored_point(db).recorded_at, clock.zone("Asia/Tokyo"), "%Y-%m-%d %H:"
     )
     # Both the table cell and the map payload carry the same local hour.
     assert page.count(expected) >= 2, (
@@ -366,9 +391,10 @@ def test_a_report_renders_in_the_configured_zone(client: TestClient, db, enrolle
     )
 
     page = client.get("/reports/fleet-inventory", headers=ADMIN_HEADERS).text
-    expected = clock.format(
-        datetime.now(timezone.utc), clock.zone("Asia/Tokyo"), "%Y-%m-%d %H:"
-    )
+    from app.db.models import Device as _Device
+
+    checked_in = db.scalar(select(_Device.last_checkin_at))
+    expected = clock.format(checked_in, clock.zone("Asia/Tokyo"), "%Y-%m-%d %H:")
     assert expected in page, "the report is still in UTC"
 
 

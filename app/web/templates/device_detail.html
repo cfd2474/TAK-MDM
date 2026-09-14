@@ -382,7 +382,19 @@
     {% for source in considered %}
       <tr>
         <td class="muted">{{ loop.index }}</td>
-        <td>{{ source.policy_name }}</td>
+        {#
+          The name goes to the editor. This table answers "why is the device
+          doing that", and the next question is always "let me change it" — which
+          meant reading the name, going to Policies, and finding it again by eye.
+
+          ⚠️ A section of a profile links here too, and lands on the *profile*
+          editor: `/policies/{id}` redirects when the policy has a `profile_id`,
+          because a section is only editable through the composite that owns it
+          (W21). Linking sections to somewhere they cannot be edited would be
+          worse than not linking them, so the redirect is what makes one link
+          correct for both kinds of row.
+        #}
+        <td><a href="/policies/{{ source.policy_id }}">{{ source.policy_name }}</a></td>
         <td class="mono">v{{ source.policy_version }}</td>
         <td><span class="pill">{{ source.scope }}</span></td>
         <td class="mono">{{ source.rank }}</td>
