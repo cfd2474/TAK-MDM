@@ -16,16 +16,7 @@
 
 package com.taksolutions.atlasmdm.policy
 
-import android.Manifest
-import android.app.admin.DevicePolicyManager
-import android.content.ComponentName
 import android.content.Context
-import android.content.pm.PackageManager
-import android.location.Location
-import android.location.LocationManager
-import android.os.Build
-import androidx.core.content.ContextCompat
-import com.taksolutions.atlasmdm.admin.MdmDeviceAdminReceiver
 import com.taksolutions.atlasmdm.core.AgentConfig
 import com.taksolutions.atlasmdm.diag.AgentLog
 import org.json.JSONArray
@@ -43,11 +34,17 @@ import java.util.TimeZone
  * unconditionally on every sync so that *removing* the policy turns tracking off
  * rather than leaving the last interval running for ever.
  *
- * ⚠️ **Last known position, not a fresh fix** — the same decision
- * `LocateCommandHandler` already made, for the same reason. Requesting a live fix
- * can take minutes indoors, and doing that on a timer would hold a GPS session
- * open on a battery-powered tablet all day. The fix's own timestamp is reported,
- * so a stale point is visibly stale rather than quietly presented as current.
+ * ⚠️ **A real fix, requested on the interval** (W162). This used to read
+ * `getLastKnownLocation`, which starts no GPS session and returns whatever some
+ * other app happened to leave in the cache — so a track was only as good as the
+ * device's other software, and a tablet running no mapping app produced a straight
+ * line of identical stale points that looked exactly like a stationary device.
+ *
+ * The battery argument the old comment made is real, and is answered by bounding
+ * rather than by not asking: one single-shot request per interval, capped at
+ * [CurrentFix.SAMPLE_TIMEOUT_MS] and cancelled on the way out. A burst on the
+ * interval, never a held session. The fix's own timestamp is still reported, so a
+ * fallback to the cache is visibly stale rather than quietly presented as current.
  *
  * ⚠️ **Buffered on disk, delivered on the next check-in.** A device out of
  * coverage keeps recording; it comes back with a track rather than a gap. The
@@ -57,8 +54,7 @@ class LocationTracker(private val context: Context) {
 
     private val config: AgentConfig by lazy { AgentConfig(context) }
 
-    private val manager: LocationManager? =
-        context.getSystemService(LocationManager::class.java)
+    private val fixes: CurrentFix by lazy { CurrentFix(context) }
 
     /** Is tracking switched on for this device? */
     fun isEnabled(): Boolean = config.locationIntervalMinutes > 0
@@ -144,8 +140,13 @@ class LocationTracker(private val context: Context) {
             return
         }
 
-        val fix = lastKnown() ?: run {
-            AgentLog.w(TAG, "location sample skipped: no last known position")
+        // ⚠️ Blocks the sync loop for up to SAMPLE_TIMEOUT_MS. That is the cost of
+        // a position worth having, and it is why the sample timeout is well under
+        // `locate`'s: this runs unattended on every interval, and policy, commands
+        // and the long-poll are all waiting behind it.
+        val outcome = CurrentFix(context).request(CurrentFix.SAMPLE_TIMEOUT_MS, now)
+        val fix = outcome.candidate ?: run {
+            AgentLog.w(TAG, "location sample skipped: ${outcome.failure ?: "no position"}")
             return
         }
 
@@ -159,21 +160,27 @@ class LocationTracker(private val context: Context) {
         val point = LocationSamplingPlan.point(
             latitude = fix.latitude,
             longitude = fix.longitude,
-            accuracyMetres = if (fix.hasAccuracy()) fix.accuracy else null,
+            accuracyMetres = fix.accuracyMetres,
             provider = fix.provider,
-            fixedAtMillis = fix.time,
-            isoTimestamp = iso8601(fix.time),
+            fixedAtMillis = fix.timeMillis,
+            isoTimestamp = iso8601(fix.timeMillis),
         )
         config.pendingLocations =
             LocationSamplingPlan.buffered(config.pendingLocations, point.toString())
 
+        // ⚠️ The age is the thing to read in this line, not the coordinates. A
+        // run of samples a second or two old is a live GPS session; ages that climb
+        // steadily are the cache being re-reported, which is the W162 bug
+        // returning.
         AgentLog.i(
             TAG,
-            "location sampled (${fix.provider}, ${(now - fix.time) / 1000}s old); " +
+            "location sampled (${fix.provider}, " +
+                "${LocationFixPlan.ageSeconds(fix, now)}s old, " +
+                "${if (outcome.live) "live" else "cached"}); " +
                 "${config.pendingLocations.size} buffered"
         )
 
-        evaluateFences(fix.latitude, fix.longitude, now - fix.time)
+        evaluateFences(fix.latitude, fix.longitude, now - fix.timeMillis)
     }
 
     /**
@@ -218,49 +225,12 @@ class LocationTracker(private val context: Context) {
         GeofenceEnforcer(context).enforce(actions)
     }
 
-    private fun hasPermission(): Boolean =
-        ContextCompat.checkSelfPermission(
-            context, Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(
-                context, Manifest.permission.ACCESS_COARSE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
+    // Permission and the master location switch both live on CurrentFix now, so
+    // that `locate` gets them too — it had neither, and a device with location
+    // switched off in Settings answered an operator with a bare failure.
+    private fun hasPermission(): Boolean = fixes.hasPermission()
 
-    /**
-     * Make sure the device's master location setting is on.
-     *
-     * ⚠️ Without this, a perfectly permissioned agent reports nothing and no log
-     * anywhere says why — the fixes simply never exist. `setLocationEnabled` is a
-     * Device Owner API (API 30+); `Settings.Secure.LOCATION_MODE` is deprecated for
-     * this and must not be used through `setSecureSetting` (Android reference §6).
-     */
-    private fun ensureLocationServicesOn(): Boolean {
-        val enabled = manager?.isLocationEnabled ?: false
-        if (enabled) return true
-
-        val dpm = context.getSystemService(DevicePolicyManager::class.java) ?: return false
-        val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
-        if (!dpm.isDeviceOwnerApp(context.packageName)) return false
-
-        return runCatching {
-            dpm.setLocationEnabled(admin, true)
-            AgentLog.i(TAG, "location services turned on for tracking")
-            manager?.isLocationEnabled ?: false
-        }.getOrElse {
-            AgentLog.w(TAG, "could not turn location services on: ${it.message}")
-            false
-        }
-    }
-
-    private fun lastKnown(): Location? {
-        val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
-        return providers.mapNotNull { provider ->
-            runCatching {
-                @Suppress("MissingPermission")
-                manager?.getLastKnownLocation(provider)
-            }.getOrNull()
-        }.maxByOrNull { it.time }
-    }
+    private fun ensureLocationServicesOn(): Boolean = fixes.ensureLocationServicesOn()
 
     companion object {
         private const val TAG = "LocationTracker"

@@ -332,6 +332,30 @@ def test_the_agent_field_names_are_translated_not_assumed():
     assert point.recorded_at.year == 2025
 
 
+def test_a_locate_result_without_an_accuracy_is_stored_without_one(client, db, enrolled):
+    """⚠️ The agent omits the key when the fix does not carry an accuracy (W162).
+
+    It used to send `accuracy.toDouble()` unconditionally, so a fix that had no
+    accuracy was reported as accurate to zero metres — the device not saying is not
+    the device claiming perfection. The server must read the absence, not trip on
+    it: this arrives inside a check-in, and an exception here would cost the device
+    its whole policy update over a bonus point.
+    """
+    point = location_service.from_locate_result(
+        {
+            "latitude": 1.5,
+            "longitude": 2.5,
+            "provider": "fused",
+            "fixed_at_millis": 1_757_332_800_000,
+            "live": True,
+        }
+    )
+
+    assert point is not None
+    assert point.accuracy_m is None
+    assert point.provider == "fused"
+
+
 def test_a_malformed_locate_result_is_ignored_rather_than_fatal():
     """It arrives inside a check-in. Failing the whole sync over a bonus point
     would cost the device its policy update as well."""

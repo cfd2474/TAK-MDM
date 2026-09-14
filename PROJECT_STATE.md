@@ -449,6 +449,105 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### 🚧 W162 — The agent has never once asked the GPS for a position
+
+Operator, 2026-09-14: *"when i click 'locate' on the device information page, is
+there a way to more aggressively request device location? i clicked locate on Test
+TAB and it still shows location as of 38 minutes ago, but this location is not
+correct … i need to make sure provisioned devices are actively using their GPS for
+location and reporting it back when requested by the locate command."*
+
+#### The root cause, and it is larger than the button
+
+`LocateCommandHandler` and `LocationTracker.lastKnown()` both call
+`getLastKnownLocation()`. That is a **passive cache read**: it returns whatever fix
+some component last produced and never starts a GPS session. A grep of the whole
+agent for `requestLocationUpdates`, `getCurrentLocation`, `LocationRequest` and
+`FusedLocation` returns **nothing**. ATLAS has never asked the GPS for anything.
+
+Which matches the report exactly: `locate` returned a 38-minute-old cached fix from
+wherever the tablet last was; the server stored it honestly at the fix's own
+timestamp; and Maps "jumped" because Maps reads the same cache *and then starts its
+own session*. ATLAS does the first half and never the second.
+
+⚠️ **This makes location reporting parasitic**, which W161 has just made
+fleet-wide: every device now samples on a 15-minute timer, and every sample reports
+a position only if some *other* app happened to drive the GPS. On a tablet where
+nothing does, it reports an ancient point for ever, or none at all.
+
+#### ⚠️ A conclusion in the Android reference that does not hold
+
+The W106 verification recorded fix ages of 1–2 s as proof that
+`ACCESS_BACKGROUND_LOCATION` and the `location` FGS type "both took effect". Both
+are genuinely necessary and both are correctly in place — but neither starts a GPS
+session, so they cannot be what a fresh age demonstrates. On that run something
+else on `SM-X520` (most likely ATAK) was keeping the cache hot. The observation is
+kept; the inference is corrected.
+
+#### What makes the fix cheap
+
+`minSdk = 33`, so `LocationManager.getCurrentLocation()` (API 30+) and
+`FUSED_PROVIDER` (API 31+) are both available with no compatibility path.
+`getCurrentLocation` is exactly the right call: one fresh fix, a cancellation
+signal, `null` on timeout, and no listener lifecycle to leak. The permission
+apparatus is already built and hardware-proven — nothing ever used it.
+
+Operator's call, asked and answered: **live fixes for both** `locate` and periodic
+sampling. Each sample is a short GPS burst on the interval, not a held session.
+
+#### Chunk plan
+
+1. **`LocationFixPlan`** — a pure, JVM-testable object holding the decisions:
+   which of several candidate fixes wins (accuracy first, with a freshness floor),
+   and whether a fix is fresh enough to be called current. Follows the house shape:
+   a thin Android shell over a pure plan.
+2. **`CurrentFix`** — the Android shell. Requests `getCurrentLocation` from FUSED,
+   GPS and NETWORK together under one `CancellationSignal`, blocks on a
+   `CountDownLatch` up to a caller's timeout (the pattern
+   `ClearAppDataCommandHandler` already uses), and falls back to last-known —
+   labelled by age, never presented as current.
+3. **`LocateCommandHandler`** uses it with a long timeout, and calls
+   `setLocationEnabled` first. ⚠️ The handler does not do this today, so a
+   device with location switched off in Settings simply fails; the tracker has
+   always done it.
+4. **`LocationTracker.sampleIfDue`** uses it with a short timeout, keeping the
+   existing anchor-whether-or-not-a-fix-arrived behaviour so a device that cannot
+   fix retries on its interval rather than every loop.
+5. **JVM tests** over `LocationFixPlan`, plus mutation checks on each guard.
+6. **Android reference** updated: the corrected inference above, and the
+   `getCurrentLocation` contract recorded with its source.
+7. **Release**: version bump, rebuild the APK, ⚠️ raise `versionCode`
+   (113 → 114; the seeder treats a repeated code as already present and ships
+   nothing), refresh `dist/`, update this file, tag and push. No server deploy.
+
+#### Status: ✅ done in code, ⏳ unverified on hardware (v1.13.0, agent 0.69.0 / 114)
+
+* `LocationFixPlan` + `CurrentFix` added; `locate` and `sampleIfDue` both go
+  through them. `getLastKnownLocation` survives only as the fallback, and every
+  caller now receives it flagged `live: false` with its age attached.
+* **`locate` gained the master location switch.** It never called
+  `setLocationEnabled`, so a device with location off in Settings answered an
+  operator with a bare failure naming none of that. The plumbing moved onto
+  `CurrentFix`, which is what let both callers share it — `LocationTracker` now
+  delegates rather than keeping its own copy.
+* **A fix with no accuracy is no longer reported as ±0 m.** The old handler sent
+  `accuracy.toDouble()` unconditionally; the key is now omitted, and a server test
+  covers the absence.
+* **281 agent JVM tests, 1716 server tests.** Five mutation checks on
+  `LocationFixPlan`, all caught: ignoring accuracy, treating an unknown accuracy
+  as perfect, ordering vague fixes by accuracy, disqualifying a clock that runs
+  ahead, and reporting a negative age.
+* **Signature continuity verified** against the shipped `dist/atlas-agent.apk`
+  before and after — same signing certificate, `versionCode` 113 → 114, so the
+  fleet can take it over the air.
+
+⏳ **The test that matters has not been run**, and it is the one the whole item
+turns on: **Locate** on a tablet with no other location-using app running should
+answer with a fix whose age is seconds. Until that is seen on hardware, this is a
+well-argued change and nothing more — the previous verification of this same area
+looked convincing and measured someone else's GPS session.
+
+
 ### ✅ W161 — Location tracking is on the moment a device enrols (v1.12.0)
 
 Operator, 2026-09-14: *"in the admin section, location, lets make history

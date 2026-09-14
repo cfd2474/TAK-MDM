@@ -16,19 +16,16 @@
 
 package com.taksolutions.atlasmdm.command
 
-import android.Manifest
 import android.app.admin.DevicePolicyManager
 import android.content.Context
-import android.content.pm.PackageManager
-import android.location.Location
-import android.location.LocationManager
 import android.os.Build
-import androidx.core.content.ContextCompat
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 import com.taksolutions.atlasmdm.admin.MdmDeviceAdminReceiver
 import com.taksolutions.atlasmdm.diag.AgentLog
+import com.taksolutions.atlasmdm.policy.CurrentFix
+import com.taksolutions.atlasmdm.policy.LocationFixPlan
 import com.taksolutions.atlasmdm.ui.DeviceAnnouncer
 
 /** Shared plumbing for the handlers that drive [DevicePolicyManager]. */
@@ -227,47 +224,62 @@ class ClearAppDataCommandHandler(context: Context) : DeviceOwnerCommandHandler(c
 }
 
 /**
- * `locate` — last known position from GPS or network.
+ * `locate` — **a live fix**, falling back to the cache only when one cannot be had.
  *
- * Deliberately does not request a *fresh* fix. A live fix can take minutes indoors
- * and would hold the sync loop open the whole time; the answer to "where is this
- * tablet" is served well enough by the last known position plus its age, which is
- * reported so the operator can judge it rather than trust a stale point.
+ * ⚠️ **This used to read `getLastKnownLocation` and nothing else** (W162), which
+ * starts no GPS session and returns whatever fix some other app happened to leave
+ * behind. Pressing Locate on a tablet that had not run a mapping app all day
+ * answered with where it was that morning, presented as its position. The age was
+ * reported honestly, but an operator asking "where is this device" is not helped by
+ * a correct answer to a different question.
+ *
+ * The old comment defended this as a battery decision, and the cost it names is
+ * real — so the request is bounded rather than abandoned: one single-shot fix,
+ * capped at [CurrentFix.LOCATE_TIMEOUT_MS], cancelled on the way out. That is a
+ * burst, not a session.
  */
 class LocateCommandHandler(context: Context) : DeviceOwnerCommandHandler(context) {
     override val type = "locate"
 
     override fun execute(command: Command): CommandOutcome {
-        val granted = ContextCompat.checkSelfPermission(
-            context, Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
+        val outcome = CurrentFix(context).request(CurrentFix.LOCATE_TIMEOUT_MS)
+        val fix = outcome.candidate
+            ?: return CommandOutcome.failed(outcome.failure ?: "no position available")
 
-        if (!granted) return CommandOutcome.failed("location permission not granted")
-
-        val manager = context.getSystemService(LocationManager::class.java)
-            ?: return CommandOutcome.failed("no location service")
-
-        val best = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
-            .mapNotNull { provider ->
-                runCatching {
-                    @Suppress("MissingPermission")
-                    manager.getLastKnownLocation(provider)
-                }.getOrNull()
-            }
-            .maxByOrNull { it.time }
-            ?: return CommandOutcome.failed("no last known location available")
-
-        return CommandOutcome.ok(best.toJson())
+        val age = LocationFixPlan.ageSeconds(fix, System.currentTimeMillis())
+        AgentLog.i(
+            TAG,
+            "locate answered with a ${if (outcome.live) "live" else "cached"} " +
+                "fix from ${fix.provider}, ${age}s old",
+        )
+        return CommandOutcome.ok(fix.toJson(age, outcome.live))
     }
 
-    private fun Location.toJson(): JSONObject = JSONObject()
-        .put("latitude", latitude)
-        .put("longitude", longitude)
-        .put("accuracy_metres", accuracy.toDouble())
-        .put("provider", provider)
-        .put("fixed_at_millis", time)
-        // The operator needs to know they may be looking at a point from yesterday.
-        .put("age_seconds", (System.currentTimeMillis() - time) / 1000)
+    /**
+     * ⚠️ The field names are the *server's*, and it is the server that translates
+     * them (`from_locate_result`). `accuracy_metres` and `fixed_at_millis` are not
+     * what a check-in calls the same two things; renaming either would break a
+     * released agent or a stored command result.
+     */
+    private fun LocationFixPlan.Candidate.toJson(age: Long, live: Boolean): JSONObject =
+        JSONObject()
+            .put("latitude", latitude)
+            .put("longitude", longitude)
+            // ⚠️ Omitted when the fix does not carry one. It used to send
+            // `accuracy.toDouble()` unconditionally, so a fix with no accuracy was
+            // reported as accurate to zero metres — the device not saying is not
+            // the device claiming perfection.
+            .apply { accuracyMetres?.let { put("accuracy_metres", it.toDouble()) } }
+            .put("provider", provider)
+            .put("fixed_at_millis", timeMillis)
+            // The operator needs to know they may be looking at a point from
+            // yesterday, and whether the GPS was actually consulted this time.
+            .put("age_seconds", age)
+            .put("live", live)
+
+    private companion object {
+        const val TAG = "LocateCommandHandler"
+    }
 }
 
 /**

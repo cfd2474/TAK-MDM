@@ -567,9 +567,59 @@ enterprise notes, and the device settled it. From its own log:
 ⚠️ **The fixes are 1–2 seconds old, which is the part that matters.** A device
 denied background location does not fail loudly — `getLastKnownLocation` keeps
 returning something, just increasingly stale. So "points arrived" is not the test;
-"points arrived carrying a fresh fix age" is. Ages of 1–2 s over a run of samples
-are a live GPS session, which is what proves the grant and the service type both
-took effect.
+"points arrived carrying a fresh fix age" is.
+
+⚠️ **Corrected 2026-09-14 (W162): a fresh age did not prove what this said it
+proved.** The original wording concluded that ages of 1–2 s "are a live GPS
+session, which is what proves the grant and the service type both took effect."
+The observation is kept — the ages were real and the grant and the type are both
+genuinely required — but the inference does not hold, because **nothing in the
+agent ever started a GPS session**. Both `locate` and the sampler called
+`getLastKnownLocation`, which reads a cache and requests nothing. On that run
+something else on `SM-X520`, almost certainly ATAK, was driving the GPS and
+keeping the cache hot.
+
+The practical consequence is the one an operator met a week later: on a tablet
+running no mapping app, the same code reported a 38-minute-old position from a
+previous location, and **Locate** could not improve on it. A fresh fix age is
+evidence that *something* is driving the GPS — not evidence that it is us. The
+test that distinguishes them is whether a fix arrives on a device with no other
+location-using app running.
+
+### 📖 Asking for a position, rather than reading the last one (W162)
+
+📖 **`LocationManager.getCurrentLocation(provider, CancellationSignal, Executor,
+Consumer<Location>)` (API 30+)** is the single-shot request. Its contract, which
+the agent relies on:
+
+| | |
+|---|---|
+| The consumer is invoked **exactly once** | Either with a `Location` or with `null`. A provider that cannot fix still calls back, so a latch per provider always counts down. |
+| `null` means "no fix in a reasonable time" | It is the documented answer, not an error — there is no exception to catch. |
+| It may return a **cached** location | If one is recent enough to satisfy the request. So a returned fix still has to be age-checked; "it came from `getCurrentLocation`" does not by itself mean "it is current". |
+| The `CancellationSignal` ends it early | Which is what keeps a burst from becoming a session when the caller has stopped waiting. |
+
+📖 **`LocationManager.FUSED_PROVIDER` (API 31+)** blends GPS, network and the
+device's own sensors. `minSdk` is 33, so neither this nor `getCurrentLocation`
+needs a compatibility path.
+
+⚠️ **Providers must be asked in parallel, not in series.** Asking GPS first and
+falling back to the network on timeout costs the whole timeout indoors before
+producing the coarse answer that was available immediately. Asked together, the
+network fix is in hand while GPS is still settling and is displaced if GPS lands
+in time.
+
+⚠️ **A recent vague fix must not beat a slightly older precise one.** The
+network provider answers in milliseconds with a kilometre of error; GPS answers in
+tens of seconds within metres. Ordering candidates by recency returns the
+cell-tower estimate every time, and the GPS session is spent for nothing — which
+from the console is indistinguishable from never having asked. `LocationFixPlan`
+orders by accuracy first and uses age only among fixes too vague to separate on
+precision.
+
+⏳ **Not yet verified on hardware.** The claim to test is the one the correction
+above turns on: a tablet with no other location-using app running answers
+**Locate** with a fix whose age is seconds, not minutes.
 
 ⚠️ **A foreground service type must never be claimed unconditionally.** Quoting
 the Android 14 foreground-service-types page:
