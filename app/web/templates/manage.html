@@ -64,13 +64,12 @@
             <a href="/devices/{{ d.id }}">{{ d.name or d.serial_number }}</a>
             {% if d.name %}<span class="mono">{{ d.serial_number }}</span>{% endif %}
           </div>
-          <form method="post" action="/devices/{{ d.id }}/rename" class="inline-rename">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="hidden" name="next" value="/">
-            <input type="text" name="name" value="{{ d.name or '' }}" aria-label="Device name"
-                   maxlength="128" aria-label="rename {{ d.serial_number }}">
-            <button type="submit" class="ghost" title="Save name">Save</button>
-          </form>
+          {#
+            ⚠️ No rename here. A text box per row turned a list meant for
+            scanning a fleet into a wall of inputs, and put an edit one stray
+            keystroke away from every device on the page. Renaming lives on the
+            device's own page, where there is one device to be wrong about.
+          #}
         </td>
         <td class="mono">{{ d.serial_number }}</td>
         <td>{{ d.model or '—' }}</td>

@@ -24,13 +24,22 @@
   server has v{{ device.state_version }}, device applied v{{ device.acked_state_version }}
 </p>
 
+{#
+  Status at a glance, before anything that needs reading. Convergence is the one
+  fact that decides whether the rest of this page describes the device or
+  describes what it is about to become.
+#}
+<p class="device-pills">
+  {% if device.acked_state_version == device.state_version %}
+    <span class="pill good">Converged</span>
+  {% else %}
+    <span class="pill warn">Behind &mdash; applied v{{ device.acked_state_version }} of v{{ device.state_version }}</span>
+  {% endif %}
+  {% set c = device.compliance_status.value %}
+  <span class="pill {{ 'good' if c == 'compliant' else 'warn' if c == 'degraded' else 'bad' }}">{{ c }}</span>
+</p>
+
 <div class="toolbar">
-  <form method="post" action="/devices/{{ device.id }}/rename" class="toolbar" style="margin:0">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <input type="text" name="name" value="{{ device.name or '' }}"
-           maxlength="128" style="min-width:280px">
-    <button type="submit" class="ghost">Save name</button>
-  </form>
   <form method="post" action="/devices/{{ device.id }}/checkin" style="margin:0">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button type="submit">Check in now</button>
@@ -83,6 +92,278 @@
     </ul>
   </div>
 {% endif %}
+
+{#
+  ⚠️ Actions first, then the two cards side by side. What an operator comes to
+  this page to do — sound it, locate it, lock it — used to sit below four
+  sections of policy detail, so the page had to be scrolled past its own
+  explanation to be used.
+
+  Device info and Location are paired because they answer one question
+  together: which device is this, and where. `.row` wraps them onto separate
+  lines on a narrow screen rather than squeezing both.
+#}
+<h2 id="actions">Actions</h2>
+<div class="panel">
+  {#
+    One-shot actions (W107). Queued as commands, so a device that is asleep or
+    out of coverage takes them when it comes back rather than losing them —
+    except a ping, which expires after an hour on purpose: it answers "where is
+    this thing while I am standing in the room", and an hour later that question
+    has been settled one way or the other.
+  #}
+  {% set done = request.query_params.get('action') %}
+  {% if done == 'ping' %}
+    <div class="banner good">
+      Sounding the device — an alarm for 30 seconds, through silent mode. Whoever
+      finds it can stop it from the screen.
+    </div>
+  {% elif done == 'lock' %}
+    <div class="banner good">Locking the device screen.</div>
+  {% elif done == 'locate' %}
+    <div class="banner good">
+      Asked the device for its position. It appears under
+      <a href="#location">Location</a> once it reports.
+    </div>
+  {% endif %}
+
+  <div class="toolbar">
+    <form method="post" action="/devices/{{ device.id }}/action/ping" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit">Play sound</button>
+    </form>
+    <form method="post" action="/devices/{{ device.id }}/action/lock" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit">Lock screen</button>
+    </form>
+    <form method="post" action="/devices/{{ device.id }}/action/locate" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="ghost">Locate</button>
+    </form>
+  </div>
+
+  <p class="field-tip">
+    <strong>Play sound</strong> rings the device for 30 seconds on the alarm
+    channel, so it is audible even when the device is silenced &mdash; which is
+    usually the state of a device somebody is looking for. It vibrates as well,
+    and whoever finds it can stop it from the screen without unlocking.
+  </p>
+  <p class="field-tip">
+    {#
+      ⚠️ Said plainly rather than implying the device has been secured. lockNow()
+      on a device with no password drops to a lock screen a swipe dismisses —
+      the same honesty the geofence lock needed.
+    #}
+    <strong>Lock screen</strong> locks the device immediately. It asks for
+    whatever credential the device already has, so on a device with no PIN or
+    password set this is only a swipe &mdash; set a Password policy if it needs to
+    be more than that.
+  </p>
+</div>
+
+<div class="row device-cards">
+  <div>
+    <h2 id="hardware">Device info</h2>
+<div class="panel">
+  {#
+    ⚠️ Renaming lives here and nowhere else. The fleet table used to carry a
+    text box per row, which put an edit one stray keystroke away from every
+    device on the page and turned a list meant for scanning into a wall of
+    inputs. Here there is one device to be wrong about, and its name is the
+    first thing the card is about.
+  #}
+  <dl class="kv">
+    <dt>Device name</dt>
+    <dd>
+      <form method="post" action="/devices/{{ device.id }}/rename" class="rename-row">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {#
+          ⚠️ No placeholder. A greyed serial inside the box reads as a name the
+          device already has, and an empty field is exactly the case where that
+          matters most. The fallback is stated below instead.
+        #}
+        <input type="text" name="name" value="{{ device.name or '' }}"
+               maxlength="128" aria-label="Device name">
+        <button type="submit" class="ghost">Save</button>
+      </form>
+      {% if not device.name %}
+        <p class="field-tip">Unnamed — shown as its serial until you name it.</p>
+      {% endif %}
+    </dd>
+    <dt>Serial</dt>
+    <dd class="mono">{{ device.serial_number }}</dd>
+    <dt>Model</dt>
+    <dd>{{ device.model or '—' }}</dd>
+    <dt>Android / agent</dt>
+    <dd class="mono">{{ device.os_version or '?' }} / {{ device.agent_version or '—' }}</dd>
+    <dt>Battery</dt>
+    <dd>
+      {#
+        ⚠️ `is not none`, not truthiness. A flat device reports 0, and `{% if
+        device.battery_level %}` would render that as "not reported" — hiding
+        precisely the reading worth seeing.
+      #}
+      {% if device.battery_level is not none %}
+        <strong{% if device.battery_level <= 15 and not device.battery_charging %}
+          class="location-stale"{% endif %}>{{ device.battery_level }}%</strong>
+        {% if device.battery_charging %}
+          &middot; charging
+        {% endif %}
+        {#
+          Always against a time. 4% reported a minute ago and 4% reported
+          yesterday are different situations, and the bare figure reads as
+          current.
+        #}
+        <span class="muted">
+          &mdash; as of
+          {% if device.last_checkin_at %}
+            {{ device.last_checkin_at.strftime('%Y-%m-%d %H:%M UTC') }}
+          {% else %}
+            its last check-in
+          {% endif %}
+        </span>
+      {% else %}
+        <span class="muted">Not reported &mdash; the agent on this device is
+        older than battery reporting.</span>
+      {% endif %}
+    </dd>
+
+    {#
+      ⚠️ Three different silences, and the whole point of `has_telephony`.
+      Collapsed into one blank, an operator would go looking for a permission bug
+      on a tablet that simply has no modem.
+    #}
+    {% if device.has_telephony is none %}
+      <dt>IMEI</dt>
+      <dd class="muted">
+        Not reported &mdash; the agent on this device is older than IMEI
+        reporting.
+      </dd>
+    {% elif not device.has_telephony %}
+      <dt>IMEI</dt>
+      <dd class="muted">
+        No cellular radio &mdash; this device has no IMEI and no phone number.
+      </dd>
+    {% else %}
+      <dt>IMEI 1</dt>
+      <dd>
+        {% if device.imei %}
+          <span class="mono">{{ device.imei }}</span>
+        {% else %}
+          <span class="muted">Not readable</span>
+        {% endif %}
+      </dd>
+
+      <dt>IMEI 2</dt>
+      <dd>
+        {% if device.imei2 %}
+          <span class="mono">{{ device.imei2 }}</span>
+        {% else %}
+          <span class="muted">None &mdash; one SIM slot, or the second is empty</span>
+        {% endif %}
+      </dd>
+
+      <dt>Phone number</dt>
+      <dd>
+        {% if device.phone_number %}
+          <span class="mono">{{ device.phone_number }}</span>
+        {% else %}
+          {#
+            Absence here is ordinary. The number is on the SIM only if the
+            carrier provisioned it, and many never do — saying "not available"
+            without saying why invites someone to go and fix nothing.
+          #}
+          <span class="muted">
+            Not provisioned &mdash; carriers only store a number on the SIM
+            sometimes, so this is often blank on a working device.
+          </span>
+        {% endif %}
+      </dd>
+    {% endif %}
+  </dl>
+</div>
+  </div>
+  <div>
+    <h2 id="location">Location</h2>
+<div class="panel">
+  {% if latest_location %}
+    <dl class="kv">
+      <dt>Coordinates</dt>
+      <dd class="mono">
+        {{ '%.5f'|format(latest_location.latitude) }},
+        {{ '%.5f'|format(latest_location.longitude) }}
+      </dd>
+
+      <dt>Accuracy</dt>
+      <dd>
+        {#
+          ⚠️ "The device did not say" is not "accurate to 0 m". Showing an
+          unreported accuracy as a number would invent precision the device
+          never claimed.
+        #}
+        {% if latest_location.accuracy_m is not none %}
+          &plusmn;{{ latest_location.accuracy_m|round|int }} m
+        {% else %}
+          <span class="muted">Not reported by device</span>
+        {% endif %}
+      </dd>
+
+      <dt>Fix taken</dt>
+      <dd>
+        {#
+          ⚠️ The age, not just the timestamp — and this is the whole reason the
+          agent reports last-known rather than a live fix. A position from
+          yesterday drawn on a map looks exactly like one from a minute ago.
+        #}
+        <span title="{{ latest_location.recorded_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}">
+          {{ location_age }}
+        </span>
+        {% if location_stale %}
+          <span class="location-stale">— this position may be out of date</span>
+        {% endif %}
+      </dd>
+
+      <dt>Source</dt>
+      <dd>
+        {% if latest_location.source.value == 'command' %}
+          Answer to a <code>locate</code> command
+        {% elif latest_location.source.value == 'periodic' %}
+          Reported on the tracking interval
+        {% else %}
+          {{ latest_location.source.value }}
+        {% endif %}
+      </dd>
+    </dl>
+
+    <div class="device-map" data-map-latest data-map='{{ latest_map_json }}'></div>
+
+    <p>
+      <a href="/devices/{{ device.id }}/location-history">Location history</a>
+    </p>
+  {% else %}
+    {#
+      Two different silences, and telling them apart is the point. "Nothing is
+      collecting" sends an operator to the policy; "collecting but nothing has
+      arrived" sends them to the device. A single "no data" message would send
+      them to neither.
+    #}
+    {% if tracking_interval %}
+      <p class="muted">
+        No position reported yet. Tracking is on at
+        <strong>{{ tracking_interval }} minute</strong>{{ '' if tracking_interval == 1 else 's' }};
+        the device reports at its next check-in after it has a fix.
+      </p>
+    {% else %}
+      <p class="muted">
+        No position recorded, and location tracking is not switched on for this
+        device. Add a <strong>Tracking and fencing</strong> policy with a reporting
+        interval, or send a <code>locate</code> command to record a single position.
+      </p>
+    {% endif %}
+  {% endif %}
+</div>
+  </div>
+</div>
 
 <h2>Policies reaching this device</h2>
 <div class="panel">
@@ -237,233 +518,6 @@
   </table>
 </div>
 {% endif %}
-
-<h2 id="hardware">Hardware</h2>
-<div class="panel">
-  <dl class="kv">
-    <dt>Battery</dt>
-    <dd>
-      {#
-        ⚠️ `is not none`, not truthiness. A flat device reports 0, and `{% if
-        device.battery_level %}` would render that as "not reported" — hiding
-        precisely the reading worth seeing.
-      #}
-      {% if device.battery_level is not none %}
-        <strong{% if device.battery_level <= 15 and not device.battery_charging %}
-          class="location-stale"{% endif %}>{{ device.battery_level }}%</strong>
-        {% if device.battery_charging %}
-          &middot; charging
-        {% endif %}
-        {#
-          Always against a time. 4% reported a minute ago and 4% reported
-          yesterday are different situations, and the bare figure reads as
-          current.
-        #}
-        <span class="muted">
-          &mdash; as of
-          {% if device.last_checkin_at %}
-            {{ device.last_checkin_at.strftime('%Y-%m-%d %H:%M UTC') }}
-          {% else %}
-            its last check-in
-          {% endif %}
-        </span>
-      {% else %}
-        <span class="muted">Not reported &mdash; the agent on this device is
-        older than battery reporting.</span>
-      {% endif %}
-    </dd>
-
-    {#
-      ⚠️ Three different silences, and the whole point of `has_telephony`.
-      Collapsed into one blank, an operator would go looking for a permission bug
-      on a tablet that simply has no modem.
-    #}
-    {% if device.has_telephony is none %}
-      <dt>IMEI</dt>
-      <dd class="muted">
-        Not reported &mdash; the agent on this device is older than IMEI
-        reporting.
-      </dd>
-    {% elif not device.has_telephony %}
-      <dt>IMEI</dt>
-      <dd class="muted">
-        No cellular radio &mdash; this device has no IMEI and no phone number.
-      </dd>
-    {% else %}
-      <dt>IMEI 1</dt>
-      <dd>
-        {% if device.imei %}
-          <span class="mono">{{ device.imei }}</span>
-        {% else %}
-          <span class="muted">Not readable</span>
-        {% endif %}
-      </dd>
-
-      <dt>IMEI 2</dt>
-      <dd>
-        {% if device.imei2 %}
-          <span class="mono">{{ device.imei2 }}</span>
-        {% else %}
-          <span class="muted">None &mdash; one SIM slot, or the second is empty</span>
-        {% endif %}
-      </dd>
-
-      <dt>Phone number</dt>
-      <dd>
-        {% if device.phone_number %}
-          <span class="mono">{{ device.phone_number }}</span>
-        {% else %}
-          {#
-            Absence here is ordinary. The number is on the SIM only if the
-            carrier provisioned it, and many never do — saying "not available"
-            without saying why invites someone to go and fix nothing.
-          #}
-          <span class="muted">
-            Not provisioned &mdash; carriers only store a number on the SIM
-            sometimes, so this is often blank on a working device.
-          </span>
-        {% endif %}
-      </dd>
-    {% endif %}
-  </dl>
-</div>
-
-<h2 id="actions">Actions</h2>
-<div class="panel">
-  {#
-    One-shot actions (W107). Queued as commands, so a device that is asleep or
-    out of coverage takes them when it comes back rather than losing them —
-    except a ping, which expires after an hour on purpose: it answers "where is
-    this thing while I am standing in the room", and an hour later that question
-    has been settled one way or the other.
-  #}
-  {% set done = request.query_params.get('action') %}
-  {% if done == 'ping' %}
-    <div class="banner good">
-      Sounding the device — an alarm for 30 seconds, through silent mode. Whoever
-      finds it can stop it from the screen.
-    </div>
-  {% elif done == 'lock' %}
-    <div class="banner good">Locking the device screen.</div>
-  {% elif done == 'locate' %}
-    <div class="banner good">
-      Asked the device for its position. It appears under
-      <a href="#location">Location</a> once it reports.
-    </div>
-  {% endif %}
-
-  <div class="toolbar">
-    <form method="post" action="/devices/{{ device.id }}/action/ping" style="margin:0">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit">Play sound</button>
-    </form>
-    <form method="post" action="/devices/{{ device.id }}/action/lock" style="margin:0">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit">Lock screen</button>
-    </form>
-    <form method="post" action="/devices/{{ device.id }}/action/locate" style="margin:0">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="ghost">Locate</button>
-    </form>
-  </div>
-
-  <p class="field-tip">
-    <strong>Play sound</strong> rings the device for 30 seconds on the alarm
-    channel, so it is audible even when the device is silenced &mdash; which is
-    usually the state of a device somebody is looking for. It vibrates as well,
-    and whoever finds it can stop it from the screen without unlocking.
-  </p>
-  <p class="field-tip">
-    {#
-      ⚠️ Said plainly rather than implying the device has been secured. lockNow()
-      on a device with no password drops to a lock screen a swipe dismisses —
-      the same honesty the geofence lock needed.
-    #}
-    <strong>Lock screen</strong> locks the device immediately. It asks for
-    whatever credential the device already has, so on a device with no PIN or
-    password set this is only a swipe &mdash; set a Password policy if it needs to
-    be more than that.
-  </p>
-</div>
-
-<h2 id="location">Location</h2>
-<div class="panel">
-  {% if latest_location %}
-    <dl class="kv">
-      <dt>Coordinates</dt>
-      <dd class="mono">
-        {{ '%.5f'|format(latest_location.latitude) }},
-        {{ '%.5f'|format(latest_location.longitude) }}
-      </dd>
-
-      <dt>Accuracy</dt>
-      <dd>
-        {#
-          ⚠️ "The device did not say" is not "accurate to 0 m". Showing an
-          unreported accuracy as a number would invent precision the device
-          never claimed.
-        #}
-        {% if latest_location.accuracy_m is not none %}
-          &plusmn;{{ latest_location.accuracy_m|round|int }} m
-        {% else %}
-          <span class="muted">Not reported by device</span>
-        {% endif %}
-      </dd>
-
-      <dt>Fix taken</dt>
-      <dd>
-        {#
-          ⚠️ The age, not just the timestamp — and this is the whole reason the
-          agent reports last-known rather than a live fix. A position from
-          yesterday drawn on a map looks exactly like one from a minute ago.
-        #}
-        <span title="{{ latest_location.recorded_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}">
-          {{ location_age }}
-        </span>
-        {% if location_stale %}
-          <span class="location-stale">— this position may be out of date</span>
-        {% endif %}
-      </dd>
-
-      <dt>Source</dt>
-      <dd>
-        {% if latest_location.source.value == 'command' %}
-          Answer to a <code>locate</code> command
-        {% elif latest_location.source.value == 'periodic' %}
-          Reported on the tracking interval
-        {% else %}
-          {{ latest_location.source.value }}
-        {% endif %}
-      </dd>
-    </dl>
-
-    <div class="device-map" data-map-latest data-map='{{ latest_map_json }}'></div>
-
-    <p>
-      <a href="/devices/{{ device.id }}/location-history">Location history</a>
-    </p>
-  {% else %}
-    {#
-      Two different silences, and telling them apart is the point. "Nothing is
-      collecting" sends an operator to the policy; "collecting but nothing has
-      arrived" sends them to the device. A single "no data" message would send
-      them to neither.
-    #}
-    {% if tracking_interval %}
-      <p class="muted">
-        No position reported yet. Tracking is on at
-        <strong>{{ tracking_interval }} minute</strong>{{ '' if tracking_interval == 1 else 's' }};
-        the device reports at its next check-in after it has a fix.
-      </p>
-    {% else %}
-      <p class="muted">
-        No position recorded, and location tracking is not switched on for this
-        device. Add a <strong>Tracking and fencing</strong> policy with a reporting
-        interval, or send a <code>locate</code> command to record a single position.
-      </p>
-    {% endif %}
-  {% endif %}
-</div>
 
 <h2 id="lifecycle">Lifecycle</h2>
 <div class="panel">

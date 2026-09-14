@@ -544,12 +544,15 @@ def test_a_device_can_be_named_and_the_name_is_shown(client: TestClient, enrolle
     assert "Command Post 1" in text_of(client.get(f"/devices/{device['device_id']}").text)
 
 
-def test_fleet_list_has_an_inline_rename_that_returns_to_the_list(client: TestClient, enrolled):
+def test_renaming_returns_where_it_was_asked_to(client: TestClient, enrolled):
+    """⚠️ The fleet list no longer offers a rename (W160) — a box per row put an
+    edit one stray keystroke from every device on the page. The endpoint keeps
+    honouring `next`, because that is what makes it usable from anywhere; it is
+    the *control* that moved, not the capability.
+    """
     device = enrolled(serial="W24-INLINE")
 
-    page = client.get("/").text
-    assert f'action="/devices/{device["device_id"]}/rename"' in page
-    assert 'name="next" value="/"' in page
+    assert f'action="/devices/{device["device_id"]}/rename"' not in client.get("/").text
 
     r = client.post(
         f"/devices/{device['device_id']}/rename",

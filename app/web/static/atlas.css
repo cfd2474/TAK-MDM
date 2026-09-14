@@ -441,9 +441,6 @@ label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 12.5
 .stack-name { display: flex; flex-direction: column; }
 .stack-name .mono { font-size: 12px; color: var(--muted); }
 
-.inline-rename { display: flex; gap: 4px; align-items: center; margin: 4px 0 0; }
-.inline-rename input[type="text"] { width: 15ch; padding: 2px 6px; font-size: 12px; }
-.inline-rename button { padding: 2px 8px; font-size: 11px; }
 
 /* --------------------------------------------------------------------------- */
 /* Section stub (pages not built yet)                                           */
@@ -1019,3 +1016,32 @@ dl.kv dd { margin: 0; font-size: 13px; }
 .store-toggle { display: flex; gap: 10px; align-items: flex-start; margin: 0; cursor: pointer; }
 .store-toggle input { margin-top: 3px; flex: 0 0 auto; }
 .store-toggle strong { font-weight: 600; color: var(--text); }
+
+/* --------------------------------------------------------------------------- */
+/* The device page's summary cards (W160)                                       */
+/* --------------------------------------------------------------------------- */
+
+/* Status, directly under the name, before anything that needs reading. */
+.device-pills { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
+
+/* ⚠️ The two cards keep equal height so the pair reads as one band, and the
+   map does not leave a ragged edge beside a short info list. */
+.device-cards > div { display: flex; flex-direction: column; }
+.device-cards > div > .panel { flex: 1 1 auto; }
+.device-cards h2 { margin-top: 0; }
+
+/* Label above value, rather than a two-column grid. At this width a long
+   address wrapped under its own label and the columns stopped lining up;
+   stacking reads the same whatever the value's length. */
+.device-cards dl.kv { display: block; }
+.device-cards dl.kv dt {
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-top: 12px;
+}
+.device-cards dl.kv dt:first-child { margin-top: 0; }
+.device-cards dl.kv dd { font-size: 14px; margin: 2px 0 0; }
+.rename-row { display: flex; gap: 6px; align-items: center; margin: 0; }
+.rename-row input[type="text"] { flex: 1 1 auto; min-width: 0; }
