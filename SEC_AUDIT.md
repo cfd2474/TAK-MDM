@@ -316,9 +316,39 @@ ATLAS administrator. The binding is created by a module that runs at install; if
 it fails, is edited, or is lost in an Authentik restore, **ATLAS has no second
 check and no way to notice**.
 
-**Recommendation.** Set a default group and fail closed on it, or have ATLAS
-verify its own Authentik binding at startup and warn as loudly as it does for
-disabled auth. A second check that is merely *redundant* is the point.
+### ⚠️ Status: detection added in v1.17.1 — the delegation itself is unchanged
+
+The empty group stays. A group ATLAS required would be a second place to manage
+access and a bootstrap nobody could complete — until somebody created it and added
+themselves, **nobody could sign in at all**. The module's `.env` argues this at
+length and the argument holds. What was missing was not a second gate; it was any
+way to know the first one had gone.
+
+* **The binding check's answer is no longer discarded.** `_restrict_to_admins`
+  already returned True/False and the deploy ignored it. The result is now
+  recorded in settings and stated in the deploy log, in the words that matter:
+  *"every authenticated Authentik user can reach the console — remote wipe,
+  factory reset, policy push."*
+* **Every update re-asks.** A check that only runs at install answers a question
+  about the past; the binding can disappear to an Authentik restore or somebody
+  unbinding the policy long afterwards.
+* **The module tile carries the state.** Read from settings, never probed —
+  `detect()` runs on every dashboard poll from several threads and must answer in
+  under a second, so an Authentik round-trip there would make ATLAS's tile report
+  Authentik's latency instead.
+* ⚠️ **"Could not ask" is not "not restricted."** No Authentik, no token, no
+  network returns `None` and leaves the stored value alone. Reporting a failure
+  because the identity provider was briefly unreachable would train an operator
+  to ignore the one message that matters.
+* **ATLAS says its own posture at startup**: with no group configured, every
+  identity the proxy forwards is a full administrator, and the log says so
+  alongside the existing warnings for disabled auth and an unset origin.
+
+**What is still true:** if the Authentik binding is removed, ATLAS will keep
+accepting whoever Authentik authenticates until a deploy, an update, or a reading
+of the tile. That is a detection latency, not a gate, and closing it properly
+means ATLAS having authorization of its own — which is the bootstrap problem
+above, and a product decision rather than a patch.
 
 ---
 

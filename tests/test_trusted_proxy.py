@@ -264,3 +264,51 @@ def test_the_console_is_unaffected_when_not_enforcing(client: TestClient):
     """The suite runs with auth disabled; this is the regression guard that the
     check has not broken ordinary rendering."""
     assert client.get("/admin", headers=ADMIN_HEADERS).status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ Delegated authorization is a decision, not an accident (SEC_AUDIT H-1)
+# --------------------------------------------------------------------------- #
+
+
+def test_an_empty_admin_group_is_said_out_loud(caplog):
+    """⚠️ With no group of its own, every identity the proxy forwards is a full
+    administrator, and only the Authentik application binding narrows that.
+
+    That binding was once found absent on a live box, and nothing noticed. The
+    empty group is deliberate — a group ATLAS required would be a bootstrap
+    nobody could complete — so the answer is to say what the posture is, not to
+    refuse it.
+    """
+    with caplog.at_level(logging.WARNING):
+        admin_auth.warn_if_unprotected(_settings(admin_group=""))
+
+    assert "TAKMDM_ADMIN_GROUP is empty" in caplog.text
+    assert "full administrator" in caplog.text
+    assert "Authentik application binding" in caplog.text
+
+
+def test_a_configured_group_says_nothing_about_it(caplog):
+    """An alarm that fires when the thing is configured correctly is noise."""
+    with caplog.at_level(logging.WARNING):
+        admin_auth.warn_if_unprotected(_settings(admin_group="takmdm-admins"))
+
+    assert "TAKMDM_ADMIN_GROUP is empty" not in caplog.text
+
+
+def test_a_group_is_still_enforced_when_one_is_set():
+    """The delegation is a default, not a removal: ATLAS still checks if told to."""
+    settings = _settings(admin_group="takmdm-admins", trusted_proxies="")
+    scope = {
+        "type": "http", "method": "GET", "path": "/",
+        "headers": [
+            (b"x-authentik-username", b"someone"),
+            (b"x-authentik-groups", b"other-team"),
+        ],
+        "client": ("172.24.0.1", 1234),
+    }
+
+    with pytest.raises(Exception) as raised:
+        admin_auth.identify(Request(scope), settings)
+
+    assert getattr(raised.value, "status_code", None) == 403

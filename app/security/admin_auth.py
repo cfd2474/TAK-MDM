@@ -354,6 +354,21 @@ def warn_if_unprotected(settings: Settings) -> None:
         )
         return
 
+    if not (settings.admin_group or "").strip():
+        # ⚠️ Not a misconfiguration — on infra-TAK this is deliberate, because a
+        # group ATLAS required would be a second place to manage access and a
+        # bootstrap nobody could complete (the module's .env says so at length).
+        # It is logged because the consequence is easy to lose: with no group of
+        # its own, **every identity the proxy forwards is a full administrator**,
+        # and the only thing narrowing that is the Authentik application binding.
+        # That binding was once found absent on a live box. SEC_AUDIT.md H-1.
+        logger.warning(
+            "TAKMDM_ADMIN_GROUP is empty: every identity the proxy forwards is a "
+            "full administrator of this console. Authorization rests entirely on "
+            "the Authentik application binding — confirm it exists, or set a group "
+            "here to have ATLAS check as well."
+        )
+
     trusted = (settings.trusted_proxies or "").strip()
     if not trusted:
         # ⚠️ Same reasoning as the origin warning below, and the same reason it is

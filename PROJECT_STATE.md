@@ -449,6 +449,42 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W171 — SEC_AUDIT H-1: notice when the access control goes (v1.17.1)
+
+The empty `TAKMDM_ADMIN_GROUP` stays. A group ATLAS required would be a second
+place to manage access and a bootstrap nobody could complete — until somebody
+created it and added themselves, nobody could sign in at all. The module's `.env`
+argues that at length and the argument holds.
+
+**What was missing was not a second gate. It was any way to know the first one had
+gone** — and it had, once, on a live box (`bindings: NONE`).
+
+* `_restrict_to_admins` already returned True/False and **the deploy threw it
+  away**. The result is now recorded and stated in the deploy log in the words
+  that matter: *"every authenticated Authentik user can reach the console — remote
+  wipe, factory reset, policy push."*
+* **Every update re-asks.** A check that runs only at install answers a question
+  about the past; the binding can vanish to an Authentik restore months later.
+* **`detect()` reports the stored value and probes nothing.** ⚠️ The module
+  contract is explicit: detect runs on every dashboard poll from several threads
+  and must answer in under a second. An Authentik round-trip there would make
+  ATLAS's tile report Authentik's latency.
+* ⚠️ **"Could not ask" is not "not restricted."** No Authentik, no token, no
+  network returns `None` and leaves the stored value alone — reporting a failure
+  because the IdP blinked would train an operator to ignore the one message that
+  matters.
+* **ATLAS states its own posture at startup**, beside the disabled-auth and unset
+  origin warnings.
+
+⚠️ **Still true:** if the binding is removed, ATLAS keeps accepting whoever
+Authentik authenticates until a deploy, an update, or someone reads the tile. That
+is detection latency, not a gate. Closing it properly means ATLAS having
+authorization of its own — the bootstrap problem above, and a product decision
+rather than a patch.
+
+**1783 tests on Windows, 1790 on Linux.**
+
+
 ### ✅ W170 — SEC_AUDIT S-2, as far as the host allows (v1.17.0)
 
 Operator, 2026-09-14: *"lets address S2, then H-1"*.
