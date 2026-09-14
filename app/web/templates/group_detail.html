@@ -73,7 +73,7 @@
   {% endif %}
 </div>
 
-<h2>Policies assigned to this {{ label }}</h2>
+<h2>Assigned to this {{ label }}</h2>
 <div class="panel">
   {#
     ⚠️ Profiles are listed here too, from their own table. A profile binds to a
@@ -161,7 +161,7 @@
     exist yet" and had no form at all, while the profile sat there assignable.
   #}
   {% if not assignable and not assignable_profiles %}
-    <p class="muted">Nothing to assign yet. Create a policy or a profile on the
+    <p class="muted">Nothing exists to assign yet. Create a policy or a profile on the
       <a href="/policies">Policies</a> page.</p>
   {% else %}
   <form method="post" action="{{ prefix }}/{{ container.id }}/assignments" class="stack">
@@ -178,8 +178,10 @@
       <select id="assign-policy" name="policy_id" required style="min-width:280px">
         {% if assignable_profiles %}
         <optgroup label="Profiles">
-          {% for p in assignable_profiles %}
-            <option value="profile:{{ p.id }}">{{ p.name }} ({{ p.sections | length }} section{{ '' if p.sections | length == 1 else 's' }})</option>
+          {% for row in assignable_profiles %}
+            <option value="profile:{{ row.profile.id }}">
+              {{ row.profile.name }} ({{ row.profile.sections | length }} section{{ '' if row.profile.sections | length == 1 else 's' }}){% if row.assigned %} — already assigned{% endif %}
+            </option>
           {% endfor %}
         </optgroup>
         {% endif %}

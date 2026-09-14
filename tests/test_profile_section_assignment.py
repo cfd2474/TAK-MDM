@@ -297,7 +297,14 @@ def test_the_form_is_not_hidden_when_only_profiles_exist(client: TestClient):
     assert "Nothing to assign yet" not in body
 
 
-def test_an_already_assigned_profile_is_not_offered_again(client: TestClient):
+def test_an_assigned_profile_stays_listed_and_is_marked(client: TestClient):
+    """⚠️ It used to be filtered out, and that emptied the form.
+
+    On a deployment whose only policy work is one profile, assigning it removed
+    the last option — and with no standalone policies the whole form went too,
+    under a message saying nothing had been created. Policies were never
+    filtered this way; the inconsistency was the bug.
+    """
     profile, group = _profile_only(client)
     client.post(
         f"/groups/{group}/assignments",
@@ -306,9 +313,60 @@ def test_an_already_assigned_profile_is_not_offered_again(client: TestClient):
     )
 
     body = client.get(f"/groups/{group}").text
-    options = re.findall(r'<option value="([^"]+)"', body)
 
-    assert f"profile:{profile}" not in options
+    assert f"profile:{profile}" in body
+    assert "already assigned" in body
+    assert 'id="assign-policy"' in body
+
+
+def test_the_form_survives_assigning_everything(client: TestClient):
+    """⚠️ The reported symptom: the ability to add more must not disappear."""
+    profile, group = _profile_only(client)
+    client.post(
+        f"/groups/{group}/assignments",
+        data={"policy_id": f"profile:{profile}", "rank": "0"},
+        follow_redirects=False,
+    )
+
+    body = client.get(f"/groups/{group}").text
+
+    assert "Nothing exists to assign" not in body
+    assert 'id="assign-policy"' in body
+
+
+def test_a_second_profile_can_still_be_added(client: TestClient):
+    first, group = _profile_only(client)
+    client.post(
+        f"/groups/{group}/assignments",
+        data={"policy_id": f"profile:{first}", "rank": "0"},
+        follow_redirects=False,
+    )
+    second = client.post(
+        "/api/v1/profiles", json={"name": "Second"}, headers=ADMIN_HEADERS
+    ).json()
+    client.put(
+        f"/api/v1/profiles/{second['id']}/sections/password",
+        json={"spec": {}},
+        headers=ADMIN_HEADERS,
+    )
+
+    response = client.post(
+        f"/groups/{group}/assignments",
+        data={"policy_id": f"profile:{second['id']}", "rank": "0"},
+        follow_redirects=False,
+    )
+
+    assert "assigned=1" in response.headers["location"]
+    body = client.get(f"/groups/{group}").text
+    assert "ATAK Test" in body and "Second" in body
+
+
+def test_the_empty_state_only_appears_when_nothing_exists(client: TestClient):
+    group = client.post(
+        "/api/v1/groups", json={"name": "Bare"}, headers=ADMIN_HEADERS
+    ).json()
+
+    assert "Nothing exists to assign" in client.get(f"/groups/{group['id']}").text
 
 
 def test_assigning_a_profile_here_keeps_its_other_targets(client: TestClient):

@@ -1005,9 +1005,14 @@ def _render_group_detail(
         member_count=len(member_ids),
         token_count=token_count,
         assignable=assignable,
+        # ⚠️ Assigned profiles stay in the list, marked. Filtering them out made
+        # the only profile on a deployment vanish the moment it was assigned —
+        # and with no standalone policies, the whole form went with it, under a
+        # message saying nothing had been created. Policies were never filtered
+        # this way; the inconsistency is what produced the empty form.
         assignable_profiles=[
-            p for p in assignable_profiles
-            if p.id not in {a.profile_id for a in profile_assignments}
+            {"profile": p, "assigned": p.id in {a.profile_id for a in profile_assignments}}
+            for p in assignable_profiles
         ],
         profile_assignments=[
             {"assignment": a, "profile": a.profile} for a in profile_assignments
