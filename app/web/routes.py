@@ -70,6 +70,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.routers.assignments import reject_unassignable
 from app.api.deps import (
     get_db,
     get_enrollment_qr_guard,
@@ -867,12 +868,27 @@ def _group_rows(session: Session) -> list[dict[str, Any]]:
             {
                 "container": c,
                 "device_count": len(c.devices),
-                "policy_count": session.scalar(
-                    select(func.count())
-                    .select_from(Assignment)
-                    .where(Assignment.group_id == c.id)
+                # ⚠️ Profiles count too. A profile binds to a group through
+                # `profile_assignment`, a different table, and counting only
+                # `assignment` showed 0 for a group that had just been given a
+                # profile — while the profile's own page said it was assigned
+                # there. The same fact, two pages, two answers.
+                "policy_count": (
+                    session.scalar(
+                        select(func.count())
+                        .select_from(Assignment)
+                        .where(Assignment.group_id == c.id)
+                    )
+                    or 0
                 )
-                or 0,
+                + (
+                    session.scalar(
+                        select(func.count())
+                        .select_from(ProfileAssignment)
+                        .where(ProfileAssignment.group_id == c.id)
+                    )
+                    or 0
+                ),
             }
         )
     return rows
@@ -935,10 +951,30 @@ def _render_group_detail(
         .where(enrollment_token_group.c.group_id == container.id)
     ) or 0
 
+    # ⚠️ Listed separately from policies rather than merged into them. A
+    # profile is assigned and unassigned as one thing — showing its sections as
+    # loose rows would offer an unassign that the profile would simply reinstate.
+    profile_assignments = list(
+        session.scalars(
+            select(ProfileAssignment)
+            .where(ProfileAssignment.group_id == container.id)
+            .order_by(ProfileAssignment.rank.desc())
+        )
+    )
+
     assignable = list(
         session.scalars(
             select(Policy)
-            .where(Policy.archived_at.is_(None), Policy.is_template.is_(False))
+            # ⚠️ Profile sections are excluded, not just templates. A section
+            # is assigned through its profile, and the assignment endpoint
+            # refuses one directly — so offering it here produced a dropdown
+            # whose entries error on submit, naming a rule the operator had no
+            # way to know from the list.
+            .where(
+                Policy.archived_at.is_(None),
+                Policy.is_template.is_(False),
+                Policy.profile_id.is_(None),
+            )
             .order_by(Policy.name)
         )
     )
@@ -956,6 +992,9 @@ def _render_group_detail(
         member_count=len(member_ids),
         token_count=token_count,
         assignable=assignable,
+        profile_assignments=[
+            {"assignment": a, "profile": a.profile} for a in profile_assignments
+        ],
         assignments=[
             {
                 "assignment": a,
@@ -2242,6 +2281,19 @@ def set_targets(
     policy = session.get(Policy, policy_id)
     if policy is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "policy not found")
+
+    # ⚠️ The same refusal the API makes, from the same function. Without it this
+    # form was a second door into assignment with no lock on it: a profile
+    # section assigned here was written to the database, shown on the policy's
+    # own page as assigned, and then refused by the group's page when anyone
+    # tried to manage it there. Two paths to one table have to agree on what may
+    # go in it — and restating the rule here is how they drifted in the first
+    # place, so it is imported rather than repeated.
+    try:
+        reject_unassignable(policy)
+    except HTTPException as exc:
+        # A form post deserves the page back with an explanation, not a JSON 409.
+        return _redirect(f"/policies/{policy_id}?error={_quote(str(exc.detail))}")
 
     form = _sync_form(request)
     selected = {

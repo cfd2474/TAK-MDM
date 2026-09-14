@@ -75,11 +75,40 @@
 
 <h2>Policies assigned to this {{ label }}</h2>
 <div class="panel">
+  {#
+    ⚠️ Profiles are listed here too, from their own table. A profile binds to a
+    group through `profile_assignment`, and reading only `assignment` showed
+    "nothing assigned" on a {{ label }} that had just been given one — while the
+    profile's own page said otherwise. Listed separately rather than merged,
+    because a profile is assigned and unassigned as one thing: showing its
+    sections as loose rows would offer an unassign the profile would reinstate.
+  #}
+  {% if profile_assignments %}
+    <p class="sub">
+      Profile{{ '' if profile_assignments|length == 1 else 's' }} assigned —
+      every section each one owns applies to this {{ label }}.
+    </p>
+    <table style="margin-bottom:18px">
+      <thead><tr><th>Profile</th><th>Sections</th><th>Rank</th><th></th></tr></thead>
+      <tbody>
+      {% for row in profile_assignments %}
+        <tr>
+          <td><a href="/profiles/{{ row.profile.id }}">{{ row.profile.name }}</a></td>
+          <td class="mono">{{ row.profile.sections | length }}</td>
+          <td class="mono">{{ row.assignment.rank }}</td>
+          <td class="mono muted">managed on the profile</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
   {% if not assignments %}
+    {% if not profile_assignments %}
     <p class="muted">
       Nothing assigned to this {{ label }} yet. A policy assigned here reaches every
       device in it, which is the reason to have a {{ label }} at all.
     </p>
+    {% endif %}
   {% else %}
   <p class="sub">
     Each of these reaches all {{ member_count }} device{{ '' if member_count == 1 else 's' }}

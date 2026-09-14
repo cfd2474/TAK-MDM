@@ -41,8 +41,14 @@ _TARGET_MODELS = {
 }
 
 
-def _reject_template(policy: Policy) -> None:
-    """A template or a profile section is not directly assignable."""
+def reject_unassignable(policy: Policy) -> None:
+    """A template or a profile section is not directly assignable.
+
+    ⚠️ Public, and imported by the web form that posts bulk targets. That
+    form used to enforce nothing, so a profile section assigned from a
+    policy's page landed in the database while the group's page refused to
+    manage it — one rule, two doors, only one of them locked.
+    """
     if policy.is_template:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -77,7 +83,7 @@ def create_assignment(
     payload: AssignmentCreate, session: Session = Depends(get_db)
 ) -> AssignmentRead:
     policy: Policy = fetch_or_404(session, Policy, payload.policy_id, "policy")
-    _reject_template(policy)
+    reject_unassignable(policy)
 
     scope = AssignmentScope(payload.scope)
     target_model, label, target_column = _TARGET_MODELS[scope]
@@ -130,7 +136,7 @@ def set_policy_targets(
     the two could drift.
     """
     policy: Policy = fetch_or_404(session, Policy, policy_id, "policy")
-    _reject_template(policy)
+    reject_unassignable(policy)
 
     pinned = None
     if payload.pinned_version is not None:

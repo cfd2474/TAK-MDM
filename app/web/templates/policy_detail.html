@@ -22,6 +22,14 @@
 {% if request.query_params.get('assigned') %}
   <div class="banner">Targets updated: {{ request.query_params.get('assigned') }} assignment(s).</div>
 {% endif %}
+{#
+  ⚠️ A refused assignment has to say so. The targets form posts and redirects
+  back, so without this the operator clicks Assign, the page returns looking
+  untouched, and nothing was saved — which reads as the button not working.
+#}
+{% if request.query_params.get('error') %}
+  <div class="banner bad">{{ request.query_params.get('error') }}</div>
+{% endif %}
 
 {% if policy.is_template %}
 <h2>Create a policy from this template</h2>
