@@ -232,6 +232,15 @@ ADMIN_HEADERS = {
 }
 
 
+#: A device's effective policy when nothing at all is assigned to it.
+#:
+#: ⚠️ Not `{}` any longer. Every enrolled device reports its position by default
+#: (W161), so the fleet default resolves into the effective policy of a device no
+#: policy reaches. Assertions compare against this rather than filtering it out,
+#: so a stray policy leaking through still fails them.
+FLEET_DEFAULT = {"TRACKING_FENCING": {"reporting_interval_minutes": 15}}
+
+
 @pytest.fixture
 def make_policy(client: TestClient):
     def _make(name: str, policy_type: str, spec: dict) -> dict:

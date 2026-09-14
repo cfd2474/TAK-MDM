@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient
 
 from app.policies.specs.files import FileEntry
 from app.services import notifications
+from tests.conftest import FLEET_DEFAULT
 
 
 def make_zip(entries: dict[str, bytes] | None = None) -> bytes:
@@ -408,7 +409,7 @@ def test_replace_mode_removes_targets_not_listed(client: TestClient, enrolled):
     assert result["unchanged"] == 1
     assert client.get(
         f"/api/v1/devices/{drop['device_id']}/effective-policy"
-    ).json()["values"] == {}
+    ).json()["values"] == FLEET_DEFAULT
 
 
 def test_add_mode_never_removes(client: TestClient, enrolled):

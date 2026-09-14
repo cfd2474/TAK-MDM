@@ -21,6 +21,8 @@ import re
 
 from fastapi.testclient import TestClient
 
+from tests.conftest import FLEET_DEFAULT
+
 ADMIN = {"x-authentik-username": "a", "x-authentik-groups": "takmdm-admins"}
 
 
@@ -1213,7 +1215,7 @@ def test_unassigning_a_profile_clears_its_sections(client: TestClient, enrolled)
         f"/api/v1/profiles/{pid}/targets", json={"device_ids": []}, headers=ADMIN
     )
 
-    assert _effective(client, device["device_id"])["values"] == {}
+    assert _effective(client, device["device_id"])["values"] == FLEET_DEFAULT
 
 
 def test_archiving_an_assigned_profile_stops_it_applying(client: TestClient, enrolled):
@@ -1228,7 +1230,7 @@ def test_archiving_an_assigned_profile_stops_it_applying(client: TestClient, enr
 
     client.post(f"/api/v1/profiles/{pid}/archive", headers=ADMIN)
 
-    assert _effective(client, device["device_id"])["values"] == {}
+    assert _effective(client, device["device_id"])["values"] == FLEET_DEFAULT
 
 
 def test_archive_from_the_list_shows_an_impact_modal(client: TestClient, enrolled):
@@ -1262,11 +1264,11 @@ def test_archiving_a_profile_drops_its_assignments(client: TestClient, enrolled)
 
     profile = client.get(f"/api/v1/profiles/{pid}", headers=ADMIN).json()
     assert profile["assignments"] == [] if "assignments" in profile else True
-    assert _effective(client, device["device_id"])["values"] == {}
+    assert _effective(client, device["device_id"])["values"] == FLEET_DEFAULT
 
     # restored profile is back but assigned to nothing
     client.post(f"/profiles/{pid}/restore", follow_redirects=False)
-    assert _effective(client, device["device_id"])["values"] == {}
+    assert _effective(client, device["device_id"])["values"] == FLEET_DEFAULT
     assert "Droppable" in client.get("/policies").text
 
 
@@ -1365,7 +1367,7 @@ def test_archive_then_restore_round_trip(client: TestClient, enrolled, assign):
     assert "Retire me" not in text_of(client.get("/policies").text).split("Archived")[0]
     assert client.get(
         f"/api/v1/devices/{device['device_id']}/effective-policy"
-    ).json()["values"] == {}
+    ).json()["values"] == FLEET_DEFAULT
 
     client.post(f"/policies/{policy_id}/restore", follow_redirects=False)
 
@@ -1416,7 +1418,7 @@ def test_unticking_a_device_removes_the_assignment(client: TestClient, enrolled)
 
     assert client.get(
         f"/api/v1/devices/{drop['device_id']}/effective-policy"
-    ).json()["values"] == {}
+    ).json()["values"] == FLEET_DEFAULT
     assert client.get(
         f"/api/v1/devices/{keep['device_id']}/effective-policy"
     ).json()["values"]["PASSWORD"]["min_length"] == 9

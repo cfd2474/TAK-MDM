@@ -4516,6 +4516,13 @@ def save_admin_settings_form(
         session, group_key, values,
         updated_by=None if identity.is_anonymous else identity.username,
     )
+    if group_key == "location":
+        # The default reporting interval resolves into every device's effective
+        # policy, so changing it here changes what the fleet should be doing.
+        # Without this the new number would reach only the devices whose policy
+        # happened to be recomputed for some other reason — an interval in force
+        # on some tablets and not others, with nothing to distinguish them.
+        eff.invalidate_all(session)
     session.commit()
     return _redirect(f"/admin?saved={group_key}#tab-{group_key}")
 

@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from tests.conftest import FLEET_DEFAULT
+
 
 def effective(client: TestClient, device_id: str) -> dict:
     response = client.get(f"/api/v1/devices/{device_id}/effective-policy")
@@ -264,7 +266,7 @@ def test_archived_policy_stops_applying(client: TestClient, make_policy, make_de
 
     client.post(f"/api/v1/policies/{policy['id']}/archive")
 
-    assert effective(client, device["id"])["values"] == {}
+    assert effective(client, device["id"])["values"] == FLEET_DEFAULT
 
 
 def test_disabled_assignment_stops_applying(
@@ -276,7 +278,7 @@ def test_disabled_assignment_stops_applying(
 
     client.patch(f"/api/v1/assignments/{assignment['id']}", json={"enabled": False})
 
-    assert effective(client, device["id"])["values"] == {}
+    assert effective(client, device["id"])["values"] == FLEET_DEFAULT
 
 
 def test_deleting_an_assignment_updates_the_device(
@@ -289,7 +291,7 @@ def test_deleting_an_assignment_updates_the_device(
 
     client.delete(f"/api/v1/assignments/{assignment['id']}")
 
-    assert effective(client, device["id"])["values"] == {}
+    assert effective(client, device["id"])["values"] == FLEET_DEFAULT
 
 
 def test_removing_a_device_from_a_group_drops_the_group_policy(
@@ -305,7 +307,7 @@ def test_removing_a_device_from_a_group_drops_the_group_policy(
 
     client.put(f"/api/v1/groups/{group['id']}/devices", json={"device_ids": []})
 
-    assert effective(client, device["id"])["values"] == {}
+    assert effective(client, device["id"])["values"] == FLEET_DEFAULT
 
 
 # --------------------------------------------------------------------------- #
@@ -317,12 +319,14 @@ def test_state_version_bumps_when_values_change(
     client: TestClient, make_policy, make_device, assign
 ):
     device = make_device()
-    assert effective(client, device["id"])["state_version"] == 0
+    # 1, not 0: the fleet location default is a desired state in its own
+    # right, so the first resolve of a brand new device already moves it.
+    assert effective(client, device["id"])["state_version"] == 1
 
     policy = make_policy("Baseline", "PASSWORD", {"min_length": 6})
     assign(policy["id"], device["id"], rank=1)
 
-    assert effective(client, device["id"])["state_version"] == 1
+    assert effective(client, device["id"])["state_version"] == 2
 
 
 def test_state_version_holds_when_a_change_is_cosmetic(
@@ -416,7 +420,7 @@ def test_preview_of_a_removal(client: TestClient, make_policy, make_device, assi
     ).json()
 
     assert body["diff"][0]["change"] == "removed"
-    assert body["proposed"]["values"] == {}
+    assert body["proposed"]["values"] == FLEET_DEFAULT
 
 
 def test_empty_preview_is_rejected(client: TestClient, make_device):

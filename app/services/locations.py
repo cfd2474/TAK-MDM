@@ -535,6 +535,63 @@ def retention_days(session: Session) -> int:
     return value
 
 
+#: The policy field the default fills in. Named here rather than imported from
+#: the spec so the one place that knows both halves of the rule — the setting and
+#: the field it feeds — is this module.
+INTERVAL_FIELD = "reporting_interval_minutes"
+
+#: How often an enrolled device reports its position when no policy says.
+#:
+#: ⚠️ **This is what makes tracking on by default.** Before it, a device with
+#: no Tracking and fencing policy reported nothing at all — the agent reads an
+#: absent interval as off — so a freshly enrolled tablet was invisible on the map until
+#: somebody remembered to write a policy. An MDM whose location feature stays
+#: silent until configured is one whose location feature is assumed broken.
+DEFAULT_INTERVAL_MINUTES = 15
+
+#: The setting that overrides it.
+INTERVAL_KEY = "location.default_interval_minutes"
+
+
+def default_interval_minutes(session: Session) -> int:
+    """The fleet-wide reporting interval, in minutes, for a device no policy covers.
+
+    ⚠️ Unparseable, negative, or beyond the spec's ceiling falls back to the
+    default rather than to 0. Reading ``"fifteen"`` as 0 would switch tracking off
+    across the whole fleet from a typo in a text box, and it would look exactly
+    like a fleet of broken agents — nothing in the console would say why.
+
+    0 *is* accepted, because an operator who types it means it: no default
+    reporting, and only a policy can switch a device on. That is the mirror of the
+    policy rule, where 0 is the one value that switches a device off.
+    """
+    from app.policies.specs.tracking_fencing import MAX_INTERVAL_MINUTES
+    from app.services import settings_store
+
+    raw = settings_store.get(session, INTERVAL_KEY, "").strip()
+    if not raw:
+        return DEFAULT_INTERVAL_MINUTES
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "%s is %r, which is not a number of minutes; using the default of %d",
+            INTERVAL_KEY,
+            raw,
+            DEFAULT_INTERVAL_MINUTES,
+        )
+        return DEFAULT_INTERVAL_MINUTES
+    if value < 0 or value > MAX_INTERVAL_MINUTES:
+        logger.warning(
+            "%s is %d, outside 0-%d; using the default",
+            INTERVAL_KEY,
+            value,
+            MAX_INTERVAL_MINUTES,
+        )
+        return DEFAULT_INTERVAL_MINUTES
+    return value
+
+
 def purge(session: Session, days: int | None = None) -> int:
     """Delete location points older than the retention window. Returns the count.
 

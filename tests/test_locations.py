@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import math
 import pathlib
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from urllib.parse import unquote
@@ -690,12 +691,34 @@ def test_a_device_with_no_position_says_which_silence_it_is(
 ):
     """⚠️ Nothing-is-collecting sends an operator to the policy; collecting-but-
     nothing-arrived sends them to the device. One message would send them to
-    neither."""
+    neither.
+
+    A freshly enrolled device is now the *second* kind of silence, not the first:
+    it is tracking at the fleet default and simply has not reported yet. Telling
+    an operator to go and add a policy would send them to fix something that is
+    already working.
+    """
     result = enrolled()
 
     body = client.get(f"/devices/{result['device_id']}", headers=ADMIN_HEADERS).text
 
-    assert "location tracking is not switched on" in body
+    assert "No position reported yet" in body
+    assert "Tracking is on at" in body
+    assert "switched off" not in body
+    assert "data-map-latest" not in body
+
+
+def test_a_device_whose_policy_switched_tracking_off_says_so(
+    client: TestClient, db, enrolled
+):
+    """The other silence, which now takes a deliberate 0 to reach."""
+    result = enrolled()
+    _tracking_policy(client, result["device_id"], 0, "no-tracking")
+
+    body = client.get(f"/devices/{result['device_id']}", headers=ADMIN_HEADERS).text
+
+    assert "location tracking is switched off" in body
+    assert "No position reported yet" not in body
     assert "data-map-latest" not in body
 
 
@@ -1711,3 +1734,252 @@ def test_the_passcode_is_cleared_only_after_the_constraints_are_released(
     clear_at = reconciler.index("clearPasscodeForTrustedArea")
 
     assert apply_at < clear_at, "the clear must come after the policy is applied"
+
+
+# --------------------------------------------------------------------------- #
+# Tracking is on by default (W161)
+#
+# ⚠️ The whole feature is the difference between a field that is **absent** and
+# one that holds **0**. The agent reads both as "do not report", so the server has
+# to keep them apart: absent means no policy had an opinion and the fleet default
+# applies; 0 means an operator said stop, and nothing may override it. Every test
+# below exists to hold that line, because a regression either way is invisible —
+# a fleet that quietly stops reporting, or a device that cannot be exempted.
+# --------------------------------------------------------------------------- #
+
+
+def _tracking_section(client: TestClient, headers) -> dict:
+    """What the device is actually told about tracking, end to end."""
+    body = checkin(client, headers, force_full=True)
+    return body["desired_state"]["policy"].get("TRACKING_FENCING") or {}
+
+
+def _tracking_policy(client: TestClient, device_id: str, minutes, name: str):
+    policy = client.post(
+        "/api/v1/policies",
+        json={
+            "name": name,
+            "policy_type": "TRACKING_FENCING",
+            "spec": {"reporting_interval_minutes": minutes},
+        },
+    )
+    assert policy.status_code == 201, policy.text
+    assigned = client.post(
+        "/api/v1/assignments",
+        json={
+            "policy_id": policy.json()["id"],
+            "scope": "device",
+            "target_id": device_id,
+            "rank": 1,
+        },
+    )
+    assert assigned.status_code in (200, 201), assigned.text
+
+
+def test_an_enrolled_device_reports_with_no_policy_at_all(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """The point of the feature: enrolment alone is enough to appear on the map."""
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+
+    section = _tracking_section(client, headers)
+
+    assert section.get(location_service.INTERVAL_FIELD) == 15
+    assert location_service.DEFAULT_INTERVAL_MINUTES == 15
+
+
+def test_the_admin_setting_replaces_the_built_in_default(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    from app.services import effective_policy as eff
+    from app.services import settings_store
+
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+
+    settings_store.put(db, location_service.INTERVAL_KEY, "45")
+    eff.invalidate_all(db)
+    db.commit()
+
+    assert location_service.default_interval_minutes(db) == 45
+    assert _tracking_section(client, headers)[location_service.INTERVAL_FIELD] == 45
+
+
+def test_a_policy_overrides_the_default(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+
+    assert _tracking_section(client, headers)[location_service.INTERVAL_FIELD] == 15
+
+    _tracking_policy(client, result["device_id"], 5, "fast-tracking")
+
+    assert _tracking_section(client, headers)[location_service.INTERVAL_FIELD] == 5
+
+
+def test_only_a_policy_of_zero_disables_tracking(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """⚠️ The one case that must not be "helpfully" filled in.
+
+    A policy setting 0 is the operator's only way to exempt a device from being
+    logged. If the default overwrote it the device would carry on reporting while
+    the console showed tracking as off — the failure the spec's own warning about
+    `0` exists to prevent, arriving from the other direction.
+    """
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+
+    _tracking_policy(client, result["device_id"], 0, "no-tracking")
+
+    section = _tracking_section(client, headers)
+    assert section[location_service.INTERVAL_FIELD] == 0, (
+        "an explicit 0 was replaced by the fleet default"
+    )
+
+
+def test_a_default_of_zero_means_no_default_reporting(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """An operator can opt the fleet out; a policy then has to opt a device in.
+
+    The field is left absent rather than written as 0 — absent is already what the
+    agent reads as off, and a 0 in the Effective policy table would claim a policy
+    asserted something that nothing did.
+    """
+    from app.services import effective_policy as eff
+    from app.services import settings_store
+
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+
+    settings_store.put(db, location_service.INTERVAL_KEY, "0")
+    eff.invalidate_all(db)
+    db.commit()
+
+    assert location_service.INTERVAL_FIELD not in _tracking_section(client, headers)
+
+    _tracking_policy(client, result["device_id"], 20, "opt-in")
+
+    assert _tracking_section(client, headers)[location_service.INTERVAL_FIELD] == 20
+
+
+def test_a_nonsense_default_falls_back_rather_than_stopping_the_fleet(
+    client: TestClient, db, enrolled
+):
+    """⚠️ The same trap as the retention window, at the opposite polarity.
+
+    Here, reading a typo as 0 would switch tracking off fleet-wide and look
+    exactly like every agent having broken at once.
+    """
+    from app.services import settings_store
+
+    enrolled()
+    for junk in ("fifteen", "", "   ", "-5", "12.5", "15 minutes", "400"):
+        settings_store.put(db, location_service.INTERVAL_KEY, junk)
+        db.commit()
+        assert location_service.default_interval_minutes(db) == 15, junk
+
+
+def test_saving_the_location_settings_moves_devices_already_computed(
+    client: TestClient, db, enrolled, mtls_headers
+):
+    """⚠️ Without the invalidation the new interval would reach only the devices
+    that happened to be recomputed for some other reason."""
+    result = enrolled()
+    headers = mtls_headers(result["certificate_pem"])
+
+    assert _tracking_section(client, headers)[location_service.INTERVAL_FIELD] == 15
+
+    client.post(
+        "/admin/settings/location",
+        data={
+            "location.default_interval_minutes": "45",
+            "location.retention_days": "30",
+        },
+        follow_redirects=False,
+    )
+
+    assert _tracking_section(client, headers)[location_service.INTERVAL_FIELD] == 45
+
+
+def test_the_admin_form_shows_the_defaults_rather_than_an_empty_box(
+    client: TestClient,
+):
+    """⚠️ A blank box beside help text is unreadable as a state.
+
+    The operator cannot tell "unset, so 30 applies" from "someone cleared it", and
+    the two look identical until a month of history disappears.
+    """
+    import re
+
+    from app.services import settings_store
+
+    values = {f.key: f.default for f in settings_store.GROUPS["location"].fields}
+    assert values["location.retention_days"] == "30"
+    assert values["location.default_interval_minutes"] == "15"
+
+    body = client.get("/admin", headers=ADMIN_HEADERS).text
+    for name, shown in (
+        ("location.retention_days", "30"),
+        ("location.default_interval_minutes", "15"),
+    ):
+        field = re.search(r'<input[^>]*name="%s"[^>]*>' % re.escape(name), body)
+        assert field, name
+        assert 'value="%s"' % shown in field.group(0), field.group(0)
+
+
+def test_a_stored_value_still_wins_over_the_displayed_default(
+    client: TestClient, db
+):
+    from app.services import settings_store
+
+    settings_store.put(db, location_service.INTERVAL_KEY, "20")
+    db.commit()
+
+    stored = settings_store.group_values(db, "location")
+    assert stored[location_service.INTERVAL_KEY] == "20"
+
+
+def test_the_default_is_attributed_rather_than_appearing_from_nowhere(
+    client: TestClient, db, enrolled
+):
+    """A number with no source in the provenance table reads as a resolver bug.
+
+    The device page draws Strategy and From straight out of this record, so an
+    unattributed value would show an interval with two em-dashes beside it and no
+    way to learn where it came from.
+    """
+    from app.db.models import Device as _Device
+    from app.services import effective_policy as eff
+
+    result = enrolled()
+    device = db.get(_Device, uuid.UUID(result["device_id"]))
+    payload = eff.get_effective(db, device)
+
+    record = payload["provenance"]["TRACKING_FENCING"][location_service.INTERVAL_FIELD]
+    assert record["value"] == 15
+    assert record["strategy"] == "admin default"
+    assert record["source"]["policy_name"] == eff._ADMIN_DEFAULT_SOURCE
+
+    page = client.get(f"/devices/{result['device_id']}", headers=ADMIN_HEADERS).text
+    assert eff._ADMIN_DEFAULT_SOURCE in page
+
+
+def test_a_policy_keeps_its_own_provenance(client: TestClient, db, enrolled):
+    """The mutation check on the one above: attribution has to follow the value."""
+    from app.db.models import Device as _Device
+    from app.services import effective_policy as eff
+
+    result = enrolled()
+    _tracking_policy(client, result["device_id"], 5, "fast-tracking")
+
+    db.expire_all()
+    device = db.get(_Device, uuid.UUID(result["device_id"]))
+    payload = eff.get_effective(db, device)
+
+    record = payload["provenance"]["TRACKING_FENCING"][location_service.INTERVAL_FIELD]
+    assert record["source"]["policy_name"] == "fast-tracking"
+    assert record["strategy"] != "admin default"

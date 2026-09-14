@@ -355,9 +355,12 @@
       </p>
     {% else %}
       <p class="muted">
-        No position recorded, and location tracking is not switched on for this
-        device. Add a <strong>Tracking and fencing</strong> policy with a reporting
-        interval, or send a <code>locate</code> command to record a single position.
+        No position recorded, and location tracking is switched off for this
+        device. Since every enrolled device reports by default, off means
+        something set the interval to <strong>0</strong> &mdash; a
+        <strong>Tracking and fencing</strong> policy reaching this device, or the
+        fleet default under <strong>Admin &rarr; Location</strong>. Change either,
+        or send a <code>locate</code> command to record a single position.
       </p>
     {% endif %}
   {% endif %}

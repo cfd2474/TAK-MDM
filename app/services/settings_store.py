@@ -41,6 +41,13 @@ class Field:
     label: str
     kind: str = "text"  # text | textarea | password | number | bool
     help: str = ""
+    #: What the form shows when nothing is stored.
+    #:
+    #: ⚠️ This is the *displayed* default, and it has to agree with the one the
+    #: code falls back to. A blank box beside help text reading "Default 30" made
+    #: an operator guess whether 30 was in force or whether the field was simply
+    #: unset — and the two look identical until a month of history disappears.
+    default: str = ""
 
 
 @dataclass(frozen=True)
@@ -94,10 +101,19 @@ GROUPS: dict[str, Group] = {
                   Field("location.retention_days", "Keep location history for (days)",
                         "number",
                         "Points older than this are deleted permanently, once a "
-                        "day. Default 30. Set 0 to keep history for ever — note "
-                        "that 0 here means KEEP EVERYTHING, the opposite of the 0 "
-                        "in a tracking policy's reporting interval, which means "
-                        "off."),
+                        "day. Set 0 to keep history for ever — note that 0 here "
+                        "means KEEP EVERYTHING, the opposite of the 0 in a "
+                        "tracking policy's reporting interval, which means off.",
+                        default="30"),
+                  Field("location.default_interval_minutes",
+                        "Default reporting interval (minutes)", "number",
+                        "How often an enrolled device records its position when "
+                        "no policy says otherwise — every device reports from the "
+                        "moment it enrols. A Tracking and fencing policy "
+                        "overrides this, and a policy setting 0 is the only way "
+                        "to switch reporting off. Blank or unparseable falls back "
+                        "to 15.",
+                        default="15"),
                   Field("location.tile_url", "Tile URL template", "text",
                         "Leaflet template, e.g. "
                         "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"),
@@ -161,7 +177,7 @@ def group_values(session: Session, group_key: str) -> dict[str, str]:
             )
         )
     }
-    return {f.key: stored.get(f.key, "") for f in group.fields}
+    return {f.key: stored.get(f.key, f.default) for f in group.fields}
 
 
 def group_is_secret(field_kind: str) -> bool:

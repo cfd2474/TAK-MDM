@@ -449,6 +449,94 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W161 — Location tracking is on the moment a device enrols (v1.12.0)
+
+Operator, 2026-09-14: *"in the admin section, location, lets make history
+defaulted to 30 days. Lets also add a field for default polling interval, and
+have it set for 15 minutes. an enrolled device should, by default, have location
+reporting turned on and abide by the default interval. this can be overridden by
+the tracking and fencing policy. it can only be disabled by a policy being set to
+0."*
+
+#### What was actually wrong
+
+Retention *was* already 30 days — `DEFAULT_RETENTION_DAYS`, since W106. The
+admin field simply rendered **blank**, because `group_values()` returned `""` for
+anything unset and `Field` had no notion of a default. Beside help text reading
+"Default 30" that is unreadable as a state: an operator cannot tell "unset, so 30
+applies" from "someone cleared it", and the two look identical until a month of
+history disappears. `Field` now carries a `default`, the form shows it, and the
+displayed number and the enforced number come from the same place.
+
+Tracking was the real gap. The agent reads an **absent**
+`reporting_interval_minutes` as off, so a device with no Tracking and fencing
+policy reported nothing at all — a freshly enrolled tablet was invisible on the
+map until somebody remembered to write a policy.
+
+#### ⚠️ Absent and 0 are different answers, and that is the whole feature
+
+| State | Means | Result |
+|---|---|---|
+| No policy names the field | Nobody has an opinion | The fleet default applies |
+| A policy names `0` | An operator said stop | Stays off, and nothing overrides it |
+| A policy names any other number | An operator said how often | That number |
+
+`apply_location_default()` therefore only ever writes into a **gap**. Overwriting
+an explicit `0` would make it impossible to exempt a device from being logged,
+which is the one thing an operator needs when a device goes somewhere that should
+not be recorded — and the console would show tracking as off while the device
+carried on reporting.
+
+Mutation-checked: breaking that guard fails
+`test_only_a_policy_of_zero_disables_tracking`, and each of the other four guards
+(the 0-default case, the injection itself, the form default, the invalidation)
+fails a test of its own when broken.
+
+#### Applied at resolve time, not baked into a policy
+
+The default is injected in `effective_policy.refresh()` rather than declared as
+the spec's `default`. A spec default is frozen into a policy version the moment it
+is published, so changing the admin setting afterwards would move new policies and
+leave old ones on the old number, with nothing on the page to explain the
+difference. Resolving it per read means one setting moves the whole fleet at its
+next check-in — and **already-deployed agents need no change**: they receive an
+ordinary interval and cannot tell it came from Admin.
+
+Saving the Location settings calls `invalidate_all`. Without it the new interval
+would reach only the devices that happened to be recomputed for some other reason
+— an interval in force on some tablets and not others, with nothing to
+distinguish them.
+
+`preview()` applies it to both sides too, so its `current` means the same thing as
+the device's own effective-policy page. The diff is still computed from the
+resolver's values, which is what keeps the default out of it.
+
+#### ⚠️ "Nothing assigned" no longer means "nothing applies"
+
+Eleven existing assertions compared a device's effective policy to `{}`. They now
+compare to `tests.conftest.FLEET_DEFAULT` — compared, not filtered out, so a
+stray policy leaking through still fails them. A brand new device's first resolve
+now moves `state_version` 0 → 1, because it genuinely has a desired state.
+
+The device page's two silences were rewritten with it. A freshly enrolled device
+is now *"no position reported yet, tracking is on at 15 minutes"*, not *"tracking
+is not switched on"* — the old message would have sent an operator off to fix
+something that was already working. The off message now says what off means: a
+policy, or the fleet default, set the interval to 0.
+
+#### ⚠️ The polarity trap, restated
+
+`location.retention_days` uses `0` for **keep everything**;
+`reporting_interval_minutes` uses `0` for **off**. Opposite meanings, deliberately
+— misread as "keep for ever" costs disk, misread the other way destroys a
+fleet's history irrecoverably. Both fields say so in their own help text, and
+`location.default_interval_minutes` falls back to 15 on anything unparseable,
+negative, or past the spec's 360-minute ceiling, because reading a typo as 0 would
+switch tracking off fleet-wide and look exactly like every agent breaking at once.
+
+**1716 server tests.** No agent change; no APK rebuild.
+
+
 ### ✅ W115 — Provisioning let the operator past ungranted permissions (2026-09-09, `eb34e9e`)
 
 Operator, after re-enrolling both devices: *"it allowed me to proceed with device

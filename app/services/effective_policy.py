@@ -55,6 +55,7 @@ from app.db.models import (
     Storefront,
 )
 from app.services import files, notifications, packages
+from app.services import locations as location_service
 from app.policies.registry import PolicyTypeError, registry
 from app.policies.resolver import (
     AssignmentInput,
@@ -445,6 +446,64 @@ def resolve_store_apps(
     return sorted(offered, key=lambda item: item["package_name"])
 
 
+#: What the provenance row says when a value came from Admin rather than a policy.
+_ADMIN_DEFAULT_SOURCE = "Admin \u2192 Location"
+
+
+def apply_location_default(session: Session, payload: dict[str, Any]) -> None:
+    """Fill in the reporting interval when no policy set one. Mutates ``payload``.
+
+    ⚠️ **Absent and 0 are different answers, and the whole feature is that
+    distinction.** A device no tracking policy reaches has *no opinion* about its
+    interval, and gets the fleet default — that is what "enrolled devices report
+    by default" means. A device whose policy says 0 has been deliberately switched
+    off and must stay off: overwriting that with the default would make it
+    impossible to exempt a device from tracking at all, which is the one thing an
+    operator needs when a device goes somewhere that should not be logged.
+
+    So this only ever writes into a gap. Any resolved value, 0 included, is left
+    exactly as the resolver produced it.
+
+    Applied to the payload rather than declared as the spec's ``default``, because
+    a spec default is baked into a policy version the moment it is published —
+    changing the admin setting afterwards would move new policies and leave old
+    ones on the old number, with nothing on the page to explain the difference.
+    Here it resolves at read time, so one setting moves the whole fleet at its next
+    check-in, and already-deployed agents need no change: they receive an ordinary
+    interval and cannot tell it came from Admin.
+    """
+    values = payload.setdefault("values", {})
+    section = values.get("TRACKING_FENCING") or {}
+    if section.get(location_service.INTERVAL_FIELD) is not None:
+        return
+
+    minutes = location_service.default_interval_minutes(session)
+    if minutes <= 0:
+        # An operator who set the default to 0 asked for no default reporting.
+        # Leaving the field absent is not the same as writing 0: absent is already
+        # what the agent reads as off, and it keeps the console's Effective policy
+        # table from showing a row that neither a policy nor a setting asserts.
+        return
+
+    section = dict(section)
+    section[location_service.INTERVAL_FIELD] = minutes
+    values["TRACKING_FENCING"] = section
+
+    # Explained on the device page like anything else. A number with no source in
+    # the provenance table reads as a bug in the resolver.
+    provenance = payload.setdefault("provenance", {})
+    entry = dict(provenance.get("TRACKING_FENCING") or {})
+    entry[location_service.INTERVAL_FIELD] = {
+        "value": minutes,
+        "strategy": "admin default",
+        "source": {"policy_name": _ADMIN_DEFAULT_SOURCE},
+        "contributors": [],
+        "overridden": [],
+        "conflict": False,
+    }
+    provenance["TRACKING_FENCING"] = entry
+
+
 def refresh(session: Session, device: Device) -> dict[str, Any]:
     """Recompute, store, and bump ``state_version`` if the device-facing state moved.
 
@@ -453,6 +512,7 @@ def refresh(session: Session, device: Device) -> dict[str, Any]:
     """
     effective = compute(session, device)
     payload = effective.as_dict()
+    apply_location_default(session, payload)
     payload["apps"] = resolve_required_apps(session, payload["values"])
     # Given the required list so an app that is both required and on the shelf
     # stays required rather than being offered as an optional install as well
@@ -531,10 +591,20 @@ def preview(
     # not hashable and cannot go in a set.
     existing_conflicts = [c.as_dict() for c in current.conflicts]
 
+    # Both sides carry the fleet default, so that "current" here means the same
+    # thing as the device's own effective policy page. The diff is computed from
+    # the resolver's values instead, which is what keeps the default out of it: it
+    # is identical on both sides and is not what the operator is being asked to
+    # approve.
+    current_payload = current.as_dict()
+    proposed_payload = proposed.as_dict()
+    apply_location_default(session, current_payload)
+    apply_location_default(session, proposed_payload)
+
     return {
         "device_id": str(device.id),
-        "current": current.as_dict(),
-        "proposed": proposed.as_dict(),
+        "current": current_payload,
+        "proposed": proposed_payload,
         "diff": diff_values(current.values, proposed.values),
         "new_conflicts": [
             c.as_dict() for c in proposed.conflicts if c.as_dict() not in existing_conflicts

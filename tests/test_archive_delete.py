@@ -31,6 +31,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.db.models import Assignment, Policy, PolicyProfile, PolicyVersion
+from tests.conftest import FLEET_DEFAULT
 
 ADMIN = {"x-authentik-username": "a", "x-authentik-groups": "takmdm-admins"}
 
@@ -225,7 +226,7 @@ def test_deleting_an_archived_policy_changes_no_device(client: TestClient, enrol
     before = effective()
     client.delete(f"/api/v1/policies/{doomed}", headers=ADMIN)
 
-    assert effective() == before == {"PASSWORD": {"min_length": 8}}
+    assert effective() == before == {"PASSWORD": {"min_length": 8}, **FLEET_DEFAULT}
 
 
 # --------------------------------------------------------------------------- #
