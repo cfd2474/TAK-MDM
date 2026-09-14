@@ -2949,3 +2949,109 @@ function atlasWireFenceLock() {
 }
 
 atlasWireFenceLock();
+
+
+/* --- App-store shortcuts for the blocklist (W153) ---------------------------
+   <div data-store-toggles> holds checkboxes carrying data-packages="a,b,c".
+   Ticking one writes those packages into the sibling [data-rowset]; unticking
+   removes exactly those rows and nothing else.
+
+   ⚠️ The packages go into the visible list rather than into a stored flag. An
+   operator can then read what will actually be blocked, add a store we missed,
+   or drop one that is wrong for their fleet — none of which is possible if the
+   expansion happens somewhere they cannot see.
+
+   ⚠️ A box is ticked on load only when *every* one of its packages is already
+   present. Half a group is not the group, and showing it ticked would claim a
+   store is blocked when one of its packages is missing.
+*/
+(function () {
+  "use strict";
+
+  function rowsetFor(toggles) {
+    var parent = toggles.parentElement;
+    return parent ? parent.querySelector("[data-rowset]") : null;
+  }
+
+  function packagesOf(box) {
+    return (box.getAttribute("data-packages") || "")
+      .split(",").map(function (p) { return p.trim(); }).filter(Boolean);
+  }
+
+  function present(rowset) {
+    var found = [];
+    rowset.querySelectorAll(".rs-row input[type=text]").forEach(function (input) {
+      var v = (input.value || "").trim();
+      if (v) found.push(v);
+    });
+    return found;
+  }
+
+  function addPackage(rowset, name) {
+    var template = rowset.querySelector("[data-row-template]");
+    if (!template) return;
+    /* An empty row the operator has not filled in yet is reused rather than
+       left stranded above the ones we add. */
+    var blank = null;
+    rowset.querySelectorAll(".rs-row input[type=text]").forEach(function (input) {
+      if (!blank && !(input.value || "").trim()) blank = input;
+    });
+    if (blank) { blank.value = name; return; }
+    var row = template.content.firstElementChild.cloneNode(true);
+    var field = row.querySelector("input[type=text]");
+    if (field) field.value = name;
+    rowset.insertBefore(row, template);
+  }
+
+  function removePackage(rowset, name) {
+    rowset.querySelectorAll(".rs-row").forEach(function (row) {
+      var input = row.querySelector("input[type=text]");
+      if (input && (input.value || "").trim() === name) row.remove();
+    });
+  }
+
+  function sync(box, rowset) {
+    var have = present(rowset);
+    var wanted = packagesOf(box);
+    box.checked = wanted.length > 0 && wanted.every(function (p) {
+      return have.indexOf(p) !== -1;
+    });
+  }
+
+  document.querySelectorAll("[data-store-toggles]").forEach(function (toggles) {
+    var rowset = rowsetFor(toggles);
+    if (!rowset) return;
+    var boxes = toggles.querySelectorAll("[data-store-group]");
+
+    boxes.forEach(function (box) { sync(box, rowset); });
+
+    toggles.addEventListener("change", function (event) {
+      var box = event.target.closest("[data-store-group]");
+      if (!box) return;
+      var wanted = packagesOf(box);
+      if (box.checked) {
+        var have = present(rowset);
+        wanted.forEach(function (name) {
+          if (have.indexOf(name) === -1) addPackage(rowset, name);
+        });
+      } else {
+        wanted.forEach(function (name) { removePackage(rowset, name); });
+      }
+      /* Another group may share a package, so re-read them all rather than
+         trusting the one that changed. */
+      boxes.forEach(function (other) { sync(other, rowset); });
+    });
+
+    /* Editing the list by hand is the authority: a box reflects the rows, so
+       deleting one package unticks its group rather than lying about it. */
+    rowset.addEventListener("input", function () {
+      boxes.forEach(function (box) { sync(box, rowset); });
+    });
+    rowset.addEventListener("click", function (event) {
+      if (!event.target.closest("[data-remove-row]")) return;
+      setTimeout(function () {
+        boxes.forEach(function (box) { sync(box, rowset); });
+      }, 0);
+    });
+  });
+})();

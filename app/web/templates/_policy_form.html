@@ -270,6 +270,30 @@
 {% endmacro %}
 
 {% macro _package_list(f, items, name) %}
+  {#
+    ⚠️ The store shortcuts write into the list below rather than storing a flag
+    that expands later. Ticking one is a shortcut for typing ten package names
+    nobody remembers — the operator still sees exactly what will be blocked, can
+    add a store we missed, and can drop one that is wrong for their fleet.
+
+    A hidden expansion would put the least complete part of this feature where
+    nothing can show it: "which packages did that actually block" has to stay a
+    question the page can answer.
+  #}
+  {% if f.store_toggles %}
+    <div class="store-toggles" data-store-toggles>
+      {% for store in store_groups %}
+        <label class="store-toggle">
+          <input type="checkbox" data-store-group
+                 data-packages="{{ store.package_names | join(',') }}">
+          <span>
+            <strong>{{ store.label }}</strong>
+            <span class="field-tip" style="display:block;margin:2px 0 0">{{ store.help }}</span>
+          </span>
+        </label>
+      {% endfor %}
+    </div>
+  {% endif %}
   <div class="rowset" data-rowset>
     {% for item in items or [] %}
       <div class="rs-row"><input type="text" name="{{ name }}" value="{{ item }}">

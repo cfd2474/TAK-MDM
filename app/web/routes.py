@@ -83,6 +83,7 @@ from app.security.enrollment_qr import EnrollmentQrGuard
 from app.security.token_vault import TokenVault
 from app.version import build_info
 from app.artifacts import app_restrictions
+from app.policies import app_stores
 from app.artifacts.storage import ArtifactStorage
 from app.config import Settings, get_settings
 from app.db.models import (
@@ -159,6 +160,13 @@ router = APIRouter(tags=["admin-ui"], include_in_schema=False)
 
 _TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 _TEMPLATES.env.filters["pretty_json"] = lambda value: json.dumps(value, indent=2, sort_keys=True)
+
+# ⚠️ A global, not request context. `_policy_form.html` is pulled in with
+# `{% from ... import %}`, and an imported macro cannot see the caller's context
+# — a bare name inside one renders *empty* rather than raising, which is how the
+# storefront select shipped blank in W140. These groups are a constant, so the
+# environment is the honest place for them and the macro hop stops mattering.
+_TEMPLATES.env.globals["store_groups"] = app_stores.STORE_GROUPS
 
 
 def _spec_rows(

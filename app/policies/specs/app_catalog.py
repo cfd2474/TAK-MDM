@@ -228,7 +228,14 @@ class AppCatalogSpec(PolicySpec):
         title="Blocklist (hide / uninstall)",
         description="Made unusable: an ordinary app is uninstalled, a preinstalled "
         "one is hidden. Reversible.",
-        json_schema_extra={"ui_group": "Blocklist", "ui_control": "package_list"},
+        json_schema_extra={
+            "ui_group": "Blocklist",
+            "ui_control": "package_list",
+            # Offers the store shortcuts above this list. Only here: the other
+            # package lists are allowlists and must-not-install, where writing a
+            # store in would mean the opposite of what the operator asked for.
+            "ui_store_toggles": True,
+        },
     )
 
     # Packages that must **not be installed** — the strict form of the blacklist.

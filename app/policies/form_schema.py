@@ -71,6 +71,9 @@ class FormField:
     choices: list[EnumChoice] = field(default_factory=list)
     #: A value not to echo in previews or the read-only detail view.
     secret: bool = False
+    #: Offer the app-store shortcuts above this control. Blocklist only — the
+    #: same tick on an allowlist would mean the opposite of what was asked.
+    store_toggles: bool = False
     #: An OEM capability this control needs before it can do anything (e.g.
     #: "Knox"). Set means the platform has no route to it yet: the form renders
     #: the control disabled and says why, and the spec refuses a value for it.
@@ -171,6 +174,7 @@ def form_fields(policy_type: str) -> list[FormField]:
                 choices=choices,
                 secret=bool(extra.get("ui_secret", False)),
                 requires=extra.get("ui_requires"),
+                store_toggles=bool(extra.get("ui_store_toggles", False)),
             )
         )
     return fields
