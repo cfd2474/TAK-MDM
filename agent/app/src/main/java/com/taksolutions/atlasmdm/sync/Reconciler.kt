@@ -1002,13 +1002,16 @@ class Reconciler(private val context: Context) {
     /**
      * Make unwanted packages go away, by the strongest means each one allows.
      *
-     * Two lists, two intents:
+     * **`blocked_packages`** is the one list: make a package unusable by whatever
+     * works — uninstall an ordinary app, hide one that ships with the device.
      *
-     * * **`removed_packages` — strict.** Uninstall, and say so plainly if the app
-     *   survives. For reclaiming storage or destroying data, where "it did not
-     *   actually work" is something the operator must be told.
-     * * **`blocked_packages` — the blacklist.** Make it unusable by whatever works:
-     *   uninstall an ordinary app, hide one that ships with the device.
+     * ⚠️ A second, stricter list lived here (`removed_packages`): uninstall only,
+     * no fallback to hiding, and a reported failure when the app survived. It was
+     * removed in W154. For an ordinary sideloaded app it did exactly what the
+     * blocklist does, and the two differed only for preinstalled apps — which cost
+     * more in confusion than the distinction was worth. The consequence is that
+     * nothing now *demands* real removal: where hiding is all the platform allows,
+     * hiding is what happens and the data stays.
      *
      * **A system app cannot be uninstalled, and the platform does not say so.**
      * `PackageInstaller` returns `STATUS_SUCCESS` for what is really "the update was
@@ -1039,26 +1042,6 @@ class Reconciler(private val context: Context) {
                 // remove the same app on alternate check-ins.
                 "$packageName: listed as both required and unwanted"
             else -> null
-        }
-
-        for (packageName in catalog.stringList("removed_packages")) {
-            val problem = guard(packageName)
-            if (problem != null) {
-                errors += problem
-                continue
-            }
-            if (!installer.isPresent(packageName)) continue
-
-            AgentLog.i(TAG, "removing $packageName")
-            val result = installer.uninstall(packageName)
-            if (result.success) {
-                AgentLog.i(TAG, "$packageName removed")
-            } else {
-                // Strict list: no fallback. Asking for removal and silently getting
-                // "hidden" would be the same lie in a different place.
-                AgentLog.e(TAG, "$packageName removal failed: ${result.message}")
-                errors += "$packageName: could not be removed - ${result.message}"
-            }
         }
 
         val blocked = catalog.stringList("blocked_packages").toSet()

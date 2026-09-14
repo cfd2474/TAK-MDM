@@ -1,5 +1,16 @@
 """Removing installed apps by policy.
 
+⚠️ There is one list now. `removed_packages` — a stricter second blacklist that
+uninstalled outright, never fell back to hiding, and reported a failure when the
+app survived — was removed in W154. For an ordinary sideloaded app it did what
+the blocklist already does; they differed only for preinstalled apps, and two
+lists behaving identically in the common case cost more in confusion than the
+distinction was worth.
+
+What went with it is the ability to *demand* real removal and be told when it
+did not happen. The blocklist uninstalls what it can and hides what it cannot,
+so on a preinstalled app the data and the storage stay.
+
 Copyright 2026 TAK-Solutions LLC
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,37 +67,6 @@ def catalog_for(client: TestClient, device_id: str) -> dict:
 # --------------------------------------------------------------------------- #
 
 
-def test_removed_packages_reaches_the_device(client: TestClient, enrolled):
-    device = enrolled(serial="RM-BASIC")
-    assign(
-        client,
-        policy_with(client, "Remove", {"removed_packages": [VICTIM]}),
-        device["device_id"],
-    )
-
-    assert catalog_for(client, device["device_id"])["removed_packages"] == [VICTIM]
-
-
-def test_blocking_and_removing_are_separate_fields(client: TestClient, enrolled):
-    device = enrolled(serial="RM-DISTINCT")
-    assign(
-        client,
-        policy_with(
-            client,
-            "Both",
-            {"blocked_packages": ["com.example.hidden"], "removed_packages": [VICTIM]},
-        ),
-        device["device_id"],
-    )
-
-    catalog = catalog_for(client, device["device_id"])
-    # Blocking hides and is instantly reversible; removing destroys data and
-    # reclaims storage. Collapsing them into one field would mean an operator who
-    # wanted a temporary restriction silently wiped the app instead.
-    assert catalog["blocked_packages"] == ["com.example.hidden"]
-    assert catalog["removed_packages"] == [VICTIM]
-
-
 def test_dropping_an_app_from_required_does_not_remove_it(client: TestClient, enrolled):
     device = enrolled(serial="RM-UNREQUIRED")
     policy = policy_with(
@@ -100,9 +80,11 @@ def test_dropping_an_app_from_required_does_not_remove_it(client: TestClient, en
         headers=ADMIN_HEADERS,
     )
 
-    # "No longer required" and "must be gone" are different claims. Conflating them
-    # would delete apps from the fleet every time a policy was tidied up.
-    assert "removed_packages" not in catalog_for(client, device["device_id"])
+    # "No longer required" and "must be gone" are different claims. Conflating
+    # them would delete apps from the fleet every time a policy was tidied up —
+    # so dropping an app from `required_apps` must not put it on the blocklist.
+    catalog = catalog_for(client, device["device_id"])
+    assert VICTIM not in catalog.get("blocked_packages", [])
 
 
 # --------------------------------------------------------------------------- #
@@ -110,91 +92,9 @@ def test_dropping_an_app_from_required_does_not_remove_it(client: TestClient, en
 # --------------------------------------------------------------------------- #
 
 
-def test_removals_union_across_stacked_policies(client: TestClient, enrolled):
-    device = enrolled(serial="RM-UNION")
-    assign(
-        client,
-        policy_with(client, "Fleet-wide", {"removed_packages": ["com.example.one"]}),
-        device["device_id"],
-        rank=10,
-    )
-    assign(
-        client,
-        policy_with(client, "Site", {"removed_packages": ["com.example.two"]}),
-        device["device_id"],
-        rank=20,
-    )
-
-    removals = set(catalog_for(client, device["device_id"])["removed_packages"])
-    # UNION, so any one policy saying "not this" survives the merge. A strategy
-    # that let a stacked policy drop the instruction would be a removal that
-    # silently never happens.
-    assert removals == {"com.example.one", "com.example.two"}
-
-
-def test_a_duplicate_removal_appears_once(client: TestClient, enrolled):
-    device = enrolled(serial="RM-DEDUPE")
-    for name, rank in (("A", 10), ("B", 20)):
-        assign(
-            client,
-            policy_with(client, f"Dup-{name}", {"removed_packages": [VICTIM]}),
-            device["device_id"],
-            rank=rank,
-        )
-
-    assert catalog_for(client, device["device_id"])["removed_packages"] == [VICTIM]
-
-
-def test_removal_bumps_the_state_version(client: TestClient, enrolled, mtls_headers):
-    device = enrolled(serial="RM-VERSION")
-    headers = mtls_headers(device["certificate_pem"])
-    before = client.post(
-        "/api/v1/device/checkin", json={}, headers=headers
-    ).json()["state_version"]
-
-    assign(
-        client,
-        policy_with(client, "Late removal", {"removed_packages": [VICTIM]}),
-        device["device_id"],
-    )
-    after = client.post(
-        "/api/v1/device/checkin", json={}, headers=headers
-    ).json()["state_version"]
-
-    # Without a bump a dark device would never learn it must remove the app.
-    assert after > before
-
-
 # --------------------------------------------------------------------------- #
 # The blacklist
 # --------------------------------------------------------------------------- #
-
-
-def test_blocklist_and_strict_removal_coexist(client: TestClient, enrolled):
-    """Two intents, deliberately not merged into one field.
-
-    The blacklist makes an app unusable by whatever means works, and unblocking
-    reverses it. Strict removal reclaims the storage and reports failure rather
-    than quietly hiding instead — asking for removal and silently getting
-    suppression would be the same lie in a different place.
-    """
-    device = enrolled(serial="BL-BOTH")
-    assign(
-        client,
-        policy_with(
-            client,
-            "Blacklist",
-            {
-                "blocked_packages": ["com.google.android.gm"],
-                "removed_packages": [VICTIM],
-            },
-        ),
-        device["device_id"],
-    )
-
-    catalog = catalog_for(client, device["device_id"])
-    assert catalog["blocked_packages"] == ["com.google.android.gm"]
-    assert catalog["removed_packages"] == [VICTIM]
 
 
 def test_blocklist_unions_across_policies(client: TestClient, enrolled):

@@ -79,9 +79,12 @@
     <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
 
     <!--
-      Removing apps a policy lists in removed_packages. As Device Owner the
-      uninstall is silent, which is the point: an operator reclaiming storage or
-      repurposing a tablet cannot be there to tap a confirmation dialog.
+      Uninstalling apps the blocklist names. Still needed after the strict
+      must-not-be-installed list went (W154): the blocklist uninstalls an
+      ordinary app and only falls back to hiding for one that ships with the
+      device. As Device Owner the uninstall is silent, which is the point — an
+      operator reclaiming storage or repurposing a tablet cannot be there to tap
+      a confirmation dialog.
     -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
 

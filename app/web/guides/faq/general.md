@@ -19,9 +19,14 @@ device that reappears.
 
 ## Can I remove an app with a policy?
 
-Yes — `removed_packages` uninstalls it outright. `blocked_packages` hides it
-(reversible, keeps data); it does not uninstall. A blocked app that ships with the
-device is hidden rather than downgraded.
+Yes — the **blocklist** (`blocked_packages`). An ordinary app is uninstalled; one
+that ships with the device is hidden instead, because a preinstalled app cannot
+be removed.
+
+⚠️ So "removed" means different things for the two cases. Uninstalling destroys
+the app's data and reclaims its storage. Hiding does neither — the app is
+unusable but still there — and it is reversible: take the package off the list
+and the agent unhides it, having only ever hidden what it hid itself.
 
 ## Is the console authenticated?
 

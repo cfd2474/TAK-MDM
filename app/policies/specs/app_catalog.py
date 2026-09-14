@@ -231,37 +231,27 @@ class AppCatalogSpec(PolicySpec):
         json_schema_extra={
             "ui_group": "Blocklist",
             "ui_control": "package_list",
-            # Offers the store shortcuts above this list. Only here: the other
-            # package lists are allowlists and must-not-install, where writing a
-            # store in would mean the opposite of what the operator asked for.
+            # Offers the store shortcuts above this list. Only here: the
+            # allowlist is the other package list, and writing a store into it
+            # would mean the opposite of what the operator asked for.
             "ui_store_toggles": True,
         },
     )
 
-    # Packages that must **not be installed** — the strict form of the blacklist.
+    # ⚠️ `removed_packages` was here: a second list that uninstalled outright and
+    # refused to fall back to hiding. It is gone (W154), on the operator's call.
     #
-    # Uninstalled outright, destroying their data and reclaiming their storage, and
-    # the result is **verified afterwards**: a package that survives is reported as
-    # a failure rather than quietly hidden. Use this when the storage or the data is
-    # the point and "it did not actually work" is something you need to be told.
-    # For preinstalled apps, which can never satisfy it, use `blocked_packages`.
+    # It differed from the blocklist in exactly two ways — it hid nothing when an
+    # uninstall failed, and it reported that failure — and for an ordinary
+    # sideloaded app the two did the same thing. Two lists that behave identically
+    # in the common case, and differ only for preinstalled apps, cost more in
+    # confusion than the distinction was worth.
     #
-    # State rather than a command (D5/D6): "this device must not have X" is a
-    # property to converge on, so a tablet that was dark for three weeks removes it
-    # on return. Dropping an app from `required_apps` deliberately does *not* remove
-    # it — "no longer required" and "must be gone" are different claims, and
-    # conflating them would delete apps every time a policy was tidied.
-    #
-    # UNION for the same reason as the blocklist: with several policies stacked, any
-    # one of them saying "not this" is the restrictive answer, and a merge that
-    # could drop that instruction would be a policy that silently fails to remove.
-    removed_packages: Annotated[list[str] | None, Merge(MergeStrategy.UNION)] = Field(
-        default=None,
-        title="Must-not-be-installed (uninstall, verified)",
-        description="Uninstalled outright and checked afterwards. Not reversible. "
-        "Use the blocklist for preinstalled apps.",
-        json_schema_extra={"ui_group": "Must-not-be-installed", "ui_control": "package_list"},
-    )
+    # ⚠️ What went with it: the ability to *demand* real removal and be told when
+    # it did not happen. `blocked_packages` uninstalls what it can and hides what
+    # it cannot, so on a preinstalled app the data and storage remain. If that
+    # guarantee is ever needed again, it belongs as an option on the blocklist
+    # rather than a parallel list.
 
     # INTERSECT is the correct "most restrictive" reading of an allowlist but it
     # surprises people: stacking two allowlists yields only their overlap, which can
