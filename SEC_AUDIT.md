@@ -275,8 +275,40 @@ them in a `python:3.13-slim` container found two of these tests broken by a
 constructor signature — they had been silently skipping. Full suite on Linux:
 **1786 passed**. Six mutation checks, all caught.
 
-**What still has to happen:** custody the application only *asks* of — a KMS or
-an HSM (`R8`). Until then one directory read is still total compromise.
+### ✅ v1.19.0 — the root can now leave the server
+
+ATLAS supports an **offline root**: a long-lived root that signs only
+intermediates, and a short-lived intermediate on the box that signs devices.
+
+| | Before | After the ceremony |
+|---|---|---|
+| What a stolen `pki/` yields | A 10-year root | An intermediate valid ~1 year |
+| How you recover | Re-enrol every device by hand | Revoke, re-issue, carry on |
+| Cost | — | One ~15-minute ceremony a year |
+
+⚠️ **This does not stop an attacker on the box from issuing certificates**, and
+nothing on a single host can — the application signs unattended. What it changes is
+that the damage **ends**.
+
+⚠️ **The dangerous part was the migration, not the attack.** A deployment whose
+root has gone offline looks, to the old code, exactly like a fresh install — and
+`load_or_create` generated a new CA in that state, which would have invalidated
+every enrolled device at once. It now raises `RootKeyMissing` and names both
+recovery routes. Six mutation checks, that one first.
+
+Verification walks the chain: every link's signature proved and every link's dates
+checked, so an **expired intermediate stops its devices** — without which the short
+life buys nothing. Retired intermediates stay in the trust store, because the
+certificates they signed remain valid and dropping the issuer would lock out the
+fleet.
+
+The ceremony is [docs/CA-OFFLINE-ROOT.md](docs/CA-OFFLINE-ROOT.md). **It is opt-in
+and has not been run on the reference box** — shipping the capability is not the
+same as using it, and this finding stays Severe until the root is actually gone
+from that server.
+
+**What still has to happen:** run the ceremony; and for the remaining keys, custody
+the application only *asks* of — a KMS or an HSM (`R8`).
 
 **Why Severe and not accepted risk.** The existing acceptance ("acceptable on a
 single trusted host where the DB is equally exposed") holds for `ca.key` versus

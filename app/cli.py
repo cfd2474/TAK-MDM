@@ -38,7 +38,11 @@ from cryptography.x509.oid import NameOID
 
 from app.config import get_settings
 from app.security.bundle import BundleSigner
-from app.security.ca import CertificateAuthority
+from app.security.ca import (
+    CertificateAuthority,
+    CertificateError,
+    issue_intermediate,
+)
 from app.security import keyfiles
 
 
@@ -102,6 +106,53 @@ def _write_dev_server_cert(
         ),
     )
     return cert_path, key_path
+
+
+def ca_issue_intermediate(args: argparse.Namespace) -> int:
+    """Issue the intermediate that signs from now on, and say what to do next.
+
+    ⚠️ The instructions matter as much as the certificate. An operator who runs
+    this and leaves `ca.key` on the server has changed the plumbing and gained
+    nothing: the root is still sitting on an internet-facing machine, which is the
+    entire finding (SEC_AUDIT S-2).
+    """
+    settings = get_settings()
+    pki_dir = Path(args.pki_dir or settings.pki_dir)
+
+    try:
+        certificate = issue_intermediate(
+            pki_dir,
+            common_name=args.common_name or f"{settings.ca_common_name} Issuing CA",
+            validity_days=args.days,
+        )
+    except CertificateError as exc:
+        print(f"could not issue an intermediate: {exc}")
+        return 1
+
+    # utc-by-design: a certificate's validity window is a UTC instant by
+    # definition, this is a date printed in a terminal rather than rendered in the
+    # console, and the CLI has no session to read the display timezone from.
+    expires = certificate.not_valid_after_utc.strftime("%Y-%m-%d")
+    print(f"issuing CA:   {pki_dir / 'issuing.crt'}")
+    print(f"  subject:    {certificate.subject.rfc4514_string()}")
+    print(f"  expires:    {expires}")
+    print(f"  serial:     {certificate.serial_number:x}")
+    print()
+    print("ATLAS now signs device certificates with this intermediate.")
+    print("Nothing on any enrolled device changes: they chain to the root, which")
+    print("has not moved.")
+    print()
+    print("NEXT, and the only part that improves anything:")
+    print(f"  1. Copy {pki_dir / 'ca.key'} somewhere off this machine.")
+    print("     A password manager, an encrypted USB stick, a printed paper backup —")
+    print("     anywhere an attacker who owns this server cannot reach.")
+    print(f"  2. Delete {pki_dir / 'ca.key'} from this machine.")
+    print("  3. Restart ATLAS and confirm a device still checks in.")
+    print()
+    print("You need the root key again only to issue the next intermediate, or to")
+    print("revoke this one. Losing it means no new intermediate can ever be issued,")
+    print(f"and every device must re-enrol after {expires}.")
+    return 0
 
 
 def init_pki(args: argparse.Namespace) -> int:
@@ -236,6 +287,20 @@ def main(argv: list[str] | None = None) -> int:
         help="reissue the dev TLS cert even if one exists (leaves the device CA alone)",
     )
     init.set_defaults(func=init_pki)
+
+    intermediate = subparsers.add_parser(
+        "ca-issue-intermediate",
+        help="sign an issuing CA with the root, so the root can go offline",
+    )
+    intermediate.add_argument("--pki-dir", default=None)
+    intermediate.add_argument("--common-name", default=None)
+    intermediate.add_argument(
+        "--days", type=int, default=365,
+        help="how long the intermediate is valid. Shorter bounds a compromise "
+             "more tightly and costs a ceremony more often; 365 is the balance "
+             "for a deployment with one operator.",
+    )
+    intermediate.set_defaults(func=ca_issue_intermediate)
 
     seed = subparsers.add_parser(
         "seed-packages", help="load the applications bundled in dist/ into the library"

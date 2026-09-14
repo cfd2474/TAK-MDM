@@ -472,7 +472,7 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
-### 🚧 W172 — An offline root, so a stolen CA is recoverable (SEC_AUDIT S-2)
+### ✅ W172 — An offline root, so a stolen CA is recoverable (SEC_AUDIT S-2)
 
 Operator, 2026-09-14: *"how do we address S2 to secure it?"* — then, given the
 options, **offline root + on-box intermediate**.
@@ -559,7 +559,41 @@ Legacy deployments are untouched: with no trust store given, the CA trusts exact
 what it signs with, which is the old behaviour exactly. **1796 tests** (13 new).
 Five mutation checks on the chain logic, all caught.
 
-**Status: chunks 2–6 to go.**
+#### ✅ Chunks 2–6 done (v1.19.0)
+
+* **`ca-issue-intermediate`** signs an issuing CA with the root, retires whatever
+  signed before, and prints the ceremony. Run end to end against a scratch PKI.
+* **Three load shapes**: legacy (root signs), split (intermediate signs, root key
+  absent), and first install (generate a root).
+* **The Caddy bundle** is now root + issuing + every retired certificate,
+  concatenated by the module. Caddy's `trust_pool file` reads a bundle, so no
+  Caddy configuration changed.
+* **[docs/CA-OFFLINE-ROOT.md](docs/CA-OFFLINE-ROOT.md)** — the ceremony, the yearly
+  renewal, what to do when the server is compromised, and what happens if the root
+  key is lost.
+
+#### ⚠️ The line that would have cost a fleet
+
+`load_or_create` used to generate a new CA whenever the key was missing — and
+after the root goes offline **that is the normal state**. The old code would have
+minted a fresh trust anchor and failed every enrolled device on its next check-in.
+It now raises `RootKeyMissing` naming both recovery routes. That mutation is the
+first of six, all caught.
+
+#### ⚠️ Not run on the box
+
+The capability ships; the ceremony is the operator's to perform. **S-2 stays
+Severe** until `ca.key` is actually gone from that server — shipping the ability to
+fix something is not fixing it.
+
+#### The guard from W165 earned its place
+
+The new CLI printed a certificate expiry with `.strftime()`, and the scan added
+for the timezone work failed the build over it. Marked `utc-by-design` with a
+reason: a certificate's validity is a UTC instant by definition, and the CLI has
+no session to read a display zone from.
+
+**1808 tests.** Eleven mutation checks across the two chunks, all caught.
 
 
 ### ✅ W171 — SEC_AUDIT H-1: notice when the access control goes (v1.17.1)

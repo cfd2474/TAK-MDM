@@ -30,6 +30,7 @@ just created. A device that asks to be called something else is simply ignored.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +41,8 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 from app.security import keyfiles
 from typing import Sequence
+
+logger = logging.getLogger(__name__)
 
 
 class CertificateError(ValueError):
@@ -69,6 +72,135 @@ class IssuedCertificate:
 
     def to_pem(self) -> str:
         return self.certificate.public_bytes(serialization.Encoding.PEM).decode()
+
+
+def issue_intermediate(
+    pki_dir: Path, *, common_name: str, validity_days: int
+) -> x509.Certificate:
+    """Sign a new issuing CA with the root, and retire whatever signed before.
+
+    Requires the **root key**, which is the point: this is the one operation that
+    needs it, so it is the one moment the root has to be present. Everything else
+    ATLAS does runs on the intermediate.
+
+    ⚠️ **The previous intermediate is retired, not deleted.** Every certificate it
+    signed stays valid until it expires, and those devices authenticate by chaining
+    through it. Removing its certificate would lock out the whole fleet the moment
+    the new intermediate took over.
+    """
+    root_cert_path = pki_dir / ROOT_CERT
+    root_key_path = pki_dir / ROOT_KEY
+    if not root_cert_path.exists():
+        raise CertificateError(f"{root_cert_path} does not exist; there is no root to sign with")
+    if not root_key_path.exists():
+        raise CertificateError(
+            f"{root_key_path} is not present. Issuing an intermediate is the one "
+            f"operation that needs the root key — bring it back to this machine "
+            f"for the length of this command, then remove it again."
+        )
+
+    root = x509.load_pem_x509_certificate(root_cert_path.read_bytes())
+    root_key = serialization.load_pem_private_key(root_key_path.read_bytes(), password=None)
+
+    issuing_cert_path = pki_dir / ISSUING_CERT
+    issuing_key_path = pki_dir / ISSUING_KEY
+
+    if issuing_cert_path.exists():
+        previous = x509.load_pem_x509_certificate(issuing_cert_path.read_bytes())
+        retired_dir = keyfiles.secure_dir(pki_dir / RETIRED_DIR)
+        (retired_dir / f"{previous.serial_number:x}.crt").write_bytes(
+            previous.public_bytes(serialization.Encoding.PEM)
+        )
+        issuing_cert_path.unlink()
+        issuing_key_path.unlink(missing_ok=True)
+
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    now = _utcnow()
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)]))
+        .issuer_name(root.subject)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - dt.timedelta(minutes=5))
+        .not_valid_after(now + dt.timedelta(days=validity_days))
+        # ⚠️ `path_length=0`: this CA may sign devices and may not sign another
+        # CA. Without it, a stolen intermediate could mint its own intermediates
+        # and the bound this whole exercise buys would be gone.
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                key_cert_sign=True,
+                crl_sign=True,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .sign(root_key, hashes.SHA256())
+    )
+
+    issuing_cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    keyfiles.write_private(
+        issuing_key_path,
+        private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ),
+    )
+    return certificate
+
+
+def _retired_certificates(pki_dir: Path) -> list[x509.Certificate]:
+    """Intermediates that no longer sign but whose devices are still out there.
+
+    Unreadable files are skipped rather than fatal: one corrupt retired
+    certificate must not stop the server, because the devices it can still
+    authenticate are the ones that need it most.
+    """
+    retired = []
+    directory = pki_dir / RETIRED_DIR
+    if not directory.is_dir():
+        return retired
+    for path in sorted(directory.glob("*.crt")):
+        try:
+            retired.append(x509.load_pem_x509_certificate(path.read_bytes()))
+        except Exception:
+            logger.warning("ignoring unreadable retired certificate %s", path)
+    return retired
+
+
+#: Where the pieces live under ``pki/``.
+#:
+#: ⚠️ `ca.crt` stays the root and the trust anchor **for ever**, through every
+#: intermediate rotation. Devices' certificates chain to it, so replacing it is
+#: the one change that costs a fleet-wide re-enrolment.
+ROOT_CERT = "ca.crt"
+ROOT_KEY = "ca.key"
+
+#: The intermediate that signs day to day, and its key. Absent on a deployment
+#: that has not split yet.
+ISSUING_CERT = "issuing.crt"
+ISSUING_KEY = "issuing.key"
+
+#: Intermediates that no longer sign but whose certificates are still out there.
+RETIRED_DIR = "retired"
+
+
+class RootKeyMissing(CertificateError):
+    """`ca.crt` exists, but nothing here can sign.
+
+    ⚠️ Its own class because the *only* safe response is to stop. Generating a
+    fresh CA at this point — which is what `load_or_create` did before W172 — mints
+    a new trust anchor and every enrolled device fails authentication on its next
+    check-in, with no way back except re-enrolling the fleet by hand.
+    """
 
 
 #: How many certificates a chain may contain before we stop walking.
@@ -159,13 +291,52 @@ class CertificateAuthority:
     def load_or_create(
         cls, pki_dir: Path, *, common_name: str, validity_days: int
     ) -> CertificateAuthority:
-        cert_path = pki_dir / "ca.crt"
-        key_path = pki_dir / "ca.key"
+        """Load this deployment's CA, or create a root on a brand-new install.
 
-        if cert_path.exists() and key_path.exists():
-            certificate = x509.load_pem_x509_certificate(cert_path.read_bytes())
-            private_key = serialization.load_pem_private_key(key_path.read_bytes(), password=None)
-            return cls(certificate, private_key)
+        Three shapes, and the third is the one W172 exists for:
+
+        * **Legacy** — `ca.crt` + `ca.key`, the root signs directly.
+        * **Split** — `ca.crt` (anchor only) + `issuing.crt`/`issuing.key`. The
+          root's private key is not on this machine.
+        * **Neither** — nothing at all: a first install, so a root is generated.
+
+        ⚠️ **`ca.crt` present with no usable key raises rather than creating
+        one.** Before W172 this path generated a fresh CA, which on a split
+        deployment is precisely the normal state — so the safety change and the
+        feature are the same change.
+        """
+        cert_path = pki_dir / ROOT_CERT
+        key_path = pki_dir / ROOT_KEY
+        issuing_cert_path = pki_dir / ISSUING_CERT
+        issuing_key_path = pki_dir / ISSUING_KEY
+
+        if cert_path.exists():
+            root = x509.load_pem_x509_certificate(cert_path.read_bytes())
+            trusted = [root, *_retired_certificates(pki_dir)]
+
+            if issuing_cert_path.exists() and issuing_key_path.exists():
+                issuing = x509.load_pem_x509_certificate(issuing_cert_path.read_bytes())
+                issuing_key = serialization.load_pem_private_key(
+                    issuing_key_path.read_bytes(), password=None
+                )
+                trusted.append(issuing)
+                return cls(issuing, issuing_key, trusted=trusted)
+
+            if key_path.exists():
+                private_key = serialization.load_pem_private_key(
+                    key_path.read_bytes(), password=None
+                )
+                return cls(root, private_key, trusted=trusted)
+
+            raise RootKeyMissing(
+                f"{cert_path} exists but neither {ROOT_KEY} nor {ISSUING_KEY} is "
+                f"present, so nothing here can issue a certificate. This is what a "
+                f"deployment looks like after its root was taken offline and the "
+                f"intermediate was lost: restore {ISSUING_KEY} and {ISSUING_CERT} "
+                f"from backup, or bring the root key back long enough to run "
+                f"`python -m app.cli ca-issue-intermediate`. Refusing to generate a "
+                f"new CA — that would invalidate every enrolled device."
+            )
 
         keyfiles.secure_dir(pki_dir)
         private_key = ec.generate_private_key(ec.SECP256R1())
@@ -216,6 +387,12 @@ class CertificateAuthority:
         return cls(certificate, private_key)
 
     # -- issuance ---------------------------------------------------------- #
+
+    @property
+    def certificate(self) -> x509.Certificate:
+        """What this process signs with — the intermediate on a split deployment,
+        the root on a legacy one. Not necessarily the trust anchor (W172)."""
+        return self._certificate
 
     def certificate_pem(self) -> str:
         return self._certificate.public_bytes(serialization.Encoding.PEM).decode()
