@@ -48,7 +48,7 @@ device-level access an admin has by design.
 
 | ID | Severity | Finding |
 |---|---|---|
-| S-1 | **Severe** | Admin authentication trusts request headers with no proxy verification |
+| S-1 | High ↴ | Admin authentication trusts request headers with no proxy verification (downgraded from Severe — see the correction) |
 | S-2 | **Severe** | Five private keys sit unencrypted in one directory |
 | H-1 | High | Fleet authorization is delegated entirely to Authentik, with no check in ATLAS |
 | H-2 | High | The agent signing key is an unrecoverable single point of failure |
@@ -67,13 +67,22 @@ device-level access an admin has by design.
 | L-4 | Low | Exported agent activities have no caller check |
 | L-5 | Low | Enrollment token hashes are unsalted |
 
-**18 findings: 2 severe, 3 high, 8 medium, 5 low.**
+**18 findings: 1 severe, 4 high, 8 medium, 5 low.**
+
+⚠️ **S-1 was downgraded from Severe to High on 2026-09-14** after the deployment
+was measured rather than assumed. The correction is kept in place rather than
+edited away.
 
 ---
 
 ## Severe
 
 ### S-1 — Admin authentication trusts request headers with no proxy verification
+
+> ⚠️ **Rated High, not Severe.** Kept under this heading, and keeping its `S-1`
+> identifier, so the downgrade is visible rather than tidied away — the original
+> rating rested on an assumption about container networking that measurement
+> disproved. The correction is inside the finding.
 
 **Where:** [app/security/admin_auth.py:95–134](app/security/admin_auth.py#L95-L134)
 
@@ -98,30 +107,80 @@ Anyone able to make an HTTP request directly to the application port is a full
 administrator by sending two headers. There is no audit distinction between that
 and a genuine sign-in.
 
-**Why this is Severe rather than theoretical.** The only control is network
-placement, and it is a single line in a compose override
-(`127.0.0.1:{app_port}:8000`). The failure modes are ordinary:
+⚠️ **Corrected 2026-09-14, after verifying the deployment.** The first version
+of this finding claimed that any other container on the box could reach the
+application, and that an SSRF in a co-located service became ATLAS administrator.
+**Both were wrong**, and the correction is recorded rather than quietly edited
+because a severity inflated by an unchecked assumption is its own kind of defect.
 
-- A compose override, debug session, or port-forward that publishes the port.
-- Any other container on the host reaching the app over Docker's network — the
-  InfraTAK box runs Authentik, CloudTAK, TAK Portal, netbird and more alongside
-  ATLAS, and `docker-compose.yml` declares no `networks:` block, so containers
-  share the default project network.
-- **An SSRF in any other service on that host** becomes ATLAS administrator.
-- Caddy misconfigured, replaced, or bypassed.
+What was actually measured on the dev host:
 
-`R7` in `PROJECT_STATE.md` records this for the *device* API and notes "the app
-does not refuse to start when no trusted proxy is configured." The same hole
-exists on the **admin** surface and is not recorded there.
+| Claim | Reality |
+|---|---|
+| Containers share a network with ATLAS | `takmdm-api-1` is on `takmdm_default` with **only** `takmdm-db-1`. No other stack is attached. |
+| Other containers can reach the port | The port is published `127.0.0.1:8760`, not `0.0.0.0`. A container's own loopback is not the host's, and the bind excludes the docker gateway. |
+| Caddy is a container | Caddy runs **on the host**, reaching `127.0.0.1:8760` directly. |
 
-**Recommendation.** Defence in depth, cheapest first:
+**What remains true, and why this is still a finding.** Everything that can open
+a socket to the host's loopback is a full administrator by sending two headers:
 
-1. A shared secret header minted at deploy and checked on every admin request —
-   the module already generates a DB password this way, so the plumbing exists.
-2. Refuse to start in `forward_auth` mode without a configured trusted proxy
-   identity, the way `TAKMDM_CONSOLE_ORIGIN` already warns.
-3. Bind the app to a Unix socket, or place it on a dedicated Docker network with
-   only Caddy attached.
+- Any process on the host, under any user account that can reach loopback.
+- Any container started with `--network host`.
+- Anyone with SSH access or a port-forward (`ssh -L 8760:127.0.0.1:8760` — an
+  invocation the module's own help text prints).
+- An SSRF in a **host-level** service, Caddy included.
+- A compose override, debug session, or misconfiguration that republishes the
+  port on `0.0.0.0`, which converts this into remote unauthenticated admin.
+
+There is no audit distinction between any of those and a genuine sign-in.
+
+**Downgraded from Severe to High.** The blast radius is unchanged — full
+administrative control — but reaching it requires code execution on the host or a
+configuration error, not merely a foothold in a neighbouring container.
+
+`R7` in `PROJECT_STATE.md` records the same trust assumption for the *device* API
+and notes "the app does not refuse to start when no trusted proxy is configured."
+The **admin** surface has the identical hole and is not recorded there.
+
+### ✅ InfraTAK has already solved this, for itself
+
+InfraTAK core hit this exact finding — their source labels it **"v10.1.1 S1"** —
+and fixed it with a shared secret:
+
+```caddy
+forward_auth @needs_sso 127.0.0.1:9090 { ... }
+request_header @needs_sso X-Infratak-Proxy-Auth <64-hex secret>
+reverse_proxy 127.0.0.1:5001
+```
+
+The secret is attached **after** forward_auth passes, on the same matcher, so it
+is present exactly when authentication succeeded. The console then requires it
+alongside `X-Authentik-Username`. Their comment states the intent precisely: *"a
+forged identity header alone is dead even if the client strip above ever
+regresses."*
+
+⚠️ **ATLAS's vhost already strips this header inbound** (`request_header
+-X-Infratak-Proxy-Auth`, emitted for every vhost) so a client cannot forge it —
+but the generator **sets** it only for InfraTAK's own upstream at
+`127.0.0.1:5001`. Module vhosts get the strip and not the injection, so the
+mechanism is half-present on ATLAS: protected against forgery, and carrying
+nothing to verify.
+
+**Recommendation, in order of what actually closes the gap:**
+
+1. **Have the Caddyfile generator offer the proxy-auth secret to module vhosts**,
+   and verify it in ATLAS alongside the identity headers. This is the complete
+   fix, it is InfraTAK's own mechanism, and it is the only option that defeats a
+   host-local forgery. It needs a change upstream, because modules do not control
+   the generated vhost.
+2. **Refuse to start in `forward_auth` mode without a trusted-proxy
+   configuration**, matching the existing `TAKMDM_CONSOLE_ORIGIN` warning.
+   ATLAS-side, ships immediately.
+3. **Reject requests whose client address is not the expected proxy source.**
+   ATLAS-side. Closes the accidental-exposure case (port republished on
+   `0.0.0.0`, reached from the LAN) but **not** host-local forgery — Caddy and any
+   other host process arrive from the same address, so the check cannot separate
+   them. Worth having for the most likely failure, not mistaken for a solution.
 
 ---
 
