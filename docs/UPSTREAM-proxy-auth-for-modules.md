@@ -5,6 +5,34 @@
 
 ---
 
+## ⚠️ How to send this: email, not a GitHub issue
+
+`CONTRIBUTING.md` in `takwerx/infra-TAK` says, under **Reporting a security
+issue**:
+
+> Do not open a public issue. Email the maintainers, and give us a reasonable
+> window to ship a fix before disclosure. infra-TAK runs CJIS-class deployments —
+> responsible disclosure protects real agencies.
+
+| | |
+|---|---|
+| **Send to** | `takwerx@gmail.com` — the commit-author address on every recent commit to `takwerx/infra-TAK`, matching *Andreas Johansson (TAKWERX)* in their licence headers |
+| **Subject** | `Security: module vhosts do not receive X-Infratak-Proxy-Auth` |
+| **Not** a GitHub issue | Their policy forbids it for anything security-shaped, and this is security-shaped even though it is a hardening gap rather than a remote vulnerability |
+| **Not** the fork's issues | `cfd2474/infra-TAK` has issues **disabled** |
+
+⚠️ **Judgement call, stated so it can be overridden.** This is arguably a
+hardening request rather than a vulnerability: exploitation needs code execution
+on the host, their own console is already protected, and the gap is visible in
+their public source. A public issue would probably be accepted. Email is still
+the right call — their policy draws the line, it costs nothing, and they can
+always say "just open an issue".
+
+**If it becomes a pull request** rather than a report: their CLA requires a
+`Signed-off-by:` line (`git commit -s`), and new files need the AGPL SPDX header.
+
+---
+
 ## The ask, in one line
 
 The Caddyfile generator injects `X-Infratak-Proxy-Auth` for the console's own
@@ -118,6 +146,15 @@ disproved that. The corrected finding stands at **High**: full administrative
 control, reachable by anything with code execution on the host or by a
 configuration error that republishes the port.
 
-No response needed on any timeline; ATLAS is not blocked. Raising it because the
-mechanism already exists, the gap is one conditional in the generator, and every
-module behind forward auth has the same hole.
+ATLAS is not blocked — it has shipped what it can from its own side — so take
+whatever window you need before this is discussed publicly. Raising it because
+the mechanism already exists, the gap is one conditional in the generator, and
+every module behind forward auth has the same hole.
+
+It also lines up with your own ground rule in `CONTRIBUTING.md`:
+
+> **No hardcoded secrets, and no new unauthenticated surface.**
+
+A module vhost that forwards `X-Authentik-*` with nothing to authenticate the
+forwarder is, in effect, that surface — reachable by anything on the host that
+can open a socket to the module's port.
