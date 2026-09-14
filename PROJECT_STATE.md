@@ -449,6 +449,72 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W169 — SEC_AUDIT S-1, as far as ATLAS can take it (v1.16.0)
+
+Operator, 2026-09-14: *"lets start with S-1. can we make it so it is only
+accessible by authentik via infratak? does that solve the vulnerability?"* — then,
+given the three options, *"Do C"*: ship the ATLAS-side control and raise the real
+fix upstream.
+
+#### The answer to the question was no, and the measurement said why
+
+It is **already** only accessible via Caddy: port bound `127.0.0.1:8760`, Caddy on
+the host, `takmdm_default` holding only `takmdm-api-1` and `takmdm-db-1`. That is
+exactly why network placement does not solve it — the control lives outside the
+application, and the application fails **open** when it is wrong.
+
+#### What shipped
+
+* **`TAKMDM_TRUSTED_PROXIES`** bounds the peer addresses the admin surface answers.
+  Checked **before** the identity headers are read, so a refused caller is never
+  authenticated — a 403 that has already trusted a forged username is a 403 with
+  the damage done.
+* **`--no-proxy-headers` in the image.** ⚠️ Load-bearing: uvicorn otherwise
+  rewrites the ASGI `client` from `X-Forwarded-For`, which would let a forged
+  header choose the address the check is made against. The control would have been
+  bypassable by the exact class of header it exists to defend against.
+* **The module writes the value** — the bridge subnet, detected from
+  `docker network inspect` at deploy, falling back to the whole RFC1918 space
+  rather than to nothing. A wrong guess locks an operator out of their own
+  console; a broad value still refuses a public address.
+* **Update backfills it.** ⚠️ `_run_update` does not rewrite `.env`, so a box
+  installed before this existed would never acquire the setting.
+
+#### ⚠️ Unset means not enforced, and that is deliberate
+
+Failing closed on a missing value would brick every existing deployment on the
+next routine update, for the reason above. It warns at startup instead. **A
+control that can lock an operator out of the console it protects is not a control,
+it is an outage.**
+
+#### ⚠️ What it does not do
+
+Caddy runs on the host and arrives as the bridge gateway — and so does every other
+host process. The peer address cannot separate them. This closes accidental
+exposure (the port republished on `0.0.0.0`) and leaves host-local forgery exactly
+where it was. **S-1 stays open in SEC_AUDIT.md**, marked partially mitigated.
+
+#### The real fix is upstream, and infra-TAK already built it
+
+Their generator injects `X-Infratak-Proxy-Auth` after forward_auth passes and the
+console verifies it — their source labels the change `v10.1.1 S1`. Module vhosts
+get the **strip** (so the header cannot be forged) and not the **injection**, so
+the mechanism is half-present on ATLAS. Drafted as
+[docs/UPSTREAM-proxy-auth-for-modules.md](docs/UPSTREAM-proxy-auth-for-modules.md)
+for the operator to file.
+
+#### Mutation checks
+
+Six, on the control and on the image. Two were **not caught** on the first run:
+one was an equivalent mutation (a redundant guard, now documented as redundant
+rather than removed), and one was a real test gap — asserting `--no-proxy-headers`
+appeared *anywhere* in the Dockerfile passed happily when it was deleted from the
+command and left in the comment explaining it. The same prose-versus-code mistake
+as the W165 scans, caught here by the mutation run rather than by an operator.
+
+**1773 server tests.**
+
+
 ### ✅ W168 — Security audit (v1.15.1)
 
 Operator, 2026-09-14: *"perform a security audit of this project. publish the

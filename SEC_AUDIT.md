@@ -166,6 +166,32 @@ but the generator **sets** it only for InfraTAK's own upstream at
 mechanism is half-present on ATLAS: protected against forgery, and carrying
 nothing to verify.
 
+### ⚠️ Status: partially mitigated in v1.16.0 — the finding stays open
+
+**What shipped (option 3 below):** `TAKMDM_TRUSTED_PROXIES` bounds which peer
+addresses the administrative surface answers. The check runs **before** the
+identity headers are read, so a refused caller is never authenticated. The
+InfraTAK module writes the value — the Docker bridge subnet, detected at deploy —
+and backfills it on update, because the update path does not rewrite `.env`.
+`--no-proxy-headers` is now explicit in the image so uvicorn cannot rewrite the
+peer from `X-Forwarded-For`, which would have made the control bypassable by the
+very class of header it defends against.
+
+**What it does not do, and this is the point:** Caddy runs on the host and
+reaches the container through the bridge gateway — *and so does every other
+process on that host*. The peer address cannot separate them. This closes the
+accidental-exposure case and leaves host-local forgery exactly where it was.
+
+**Unset still means not enforced**, deliberately. Failing closed on a missing
+value would brick every existing deployment on the next routine update, since
+`_run_update` never rewrites `.env`. It warns at startup instead, and the module
+supplies the value. A control that can lock an operator out of the console it
+protects is not a control, it is an outage.
+
+**Option 1 is the fix, and it is upstream.** Until the Caddyfile generator offers
+the proxy-auth secret to module vhosts, ATLAS cannot tell Caddy from anything else
+on the host, and no amount of ATLAS-side code changes that.
+
 **Recommendation, in order of what actually closes the gap:**
 
 1. **Have the Caddyfile generator offer the proxy-auth secret to module vhosts**,

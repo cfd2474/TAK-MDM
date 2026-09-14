@@ -120,6 +120,24 @@ class Settings(BaseSettings):
     # disables the origin check; the CSRF token still applies.
     console_origin: str = ""
 
+    #: Addresses the administrative surface may be reached from.
+    #:
+    #: Comma-separated IPs or CIDRs, matched against the connecting peer. Empty
+    #: means **not enforced** and is warned about at startup; the literal `any`
+    #: means deliberately not enforced and is warned about more quietly.
+    #:
+    #: ⚠️ **Empty cannot mean "refuse to start", however much it should.** The
+    #: InfraTAK module rewrites `.env` on deploy but *not* on update, so a release
+    #: that refused to boot without this would brick every existing box on the
+    #: next routine update — a far worse outcome than the gap it closes. It warns
+    #: instead, and the module writes the value.
+    #:
+    #: ⚠️ This is a **network** control and cannot tell Caddy from anything else
+    #: on the same host: both arrive from the bridge gateway. It closes the
+    #: accidental-exposure case (the port republished on 0.0.0.0 and reached from
+    #: elsewhere), not host-local forgery. See SEC_AUDIT.md S-1.
+    trusted_proxies: str = ""
+
     # --- Enrollment ----------------------------------------------------------
     enrollment_token_ttl_hours: int = 168  # 7 days
 

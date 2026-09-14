@@ -55,4 +55,9 @@ ENV TAKMDM_PKI_DIR=/pki
 EXPOSE 8000
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# ⚠️ `--no-proxy-headers` is load-bearing, not tidiness. uvicorn otherwise
+# rewrites the ASGI `client` from `X-Forwarded-For`, which would let a forged
+# header choose the address that `TAKMDM_TRUSTED_PROXIES` is checked against —
+# defeating the control with exactly the class of header it exists to defend
+# against. Nothing in this application reads a forwarded address.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]

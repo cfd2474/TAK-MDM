@@ -35,6 +35,7 @@ device-facing port keeps mTLS with no Authentik in the path.
 from __future__ import annotations
 
 import enum
+import ipaddress
 import logging
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -92,12 +93,91 @@ def _split_groups(raw: str | None) -> tuple[str, ...]:
     return tuple(part.strip() for part in raw.split(separator) if part.strip())
 
 
+#: The literal that means "I have decided not to enforce this".
+ANY = "any"
+
+
+def _trusted_networks(raw: str) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    """Parse the configured peers. Unparseable entries are dropped, loudly.
+
+    ⚠️ A typo must not silently widen the control to nothing, nor narrow it to
+    everything. Dropping the bad entry keeps the good ones enforcing, and the
+    warning names the entry — the alternative is an operator who believes a
+    restriction is in force because they wrote it down.
+    """
+    networks = []
+    for entry in (part.strip() for part in raw.split(",")):
+        if not entry or entry.lower() == ANY:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            logger.warning(
+                "TAKMDM_TRUSTED_PROXIES entry %r is not an IP or CIDR; ignoring it",
+                entry,
+            )
+    return tuple(networks)
+
+
+def _peer_is_trusted(request: Request, settings: Settings) -> bool:
+    """Did this request arrive from somewhere the admin surface is served to?
+
+    ⚠️ **`request.client` must be the real peer**, and uvicorn will overwrite it
+    from `X-Forwarded-For` when proxy headers are trusted. That would make this
+    check bypassable by exactly the class of forged header it exists to defend
+    against, so the image runs uvicorn with `--no-proxy-headers` and nothing here
+    reads a forwarded address.
+    """
+    raw = (settings.trusted_proxies or "").strip()
+    if not raw or raw.lower() == ANY:
+        return True
+
+    networks = _trusted_networks(raw)
+    if not networks:
+        # Every entry was unparseable. Enforcing nothing is the honest outcome —
+        # the warnings above already said so — because the alternative is locking
+        # an operator out of the console over a typo.
+        return True
+
+    client = request.client
+    if client is None or not client.host:
+        # No peer address at all. ASGI permits it; a real TCP connection always
+        # has one, so this is a test client or an unusual transport.
+        return True
+
+    try:
+        peer = ipaddress.ip_address(client.host)
+    except ValueError:
+        logger.warning("could not read the peer address %r; refusing", client.host)
+        return False
+
+    return any(peer in network for network in networks)
+
+
 def identify(request: Request, settings: Settings) -> AdminIdentity:
     """Resolve the caller, or raise 401/403. Never returns an unauthorized user."""
     mode = AuthMode(settings.admin_auth_mode)
 
     if mode is AuthMode.DISABLED:
         return ANONYMOUS
+
+    if not _peer_is_trusted(request, settings):
+        # ⚠️ Logged at ERROR with both halves of the comparison, because the
+        # recovery for a misconfiguration is to read this line: it names what
+        # arrived and what was allowed. Without that an operator locked out of
+        # the console has a 403 and nothing to act on.
+        peer = request.client.host if request.client else "unknown"
+        logger.error(
+            "admin request from %s refused: not within TAKMDM_TRUSTED_PROXIES (%s). "
+            "If this is the proxy, correct the setting; to disable the check set "
+            "it to 'any'.",
+            peer,
+            settings.trusted_proxies,
+        )
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "the administrative interface is not served to this address",
+        )
 
     username = request.headers.get(settings.admin_user_header)
     if not username:
@@ -273,6 +353,23 @@ def warn_if_unprotected(settings: Settings) -> None:
             "before this is reachable by anyone else."
         )
         return
+
+    trusted = (settings.trusted_proxies or "").strip()
+    if not trusted:
+        # ⚠️ Same reasoning as the origin warning below, and the same reason it is
+        # not a refusal to start: the module rewrites `.env` on deploy but not on
+        # update, so failing closed here would take an existing deployment down on
+        # a routine update.
+        logger.warning(
+            "TAKMDM_TRUSTED_PROXIES is not set. The administrative interface will "
+            "accept an identity header from any address that can reach this port, "
+            "so its only protection is where the port is published. Set it to the "
+            "proxy's address, e.g. 172.24.0.1 or 172.24.0.0/16."
+        )
+    elif trusted.lower() == ANY:
+        logger.warning(
+            "TAKMDM_TRUSTED_PROXIES is 'any' — the peer check is deliberately off."
+        )
 
     if not settings.console_origin:
         # The token covers form submissions, which is the classic attack. What it
