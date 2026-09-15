@@ -51,9 +51,8 @@
           Signing with <span class="mono">{{ ca.issuing_name }}</span>,
           {% if ca.is_split %}
             an intermediate ({{ ca.trust_anchors }} trust anchors).
-            The root is not on this server.
           {% else %}
-            the root itself. See <code>docs/CA-OFFLINE-ROOT.md</code> to move it off.
+            the root itself.
           {% endif %}
           Expires {{ ca.issuing_expires | localtime('%Y-%m-%d') }}
           ({{ ca.issuing_days_left }} days).
@@ -66,8 +65,35 @@
           </p>
         {% endif %}
       {% endif %}
+      {#
+        ⚠️ Read from the key file, never from `is_split`. Issuing an intermediate
+        and deleting `ca.key` are two separate steps, and an operator who does the
+        first and stops has changed nothing about their exposure — the ten-year
+        root is still on an internet-facing box. This panel used to infer it from
+        the chain shape and told exactly that operator the root was gone
+        (SEC_AUDIT.md S-2).
+      #}
+      {% if ca.root_key_on_server %}
+        <p class="banner bad">
+          <strong>The root private key is on this server</strong>, at
+          <code>pki/ca.key</code>. Anyone who reaches this machine can mint a
+          certificate for any device, for the life of the root, and the only
+          remedy is re-enrolling every tablet by hand.
+          {% if ca.is_split %}
+            An intermediate has been issued, which is the first half of the fix
+            &mdash; <strong>the root key still has to be moved off and deleted</strong>.
+          {% endif %}
+          It takes about fifteen minutes and no device is touched:
+          see <code>docs/CA-OFFLINE-ROOT.md</code>.
+        </p>
+      {% else %}
+        <p class="muted" style="font-size:12px">
+          The root private key is not on this server. Device certificates are
+          signed by the intermediate above; reissuing it needs the root fetched
+          from wherever you put it.
+        </p>
+      {% endif %}
       <p class="muted" style="font-size:12px">
-        The CA private key lives at <code>pki/ca.key</code> on the server (R8).
         Enrollment tokens are managed on the <a href="/enrollment">Enroll</a> page.
       </p>
     </div>

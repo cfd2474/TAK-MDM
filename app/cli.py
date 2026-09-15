@@ -43,6 +43,7 @@ from app.security.ca import (
     CertificateError,
     issue_intermediate,
 )
+from app.security import ca as ca_module
 from app.security import keyfiles
 
 
@@ -126,7 +127,7 @@ def ca_status(args: argparse.Namespace) -> int:
         # ⚠️ The single most important field. `false` is the goal state, and an
         # operator who has run the ceremony but left the key behind has changed
         # nothing about their exposure (SEC_AUDIT S-2).
-        "root_key_on_server": (pki_dir / "ca.key").exists(),
+        "root_key_on_server": ca_module.root_key_on_server(pki_dir),
         "ok": False,
     }
 

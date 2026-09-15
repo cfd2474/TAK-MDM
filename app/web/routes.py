@@ -80,6 +80,7 @@ from app.api.deps import (
     get_storage,
     get_token_vault,
 )
+from app.security import ca as ca_module
 from app.security.ca import CertificateAuthority
 from app.security import admin_auth, csrf
 from app.security.admin_auth import AdminIdentity, admin_required
@@ -4391,10 +4392,18 @@ def get_ca_for_console() -> CertificateAuthority | None:
         return None
 
 
-def _issuing_ca_panel(ca: "CertificateAuthority | None") -> dict:
-    """What is signing device certificates, and how long it has left."""
+def _issuing_ca_panel(ca: "CertificateAuthority | None", pki_dir) -> dict:
+    """What is signing device certificates, how long it has left, and — the
+    question S-2 actually turns on — whether the root key is still here.
+
+    ⚠️ `root_key_on_server` is read from the **file**, never inferred from
+    `is_split`. The two come apart in the one state that matters: an operator who
+    issued the intermediate and did not delete `ca.key` has a split chain and a
+    ten-year root still sitting on the box.
+    """
+    root_present = ca_module.root_key_on_server(pki_dir)
     if ca is None:
-        return {"issuing_known": False}
+        return {"issuing_known": False, "root_key_on_server": root_present}
 
     certificate = ca.certificate
     expires = certificate.not_valid_after_utc
@@ -4410,6 +4419,7 @@ def _issuing_ca_panel(ca: "CertificateAuthority | None") -> dict:
         "issuing_warn": days_left < 180,
         "is_split": len(anchors) > 1,
         "trust_anchors": len(anchors),
+        "root_key_on_server": root_present,
     }
 
 
@@ -4456,7 +4466,7 @@ def admin_page(
             # configuration. An operator needs to see the *issuer's* expiry: when
             # it passes, every device it signed stops authenticating, and the
             # configured numbers say nothing about it (W174).
-            **_issuing_ca_panel(get_ca_for_console()),
+            **_issuing_ca_panel(get_ca_for_console(), settings.pki_dir),
         },
         setting_groups=groups,
         env_settings=env_settings,

@@ -40,6 +40,7 @@ from app.security.ca import (
     RootKeyMissing,
     issue_intermediate,
 )
+from tests.conftest import ADMIN_HEADERS
 
 
 def _root(pki):
@@ -503,3 +504,129 @@ def test_ca_status_warns_months_before_expiry(cli_pki, capsys):
     report = json.loads(capsys.readouterr().out)
 
     assert report["needs_attention"] is True
+
+
+# --------------------------------------------------------------------------- #
+# What the console claims about the root key (W185)
+#
+# ⚠️ The panel used to decide whether to print "The root is not on this server"
+# from `is_split` — whether more than one trust anchor exists. The ceremony has
+# two halves, and an operator who issues the intermediate and forgets to delete
+# `ca.key` has a split chain and a ten-year root still on an internet-facing box.
+# The console told exactly that operator the root was gone.
+# --------------------------------------------------------------------------- #
+
+
+def test_root_key_on_server_reads_the_file(tmp_path):
+    from app.security import ca as ca_module
+
+    pki = tmp_path / "pki"
+    _root(pki)
+    assert ca_module.root_key_on_server(pki) is True
+
+    (pki / "ca.key").unlink()
+    assert ca_module.root_key_on_server(pki) is False
+
+
+def test_it_is_false_for_a_directory_that_does_not_exist(tmp_path):
+    """A deployment with no PKI at all has no root key on it, and asking must not
+    raise — this is read on every render of the admin page."""
+    from app.security import ca as ca_module
+
+    assert ca_module.root_key_on_server(tmp_path / "nothing-here") is False
+
+
+def test_the_panel_reports_the_key_file_and_not_the_chain_shape(tmp_path):
+    """⚠️ The regression. A split chain with the key still present is the one
+    state where the two answers differ, and it is the state an interrupted
+    ceremony leaves behind."""
+    from app.web.routes import _issuing_ca_panel
+
+    pki = tmp_path / "pki"
+    _root(pki)
+    issue_intermediate(pki, common_name="ATLAS Issuing CA", validity_days=1825)
+
+    panel = _issuing_ca_panel(_root(pki), pki)
+
+    assert panel["is_split"] is True
+    assert panel["root_key_on_server"] is True, (
+        "a split chain does not mean the root key has gone; the ceremony's "
+        "second half is deleting it"
+    )
+
+
+def test_the_panel_says_the_root_is_gone_only_once_it_is(tmp_path):
+    from app.web.routes import _issuing_ca_panel
+
+    pki = tmp_path / "pki"
+    _root(pki)
+    issue_intermediate(pki, common_name="ATLAS Issuing CA", validity_days=1825)
+    (pki / "ca.key").unlink()
+
+    panel = _issuing_ca_panel(_root(pki), pki)
+
+    assert panel["is_split"] is True
+    assert panel["root_key_on_server"] is False
+
+
+def test_the_panel_answers_even_with_no_certificate_authority(tmp_path):
+    """⚠️ The broken deployment is exactly when somebody opens this page.
+
+    A half-finished ceremony can leave nothing loadable, and the root-key
+    question still has an answer worth showing.
+    """
+    from app.web.routes import _issuing_ca_panel
+
+    pki = tmp_path / "pki"
+    _root(pki)
+
+    panel = _issuing_ca_panel(None, pki)
+
+    assert panel["issuing_known"] is False
+    assert panel["root_key_on_server"] is True
+
+
+@pytest.fixture
+def console_pki(tmp_path, settings):
+    """Point the *console's* view at a scratch PKI.
+
+    ⚠️ Not the real `pki/`. It is a real directory on a developer's machine, so a
+    test that read it would pass or fail depending on whether that machine had
+    ever run the ceremony.
+    """
+    pki = tmp_path / "console-pki"
+    _root(pki)
+    settings.pki_dir = pki
+    return pki
+
+
+def test_the_console_says_so_while_the_root_is_still_here(client, console_pki):
+    body = client.get("/admin", headers=ADMIN_HEADERS).text
+
+    assert "The root private key is on this server" in body
+    assert "docs/CA-OFFLINE-ROOT.md" in body
+
+
+def test_the_console_stops_saying_so_once_it_is_gone(client, console_pki):
+    (console_pki / "ca.key").unlink()
+
+    body = client.get("/admin", headers=ADMIN_HEADERS).text
+
+    assert "The root private key is on this server" not in body
+    assert "The root private key is not on this server" in body
+
+
+def test_the_console_never_claims_the_key_is_somewhere_it_is_not(
+    client, console_pki
+):
+    """⚠️ The sentence the old panel printed unconditionally.
+
+    "The CA private key lives at pki/ca.key on the server" was in the footer
+    whether or not the ceremony had been run, so the page contradicted itself in
+    both directions at once.
+    """
+    (console_pki / "ca.key").unlink()
+
+    body = client.get("/admin", headers=ADMIN_HEADERS).text
+
+    assert "lives at" not in body

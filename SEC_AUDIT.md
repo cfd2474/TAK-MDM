@@ -49,7 +49,7 @@ device-level access an admin has by design.
 | ID | Severity | Finding |
 |---|---|---|
 | S-1 | ⚠️ High, part-fixed | Admin authentication trusts request headers with no proxy verification — peer check in force; host-local forgery needs the upstream change |
-| S-2 | **Severe**, tooling ready | Five private keys sit unencrypted in one directory — offline-root capability and ceremony shipped; **the ceremony has not been run** |
+| S-2 | **Severe**, tooling ready | Six private keys sit unencrypted in one directory — offline-root capability, ceremony and console nudge shipped; **the ceremony has not been run** |
 | H-1 | ⚠️ High, detected | Fleet authorization is delegated entirely to Authentik — loss of the binding is now noticed; the delegation stands |
 | H-2 | High | The agent signing key is an unrecoverable single point of failure |
 | H-3 | ✅ Fixed | Dependencies pinned two years back, with no scanning and no CI — 24 advisories found and cleared |
@@ -287,9 +287,18 @@ intermediates, and a short-lived intermediate on the box that signs devices.
 
 | | Before | After the ceremony |
 |---|---|---|
-| What a stolen `pki/` yields | A 10-year root | An intermediate valid ~1 year |
-| How you recover | Re-enrol every device by hand | Revoke, re-issue, carry on |
-| Cost | — | One ~15-minute ceremony a year |
+| What a stolen `pki/` yields | A 10-year root | An intermediate that can be revoked |
+| How you recover | Re-enrol every device by hand | Revoke, re-issue, carry on — no tablet is touched |
+| Cost | — | One ~15-minute ceremony, then one per intermediate |
+
+⚠️ **This table said "an intermediate valid ~1 year" and "one ceremony a year".
+Both were wrong**, and wrong in the direction that discourages the single action
+that closes this finding. The shipped default is `--days 1825` — five years — and
+[docs/CA-OFFLINE-ROOT.md](docs/CA-OFFLINE-ROOT.md) argues the point this table
+missed: **revocation, not expiry, is what bounds a compromise.** Deleting a
+stolen intermediate from `pki/retired/` kills every certificate it issued
+immediately, at any interval; devices renew against the replacement on their next
+check-in. Natural expiry is only the backstop for a theft nobody noticed.
 
 ⚠️ **This does not stop an attacker on the box from issuing certificates**, and
 nothing on a single host can — the application signs unattended. What it changes is
@@ -312,6 +321,31 @@ and has not been run on the reference box** — shipping the capability is not t
 same as using it, and this finding stays Severe until the root is actually gone
 from that server.
 
+### ⚠️ v1.31.0 — the console was telling some operators the root was already gone
+
+Not a new weakness; a false statement about an existing one, and worth recording
+because it is the kind that stops a fix from being applied.
+
+`admin.html` printed *"The root is not on this server"* whenever `is_split` was
+true — whenever an intermediate existed. The ceremony has **two** halves: issue
+the intermediate, and delete `ca.key`. An operator who did the first and stopped
+had a split chain, a ten-year root still on an internet-facing box, and a console
+telling them it had gone. The CLI's own comment already named that exact state as
+"changed nothing about their exposure".
+
+The same panel also said, unconditionally, that the key *"lives at `pki/ca.key` on
+the server"* — false after a completed ceremony. It contradicted itself in both
+directions at once.
+
+Now: `ca.root_key_on_server(pki_dir)` reads the **file**, one function shared by
+the CLI and the console so they cannot answer differently; the page carries a
+banner naming the exposure and the fifteen-minute remedy while the key is present,
+including the "you are half done" case; and the reassuring sentence appears only
+once the key is actually gone.
+
+⚠️ **This does not reduce S-2.** It makes the finding visible to the person who
+can close it. Seven mutations, all caught.
+
 ### ✅ v1.22.0 — certificates now renew themselves
 
 Devices ask for a new certificate over their existing mTLS connection, before
@@ -332,6 +366,25 @@ before the fleet has updated would strand every device still on an older agent i
 **What still has to happen:** run the offline-root ceremony; shorten device
 certificates once the fleet is on agent 0.70.0 or later; and for the remaining
 keys, custody the application only *asks* of — a KMS or an HSM (`R8`).
+
+### What the aggregate argument is actually worth after the ceremony
+
+Stated because the severity should be re-derived rather than inherited. Taking
+each remaining key on its own, *without* also having the box:
+
+| Key | What theft alone buys |
+|---|---|
+| `issuing.key` | Mint device certificates until it is revoked or expires. **The real residual**, and the one the design answers. |
+| `token_vault.key` | Decrypt stored enrollment secrets. Useful away from the box; on it, the database is already readable. |
+| bundle signing key | ⚠️ Much less than it looks. The agent takes the bundle public key **from the check-in response** (`Reconciler.kt:214`), so an attacker who owns the server substitutes their own and never needs this. It defends against a compromised proxy, not a compromised server. |
+| `csrf` key | Forging a CSRF token is not authentication — an admin session is still required. |
+| `enrollment_qr` key | Forge QR payloads, which still resolve against a primary token row in the database. |
+
+So "one directory read defeats every independent control" is true **today** and
+is carried almost entirely by `ca.key`. Once the root is off the box the honest
+reading is **High**, with the residual being `issuing.key` and
+`token_vault.key` — not Severe. The severity is written down against the state
+the reference box is actually in, which is before the ceremony.
 
 **Why Severe and not accepted risk.** The existing acceptance ("acceptable on a
 single trusted host where the DB is equally exposed") holds for `ca.key` versus

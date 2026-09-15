@@ -487,6 +487,89 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W185 — SEC_AUDIT S-2: stop the console saying the root is gone when it is not (v1.31.0)
+
+S-2's fix is a ceremony only the operator can run, so the work here is the two
+things that make running it more likely — and one of them turned out to be a
+correctness bug rather than a missing nudge.
+
+1. **⚠️ The console asserts something false.** `admin.html` decides whether to
+   print *"The root is not on this server"* from `is_split` — whether more than
+   one trust anchor exists. But the ceremony has two halves: issue the
+   intermediate, **and delete `ca.key`**. An operator who does the first and
+   forgets the second gets `is_split = True` and is told the root is gone, in
+   exactly the half-finished state the CLI's own comment calls out as "changed
+   nothing about their exposure". The claim has to come from the file, not from
+   the chain shape.
+2. The footer says unconditionally that the key "lives at `pki/ca.key` on the
+   server", which is false *after* a completed ceremony. The panel contradicts
+   itself in both directions.
+3. `ca.root_key_on_server(pki_dir)` as one source of truth, used by both `cli.py`
+   (which had the check inline) and the console.
+4. **Correct the stale S-2 table in SEC_AUDIT.md.** It says the intermediate is
+   valid "~1 year" and costs "one ceremony a year". The shipped default is
+   `--days 1825`, and `docs/CA-OFFLINE-ROOT.md` argues — correctly — that
+   **revocation, not expiry**, is what bounds a compromise. ⚠️ The audit was
+   overstating the ongoing cost of the one action that closes the finding, which
+   is the worst direction for that error to run.
+5. Tests across all three states, mutation checks, then version/tag/push/pin.
+
+⚠️ **This does not reduce S-2.** Only the ceremony does. Recorded so that is not
+mistaken for progress on the finding itself.
+
+**Status: complete.** 2033 tests; seven mutations, all caught.
+
+#### What was actually wrong
+
+Not a missing nudge — a **false statement**. `is_split` answers "has an
+intermediate been issued", and the page used it to answer "has the root key
+gone". Those come apart in precisely the state an interrupted ceremony leaves
+behind, and in that state the page reassured the one operator who most needed
+telling. The footer separately claimed the key "lives at `pki/ca.key`"
+unconditionally, so the panel contradicted itself in both directions at once.
+
+`ca.root_key_on_server(pki_dir)` is now one function shared by `cli.py` and the
+console, so the two cannot answer differently.
+
+#### A severity re-derivation, written down rather than inherited
+
+The Severe rating rests on the aggregate — "one directory read defeats every
+independent control". Taking each key alone, without also having the box, that is
+carried almost entirely by `ca.key`:
+
+* ⚠️ **The bundle signing key is worth much less than the audit implies.** The
+  agent takes the bundle public key **from the check-in response**
+  (`Reconciler.kt:214`), so an attacker who owns the server substitutes their own
+  and never needs the key. It defends against a compromised proxy, not a
+  compromised server.
+* The CSRF key is not authentication; the QR key still needs a primary token row;
+  the vault key is only interesting away from the box.
+
+So after the ceremony the honest reading is **High**, residual `issuing.key` and
+`token_vault.key`. Recorded in SEC_AUDIT so the rating is re-derived rather than
+carried forward out of habit.
+
+#### ⚠️ The audit was discouraging its own fix
+
+The S-2 table said the intermediate lasts "~1 year" and costs "one ceremony a
+year". The shipped default is `--days 1825`, and `docs/CA-OFFLINE-ROOT.md` had
+already worked out that **revocation, not expiry**, is what bounds a compromise.
+An audit that overstates the ongoing cost of the one action closing a Severe
+finding is worse than one that says nothing.
+
+#### Two ambient dependencies noticed, one fixed
+
+* The new `console_pki` fixture points `settings.pki_dir` at a scratch directory.
+  ⚠️ Without it the test would read the developer's real `pki/`, and pass or fail
+  depending on whether that machine had ever run the ceremony.
+* ⚠️ **Not fixed, and recorded here instead:** `get_ca_for_console()` calls
+  `get_settings()` directly rather than through the dependency, so the console
+  panel's *issuer* fields still come from the real `pki/` during tests — and on a
+  fresh checkout `load_or_create` will create one in the repository root as a
+  side effect of rendering `/admin`. Harmless (`/pki/` is gitignored) and
+  pre-existing; the same shape as the `Secure`-cookie gap in W181.
+
+
 ### ✅ W184 — SEC_AUDIT M-8: rate limiting, keyed on something that is not the IP (v1.30.0)
 
 Nothing limits request rate anywhere. The audit is right that credential brute

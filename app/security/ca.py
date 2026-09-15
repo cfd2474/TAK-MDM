@@ -193,6 +193,22 @@ ISSUING_KEY = "issuing.key"
 RETIRED_DIR = "retired"
 
 
+def root_key_on_server(pki_dir: Path | str) -> bool:
+    """Is the root private key still on this machine? (`SEC_AUDIT.md` S-2)
+
+    ⚠️ **`False` is the goal state, and this is not the same question as "has an
+    intermediate been issued".** The ceremony has two halves — issue the
+    intermediate, and delete `ca.key` — and an operator who does the first and
+    forgets the second has changed nothing whatsoever about their exposure: the
+    ten-year root is still sitting on an internet-facing box.
+
+    Inferring it from the chain shape instead is what made the console tell that
+    operator the root was gone. One function, so the CLI and the console cannot
+    answer it differently.
+    """
+    return (Path(pki_dir) / ROOT_KEY).exists()
+
+
 class RootKeyMissing(CertificateError):
     """`ca.crt` exists, but nothing here can sign.
 
