@@ -70,6 +70,28 @@ def _enrol(authority: CertificateAuthority):
     return x509.load_pem_x509_certificate(issued.to_pem().encode())
 
 
+@pytest.fixture
+def cli_pki(tmp_path, monkeypatch):
+    """Point the CLI at a scratch PKI, and put the settings cache back afterwards.
+
+    ⚠️ `get_settings` is an `lru_cache`. Clearing it on the way in and not on the
+    way out leaves every later test holding a Settings that names a temp directory
+    pytest has since deleted — which surfaced as unrelated CSRF failures in the
+    full suite while this file passed in isolation. Teardown is the half that
+    matters.
+    """
+    from app.config import get_settings
+
+    pki = tmp_path / "pki"
+    _root(pki)
+    monkeypatch.setenv("TAKMDM_PKI_DIR", str(pki))
+    get_settings.cache_clear()
+    try:
+        yield pki
+    finally:
+        get_settings.cache_clear()
+
+
 # --------------------------------------------------------------------------- #
 # The ceremony
 # --------------------------------------------------------------------------- #
@@ -252,3 +274,68 @@ def test_the_refusal_explains_the_ceremony(tmp_path):
         issue_intermediate(pki, common_name="x", validity_days=365)
 
     assert "bring it back" in str(raised.value)
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ The intermediate's life caps every certificate it signs
+# --------------------------------------------------------------------------- #
+
+
+def test_a_short_intermediate_expires_before_the_certificates_it_issues(tmp_path):
+    """⚠️ The fact that decides the interval, measured rather than argued.
+
+    A device certificate is issued for 825 days and **nothing renews it** —
+    `sign_csr` is reachable from enrolment and nowhere else. A device
+    authenticates only while its issuer is also valid, so an intermediate shorter
+    than 825 days truncates every certificate it signs, and recovering one of
+    those tablets means a factory reset and a re-provision.
+
+    (That an expired issuer actually refuses the leaf is proven in
+    `test_ca_chain.py`; this pins the arithmetic that makes it matter.)
+    """
+    pki = tmp_path / "pki"
+    _root(pki)
+    issue_intermediate(pki, common_name="ATLAS Issuing CA", validity_days=365)
+    authority = _root(pki)
+
+    device_cert = _enrol(authority)
+
+    assert authority.certificate.not_valid_after_utc < device_cert.not_valid_after_utc, (
+        "a 365-day intermediate outliving its 825-day certificates would mean the "
+        "truncation warning is unnecessary"
+    )
+
+
+def test_the_shipped_default_strands_nobody(cli_pki, capsys):
+    """The default `--days` must exceed the device certificate validity.
+
+    Run through `main()` rather than by reading the constant, so the number an
+    operator actually gets is the one under test.
+    """
+    from app.cli import main
+
+    assert main(["ca-issue-intermediate"]) == 0
+    output = capsys.readouterr().out
+
+    assert "WARNING" not in output, output
+    certificate = x509.load_pem_x509_certificate((cli_pki / "issuing.crt").read_bytes())
+    device_cert = _enrol(_root(cli_pki))
+    assert certificate.not_valid_after_utc > device_cert.not_valid_after_utc
+
+
+def test_a_truncating_interval_is_called_out(cli_pki, capsys):
+    """⚠️ Saying it is the whole mitigation — the command still proceeds.
+
+    Refusing would be wrong: an operator who has accepted the re-enrolment, or who
+    has a renewal process this repository does not know about, is entitled to a
+    short intermediate. What they are not entitled to is finding out later.
+    """
+    from app.cli import main
+
+    assert main(["ca-issue-intermediate", "--days", "365"]) == 0
+    output = capsys.readouterr().out
+
+    assert "WARNING" in output
+    assert "460 days before" in output, output
+    assert "factory reset" in output
+    assert "--days 1190" in output, "the message must name the number that works"

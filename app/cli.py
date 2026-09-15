@@ -119,6 +119,23 @@ def ca_issue_intermediate(args: argparse.Namespace) -> int:
     settings = get_settings()
     pki_dir = Path(args.pki_dir or settings.pki_dir)
 
+    # ⚠️ A device authenticates only while its *issuer* is also valid, and
+    # nothing renews a device certificate — `sign_csr` is reachable from enrolment
+    # and nowhere else. So an intermediate shorter than the device certificate
+    # validity silently caps every certificate it issues, and recovering a
+    # truncated device means a factory reset and a re-provision.
+    device_days = settings.device_cert_validity_days
+    if args.days < device_days:
+        lost = device_days - args.days
+        print(f"WARNING: this intermediate is valid for {args.days} days, but device")
+        print(f"certificates are issued for {device_days}. Every device this signs will")
+        print(f"stop authenticating {lost} days before its own certificate expires, and")
+        print("there is no renewal — each one needs a factory reset and re-provision.")
+        print()
+        print(f"Use --days {device_days + 365} to leave a year of issuing at full device life,")
+        print("or keep this if you have accepted the re-enrolment.")
+        print()
+
     try:
         certificate = issue_intermediate(
             pki_dir,
@@ -295,10 +312,13 @@ def main(argv: list[str] | None = None) -> int:
     intermediate.add_argument("--pki-dir", default=None)
     intermediate.add_argument("--common-name", default=None)
     intermediate.add_argument(
-        "--days", type=int, default=365,
-        help="how long the intermediate is valid. Shorter bounds a compromise "
-             "more tightly and costs a ceremony more often; 365 is the balance "
-             "for a deployment with one operator.",
+        "--days", type=int, default=1190,
+        help="how long the intermediate is valid. ⚠️ A device authenticates only "
+             "while its issuer is also valid, and there is no certificate renewal "
+             "— so an intermediate shorter than the device certificate validity "
+             "(825 days) truncates every certificate it issues, and those devices "
+             "must be re-enrolled by hand. The default is 825 + a year of "
+             "issuing.",
     )
     intermediate.set_defaults(func=ca_issue_intermediate)
 

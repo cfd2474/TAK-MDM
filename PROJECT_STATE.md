@@ -472,6 +472,52 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W173 — The intermediate's life is a cap on every device (v1.20.0)
+
+Operator, 2026-09-14: *"can we make this a 2 year cert?"*
+
+Yes, and the question exposed something W172 shipped wrong.
+
+#### ⚠️ There is no certificate renewal, anywhere
+
+`sign_csr` is reachable from **enrolment and nowhere else** — checked across the
+server and the agent. A device is issued a certificate once, for 825 days, and
+never again.
+
+A device authenticates only while **its issuer is also valid**. So the
+intermediate's life is a hard cap on every certificate it signs, and a truncated
+device needs a factory reset and a re-provision:
+
+| `--days` | A device enrolled on day 1 gets | Loses |
+|---|---|---|
+| 365 | 365 days | 460 days |
+| 730 | 730 days | 95 days |
+| 1190 | the full 825 | nothing |
+
+#### ⚠️ The guidance shipped an hour earlier was wrong
+
+`CA-OFFLINE-ROOT.md` presented 90 days as the tightest and best option. With no
+renewal that is **re-enrolling the entire fleet four times a year**. Corrected in
+place, with the reasoning that replaces it: what bounds a compromise is
+**revocation** — deleting the stolen intermediate from `pki/retired/` — not natural
+expiry. Expiry is only the backstop for a theft nobody noticed, and it is an
+expensive backstop while nothing renews.
+
+Default moved 365 → **1190** (825 + a year of issuing), and the command now prints
+the arithmetic when a shorter interval would truncate — it still proceeds, because
+an operator who has accepted the re-enrolment is entitled to a short intermediate;
+what they are not entitled to is finding out later.
+
+#### ⚠️ My own new tests broke the suite
+
+They cleared `get_settings`'s `lru_cache` on the way in and not on the way out, so
+every later test held a Settings naming a temp directory pytest had deleted —
+surfacing as unrelated CSRF failures while the file passed in isolation. The
+teardown is the half that mattered; it is now a fixture that clears on both sides.
+
+**1811 tests.**
+
+
 ### ✅ W172 — An offline root, so a stolen CA is recoverable (SEC_AUDIT S-2)
 
 Operator, 2026-09-14: *"how do we address S2 to secure it?"* — then, given the

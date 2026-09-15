@@ -31,7 +31,7 @@ the fifteen minutes.
 
 ```bash
 cd /root/atlas
-docker compose exec -T api python -m app.cli ca-issue-intermediate --days 365
+docker compose exec -T api python -m app.cli ca-issue-intermediate
 ```
 
 This signs an issuing CA with the root and prints where it went. **Nothing on any
@@ -76,21 +76,26 @@ certificates still verify, the second proves the intermediate can issue.
 
 ## Every year: renewing the intermediate
 
-The intermediate expires. ⚠️ **When it does, devices stop authenticating** — that
-is the mechanism working, not a fault, but it is an outage if it surprises you.
-Put the expiry date in a calendar.
+The intermediate expires. ⚠️ **When it does, every device it signed stops
+authenticating** — the mechanism working, not a fault, but an outage if it
+surprises you. Put the expiry in a calendar the day you run the ceremony.
 
 ```bash
 # put ca.key back, briefly
 cd /root/atlas
-docker compose exec -T api python -m app.cli ca-issue-intermediate --days 365
+docker compose exec -T api python -m app.cli ca-issue-intermediate
 rm /root/atlas/pki/ca.key
 docker compose restart api
 ```
 
 The previous intermediate is **retired, not deleted** — moved to `pki/retired/`
-and kept in the trust store. Devices it signed keep working until their own
-certificates expire, which is what stops a renewal from locking out the fleet.
+and kept in the trust store, so the devices it signed keep working.
+
+⚠️ **They keep working until the *retired intermediate* expires, not until their
+own certificates do.** That is why the default is 1190 days and the rotation is
+yearly: each retired intermediate outlives the last certificate it issued, so the
+overlap covers the whole fleet. Rotate a short intermediate and this sentence
+stops being true — see *Deciding the interval*.
 
 ---
 
@@ -137,14 +142,39 @@ The module does this on deploy; no Caddy configuration changes.
 
 ## Deciding the interval
 
-`--days 365` is the default and the balance for a deployment with one operator.
+⚠️ **This is not simply "shorter is safer", and an earlier version of this page
+said it was.** A device authenticates only while **its issuer is also valid**, and
+**nothing renews a device certificate** — a certificate is issued at enrolment and
+never again. So the intermediate's life is a hard cap on every certificate it
+signs, and a truncated device needs a factory reset and a re-provision.
 
-| Interval | Bounded exposure | Ceremonies |
+Device certificates are **825 days**.
+
+| `--days` | A device enrolled on day 1 gets | Cost |
 |---|---|---|
-| 90 days | A theft is useful for at most a quarter | 4 a year |
-| 365 days | A theft is useful for at most a year | 1 a year |
-| 825 days | Matches a device certificate's life | Rare, and barely better than no split |
+| 90 | 90 days | Re-enrol the entire fleet **four times a year** |
+| 365 | 365 days | Re-enrol the entire fleet **every year** |
+| 825 | 825 days, but only if enrolled on day 1 | Later enrolments truncated |
+| **1190** (default) | The full 825 days, for anything enrolled in the first year | A ceremony a year, no truncation |
 
-⚠️ **Shorter is only better if you actually do it.** An expired intermediate
-nobody renewed is a fleet-wide outage, and a yearly ceremony that happens beats a
-quarterly one that is skipped.
+`1190` is 825 + 365: a year of issuing at full device life. Rotate yearly and the
+retired intermediate stays valid in the trust store until its last device ages
+out, so nothing is ever stranded.
+
+### What actually bounds a compromise
+
+**Revocation, not expiry.** Deleting a stolen intermediate's certificate from
+`pki/retired/` kills every certificate it issued, immediately — that is the
+procedure above, and it works whatever the interval is. Natural expiry is only the
+backstop for a compromise you never noticed.
+
+So the interval trades *how long an unnoticed theft keeps issuing* against *how
+often you re-enrol a fleet*. With no renewal, the second cost is brutal, and a
+short interval is the wrong answer until certificate renewal exists.
+
+### The change that would make short intervals cheap
+
+**Certificate renewal**: a device re-requests over its existing mTLS connection
+before expiry, and is re-issued by whichever intermediate is current. Rotation
+then costs nothing and 90 days becomes reasonable. Until then, prefer the long
+intermediate and rely on revocation.
