@@ -533,9 +533,50 @@ sees a key — but it puts us in every customer's trust path and gives one root 
 cross-customer blast radius, which is the mistake the agent signing key already
 makes. TAK customers are frequently the people who would refuse it outright.
 
-**Status: chunk 1 of 2 complete — the ATLAS side.** The three commands exist,
-are tested and mutation-checked. The module's card and the automatic issue at
-deploy are chunk 2.
+**Status: complete.** Chunk 1 (ATLAS CLI, v1.33.0) and chunk 2 (the module
+card and the automatic issue at deploy) are both shipped.
+
+#### What a customer now does about certificates, in total
+
+1. Deploy. The intermediate is issued automatically; they never meet the word.
+2. One banner: **Save recovery file** → download → upload it back → the root is
+   removed from the server.
+3. About twice a decade: **Renew**, which asks for the same file.
+
+That is the entire lifetime interaction. Everything else — every device
+enrolling, renewing every 90 days, and the whole fleet rolling onto a new chain
+after a rotation — happens with nobody touching anything.
+
+#### Design decisions in chunk 2 worth keeping
+
+* ⚠️ **Verify and delete are one server call.** Two endpoints would permit
+  "verified but still on the server" — the half-finished state this feature
+  exists to eliminate, and the one W185 found the console misreporting as done.
+* ⚠️ **The download is a POST with the console password.** `login_required`
+  already gates every `extra_route` (registry, `modules/__init__.py:261`), but
+  the most dangerous secret in the system should not be one URL away from an
+  open tab, and a GET lands in browser history, the access log and anything that
+  prefetches links.
+* ⚠️ **`_compose_exec` gained stdin.** The uploaded key goes straight into
+  `docker exec -i`; the alternative — temp file, then shred — would put the root
+  key on the host's filesystem, which is the exposure being removed.
+* **"Check my recovery file"** reuses the modal years later, which works only
+  because verification compares against `ca.crt` rather than `ca.key`. It sends
+  `verify_only` so the check cannot report a removal that did not happen.
+
+#### Two defects in my own first draft
+
+* A ternary whose two branches were identical — dead code wearing the costume of
+  a decision.
+* The check-only path entered at step 2 and so could never reach the password
+  field, which lived in step 1: an "Invalid admin password" error on a button
+  that had asked for nothing. Step 2 has its own field now.
+
+#### Verified on the box
+
+`GET /api/atlas/ca/recovery` → **405** (registered, POST-only),
+`/api/atlas/ca/recovery/confirm` → **405**, an unregistered path → **404**,
+unauthenticated POST → **403**. Module registry loaded with no traceback.
 
 #### What the sweep found, twice
 

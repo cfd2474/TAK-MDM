@@ -321,6 +321,36 @@ and has not been run on the reference box** — shipping the capability is not t
 same as using it, and this finding stays Severe until the root is actually gone
 from that server.
 
+### ✅ v1.33.0 — the ceremony became a product feature
+
+⚠️ **The reason this finding stayed Severe for months was not difficulty. It was
+that the fix was a manual procedure**, and manual procedures do not happen —
+least of all to customers who are not IT experts. W185 found the console telling
+the operators who half-finished it that they were done.
+
+So the procedure is gone. Deploy issues the intermediate automatically, and the
+module page shows one banner:
+
+> **Save recovery file** → download → upload it back → the root is removed
+
+The root key is presented as a *recovery file*, which is a concept non-experts
+have already met. A customer's entire lifetime interaction with the certificate
+authority is now: save a file at install, and upload it about twice a decade.
+
+The three commands behind it are `ca-export-root`, `ca-verify-root` and
+`ca-delete-root`. ⚠️ **Verify compares against `ca.crt`, never `ca.key`** — which
+is what lets one command answer both "prove you saved it" now and "does my
+recovery file still work?" in five years, and the second is the only way anyone
+discovers a lost file before the day it is needed.
+
+⚠️ **Verify and delete are one call**, so "verified but still on the server"
+cannot exist. ⚠️ **Deleting refuses unless something else can sign** — a root
+removed with no intermediate does not harden a deployment, it destroys it.
+
+**This still does not close S-2 on the reference box**, because ATLAS is not
+installed there. It closes it for every deployment made from v1.33.0 onward, at
+the cost of two clicks the customer is actually shown.
+
 ### ⚠️ v1.31.0 — the console was telling some operators the root was already gone
 
 Not a new weakness; a false statement about an existing one, and worth recording
