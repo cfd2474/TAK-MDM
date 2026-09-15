@@ -423,3 +423,83 @@ def test_an_expired_issuer_refuses_rather_than_issuing_a_useless_certificate(tmp
 
     with pytest.raises(CertificateError, match="ca-issue-intermediate"):
         _enrol(authority)
+
+
+# --------------------------------------------------------------------------- #
+# The status the module page renders (W176)
+# --------------------------------------------------------------------------- #
+
+
+def test_ca_status_reports_a_legacy_deployment(cli_pki, capsys):
+    import json
+
+    from app.cli import main
+
+    assert main(["ca-status"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    assert report["ok"] is True
+    assert report["is_split"] is False
+    assert report["root_key_on_server"] is True
+    assert report["trust_anchors"] == 1
+
+
+def test_ca_status_reports_a_split_deployment(cli_pki, capsys):
+    """⚠️ `root_key_on_server: false` is the goal state.
+
+    An operator who ran the ceremony but left the key behind has changed nothing
+    about their exposure, and this is the field that says so.
+    """
+    import json
+
+    from app.cli import main
+
+    assert main(["ca-issue-intermediate"]) == 0
+    capsys.readouterr()
+    (cli_pki / "ca.key").unlink()
+
+    assert main(["ca-status"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    assert report["is_split"] is True
+    assert report["root_key_on_server"] is False
+    assert report["trust_anchors"] == 2
+    assert report["issuing_days_left"] > 1800
+
+
+def test_ca_status_does_not_raise_on_a_broken_deployment(cli_pki, capsys):
+    """⚠️ The state it is most needed in is the broken one.
+
+    Root key removed, intermediate never issued — a status command that threw
+    here would leave an operator with a blank page instead of the sentence
+    explaining what to do.
+    """
+    import json
+
+    from app.cli import main
+
+    (cli_pki / "ca.key").unlink()
+
+    assert main(["ca-status"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    assert report["ok"] is False
+    assert report["root_certificate"] is True
+    assert report["root_key_on_server"] is False
+    assert "ca-issue-intermediate" in report["error"]
+
+
+def test_ca_status_warns_months_before_expiry(cli_pki, capsys):
+    """⚠️ 180 days, not 30. Reissuing needs the root fetched from wherever it
+    went, which is not a same-afternoon task."""
+    import json
+
+    from app.cli import main
+
+    assert main(["ca-issue-intermediate", "--days", "100"]) == 0
+    capsys.readouterr()
+
+    assert main(["ca-status"]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    assert report["needs_attention"] is True

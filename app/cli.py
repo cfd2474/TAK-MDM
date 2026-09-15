@@ -108,6 +108,64 @@ def _write_dev_server_cert(
     return cert_path, key_path
 
 
+def ca_status(args: argparse.Namespace) -> int:
+    """Report the certificate authority as JSON, for a tool to render.
+
+    ⚠️ Read-only and never raises on a half-finished ceremony. The state this is
+    most needed in is the broken one — root key removed, intermediate missing — and
+    a status command that threw there would leave an operator with a blank page
+    instead of the sentence explaining what to do.
+    """
+    import json as _json
+
+    settings = get_settings()
+    pki_dir = Path(args.pki_dir or settings.pki_dir)
+    report: dict = {
+        "pki_dir": str(pki_dir),
+        "root_certificate": (pki_dir / "ca.crt").exists(),
+        # ⚠️ The single most important field. `false` is the goal state, and an
+        # operator who has run the ceremony but left the key behind has changed
+        # nothing about their exposure (SEC_AUDIT S-2).
+        "root_key_on_server": (pki_dir / "ca.key").exists(),
+        "ok": False,
+    }
+
+    try:
+        ca = CertificateAuthority.load_or_create(
+            pki_dir,
+            common_name=settings.ca_common_name,
+            validity_days=settings.ca_validity_days,
+        )
+    except Exception as exc:
+        report["error"] = str(exc)
+        print(_json.dumps(report, indent=2))
+        return 0
+
+    certificate = ca.certificate
+    expires = certificate.not_valid_after_utc
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=dt.timezone.utc)
+    remaining = expires - dt.datetime.now(dt.timezone.utc)
+
+    report.update(
+        ok=True,
+        issuing_subject=certificate.subject.rfc4514_string(),
+        # utc-by-design: a certificate's validity is a UTC instant, and this is
+        # machine-readable output rather than a rendered page.
+        issuing_expires=expires.strftime("%Y-%m-%d"),
+        issuing_days_left=remaining.days,
+        # More than one anchor means the root has been separated from the signer.
+        trust_anchors=len(ca.trusted),
+        is_split=len(ca.trusted) > 1,
+        device_cert_validity_days=settings.device_cert_validity_days,
+        renew_within_days=settings.device_cert_renew_within_days,
+        # Months, because reissuing needs the root fetched from wherever it went.
+        needs_attention=remaining.days < 180,
+    )
+    print(_json.dumps(report, indent=2))
+    return 0
+
+
 def ca_issue_intermediate(args: argparse.Namespace) -> int:
     """Issue the intermediate that signs from now on, and say what to do next.
 
@@ -304,6 +362,12 @@ def main(argv: list[str] | None = None) -> int:
         help="reissue the dev TLS cert even if one exists (leaves the device CA alone)",
     )
     init.set_defaults(func=init_pki)
+
+    status = subparsers.add_parser(
+        "ca-status", help="report the certificate authority as JSON"
+    )
+    status.add_argument("--pki-dir", default=None)
+    status.set_defaults(func=ca_status)
 
     intermediate = subparsers.add_parser(
         "ca-issue-intermediate",

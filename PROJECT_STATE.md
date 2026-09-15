@@ -487,6 +487,63 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W176 — The renewal ceremony, on the InfraTAK module page (v1.24.0)
+
+Operator, 2026-09-14: *"I need to include a tool to help the user do the cert
+renewal. Let's have it live on the atlas module page of infraTAK, not in the atlas
+portal."*
+
+#### Why the module page is the right place
+
+The ceremony needs the **root key**, which is deliberately not in ATLAS's world at
+all — and it ends with a `docker compose restart`. Both are host operations. The
+ATLAS console could not do either without being handed privileges it exists to not
+have.
+
+#### What it is
+
+* **A Certificate authority card**: what is signing, when it expires, how many days
+  are left, whether the root is still on the server, and a banner from 180 days
+  out. Fed by a new ATLAS command, `python -m app.cli ca-status`, so the knowledge
+  stays in ATLAS and the module only renders it.
+* **A guided renewal**: paste the root key, pick a validity, confirm with the
+  console password, and the module issues the intermediate, stages the new trust
+  bundle for Caddy, reloads Caddy and restarts ATLAS.
+
+#### ⚠️ The value is the cleanup, not the convenience
+
+Pasting a key into a browser is not obviously better than `cat`-ing it over SSH —
+the exposure is comparable, and the console is already trusted with root on this
+box. What the tool actually buys is that **`ca.key` is removed in a `finally`**, on
+every path including the failures. The step an operator forgets is the deletion,
+and forgetting it means the whole exercise bought nothing.
+
+Written `0600` by `os.open` and chowned to the container uid; overwritten before
+unlink. ⚠️ **Overwriting is not secure erasure and is not claimed to be** — on a
+journaling filesystem the original blocks may survive. The honest position is that
+the root key touched the machine, which the ceremony can shorten and not avoid.
+
+#### ⚠️ Two refusals worth having
+
+* **A pasted key when one is already on the server** is refused rather than
+  overwriting. Silently replacing it would be a way to swap a running fleet's CA
+  through a web form.
+* **The console password** is required, using `modules/__init__._check_admin_password`
+  — imported, not re-implemented. Core calls it "the 12-copy pattern, one copy";
+  adding a thirteenth is how a security check drifts. It is the module package,
+  not `app.py`, so rule 10 holds.
+
+#### Small things the review caught
+
+`loadCa()` ran unguarded, so a box without ATLAS would `docker exec` a container
+that does not exist and paint an error card onto a page whose whole message is
+"not installed yet". Guarded like its neighbours. The page JS was parsed with
+`node --check` after stripping Jinja.
+
+**1836 tests**, four covering the status the page consumes — including the broken
+state, because that is the one an operator opens this page in.
+
+
 ### ✅ W175 — Renewal did not actually save the fleet (v1.23.0)
 
 Operator, 2026-09-14: *"Does the 5 year cert need to be manually reissued?"*
