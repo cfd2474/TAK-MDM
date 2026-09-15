@@ -43,6 +43,8 @@ from threading import Lock
 import httpx
 from sqlalchemy.orm import Session
 
+from app.security import outbound
+
 logger = logging.getLogger(__name__)
 
 #: OpenStreetMap's public geocoder. A default, not a recommendation — see above.
@@ -104,15 +106,28 @@ def search(session: Session, query: str, *, client: httpx.Client | None = None) 
         return cached
 
     owned = client is None
-    http = client or httpx.Client(timeout=TIMEOUT_SECONDS, follow_redirects=True)
+    # ⚠️ No `follow_redirects=True`. `outbound.fetch` follows them by hand so
+    # every hop is checked — an external geocoder redirecting into this network
+    # is the half of SEC_AUDIT M-2 that reaches past the admin who set the URL.
+    http = client or httpx.Client(timeout=TIMEOUT_SECONDS)
     try:
-        response = http.get(
+        response = outbound.fetch(
+            http,
             url,
             params={"q": query, "format": "jsonv2", "limit": MAX_RESULTS},
             headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
         )
         response.raise_for_status()
         payload = response.json()
+    except outbound.UnsafeUrl as exc:
+        # Distinguished from an unreachable geocoder on purpose: this one is
+        # fixed by editing a setting, and "could not be reached" would send an
+        # operator to check their network instead.
+        logger.warning("refusing to fetch geocoder %s: %s", url, exc)
+        raise GeocodingError(
+            f"The address lookup service is not a URL this server will fetch: {exc} "
+            f"Check Admin → Location."
+        ) from exc
     except httpx.HTTPError as exc:
         # ⚠️ Reported, never swallowed into "no results". "The geocoder is
         # unreachable" and "that address does not exist" are different answers,
@@ -247,10 +262,10 @@ def suggest(
         return cached
 
     owned = client is None
-    http = client or httpx.Client(timeout=TIMEOUT_SECONDS, follow_redirects=True)
+    http = client or httpx.Client(timeout=TIMEOUT_SECONDS)
     try:
         places = _search_photon(http, url, query, near, bbox)
-    except (httpx.HTTPError, ValueError) as exc:
+    except (httpx.HTTPError, ValueError, outbound.UnsafeUrl) as exc:
         # ⚠️ Suggestions fail *quietly*. This runs on almost every keystroke, and
         # an error banner per character would bury the form in complaints about a
         # convenience. The Find button still reports failures loudly, which is
@@ -345,7 +360,9 @@ def _ask_photon(
         # Photon wants minLon,minLat,maxLon,maxLat.
         params["bbox"] = ",".join(f"{value:.5f}" for value in bbox)
 
-    response = http.get(url, params=params, headers={"User-Agent": USER_AGENT})
+    response = outbound.fetch(
+        http, url, params=params, headers={"User-Agent": USER_AGENT}
+    )
     response.raise_for_status()
     return _parse_photon(response.json())
 

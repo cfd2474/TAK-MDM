@@ -55,7 +55,7 @@ device-level access an admin has by design.
 | H-3 | ✅ Fixed | Dependencies pinned two years back, with no scanning and no CI — 24 advisories found and cleared |
 | H-4 | ✅ Fixed | A device's own serial number reached a JavaScript string in the console — found while fixing M-6 |
 | M-1 | ✅ Fixed | Uploads are read whole into memory with no size limit — the cap now bites during the read, plus a body limit at Caddy |
-| M-2 | Medium | Server-side fetch of operator-supplied URLs, following redirects (SSRF) |
+| M-2 | ✅ Fixed | Server-side fetch of operator-supplied URLs, following redirects (SSRF) — validated per hop; private LAN still allowed on purpose |
 | M-3 | ✅ Fixed | Private key files are created before they are made private (TOCTOU) — closed by the S-2 key-custody work |
 | M-4 | ✅ Fixed | A fleet-takeover receiver is exported in release builds — removed from the release manifest |
 | M-5 | ✅ Fixed | Outbound credentials stored in plaintext in the database — sealed in the token vault |
@@ -635,7 +635,16 @@ response = http.get(url, params={...})
 `endpoint()` returns the stored setting with no scheme, host, or address
 validation. The same pattern applies to `location.suggest_url`. The server will
 fetch `http://169.254.169.254/...`, `http://localhost:9000/...`, or any container
-on the Docker network, and return part of the response to the console.
+on the Docker network.
+
+⚠️ **Correction (v1.29.0): "and return part of the response to the console" was
+wrong.** `_parse` extracts only `lat`, `lon` and `display_name` from a JSON list,
+and `GeocodingError` carries a fixed string rather than the `httpx` error — so
+neither the response body nor the failure detail reaches the console. What the
+finding actually is, stated properly: a **blind** SSRF with a status-and-timing
+oracle, plus a narrow read channel for any endpoint whose JSON happens to parse
+as a place. That is still worth fixing; it is not the exfiltration primitive the
+sentence described.
 
 ⚠️ **`follow_redirects=True` widens this beyond the admin who set it.** Even a
 legitimate external geocoder — or an open redirect on one — can send the fetch to
@@ -647,6 +656,62 @@ controls, into the host's internal network.
 
 **Recommendation.** Validate the scheme, resolve the host and reject private and
 link-local ranges, and stop following redirects (or re-validate each hop).
+
+### ✅ Fixed in v1.29.0
+
+[app/security/outbound.py](app/security/outbound.py), used by both `search` and
+`_ask_photon`. `follow_redirects=True` is gone from both.
+
+⚠️ **The recommendation above is half wrong, and following it literally would
+have shipped an outage.** "Reject private ranges" would refuse
+`http://10.0.0.5:8080/search` — a self-hosted Nominatim or Photon on a private
+LAN, which is precisely what an air-gapped TAK installation runs. The
+deployments that most need this product are the ones that fix would have broken,
+and the breakage would look like "address lookup stopped working" with no
+obvious cause.
+
+So the policy has two axes, and only the second is about the attacker the
+finding names:
+
+| | Allowed | Refused |
+|---|---|---|
+| **What an admin may configure** | public, and their own LAN | loopback, link-local, multicast, unspecified — no geocoder is at any of those |
+| **Where a redirect may go** | anywhere no more internal than where the chain started | public → internal, at any hop |
+
+The second row is the part that reaches past the administrator: an external
+geocoder, or an open redirect on one, steering the fetch inward while the
+setting stays exactly as they left it. Redirects are followed by hand with a hop
+limit rather than by `follow_redirects=True`.
+
+Two details worth recording because the obvious version of each is wrong:
+
+* **`is_global`, not a hand-written list of private ranges.** CPython maintains
+  it against the IANA special-purpose registries, which is how `100.64.0.0/10`
+  — shared address space, and Alibaba's metadata range — is caught. ⚠️ Python's
+  `is_private` does **not** cover it. The one thing `is_global` gets wrong here
+  is multicast, which reports global.
+* **A host is internal if *any* of its addresses is.** A hostile resolver can
+  answer with several in any order, so judging by the first is a coin toss the
+  attacker calls.
+
+#### What this does not close
+
+⚠️ **DNS rebinding.** The host is resolved for validation and resolved again by
+`httpx` when it connects. A name that answers publicly the first time can answer
+`127.0.0.1` the second. Closing it means connecting to the validated address and
+carrying the hostname only in SNI and `Host`, which httpx does not expose without
+replacing its transport. The attacker must control DNS for a host an
+administrator typed into the settings. Recorded rather than left out of the
+claim.
+
+#### A side effect worth knowing about
+
+The guard resolves hostnames, so it made the test suite query
+`nominatim.openstreetmap.org` and `photon.komoot.io` on every run — the W101
+mistake (a test that quietly queried a third party) reappearing through a
+security fix, and a suite that would fail outright on a machine with no DNS.
+`tests/conftest.py` now replaces the resolver for every test; the whole suite
+performs no external lookups.
 
 ---
 

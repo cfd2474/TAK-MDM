@@ -487,6 +487,108 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W183 — SEC_AUDIT M-2: the geocoder is not a way into the host's network (v1.29.0)
+
+Two operator-set URLs (`location.geocoder_url`, `location.suggest_url`) are
+fetched server-side with `follow_redirects=True` and no validation of any kind.
+
+⚠️ **The obvious fix would break a real deployment.** "Reject private ranges" is
+the reflex, and a self-hosted Nominatim or Photon on a private LAN is exactly
+what an air-gapped TAK installation would run. Blocking it would turn a security
+fix into an outage for the deployments that need the product most.
+
+So the policy is two-axis rather than one:
+
+1. **What the operator may configure.** Anywhere routable or on their own LAN.
+   Never loopback, link-local (`169.254.169.254` is the cloud metadata service),
+   multicast, or unspecified — no geocoder lives at any of those.
+2. **Where a redirect may go.** ⚠️ This is the half that reaches *beyond* the
+   admin who set the URL: a public geocoder, or an open redirect on one, can send
+   the fetch inward without the setting ever changing. A hop may not move from a
+   public address to an internal one, and redirects are followed by hand with a
+   hop limit rather than by `follow_redirects=True`.
+
+Steps:
+
+1. `app/security/outbound.py` — scheme allowlist, address classification, and a
+   `fetch()` that validates every hop.
+2. Wire it into `search` and `_ask_photon`; drop `follow_redirects=True`.
+3. Tests that never touch DNS — the resolver is a patchable module attribute,
+   because a guard that quietly queries the network on every test run is the W101
+   mistake again.
+4. Mutation-check, then correct two overstatements in the finding itself: the
+   response body does **not** reach the console (only values parseable as a
+   place), and the error message shown is a fixed string, not the httpx error.
+5. Version, tag, push, module pin.
+
+**Status: complete.** 2005 tests; thirteen mutations of the guard, all caught.
+
+#### ⚠️ The audit's own recommendation would have shipped an outage
+
+It said "reject private and link-local ranges". Following that literally refuses
+`http://10.0.0.5:8080/search` — a self-hosted Nominatim or Photon on a private
+LAN, which is exactly what an air-gapped TAK installation runs. The deployments
+that most need this product are the ones that fix would have broken, and the
+symptom would have been "address lookup stopped working" with nothing to point
+at the cause.
+
+The two questions are separate and only one of them is about the attacker:
+
+| | Allowed | Refused |
+|---|---|---|
+| What an admin may configure | public, and their own LAN | loopback, link-local, multicast, unspecified |
+| Where a redirect may go | no more internal than where it started | public → internal, at any hop |
+
+⚠️ `tests/test_outbound_urls.py` guards **both** rows. The
+`a_self_hosted_geocoder_on_a_private_lan_still_works` half is as much a part of
+the fix as the refusals — without it, the next person tightening this reintroduces
+the outage and every "refused" test still passes.
+
+#### Three things measured rather than assumed
+
+* **`is_global`, not a hand-written private-range list.** ⚠️ Python's
+  `is_private` does **not** cover `100.64.0.0/10` — shared address space, and
+  Alibaba's metadata range. `is_global` does, because CPython tracks the IANA
+  registries. The one case it gets wrong is multicast, which reports global.
+* **httpx strips `Authorization` on a cross-origin redirect.** Checked in the
+  installed source (`_redirect_headers`), not recalled — it was about to be
+  written up as a token-leak finding against `tak_gov.apk_url`, and it is not one.
+* **Storefront URLs are a hardcoded `RepoSpec` list**, not operator-supplied, so
+  M-2's scope really is just the two geocoding settings.
+
+#### ⚠️ The guard made the test suite query the internet
+
+Resolving hostnames meant every geocoding test looked up
+`nominatim.openstreetmap.org` and `photon.komoot.io` — the W101 mistake (a test
+that quietly queried a third party) reappearing *through a security fix*, and a
+suite that would fail on a machine with no DNS via the `except OSError` path.
+`conftest.resolves` is autouse and replaces the resolver; the whole suite now
+performs no external lookups.
+
+#### ⚠️ Two of my own tests passed for the wrong reason
+
+`http://fc00::1/search` is not a URL. Unbracketed IPv6 makes `urlsplit` read the
+host as `fc00`, which the stub resolver answered with a public address — so an
+"IPv6 loopback is refused" test was refusing a nonexistent hostname instead.
+Bracketed now, via a helper that says why.
+
+#### ⚠️ A mutation that hung the sweep rather than failing it
+
+Removing the redirect hop limit makes `fetch` loop forever against a test server
+that always redirects, so the sweep stopped dead instead of reporting. Same
+lesson as W182's flood stream: **a regression must fail the suite, not hang it.**
+The test server now gives up after 20 hops, and the harness has a per-run
+timeout so one hang cannot take the rest of the sweep with it.
+
+#### A correction to the finding itself
+
+It claimed the server would "return part of the response to the console". It does
+not: `_parse` extracts only `lat`/`lon`/`display_name`, and `GeocodingError`
+carries a fixed string rather than the httpx error. It is a blind SSRF with a
+status-and-timing oracle plus a narrow read channel for JSON that parses as a
+place. Still worth fixing; not the exfiltration primitive it was written as.
+
+
 ### ✅ W182 — SEC_AUDIT second pass: M-1 and M-4 (v1.28.0, agent 0.70.1)
 
 The two findings the first pass deliberately left out, because each needs

@@ -106,6 +106,52 @@ def token_vault(tmp_path) -> TokenVault:
     return TokenVault.load_or_create(tmp_path / "pki")
 
 
+#: What an unregistered hostname resolves to in tests: an ordinary public
+#: address, so a URL is allowed unless a test says otherwise.
+PUBLIC_ADDRESS = "93.184.216.34"
+
+
+class StubResolver:
+    """A DNS resolver that never leaves the process.
+
+    Tests register what a name should answer with; anything unregistered is a
+    public address, because "allowed" is the uninteresting case and every test
+    that does not care about SSRF should behave as it did before the guard
+    existed.
+    """
+
+    def __init__(self) -> None:
+        self.answers: dict[str, list[str]] = {}
+        self.asked: list[str] = []
+
+    def points(self, host: str, *addresses: str) -> None:
+        self.answers[host] = list(addresses)
+
+    def __call__(self, host: str) -> list[str]:
+        self.asked.append(host)
+        return self.answers.get(host, [PUBLIC_ADDRESS])
+
+
+@pytest.fixture(autouse=True)
+def resolves(monkeypatch) -> StubResolver:
+    """⚠️ **Autouse, so no test ever performs a real DNS lookup.**
+
+    `app.security.outbound` resolves the host of every operator-supplied URL it
+    fetches (SEC_AUDIT M-2). Left alone, that made the geocoding tests query
+    `nominatim.openstreetmap.org` and `photon.komoot.io` on every run — which is
+    the W101 mistake wearing different clothes (a test that quietly queried a
+    third party), and it would also fail the suite outright on a machine with no
+    DNS, in the `except OSError` path.
+
+    A test that cares where a name points calls `resolves.points(...)`.
+    """
+    from app.security import outbound
+
+    resolver = StubResolver()
+    monkeypatch.setattr(outbound, "_resolve", resolver)
+    return resolver
+
+
 @pytest.fixture
 def settings() -> Settings:
     """Settings built in isolation from any local `.env`.
