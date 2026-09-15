@@ -288,7 +288,22 @@ What was ruled out:
 * **`history()` itself.** A bounded, ordered query — deterministic given its rows.
 
 Which leaves the row count from the check-in, and no mechanism found for that
-varying. ⚠️ **Do not treat "it passes now" as the answer** — the next occurrence
+varying.
+
+⚠️ **A second one, 2026-09-14, same signature.**
+`test_the_group_counts_an_assigned_profile` failed once in a full-suite run,
+passed in isolation and in its own file, and has not recurred. Its assertion
+scraped `/groups` with `re.search(r"G1.{0,200}")` and found no digits in the
+window — a test that depends on how many characters of markup sit between two
+cells. **That one is fixed** rather than merely recorded: it now anchors on the
+group's id and bounds itself by the end of the row.
+
+Two unexplained intermittents in one session, both only in the full suite, both
+database- or page-shaped, is a pattern worth a proper look if a third appears —
+the shared cause would be something process-wide, since the `db` fixture is a
+per-test in-memory SQLite and there is no `pytest-randomly` or `xdist`.
+
+⚠️ **Do not treat "it passes now" as the answer** — the next occurrence
 should be captured with `-x --tb=long` and the stored rows dumped, because the
 interesting question is how many points landed, not what the query returned.
 
@@ -471,6 +486,91 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ---
 
 ## Chunk plan
+
+### 🚧 W174 — Certificates renew themselves; nobody touches a tablet
+
+Operator, 2026-09-14: *"I want all certs to be automated and have minimal impact
+on the administrator. No manual cert rotations, no re-enroll, etc"* — and, given
+the one conflict that cannot be automated away, **long intermediate with a rare
+ceremony**, root staying offline.
+
+#### ⚠️ The one thing that cannot be automated, stated plainly
+
+Issuing an intermediate **requires the root key**, which is the definition of
+having taken it offline. Everything else becomes hands-off; that stays a ~15-minute
+ceremony roughly every five years, with the console warning months ahead.
+
+The alternative was the root back on the box, which would undo S-2 to save fifteen
+minutes every five years. Declined, by the operator.
+
+#### What makes this safe, and it is already built
+
+* The device identity key is **EC P-256 inside the Android Keystore**, StrongBox
+  where available, and **non-exportable**. Renewal reuses the *same key* and asks
+  only for a new certificate — so there is **no key swap and therefore no brick
+  risk**. If renewal fails the old certificate is untouched and it retries.
+* `DeviceIdentity.createCsrPem()` already exists, from enrolment.
+* The install path already re-binds the existing hardware key to a new chain, and
+  **already refuses a certificate issued for a different key**. Renewal needs no
+  new safety code there; it needs the guard that is there to keep working.
+* `device_certificate` already records serial, expiry and revocation, so an
+  overlapping certificate is an ordinary row.
+
+#### ⚠️ The old certificate is never revoked on renewal
+
+The request that asks for a new certificate is authenticated *by the old one*.
+Revoking it on issue would cut the connection carrying the reply, and a device
+that never received its new certificate would have destroyed the one it had.
+Old certificates expire; they are not withdrawn.
+
+#### The payoff nobody asked for but everybody wants
+
+Once renewal works, device certificates can be **short** — 90 days rather than 825.
+A stolen device credential then expires on its own, which is worth more than
+anything else in this work. It is only possible *because* renewal exists.
+
+#### Chunk plan
+
+1. **The renewal endpoint.** mTLS-authenticated, takes a CSR, issues from the
+   current intermediate, records the new certificate, leaves the old one valid.
+   ⚠️ The CSR's public key must equal the authenticated certificate's, matching the
+   agent's own install guard.
+2. **Short certificates, and a renewal window** the server states rather than the
+   agent assuming — so the policy can change without an agent release.
+3. **The agent renews.** Checks remaining life each sync, renews past the
+   threshold, installs, and never discards a working certificate.
+4. **Expiry is visible.** The intermediate's expiry on the console, warned about
+   months ahead; a device's certificate age on its page.
+5. **The intermediate default becomes ~5 years**, with the docs rewritten around
+   renewal rather than around re-enrolment.
+6. **Release.** Agent APK, ⚠️ `versionCode` raised, tests, audit, module pin.
+
+#### ✅ Chunk 1 done — the renewal endpoint (v1.21.0)
+
+`POST /api/v1/device/certificate`, authenticated by the certificate it replaces.
+A device sends a CSR over its existing mTLS connection and gets a fresh
+certificate, the whole trust bundle, and an expiry.
+
+* ⚠️ **The same key, or nothing.** The request must carry the public key the
+  caller authenticated with. The agent's installer already refuses a certificate
+  issued for a key it does not hold, so issuing one would produce a certificate
+  the device is obliged to discard — a renewal that fails silently at both ends.
+* ⚠️ **The old certificate is never revoked.** It authenticated the request
+  asking for the new one; revoking on issue would cut the connection carrying the
+  reply, and a device that never received the answer would have destroyed the
+  credential it had.
+* ⚠️ **A revoked device cannot renew**, or revocation would not be revocation.
+* The answer carries the **whole trust bundle**, so a device can still build a
+  chain after its issuer retires.
+
+Six mutation checks; one remains **NOT CAUGHT and is documented as equivalent**:
+removing the CSR signature check changes nothing observable, because the
+public-key match already confines the request to the caller's own key. The guard
+is kept as defence in depth and the test says why it cannot be exercised.
+
+**1829 tests.** Chunks 2–6 to go — short certificates, the agent side, expiry
+visibility, the 5-year intermediate, and the release.
+
 
 ### ✅ W173 — The intermediate's life is a cap on every device (v1.20.0)
 

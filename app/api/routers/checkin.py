@@ -29,15 +29,31 @@ from __future__ import annotations
 import random
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import authenticated_device, get_bundle_signer, get_db, get_storage
-from app.api.schemas import CheckinRequest, CheckinResponse, CommandEnvelope
+from app.api.deps import (
+    authenticated_device,
+    get_bundle_signer,
+    get_ca,
+    get_db,
+    get_storage,
+    presented_certificate,
+)
+from app.api.schemas import (
+    CertificateRenewalRequest,
+    CertificateRenewalResponse,
+    CheckinRequest,
+    CheckinResponse,
+    CommandEnvelope,
+)
+from cryptography import x509
+
 from app.artifacts.storage import ArtifactStorage
 from app.config import Settings, get_settings
 from app.db.models import ComplianceStatus, Device
 from app.security.bundle import BundleSigner
+from app.security.ca import CertificateAuthority
 from app.services import commands as command_service
 from app.services import disenroll
 from app.services import desired_state as desired_state_service
@@ -46,6 +62,7 @@ from app.services import agent_update as agent_update_service
 from app.services import files as file_service
 from app.services import fleet as fleet_service
 from app.services import locations as location_service
+from app.services import certificate_renewal
 
 router = APIRouter(prefix="/api/v1/device", tags=["device"])
 
@@ -241,4 +258,46 @@ def checkin(
         ],
         next_checkin_seconds=_next_checkin_seconds(settings),
         unknown_command_ids=unknown_command_ids,
+    )
+
+
+@router.post("/certificate", response_model=CertificateRenewalResponse)
+def renew_certificate(
+    payload: CertificateRenewalRequest,
+    device: Device = Depends(authenticated_device),
+    presented: x509.Certificate = Depends(presented_certificate),
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    ca: CertificateAuthority = Depends(get_ca),
+) -> CertificateRenewalResponse:
+    """Issue this device a fresh certificate over the connection it already has.
+
+    ⚠️ **Authenticated by the certificate being replaced.** That is what makes it
+    safe to leave unauthenticated enrolment alone: only a device already holding a
+    valid identity can extend it, so this adds no way in.
+
+    ⚠️ **The previous certificate stays valid.** Revoking it here would cut the
+    connection carrying this reply, and a device that never received the answer
+    would have destroyed the credential it had. It expires on its own.
+    """
+    try:
+        renewal = certificate_renewal.renew(
+            session,
+            device,
+            presented,
+            payload.csr_pem,
+            ca=ca,
+            validity_days=settings.device_cert_validity_days,
+        )
+    except certificate_renewal.RenewalRefused as exc:
+        # 400, not 500: the device asked for something it may not have, and it
+        # keeps working with what it holds. Logged by the service.
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    session.commit()
+    return CertificateRenewalResponse(
+        certificate_pem=renewal.certificate_pem,
+        ca_pem=renewal.ca_pem,
+        serial_hex=renewal.serial_hex,
+        not_valid_after=renewal.not_valid_after,
     )

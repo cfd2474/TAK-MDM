@@ -750,3 +750,18 @@ class CheckinResponse(BaseModel):
     commands: list[CommandEnvelope] = Field(default_factory=list)
     next_checkin_seconds: int
     unknown_command_ids: list[str] = Field(default_factory=list)
+
+
+class CertificateRenewalRequest(BaseModel):
+    """A device asking for a new certificate over its existing connection (W174)."""
+
+    csr_pem: str = Field(min_length=1, max_length=8192)
+
+
+class CertificateRenewalResponse(BaseModel):
+    certificate_pem: str
+    #: The whole trust bundle, not just the issuer — a device that stored only its
+    #: own issuer could not build a chain once that intermediate retired.
+    ca_pem: str
+    serial_hex: str
+    not_valid_after: datetime

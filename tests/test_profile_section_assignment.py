@@ -211,8 +211,16 @@ def test_the_group_counts_an_assigned_profile(client: TestClient):
     had just been given a profile showed 0 while the profile said otherwise."""
     _, group = _profile_on_group(client)
 
-    row = re.search(r"G1.{0,200}", client.get("/groups").text, re.S).group(0)
-    numbers = re.findall(r">(\d+)<", row)
+    # ⚠️ Anchored on this group's id and bounded by the end of its row, not by a
+    # fixed number of characters after its name. The window version failed once in
+    # a full-suite run and never in isolation, and a test that depends on how many
+    # characters of markup sit between two cells is going to keep doing that.
+    page = client.get("/groups").text
+    row = re.search(
+        r'<tr>(?:(?!</tr>).)*?/groups/%s.*?</tr>' % re.escape(group), page, re.S
+    )
+    assert row, "this group has no row on the groups page"
+    numbers = re.findall(r'<td class="mono">(\d+)</td>', row.group(0))
 
     assert numbers[:2] == ["0", "1"], f"devices/policies read {numbers[:2]}"
 

@@ -181,6 +181,32 @@ def _load_client_certificate(raw: str) -> x509.Certificate:
     return x509.load_der_x509_certificate(der)
 
 
+def presented_certificate(
+    request: Request, settings: Settings = Depends(get_settings)
+) -> x509.Certificate:
+    """The client certificate this request authenticated with.
+
+    ⚠️ **Use only alongside `authenticated_device`**, never instead of it. This
+    re-reads the same header without verifying anything — issuer, signature,
+    validity and revocation are `authenticated_device`'s job, and a route that
+    took this on its own would be trusting a string.
+
+    It exists for certificate renewal (W174), which has to compare the requested
+    public key against the one the caller is already using.
+    """
+    raw = request.headers.get(settings.client_cert_header)
+    if not raw:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "no client certificate presented"
+        )
+    try:
+        return _load_client_certificate(raw)
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "client certificate is malformed"
+        ) from exc
+
+
 def authenticated_device(
     request: Request,
     session: Session = Depends(get_db),
