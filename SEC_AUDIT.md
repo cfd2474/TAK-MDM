@@ -48,14 +48,14 @@ device-level access an admin has by design.
 
 | ID | Severity | Finding |
 |---|---|---|
-| S-1 | High ↴ | Admin authentication trusts request headers with no proxy verification (downgraded from Severe — see the correction) |
-| S-2 | **Severe** | Five private keys sit unencrypted in one directory |
-| H-1 | High | Fleet authorization is delegated entirely to Authentik, with no check in ATLAS |
+| S-1 | ⚠️ High, part-fixed | Admin authentication trusts request headers with no proxy verification — peer check in force; host-local forgery needs the upstream change |
+| S-2 | **Severe**, tooling ready | Five private keys sit unencrypted in one directory — offline-root capability and ceremony shipped; **the ceremony has not been run** |
+| H-1 | ⚠️ High, detected | Fleet authorization is delegated entirely to Authentik — loss of the binding is now noticed; the delegation stands |
 | H-2 | High | The agent signing key is an unrecoverable single point of failure |
 | H-3 | ✅ Fixed | Dependencies pinned two years back, with no scanning and no CI — 24 advisories found and cleared |
 | M-1 | Medium | Uploads are read whole into memory with no size limit |
 | M-2 | Medium | Server-side fetch of operator-supplied URLs, following redirects (SSRF) |
-| M-3 | Medium | Private key files are created before they are made private (TOCTOU) |
+| M-3 | ✅ Fixed | Private key files are created before they are made private (TOCTOU) — closed by the S-2 key-custody work |
 | M-4 | Medium | A fleet-takeover receiver is exported in release builds |
 | M-5 | Medium | Outbound credentials stored in plaintext in the database |
 | M-6 | Medium | No security response headers anywhere |
@@ -68,6 +68,10 @@ device-level access an admin has by design.
 | L-5 | Low | Enrollment token hashes are unsalted |
 
 **18 findings: 1 severe, 4 high, 8 medium, 5 low.**
+
+**Progress, 2026-09-14:** H-3 and M-3 fixed. S-1 part-fixed and S-2's tooling
+shipped — both stay open, for reasons stated in each. H-1 now detects the failure
+it could not see. ⚠️ **Nothing below M-3 has been touched.**
 
 ⚠️ **S-1 was downgraded from Severe to High on 2026-09-14** after the deployment
 was measured rather than assumed. The correction is kept in place rather than
