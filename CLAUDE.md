@@ -107,9 +107,31 @@ Three things follow a release and are easy to forget:
   immediately offers an update.
 - **`PROJECT_STATE.md`**, per section 1.
 
-### Never push a release to a server
+### ⚠️ Two repositories, two owners (2026-09-14)
 
-**The operator deploys. Not us.** They run InfraTAK's update function by hand,
+Operator: *"i cannot trigger infratak updates, just atlas. i want you to execute
+update changes to infraTAK, i will do manual updates for atlas."*
+
+| Repository | Who updates the box |
+|---|---|
+| `TAK-MDM` (ATLAS itself) | **The operator**, through InfraTAK's update button. Unchanged. |
+| `infra-TAK` fork (`modules/atlas.py`, `templates/atlas.html`) | **Us**, over SSH: `cd /root/infra-TAK && git pull && systemctl restart takwerx-console`. |
+
+The console has no self-update button, so module changes reached GitHub and stopped
+there. ⚠️ **This went unnoticed for twelve releases** because the ATLAS updater
+resolves the newest tag itself — a stale `ATLAS_TAG` never blocked an update, so
+nothing looked wrong while every module-side change sat inert on the box.
+
+**After changing the module or its template: pull it onto the box and restart the
+console.** Confirm the route exists (a registered route answers `401`, an
+unregistered one `404`) rather than assuming the import succeeded.
+
+⚠️ Restarting `takwerx-console` restarts the management UI for the whole box, not
+just ATLAS. It does not touch the running containers, but check it comes back.
+
+### Never push an ATLAS release to a server
+
+**The operator deploys ATLAS. Not us.** They run InfraTAK's update function by hand,
 deliberately, so that the update path itself is exercised and proven on every
 release rather than bypassed by a convenient `git pull` and rebuild.
 

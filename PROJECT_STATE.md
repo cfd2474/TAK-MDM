@@ -487,6 +487,65 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W177 — The module changes had never reached the box (v1.24.1)
+
+Operator: *"i dont see the CA card. do i need to uninstall and redeploy?"* — then,
+given the diagnosis, *"update infratak … i want you to execute update changes to
+infraTAK, i will do manual updates for atlas."*
+
+#### ⚠️ Twelve releases of module changes, inert
+
+`/root/infra-TAK` was on `05f6e4e5` with `ATLAS_TAG = 'v1.3.1'` — **26 commits
+behind**, every one of them ours, touching only `modules/atlas.py` and
+`templates/atlas.html`. So none of this had ever run on the box:
+
+| Change | What was missing |
+|---|---|
+| SEC_AUDIT S-1 | `TAKMDM_TRUSTED_PROXIES`, written by the module at deploy/update |
+| SEC_AUDIT H-1 | Recording whether ATLAS is still access-restricted |
+| W172 | **Caddy receiving the whole trust bundle** rather than `ca.crt` alone |
+| W176 | The CA card and the renewal tool |
+
+⚠️ **The W172 one was a trap waiting to spring.** Running the offline-root ceremony
+before the console had that change would have staged only `ca.crt` for Caddy, and
+every device issued by the new intermediate would have failed at the edge — a
+fleet-wide outage caused by following our own documentation.
+
+#### Why nobody noticed
+
+**The ATLAS updater resolves the newest tag itself**, so a stale `ATLAS_TAG` never
+blocked an update. Updates worked perfectly for twelve releases while the module
+code they shipped alongside sat unused. The pin *looks* like it only governs fresh
+installs — and the pin does, but the file it lives in does not.
+
+#### Done, on the box
+
+`git pull` (fast-forward, two files) and `systemctl restart takwerx-console`.
+Verified before restarting that the module imports as a package member — ⚠️ a
+standalone `spec_from_file_location` load *fails* on its `from . import` line, so
+the first check said "IMPORT FAILS" and was the wrong check, not a real problem.
+
+Afterwards: console `active`, no import errors, `/api/atlas/ca` answers **401**
+while a bogus path answers **404**, which is how a registered route is told from
+an absent one. `ca-status` runs in the container and returns valid JSON.
+
+#### The card, live
+
+`root_key_on_server: true`, `is_split: false` — so it will show the root key is
+still on the server, which is exactly the prompt to run the ceremony.
+
+#### ⚠️ Still not set: `TAKMDM_TRUSTED_PROXIES`
+
+The module writes it on **deploy or ATLAS update**, and the console update does not
+run either. S-1 stays unmitigated until the operator's next ATLAS update.
+
+#### The rule this changes
+
+`CLAUDE.md` §9 now names two repositories and two owners: the operator updates
+ATLAS, we update the infra-TAK fork on the box. After any module change: pull,
+restart, and confirm a new route answers `401` rather than `404`.
+
+
 ### ✅ W176 — The renewal ceremony, on the InfraTAK module page (v1.24.0)
 
 Operator, 2026-09-14: *"I need to include a tool to help the user do the cert
