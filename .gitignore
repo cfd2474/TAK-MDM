@@ -64,3 +64,6 @@ docs/TEST-SERVER-CONNECTION.md
 # The ATLAS signing key's passphrase. NEVER committed — it is the fleet's
 # identity, and this repository is public.
 docs/ATLAS-SIGNING-KEY.local.md
+
+# The keystore passphrase, in the obvious place someone would look for it.
+docs/KEYSTORE-PASS.md
