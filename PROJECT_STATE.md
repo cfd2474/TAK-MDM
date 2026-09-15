@@ -487,6 +487,55 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W178 — The same compose trap, twice (v1.25.0)
+
+Operator: *"update triggered. check now"*. The update landed (ATLAS **1.24.1**),
+and the check found S-1's mitigation doing nothing.
+
+| Where | Value |
+|---|---|
+| `/root/atlas/.env` | `TAKMDM_TRUSTED_PROXIES=172.24.0.0/16` ✅ |
+| Inside the container | **not set** ❌ |
+| The application's log | *"TAKMDM_TRUSTED_PROXIES is not set"* |
+
+#### ⚠️ The trap was documented, in the file, and read
+
+`docker-compose.yml` has no `env_file`, so a variable reaches the container only
+where compose names it. Its own comment says so, about the last time:
+
+> ⚠️ Declared here or it does not exist … writing `TAKMDM_INCLUDE_SERVER_CA` into
+> `.env` and stopping there set nothing at all.
+
+That comment was read during this session — it is quoted in W169's reasoning — and
+the same mistake was made four releases later. **A comment is not a control.**
+
+The consequence: SEC_AUDIT **S-1**'s mitigation was written, shipped, pinned,
+pulled and deployed, and never did anything. Everything an operator would inspect
+said it was configured.
+
+#### The control
+
+`tests/test_compose_env.py`: every setting something outside the image supplies
+must be named in the `api` environment, and every `TAKMDM_*` compose passes must
+match a real `Settings` field — the same failure from the other side, where
+`TAKMDM_TRUSTED_PROXY` would be accepted by compose, ignored by pydantic, and look
+right in `docker compose config`.
+
+Both directions mutation-checked.
+
+⚠️ The list is hand-maintained, and says so: the module that writes these lives in
+another repository, so nothing else connects the two.
+
+#### Also confirmed on the box
+
+* ATLAS **1.24.1**, update clean.
+* H-1's startup warning is live: *"TAKMDM_ADMIN_GROUP is empty …"*.
+* Devices still checking in.
+
+⚠️ **S-1 needs one more ATLAS update** — the compose file ships in the ATLAS repo,
+so the variable starts reaching the container on the next one.
+
+
 ### ✅ W177 — The module changes had never reached the box (v1.24.1)
 
 Operator: *"i dont see the CA card. do i need to uninstall and redeploy?"* — then,

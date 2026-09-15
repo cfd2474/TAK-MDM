@@ -51,6 +51,15 @@ services:
       # nothing at all, and provisioning went on pinning a CA it should not.
       # Blank means "decide by looking"; see Settings.include_server_ca.
       TAKMDM_INCLUDE_SERVER_CA: ${TAKMDM_INCLUDE_SERVER_CA:-}
+      # ⚠️ And the same trap caught the next one. The InfraTAK module wrote
+      # TAKMDM_TRUSTED_PROXIES into `.env`, the value was correct, and the
+      # application logged "is not set" for a release — because nothing named it
+      # here. SEC_AUDIT.md S-1's mitigation shipped and did nothing.
+      #
+      # The comment above was written after the first time and read before the
+      # second, which is the useful lesson: a warning in a file is not a control.
+      # `tests/test_compose_env.py` is.
+      TAKMDM_TRUSTED_PROXIES: ${TAKMDM_TRUSTED_PROXIES:-}
       TAKMDM_ARTIFACT_DIR: /artifacts
       TAKMDM_CACHE_DIR: /cache
       # Baked into enrollment QR codes, so it must be an address the tablet can
