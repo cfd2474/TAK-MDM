@@ -184,6 +184,60 @@ def test_files_that_are_not_terrain_are_carried_unchanged():
     assert layout.carried == 1
 
 
+# --------------------------------------------------------------------------- #
+# Escaping the destination (SEC_AUDIT.md L-1)
+#
+# A non-cell entry keeps its own path, and that path is handed to a device to
+# write. The agent's extractor has always refused an escape, but a server that
+# plans a destination it has not checked is trusting a guard in another
+# codebase on another release cycle to stay correct.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "escape",
+    [
+        "../outside.txt",
+        "DTED/../../outside.txt",
+        "/etc/cron.d/atlas",
+        "..\\..\\outside.txt",
+        "C:/Windows/System32/x.dll",
+    ],
+)
+def test_an_entry_that_would_escape_the_destination_is_refused(escape):
+    with pytest.raises(dted.DtedError) as raised:
+        dted.plan_layout(["DTED/w115/n32.dt2", escape])
+
+    assert "outside the destination" in str(raised.value)
+    # repr, because that is how the message names it — and a message that does
+    # not name the offending entry sends an operator hunting through a zip.
+    assert repr(escape) in str(raised.value)
+
+
+def test_the_check_normalises_before_it_looks():
+    """⚠️ A zip written on Windows carries backslashes.
+
+    Every check in `_escapes` reads `..\\..\\payload` as one harmless filename
+    until the separators are normalised, so the normalisation has to happen
+    inside the guard rather than in whichever caller remembered.
+    """
+    assert dted._escapes("..\\..\\payload") is True
+    assert dted._escapes("a\\..\\b") is True
+
+
+@pytest.mark.parametrize(
+    "ordinary",
+    ["readme.txt", "DTED/readme.txt", "docs/a..b/notes.txt", "w115/n32.dt2"],
+)
+def test_an_ordinary_path_is_still_carried(ordinary):
+    """⚠️ `a..b` is a filename, not a traversal.
+
+    Matching on the substring '..' rather than on a path segment would refuse
+    real archives, and the operator would have no idea why.
+    """
+    assert dted._escapes(ordinary) is False
+
+
 def test_two_files_claiming_one_cell_path_are_refused():
     """⚠️ Flattening can collide, and picking a winner would discard terrain.
 

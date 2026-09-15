@@ -333,7 +333,10 @@ def _render(
             # because local development runs on plain http and a Secure cookie would
             # silently never be set.
             secure=bool(settings.console_origin.startswith("https://")),
-            httponly=False,
+            # ⚠️ The token is also in a hidden form field, and `atlas.js` never
+            # reads the cookie — so leaving it script-readable handed an XSS payload
+            # the token for no functional gain (SEC_AUDIT.md L-2).
+            httponly=True,
         )
     return response
 

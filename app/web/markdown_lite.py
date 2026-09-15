@@ -34,12 +34,34 @@ _ITALIC = re.compile(r"(?<!\*)\*([^*]+)\*(?!\*)")
 _CODE = re.compile(r"`([^`]+)`")
 
 
+#: Schemes a guide may link to. Everything else renders as plain text.
+#:
+#: ⚠️ An allowlist, not a `javascript:` blocklist. `data:` and `vbscript:` execute
+#: too, and a blocklist is a list of the ones somebody thought of. Measured before
+#: the fix: `[click](javascript:alert(1))` rendered a live link.
+_SAFE_SCHEMES = ("http://", "https://", "mailto:", "/", "#")
+
+
+def _safe_link(match) -> str:
+    """Render a markdown link, or just its words if the target is not a URL."""
+    label, target = match.group(1), match.group(2)
+    if not target.strip().lower().startswith(_SAFE_SCHEMES):
+        # The words survive; only the link is dropped. A guide with a dead link
+        # reads oddly; one that silently swallowed a sentence reads like a bug.
+        return label
+    return '<a href="%s">%s</a>' % (target, label)
+
+
 def _inline(text: str) -> str:
-    text = html.escape(text, quote=False)
+    # ⚠️ `quote=True`, because a link target is about to be placed inside an
+    # attribute. The docstring above claimed this function escaped all HTML; that
+    # was true of element context and not of the attribute the link line creates
+    # (SEC_AUDIT.md L-3).
+    text = html.escape(text, quote=True)
     text = _CODE.sub(r"<code>\1</code>", text)
     text = _BOLD.sub(r"<strong>\1</strong>", text)
     text = _ITALIC.sub(r"<em>\1</em>", text)
-    text = _LINK.sub(r'<a href="\2">\1</a>', text)
+    text = _LINK.sub(_safe_link, text)
     return text
 
 

@@ -261,3 +261,52 @@ def test_compose_passes_the_console_origin_through():
 
     compose = pathlib.Path(__file__).resolve().parents[1] / "docker-compose.yml"
     assert "TAKMDM_CONSOLE_ORIGIN" in compose.read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------- #
+# The cookie's own attributes (SEC_AUDIT.md L-2)
+# --------------------------------------------------------------------------- #
+
+
+def _set_cookie_header(response) -> str:
+    """The raw Set-Cookie line for the CSRF cookie.
+
+    Read from the header rather than from the cookie jar: httpx parses the
+    attributes away, and the attributes are the entire subject here.
+    """
+    for value in response.headers.get_list("set-cookie"):
+        if value.startswith(f"{csrf.COOKIE_NAME}="):
+            return value
+    raise AssertionError(
+        f"no {csrf.COOKIE_NAME} cookie was issued; "
+        f"got {response.headers.get_list('set-cookie')}"
+    )
+
+
+def test_the_csrf_cookie_is_not_readable_by_script(guarded: TestClient):
+    """⚠️ The token is also in a hidden form field, and atlas.js never reads the
+    cookie — so leaving it script-readable handed an XSS payload the token for no
+    functional gain whatsoever.
+    """
+    header = _set_cookie_header(guarded.get("/enrollment", headers=ADMIN))
+
+    assert "HttpOnly" in header, header
+
+
+def test_the_csrf_cookie_does_not_travel_cross_site(guarded: TestClient):
+    """Lax, not Strict.
+
+    Strict drops the cookie on arrival from Authentik's redirect, so the first
+    form submit after signing in fails CSRF and nothing on the page says why.
+    """
+    header = _set_cookie_header(guarded.get("/enrollment", headers=ADMIN))
+
+    assert "SameSite=lax" in header, header
+
+
+# ⚠️ The `Secure` flag is deliberately not asserted here. `_render` reads it
+# from `get_settings()` called directly rather than through the dependency, so a
+# test's `console_origin` never reaches it and any assertion would describe the
+# workstation's environment instead of the code. Clearing the `lru_cache` to
+# force it is what broke the CSRF suite once already (W170), so the gap is
+# recorded rather than papered over.

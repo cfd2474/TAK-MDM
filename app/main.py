@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.version import build_info
 from app.security import admin_auth
+from app.security import headers as security_headers
 from app.security import keyfiles
 from app.services import notifications
 from app.web import routes as web_routes
@@ -279,6 +280,10 @@ app = FastAPI(
     license_info={"name": "Apache 2.0", "identifier": "Apache-2.0"},
     lifespan=lifespan,
 )
+
+# Browser-facing constraints on every response, including the static mount and
+# the error pages a router never sees (SEC_AUDIT M-6).
+security_headers.install(app)
 
 # --------------------------------------------------------------------------- #
 # Device-facing. Never behind admin authentication: a tablet cannot perform an

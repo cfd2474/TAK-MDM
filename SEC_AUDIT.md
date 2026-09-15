@@ -53,17 +53,18 @@ device-level access an admin has by design.
 | H-1 | ⚠️ High, detected | Fleet authorization is delegated entirely to Authentik — loss of the binding is now noticed; the delegation stands |
 | H-2 | High | The agent signing key is an unrecoverable single point of failure |
 | H-3 | ✅ Fixed | Dependencies pinned two years back, with no scanning and no CI — 24 advisories found and cleared |
+| H-4 | ✅ Fixed | A device's own serial number reached a JavaScript string in the console — found while fixing M-6 |
 | M-1 | Medium | Uploads are read whole into memory with no size limit |
 | M-2 | Medium | Server-side fetch of operator-supplied URLs, following redirects (SSRF) |
 | M-3 | ✅ Fixed | Private key files are created before they are made private (TOCTOU) — closed by the S-2 key-custody work |
 | M-4 | Medium | A fleet-takeover receiver is exported in release builds |
-| M-5 | Medium | Outbound credentials stored in plaintext in the database |
-| M-6 | Medium | No security response headers anywhere |
+| M-5 | ✅ Fixed | Outbound credentials stored in plaintext in the database — sealed in the token vault |
+| M-6 | ✅ Fixed | No security response headers anywhere — CSP with no inline script, plus four headers |
 | M-7 | Medium | The permanent enrollment QR is a non-expiring credential in a printable image |
 | M-8 | Medium | No rate limiting on any endpoint |
-| L-1 | Low | DTED archive paths pass through the server unsanitised |
-| L-2 | Low | CSRF cookie is readable by JavaScript for no reason |
-| L-3 | Low | Markdown link URLs are injected into an attribute without quote escaping |
+| L-1 | ✅ Fixed | DTED archive paths pass through the server unsanitised — escapes refused at plan time |
+| L-2 | ✅ Fixed | CSRF cookie is readable by JavaScript for no reason — now HttpOnly |
+| L-3 | ✅ Fixed | Markdown link URLs are injected into an attribute without quote escaping — quotes escaped, schemes allowlisted |
 | L-4 | Low | Exported agent activities have no caller check |
 | L-5 | Low | Enrollment token hashes are unsalted |
 
@@ -426,6 +427,63 @@ machine, and a documented recovery position for "the key is gone".
 
 ---
 
+### H-4 — A device's own serial number reached a JavaScript string in the console
+
+**Found in v1.27.0, while converting the inline handlers for M-6. Fixed by that
+same conversion.** It was not in the original audit; the original audit had
+recorded the console's XSS posture as good, on the strength of autoescaping being
+on and `|safe` appearing in only three audited places. Both of those remain true.
+
+**Where:** `app/web/templates/device_detail.html` — two forms:
+
+```html
+onsubmit="return confirm('Retire {{ device.serial_number }}? ...');"
+```
+
+⚠️ **Autoescaping did not help here, and looking at it would suggest it did.**
+Jinja escaped the apostrophe to `&#39;`. The browser decodes entities in an
+attribute value *before* handing it to the JavaScript parser, so the escaped
+apostrophe arrives as a live `'`, ends the string, and everything after it runs
+with the signed-in administrator's session. Autoescape is an HTML escape; the
+context was JavaScript.
+
+The console can wipe and retire devices, so script execution in an
+administrator's session is fleet-level.
+
+#### What an attacker needs
+
+A serial number is reported **by the device** at enrolment and validated only for
+length (`min_length=1, max_length=64`, [schemas.py:46](app/api/schemas.py#L46)).
+So this needs an enrolment credential — and **M-7** records that the permanent
+enrolment QR is designed to be printed and left on a provisioning bench.
+
+One thing narrows it, and it is worth stating because it is easy to mistake for a
+fix: the serial also becomes the certificate subject's CN, encoded as an ASN.1
+`PrintableString`. A payload containing `;`, `<`, `!` or `_` is refused by the
+X.509 encoder at enrolment. That leaves `A-Z a-z 0-9 space ' ( ) + , - . / : = ?`
+
+`SER'),alert(1),('` is built entirely from that alphabet, and is what the
+regression test uses.
+
+#### ✅ Fixed in v1.27.0
+
+Both handlers became `data-confirm`, read by a delegated listener in `atlas.js`.
+The same bytes are now a string handed to `window.confirm` — there is no script
+context on the page for a decoded apostrophe to escape from, and `script-src
+'self'` means an injected one could not create one.
+
+`test_a_device_serial_cannot_close_a_javascript_string` enrols a device with that
+serial and asserts the device page renders it while carrying no inline handler.
+Restoring the `onsubmit` fails it.
+
+⚠️ **The general lesson is not about this page.** Autoescaping protects the HTML
+context it knows about. Every remaining place a template value lands inside a
+JavaScript string, a URL, or a CSS value is unprotected by it — the inline-handler
+guard in `tests/test_security_headers.py` now makes the first of those three
+impossible to reintroduce, and the other two have not been audited.
+
+---
+
 ### H-3 — Dependencies pinned two years back, with no scanning and no CI
 
 **Where:** [requirements.txt](requirements.txt)
@@ -607,6 +665,22 @@ secrets are too. These three fields are the ones left behind.
 **Recommendation.** Seal them with the existing `TokenVault` — the mechanism is
 already in the codebase and already used for exactly this purpose.
 
+### ✅ Fixed in v1.27.0
+
+`save_group` seals every field of a secret kind through the existing
+`TokenVault`; `group_values` unseals on the way back out.
+
+⚠️ **Credentials written before this release still work.** `_unseal` returns the
+stored string unchanged when it is not sealed, so an upgrade does not lock an
+operator out of their own SMTP relay and then blame the password. They are
+re-sealed the next time the group is saved. The cost is that a plaintext value
+cannot be distinguished from a corrupt sealed one — accepted, because the
+alternative is a migration that must guess.
+
+Guarded by `test_every_secret_field_is_sealed_in_the_database` (reads the row
+back out of the database and asserts the plaintext is not in it) and
+`test_a_credential_written_before_sealing_still_works`.
+
 ---
 
 ### M-6 — No security response headers anywhere
@@ -625,6 +699,54 @@ clickjacking a console that can wipe devices is worth preventing outright.
 **Recommendation.** One middleware setting all five. CSP can start in
 report-only; the console loads no third-party scripts, so a strict policy is
 achievable.
+
+### ✅ Fixed in v1.27.0
+
+[`app/security/headers.py`](app/security/headers.py), installed as middleware in
+`main.py` so the static mount and the error responses — the two that a
+per-router dependency always misses — are covered too.
+
+Enforcing, not report-only. Two things were measured first, and either would
+have made the policy worthless or actively breaking:
+
+| Assumption that had to be checked | What was actually there |
+|---|---|
+| The console has no inline script | It had **four** `on*` handlers. They were converted to `data-confirm`, `data-reveals` and `data-add-app-group`, delegated from `atlas.js`. |
+| Images are ours | ⚠️ Map tiles are fetched **by the browser** from `location.tile_url`, an operator-set value defaulting to openstreetmap.org. A reflexive `img-src 'self'` would have blanked every map on every deployment, with the reason only in the browser console. |
+
+The policy:
+
+```
+default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+img-src 'self' data: https:; font-src 'self'; connect-src 'self';
+object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+```
+
+plus `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy: same-origin`
+and a `Permissions-Policy` denying geolocation, camera, microphone, payment and
+USB.
+
+`script-src 'self'` with no `'unsafe-inline'` is the only directive here that
+turns an injection into inert text; everything else shapes one. It is true only
+while no template reintroduces an inline handler, so
+`tests/test_security_headers.py` asserts per template that none has — and, for
+each converted control, that the listener exists, is registered for the right
+event, and still reads the attribute the template writes. Seven mutations of that
+wiring were checked; all seven fail the suite.
+
+Two deliberate holes, both documented in the module:
+
+* **`img-src ... https:`** — wider than the rest, because the tile origin lives
+  in the database and changes without a restart.
+* **`/docs` and `/redoc`** get a policy allowing Swagger's CDN and its inline
+  bootstrap. Under the strict policy those pages render blank with the reason
+  only in the console. Framing, forms and objects stay refused.
+
+⚠️ **HSTS is deliberately absent.** Caddy already sets it — verified on the
+box, not assumed: `header Strict-Transport-Security "max-age=31536000;"` on the
+`atlas.` vhost, and that is the *only* security header Caddy emits. Two emitters
+for one header is how the two come to disagree, and the one an operator reads is
+not necessarily the one the browser obeys. The other five have no second source.
 
 ---
 
@@ -690,6 +812,23 @@ different codebase that ships on its own release cycle.
 **Recommendation.** Reject `..` and absolute paths in `plan_layout`, matching
 what `mission_package.py` already does.
 
+### ✅ Fixed in v1.27.0
+
+`_escapes()` refuses `..` **as a path segment**, a leading `/`, and a Windows
+drive letter; `plan_layout` raises `DtedError` naming the offending entry.
+
+⚠️ Two details that a shorter version of this would have got wrong:
+
+* The check normalises backslashes **itself** rather than trusting the caller.
+  A zip written on Windows carries `..\..\payload`, which every test below reads
+  as one harmless filename until the separators are converted.
+* It matches `..` as a whole segment, not as a substring. `docs/a..b/notes.txt`
+  is a filename, and refusing it would reject real archives with no explanation
+  an operator could act on.
+
+The agent-side check stays where it is. Two guards is the point: this one is on
+the server's own release cycle.
+
 ---
 
 ### L-2 — CSRF cookie is readable by JavaScript for no reason
@@ -702,6 +841,18 @@ no functional benefit.
 
 **Recommendation.** Set `httponly=True`. If a form submit breaks, the double
 submit is relying on the cookie and the reason should be written down.
+
+### ✅ Fixed in v1.27.0
+
+`httponly=True`. Nothing broke, because the token reaches every form from the
+hidden field.
+
+`tests/test_csrf.py` asserts `HttpOnly` and `SameSite=lax` on the raw
+`Set-Cookie` header. ⚠️ `Secure` is **not** asserted: `_render` reads it from
+`get_settings()` called directly rather than through the dependency, so a test's
+`console_origin` never reaches it and any assertion would be describing the
+workstation's environment. The gap is recorded in the test file rather than
+papered over with a passing assertion.
 
 ---
 
@@ -725,6 +876,23 @@ real one the day guides become editable.
 
 **Recommendation.** `html.escape(text, quote=True)`, and an allowlist of `http`,
 `https`, and relative schemes.
+
+### ✅ Fixed in v1.27.0
+
+`html.escape(text, quote=True)`, and `_safe_link` drops the anchor entirely
+unless the target starts with `http://`, `https://`, `mailto:`, `/` or `#` —
+compared after `.strip().lower()`, because a leading space defeats a bare
+`startswith` and the browser ignores it.
+
+A refused link renders as its own text rather than as a link. Silently dropping
+the words too would make a guide read as though a sentence were missing.
+
+Checked in both directions: `javascript:`, `JaVaScRiPt:`, `data:`, `vbscript:`
+and a space-prefixed `javascript:` produce no anchor at all, while the https,
+http, relative, fragment and mailto links the guides actually contain are
+untouched. ⚠️ That second half matters as much as the first — an allowlist that
+also drops real links turns every cross-reference in the documentation into
+plain text, and nobody reports a link that merely stopped being a link.
 
 ---
 

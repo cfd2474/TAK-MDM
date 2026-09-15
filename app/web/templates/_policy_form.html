@@ -1383,7 +1383,8 @@
     <span class="muted" style="font-size:12px">Add an app group to Required apps:</span>
     {% for grp in app_groups %}
       <button type="button" class="ghost"
-              onclick='atlasAddAppGroup("required_apps", {{ grp.packages | tojson }})'>
+              data-add-app-group="required_apps"
+              data-packages='{{ grp.packages | tojson }}'>
         {{ grp.name }} ({{ grp.packages | length }})
       </button>
     {% endfor %}

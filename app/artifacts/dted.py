@@ -153,6 +153,24 @@ class DtedLayout:
         return any(source != destination for source, destination in self.moves)
 
 
+def _escapes(path: str) -> bool:
+    r"""Would this archive entry land outside where it is unpacked?
+
+    ⚠️ Normalises first rather than trusting the caller to have done it. A zip
+    written on Windows carries `..\..\payload`, which every check below reads as
+    one harmless filename until the backslashes become slashes — so a caller
+    passing a raw entry name would get False for the one case this exists to
+    catch.
+    """
+    path = path.replace("\\", "/")
+    if path.startswith("/"):
+        return True
+    # A Windows drive letter is absolute too, and survives normalisation.
+    if len(path) > 1 and path[1] == ":":
+        return True
+    return any(part == ".." for part in path.split("/"))
+
+
 def plan_layout(names: Iterable[str]) -> DtedLayout:
     """Decide where each entry goes, flattening cells found at any depth."""
     moves: list[tuple[str, str]] = []
@@ -187,6 +205,16 @@ def plan_layout(names: Iterable[str]) -> DtedLayout:
             moves.append((name, destination))
             continue
 
+        # ⚠️ An entry that is not a cell keeps its own path, so it has to be a
+        # path we are willing to hand a device (SEC_AUDIT.md L-1). The agent's
+        # extractor refuses an escape and always has, but the server should not be
+        # planning a destination it has not checked — that guard lives in another
+        # codebase on its own release cycle.
+        if _escapes(normalised):
+            raise DtedError(
+                f"{name!r} would be written outside the destination. An archive "
+                f"entry may not contain '..' or start at the filesystem root."
+            )
         carried.append(normalised)
         moves.append((name, normalised))
 

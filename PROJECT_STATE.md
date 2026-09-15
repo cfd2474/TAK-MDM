@@ -3,7 +3,7 @@
 Running state file per [CLAUDE.md](CLAUDE.md). Read before starting any step;
 update after every completed step.
 
-**Last updated:** 2026-09-06
+**Last updated:** 2026-09-14
 
 ---
 
@@ -486,6 +486,118 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ---
 
 ## Chunk plan
+
+### ✅ W181 — SEC_AUDIT first-pass batch: M-5, M-6, L-1, L-2, L-3 (v1.27.0)
+
+Five self-contained, server-side findings in one release. No agent build, so the
+fleet is untouched.
+
+1. **M-5 — vault the outbound credentials.** SMTP, AD bind and SMS keys sit in
+   plaintext in `app_setting` while `TokenVault` already seals enrolment secrets
+   and the Google Play token. ⚠️ The vault key lives in `pki/`, so this defends
+   against a **database-only** compromise — a dump, a backup, a read-only
+   injection — and not against `pki/` leaking. That is the realistic threat and
+   the honest claim. Legacy plaintext must keep working.
+2. **M-6 — security headers.** ⚠️ Two traps found before writing any: the console
+   has four inline handlers, and the location map fetches tiles **from the
+   browser** against an operator-configurable URL. A naïve `img-src 'self'` would
+   silently break every map. The four handlers convert — `data-confirm` already
+   exists in `atlas.js` — which buys a `script-src` with no `unsafe-inline`.
+   HSTS is left to Caddy, which already sets it; two sources for one header is
+   how they disagree.
+3. **L-1 — DTED traversal.** `plan_layout` passes unmatched archive paths through
+   unsanitised. Not exploitable today because the agent's extractor refuses them,
+   but the server should not be planning paths it has not checked.
+4. **L-2 — `httponly` on the CSRF cookie.** Nothing reads it from JavaScript.
+5. **L-3 — markdown link escaping.** `html.escape(quote=False)` then injection
+   into an `href` attribute, plus no scheme allowlist.
+
+**Status: complete.** All five shipped; every guard mutation-checked.
+
+#### What the traps cost, and what they bought
+
+**M-6 was the only one with real risk in it**, and both traps held up:
+
+* The four inline handlers converted cleanly — `data-confirm` already existed,
+  `data-reveals` and `data-add-app-group` are new. That bought `script-src
+  'self'` with **no** `'unsafe-inline'`, the only directive in the policy that
+  turns an injection into inert text.
+* `img-src` stayed permissive (`'self' data: https:`) because map tiles are
+  browser-fetched from an operator-set URL. ⚠️ Narrowing it would have blanked
+  every map on every deployment with the reason only in the browser console —
+  the kind of break nobody files a bug for, because the page still loads.
+* A third trap appeared while writing it: **FastAPI's `/docs` and `/redoc` load
+  Swagger UI from a CDN with an inline bootstrap.** Under the strict policy they
+  render blank. They get their own policy; framing, forms and objects stay
+  refused.
+
+#### Guards, and what the mutants taught
+
+`tests/test_security_headers.py` (62 tests). Seventeen mutations run in total;
+every one now fails the suite. Four of them survived a first attempt and each
+exposed a real weakness in the guard rather than in the code:
+
+| Mutation that survived | Why the guard missed it |
+|---|---|
+| Delete the `change` registration | The check only asked whether `applyReveal` existed. It did — defined, unreferenced, dead. |
+| Turn the app-group `click` listener into a plain function | The check asked for `addEventListener("click"`, and `atlas.js` registers several. |
+| Stop reading `data-packages` | The bare string `getAttribute("data-packages")` also appears 1900 lines away in an unrelated feature. |
+| Delete a registration so two bodies merge | Bounding a listener body by "the next registration" means deleting one makes its code appear to live in the previous. |
+
+The guard now bounds each listener body **both** ways — by the next registration
+and by a span — and asserts a fragment inside it plus the precise expression that
+reads the attribute. ⚠️ The general lesson is the same each time: a static check
+on a string is only as good as the string's uniqueness, and every one of these
+mutations left every page rendering identically.
+
+#### ⚠️ A new finding fell out of it: SEC_AUDIT **H-4**
+
+Converting the two `onsubmit` handlers closed a **stored XSS** nobody had
+recorded. `confirm('Retire {{ device.serial_number }}?')` interpolated a
+device-supplied value into a JavaScript string inside an HTML attribute.
+Autoescaping escaped the apostrophe to `&#39;` — and the browser decodes entities
+in an attribute *before* the JavaScript parser runs, so the string ended and what
+followed executed with the administrator's session.
+
+The audit had recorded the console's XSS posture as good, on the strength of
+autoescape being on and `|safe` appearing in only three audited places. Both are
+still true. **Autoescape is an HTML escape; the context here was JavaScript.**
+
+Narrowed but not closed by the certificate encoder: the serial becomes the cert
+subject CN as an ASN.1 `PrintableString`, which refuses `;`, `<`, `!` and `_` at
+enrolment. `SER'),alert(1),('` is built entirely from what is left, and is what
+the regression test enrols with.
+
+Needs an enrolment credential — which **M-7** says is designed to be printed and
+left on a bench.
+
+#### Two things found while doing it
+
+* ⚠️ **A stray `\x08` in a test file.** Writing a test through a Python heredoc
+  turned `\\b` into a backspace character inside a regex, which `grep` and
+  pytest's own traceback both render invisibly. The test failed with an
+  impossible-looking message — the regex matched when run by hand and not under
+  pytest. Every file touched in this work item was swept for control characters
+  afterwards.
+* ⚠️ **`_escapes` normalises its own input now.** It was called only on an
+  already-normalised path, so the backslash branch was dead code that looked
+  live. A caller passing a raw zip entry would have got `False` for exactly the
+  case it exists to catch.
+
+#### What is deliberately not asserted
+
+`Secure` on the CSRF cookie. `_render` reads it from `get_settings()` called
+directly rather than through the dependency, so a test's `console_origin` never
+reaches it and an assertion would be describing the developer's environment.
+Recorded in `tests/test_csrf.py`; forcing it by clearing the `lru_cache` is what
+broke the CSRF suite once already (W170).
+
+#### Remaining audit items
+
+S-2 (waits on the operator's ceremony), S-1 and H-1 (upstream), H-2, M-1, M-2,
+M-4 (needs an agent build and a `versionCode` bump), M-7 (deliberate), M-8, L-4,
+L-5.
+
 
 ### ✅ W179 — SEC_AUDIT H-3: 24 advisories, found and cleared (v1.26.0)
 

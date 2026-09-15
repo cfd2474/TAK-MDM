@@ -1074,8 +1074,13 @@
      pressing a button twice does not duplicate entries. */
 
   /* Append a row per package in an app group to the named row-set (e.g.
-     required_apps), skipping packages that already have a row. */
-  window.atlasAddAppGroup = function (fieldName, packageNames) {
+     required_apps), skipping packages that already have a row.
+
+     Reached by delegation, not by an inline onclick:
+       <button data-add-app-group="required_apps" data-packages='["com.a"]'>
+     The button carries the data; the page carries no script. That is what lets
+     the Content-Security-Policy refuse inline script outright (SEC_AUDIT M-6). */
+  function addAppGroup(fieldName, packageNames) {
     var set = document.querySelector('[data-rowset="' + fieldName + '"]');
     var tpl = set && set.querySelector("[data-row-template]");
     var addBtn = set && set.querySelector("[data-add-row]");
@@ -1093,7 +1098,22 @@
         select.value = name;
       }
     });
-  };
+  }
+
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest && e.target.closest("[data-add-app-group]");
+    if (!btn) return;
+    e.preventDefault();
+    var packages;
+    try {
+      packages = JSON.parse(btn.getAttribute("data-packages") || "[]");
+    } catch (err) {
+      /* A malformed attribute adds nothing rather than throwing into the
+         console, where nobody would see it. */
+      return;
+    }
+    addAppGroup(btn.getAttribute("data-add-app-group"), packages);
+  });
 
   /* --- Confirm before submit --------------------------------------------------
      <form data-confirm="This retires the token. Continue?"> */
@@ -1101,6 +1121,31 @@
   document.addEventListener("submit", function (e) {
     var msg = e.target.getAttribute && e.target.getAttribute("data-confirm");
     if (msg && !window.confirm(msg)) e.preventDefault();
+  });
+
+  /* --- Reveal one of a set of forms by value ----------------------------------
+     <select data-reveals="[data-type-form]"> shows the element whose
+     data-type-form equals the selection and hides the rest.
+
+     Change only. The page renders with the first option selected and the first
+     form visible, so there is nothing to apply at load — and applying it anyway
+     would look like it was handling a re-rendered form, which nothing here
+     produces. */
+
+  function applyReveal(select) {
+    var selector = select.getAttribute("data-reveals");
+    if (!selector || selector.charAt(0) !== "[") return;
+    /* "[data-type-form]" names both the set to search and the attribute whose
+       value is compared, so the attribute is read back off the selector rather
+       than repeated in a second attribute that could disagree with it. */
+    var attribute = selector.slice(1, -1);
+    document.querySelectorAll(selector).forEach(function (el) {
+      el.hidden = el.getAttribute(attribute) !== select.value;
+    });
+  }
+
+  document.addEventListener("change", function (e) {
+    if (e.target.matches && e.target.matches("[data-reveals]")) applyReveal(e.target);
   });
 
   /* --- Character counter -------------------------------------------------------

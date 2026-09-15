@@ -38,7 +38,7 @@
       <div>
         <label for="policy_type">Type</label>
         <select id="policy_type" name="policy_type" class="field-full"
-                onchange="var v=this.value;document.querySelectorAll('[data-type-form]').forEach(function(el){el.hidden=el.dataset.typeForm!==v})">
+                data-reveals="[data-type-form]">
           {% for t in wired_types %}
             <option value="{{ t.policy_type }}">{{ t.label }} ({{ t.policy_type }})</option>
           {% endfor %}

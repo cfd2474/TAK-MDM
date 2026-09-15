@@ -19,15 +19,24 @@ environment and are shown read-only. Everything here is operational configuratio
 an operator legitimately edits at runtime: the EULA, and credentials for outbound
 email, a directory, and SMS.
 
-⚠️ Secret fields (SMTP / AD / SMS passwords) are stored **in plaintext** in
-`app_setting`, next in danger to `pki/ca.key` and the token vault. Acceptable on
-the single trusted host this project targets; folded into the R8 KMS work. The
-console never echoes a stored secret back into a form — it shows "set" instead.
+⚠️ **Secret fields are sealed, not encrypted away.** SMTP / AD / SMS credentials
+are stored through `TokenVault` (SEC_AUDIT.md M-5), which is the same mechanism
+already protecting enrolment secrets and the Google Play token. The vault key
+lives in `pki/`, so what this defends against is a **database-only** compromise —
+a dump, a backup, a snapshot, a read-only injection somewhere else. It does
+**not** help if `pki/` leaks, because then everything is gone anyway (S-2).
+
+That is a narrower claim than "encrypted at rest" and it is the true one. It is
+also the realistic threat: a database copy travels far more easily than a
+directory of 0600 files on a running host.
+
+The console never echoes a stored secret back into a form — it shows "set".
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -196,6 +205,35 @@ def put(session: Session, key: str, value: str, *, updated_by: str | None = None
     session.flush()
 
 
+def _vault():
+    """The token vault, resolved late so importing this module needs no PKI."""
+    from app.config import get_settings
+    from app.security.token_vault import TokenVault
+
+    return TokenVault.load_or_create(Path(get_settings().pki_dir))
+
+
+def _unseal(spec: "Field", stored: str) -> str:
+    """Recover a secret, tolerating one written before sealing existed.
+
+    ⚠️ A value that will not unseal is returned **as-is**, not discarded. Every
+    credential stored before M-5 is plaintext, and treating those as corrupt would
+    silently break outbound mail on the release that added the encryption — a
+    security improvement that reads as an outage.
+
+    The cost is that a plaintext value cannot be told apart from a corrupt sealed
+    one. Accepted: the alternative is a migration that has to guess, and guessing
+    wrong locks an operator out of their own mail relay.
+    """
+    if not stored or not group_is_secret(spec.kind):
+        return stored
+    try:
+        opened = _vault().open(stored)
+    except Exception:
+        return stored
+    return stored if opened is None else opened
+
+
 def group_values(session: Session, group_key: str) -> dict[str, str]:
     group = GROUPS[group_key]
     stored = {
@@ -206,7 +244,10 @@ def group_values(session: Session, group_key: str) -> dict[str, str]:
             )
         )
     }
-    return {f.key: stored.get(f.key, f.default) for f in group.fields}
+    return {
+        f.key: _unseal(f, stored.get(f.key, f.default))
+        for f in group.fields
+    }
 
 
 def group_is_secret(field_kind: str) -> bool:
@@ -231,6 +272,9 @@ def save_group(
         if row is None:
             row = AppSetting(key=f.key)
             session.add(row)
-        row.value = incoming
+        # ⚠️ Sealed on the way in, so a database copy carries ciphertext. The key
+        # is in `pki/`; see the module docstring for exactly what that does and
+        # does not buy.
+        row.value = _vault().seal(incoming) if group_is_secret(f.kind) else incoming
         row.updated_by = updated_by
     session.flush()

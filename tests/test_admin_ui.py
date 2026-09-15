@@ -19,6 +19,7 @@ from __future__ import annotations
 import json as _json
 import re
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import FLEET_DEFAULT
@@ -245,7 +246,9 @@ def test_profile_creator_offers_app_group_shortcut(client: TestClient):
     client.post("/app-groups", data={"name": "ATAK", "package_ids": [pkg_id]})
 
     body = client.get("/policies/new").text
-    assert "atlasAddAppGroup" in body
+    # The button carries its payload as data, not as an onclick argument
+    # (SEC_AUDIT M-6) — the page itself contains no script.
+    assert "data-add-app-group" in body
     assert "com.atakmap.app.civ" in body  # the group's package is offered
 
 
@@ -431,8 +434,17 @@ def test_blank_password_keeps_the_stored_one(client: TestClient, db):
     client.post("/admin/settings/sms", data={"sms.api_key": "", "sms.provider": "twilio"})
 
     db.expire_all()
-    stored = {s.key: s.value for s in db.scalars(_select(AppSetting))}
-    assert stored["sms.api_key"] == "KEY123"
+    from app.services import settings_store
+
+    # The behaviour: a blank field does not overwrite what is held.
+    assert settings_store.group_values(db, "sms")["sms.api_key"] == "KEY123"
+
+    # ⚠️ And the property M-5 added: the column no longer carries the secret.
+    # This assertion used to read `stored["sms.api_key"] == "KEY123"`, which was
+    # exactly what a database dump would have given an attacker.
+    raw = {s.key: s.value for s in db.scalars(_select(AppSetting))}["sms.api_key"]
+    assert raw != "KEY123"
+    assert "KEY123" not in raw
 
 
 def test_custom_attribute_lifecycle(client: TestClient, enrolled):
@@ -508,6 +520,59 @@ def test_markdown_lite_escapes_html():
     assert "<b>world</b>" not in out
     assert "&lt;b&gt;" in out
     assert "<code>&lt;script&gt;</code>" in out
+
+
+def test_markdown_lite_escapes_quotes_too():
+    """⚠️ `html.escape` leaves quotes alone unless asked (SEC_AUDIT L-3).
+
+    Rendered text lands inside attributes — a link title, a table cell reused as
+    a tooltip — where an unescaped quote closes the attribute and everything
+    after it is markup.
+    """
+    from app.web.markdown_lite import render
+
+    out = render("""He said "run" and it's fine""")
+
+    assert '"run"' not in out
+    assert "&quot;" in out
+    assert "&#x27;" in out
+
+
+@pytest.mark.parametrize(
+    "scheme", ["javascript:alert(1)", "JaVaScRiPt:alert(1)", "data:text/html,<x>",
+               "vbscript:msgbox", "  javascript:alert(1)"]
+)
+def test_markdown_lite_refuses_a_script_bearing_link(scheme):
+    """A guide is authored in the repository, but the renderer is not only fed
+    guides — and a link scheme is the cheapest way to turn read-only text into
+    script execution.
+    """
+    from app.web.markdown_lite import render
+
+    out = render(f"[click]({scheme})")
+
+    # No anchor at all is the property that matters. Whether the leftover text
+    # still reads "javascript:" is irrelevant — it is escaped body text, and
+    # asserting on it instead would pass for a renderer that happened to fail to
+    # parse the link while still linking the next one.
+    assert "<a " not in out, out
+    assert "href" not in out, out
+
+
+@pytest.mark.parametrize(
+    "target", ["https://example.com/x", "http://example.com/x", "/guides/howto/a",
+               "#section", "mailto:someone@example.com"]
+)
+def test_markdown_lite_still_links_what_a_guide_actually_uses(target):
+    """⚠️ The guides are full of these. A scheme allowlist that also drops them
+    turns every cross-reference in the documentation into plain text, and nobody
+    reads a 404 they cannot click.
+    """
+    from app.web.markdown_lite import render
+
+    out = render(f"[click]({target})")
+
+    assert f'href="{target}"' in out, out
 
 
 # --------------------------------------------------------------------------- #
@@ -1830,3 +1895,68 @@ def test_console_refuses_to_delete_a_live_device(client: TestClient, enrolled):
 
     assert response.status_code == 409
     assert client.get(f"/api/v1/devices/{device['device_id']}").status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ Outbound credentials are sealed, not stored (SEC_AUDIT M-5)
+# --------------------------------------------------------------------------- #
+
+
+def test_every_secret_field_is_sealed_in_the_database(client: TestClient, db):
+    """⚠️ What a database dump yields.
+
+    The vault key lives in `pki/`, so this defends against a copy of the database
+    travelling — a backup, a snapshot, a read-only injection — and not against
+    `pki/` leaking, at which point everything is gone anyway (S-2). That is a
+    narrower claim than "encrypted at rest" and it is the true one.
+    """
+    from sqlalchemy import select as _select
+
+    from app.db.models import AppSetting
+    from app.services import settings_store
+
+    client.post(
+        "/admin/settings/smtp",
+        data={"smtp.host": "mail.example.org", "smtp.password": "hunter2"},
+    )
+    client.post("/admin/settings/ad", data={"ad.bind_password": "directory-secret"})
+    client.post("/admin/settings/sms", data={"sms.api_key": "sms-secret"})
+    db.expire_all()
+
+    raw = " ".join(s.value or "" for s in db.scalars(_select(AppSetting)))
+    for secret in ("hunter2", "directory-secret", "sms-secret"):
+        assert secret not in raw, f"{secret} is readable in app_setting"
+
+    # And each still round-trips for the code that uses it.
+    assert settings_store.group_values(db, "smtp")["smtp.password"] == "hunter2"
+    assert settings_store.group_values(db, "ad")["ad.bind_password"] == "directory-secret"
+    assert settings_store.group_values(db, "sms")["sms.api_key"] == "sms-secret"
+
+
+def test_a_non_secret_setting_is_still_plain(client: TestClient, db):
+    """Sealing everything would make the settings table unreadable to an operator
+    debugging their own deployment, for no gain."""
+    from sqlalchemy import select as _select
+
+    from app.db.models import AppSetting
+
+    client.post("/admin/settings/smtp", data={"smtp.host": "mail.example.org"})
+    db.expire_all()
+
+    stored = {s.key: s.value for s in db.scalars(_select(AppSetting))}
+    assert stored["smtp.host"] == "mail.example.org"
+
+
+def test_a_credential_written_before_sealing_still_works(client: TestClient, db):
+    """⚠️ Every credential stored before M-5 is plaintext.
+
+    Treating those as corrupt would silently break outbound mail on the release
+    that added the encryption — a security improvement that reads as an outage.
+    """
+    from app.services import settings_store
+
+    # Exactly what an upgraded deployment has in its table.
+    settings_store.put(db, "smtp.password", "legacy-plaintext")
+    db.commit()
+
+    assert settings_store.group_values(db, "smtp")["smtp.password"] == "legacy-plaintext"
