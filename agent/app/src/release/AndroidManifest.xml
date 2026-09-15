@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copyright 2026 TAK-Solutions LLC
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<!--
+  Release-only manifest overlay. SEC_AUDIT.md M-4.
+
+  `DebugConfigReceiver` accepts a broadcast that sets server_url,
+  enrollment_token and server_ca_pem — it can repoint an agent at an arbitrary
+  management server, which is a fleet-takeover primitive by any reading.
+
+  ⚠️ It was declared `exported="true" enabled="true"` in **every** build type,
+  so any app on the device could send it that broadcast and the entire defence
+  was one runtime `if (!BuildConfig.DEBUG) return`. One boolean is thin for a
+  primitive of that consequence: a refactor that drops the guard, or a debug
+  build reaching a real device, are both ordinary events.
+
+  Removed here rather than disabled. A component absent from the merged manifest
+  cannot be enabled by a package manager call, a `pm enable`, or anything else —
+  there is nothing left to enable. The runtime check stays in the Kotlin as the
+  second layer, which is what it should have been all along.
+
+  Verified on the built artifacts, not on this file: `aapt2 dump xmltree` finds
+  the receiver exported in app-debug.apk and finds nothing at all in
+  app-release.apk.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application>
+        <receiver
+            android:name=".admin.DebugConfigReceiver"
+            tools:node="remove" />
+    </application>
+</manifest>

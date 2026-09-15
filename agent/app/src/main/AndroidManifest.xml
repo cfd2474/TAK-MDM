@@ -298,8 +298,14 @@
 
         <!--
           Bench configuration for the `dpm set-device-owner` path, which carries no
-          provisioning extras. Guarded by BuildConfig.DEBUG at runtime as well as
-          being exported only so `adb shell am broadcast` can reach it.
+          provisioning extras. Exported so `adb shell am broadcast` can reach it,
+          which also means every other app on the device can.
+
+          ⚠️ **Removed from release builds** by src/release/AndroidManifest.xml
+          (SEC_AUDIT.md M-4). Declaring it here declares it for the debug variant
+          only; the `BuildConfig.DEBUG` check in the receiver is the second layer,
+          not the only one. Do not add `enabled`/`exported` placeholders here in
+          the belief that they are what protects a release — the removal is.
         -->
         <receiver
             android:name=".admin.DebugConfigReceiver"

@@ -487,6 +487,96 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W182 — SEC_AUDIT second pass: M-1 and M-4 (v1.28.0, agent 0.70.1)
+
+The two findings the first pass deliberately left out, because each needs
+something the batch did not have: M-1 touches thirteen call sites, and M-4 needs
+an agent build and a `versionCode` bump.
+
+1. **M-1 — cap the upload before it is in memory.** ⚠️ The cap already exists
+   (`max_upload_bytes`, 2 GiB) and is checked at **every** upload site — but
+   *after* `.read()` has already materialised the whole body. A 50 GB POST is
+   refused only once 50 GB is resident. A chunked reader that aborts the moment
+   the cap is passed turns "no limit" into "bounded by the limit".
+2. **M-1 — a body limit at the proxy.** `docker/nginx/nginx.conf` sets one; the
+   Caddy vhost the InfraTAK module writes does not, and Caddy is what actually
+   fronts ATLAS in an InfraTAK deployment. Two layers, because the application
+   one cannot be delegated to a proxy that varies by deployment.
+3. **M-1 tests**, including one that proves the abort happens *during* the read
+   rather than after it — asserting only the 413 would pass for the code as it
+   stands today.
+4. **M-4 — remove `DebugConfigReceiver` from the release manifest.** It is a
+   fleet-takeover primitive (`server_url`, `enrollment_token`, `server_ca_pem`)
+   exported to every app on the device, defended by one runtime boolean. A
+   `src/release/AndroidManifest.xml` with `tools:node="remove"` means the release
+   APK has no such component at all; the `BuildConfig.DEBUG` check stays as the
+   second layer rather than the only one.
+5. **M-4 verification on the built artifact, not the source.** `aapt dump
+   xmltree` on both variants — absent from release, present in debug. A static
+   check on the manifest files would pass whether or not the merge did what it
+   claims.
+6. Rebuild `dist/`, raise `versionCode`, then SEC_AUDIT/PROJECT_STATE/version/
+   tag/push/module pin.
+
+**Status: complete.** 1959 server tests, agent JVM tests green, both guards
+mutation-checked (7 mutations each, all caught).
+
+#### ⚠️ The M-1 finding was wrong in a way that mattered
+
+The audit said "no size limit". There **was** one — `max_upload_bytes`, 2 GiB,
+checked at every one of the thirteen handlers. The defect was that it was checked
+after `file.file.read()`, so a 50 GB POST was refused once 50 GB was resident.
+
+That distinction decides what a test is worth. Every status-code assertion about
+this passes against the old code too, so the only test that separates the fix
+from what it replaced is `test_the_read_stops_at_the_cap`, which measures how
+many bytes the server actually took before saying no.
+
+⚠️ That test's flood stream is **bounded** (64 MB), not endless, and deliberately:
+a reader that consumes everything has to *fail* the suite, not hang it. Nobody
+diagnoses a test run that never finishes as "the upload cap regressed".
+
+#### Two things found while doing M-1
+
+* ⚠️ **`_run_update` never regenerated the Caddyfile** — only `deploy` did. The
+  new `request_body` limit would have reached the box and sat inert until
+  somebody happened to redeploy. That is the same shape as the twelve releases of
+  stale module pins: a change that is in git, on the box, and not in effect.
+  `_run_update` re-emits the vhost now.
+* The Caddy directive was verified by adapting the box's **real** Caddyfile
+  rather than by reading the documentation: `caddy validate` accepts it, and the
+  adapted JSON puts `request_body` at index 1 of the vhost's handler chain, ahead
+  of the subroute holding `forward_auth` and `reverse_proxy`. Ordering is what
+  decides whether it applies at all, and it is not visible in the Caddyfile.
+
+#### What M-1 does not fix, stated plainly
+
+A permitted upload is still `bytes` plus usually an `io.BytesIO` copy, so one
+2 GiB upload costs roughly 4 GiB. The dev box has 31 GB. Bounding that means
+handing the file object to `inspect_apk` and `dted.plan` instead of bytes — a
+refactor of both, and its own work item if it is ever worth doing.
+
+#### M-4 — verified on the artifact, not the source
+
+`aapt2 dump xmltree`: `DebugConfigReceiver` is present and exported in
+`app-debug.apk` and **absent** from `app-release.apk`. Signing certificate
+unchanged (`2094bccc…`), so the update channel will accept the build — a
+signature change cannot be delivered over the air and would strand the fleet.
+
+⚠️ The class's KDoc claimed it was "compiled out of release builds" and was not.
+The claim is true now; it was false when written, and anyone auditing by reading
+would have believed it.
+
+#### ⚠️ A mutation harness that corrupted the tree it was testing
+
+The first M-4 sweep keyed its backups by **basename**, and
+`src/main/AndroidManifest.xml` and `src/release/AndroidManifest.xml` share one.
+Restoring overwrote the release overlay with the main manifest, so the baseline
+run failed and every "CAUGHT" after it was measured against a broken tree. The
+sweep was redone with full-path keys and a baseline assertion first. **A mutation
+run that does not start by proving the tree is clean proves nothing.**
+
+
 ### ✅ W181 — SEC_AUDIT first-pass batch: M-5, M-6, L-1, L-2, L-3 (v1.27.0)
 
 Five self-contained, server-side findings in one release. No agent build, so the

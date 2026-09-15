@@ -34,9 +34,17 @@ import com.taksolutions.atlasmdm.sync.SyncScheduler
  * ADB is the only path that yields logs, which is exactly what is needed when
  * provisioning fails on-device with "something went wrong".
  *
- * **Debug builds only.** A receiver that can repoint an agent at an arbitrary
- * server is a fleet takeover primitive; it is compiled out of release builds and
- * refuses to act even if one were somehow shipped.
+ * **Debug builds only**, in two independent ways. A receiver that can repoint an
+ * agent at an arbitrary management server is a fleet takeover primitive.
+ *
+ * 1. `src/release/AndroidManifest.xml` removes the declaration, so a release APK
+ *    has no such component for anything to broadcast to (SEC_AUDIT.md M-4).
+ * 2. The `BuildConfig.DEBUG` check below, which is the backstop.
+ *
+ * ⚠️ This comment used to claim the class was "compiled out of release builds".
+ * It was not — the class shipped, the receiver was declared `exported="true"` in
+ * every build type, and point 2 was the whole defence. The claim is true now
+ * because point 1 exists; it was not true when it was written.
  *
  *     adb shell am broadcast -a com.taksolutions.atlasmdm.CONFIGURE \
  *       -n com.taksolutions.atlasmdm/.admin.DebugConfigReceiver \

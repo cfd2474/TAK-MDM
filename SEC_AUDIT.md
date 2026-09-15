@@ -54,10 +54,10 @@ device-level access an admin has by design.
 | H-2 | High | The agent signing key is an unrecoverable single point of failure |
 | H-3 | ✅ Fixed | Dependencies pinned two years back, with no scanning and no CI — 24 advisories found and cleared |
 | H-4 | ✅ Fixed | A device's own serial number reached a JavaScript string in the console — found while fixing M-6 |
-| M-1 | Medium | Uploads are read whole into memory with no size limit |
+| M-1 | ✅ Fixed | Uploads are read whole into memory with no size limit — the cap now bites during the read, plus a body limit at Caddy |
 | M-2 | Medium | Server-side fetch of operator-supplied URLs, following redirects (SSRF) |
 | M-3 | ✅ Fixed | Private key files are created before they are made private (TOCTOU) — closed by the S-2 key-custody work |
-| M-4 | Medium | A fleet-takeover receiver is exported in release builds |
+| M-4 | ✅ Fixed | A fleet-takeover receiver is exported in release builds — removed from the release manifest |
 | M-5 | ✅ Fixed | Outbound credentials stored in plaintext in the database — sealed in the token vault |
 | M-6 | ✅ Fixed | No security response headers anywhere — CSP with no inline script, plus four headers |
 | M-7 | Medium | The permanent enrollment QR is a non-expiring credential in a printable image |
@@ -570,6 +570,56 @@ device check-in.
 (it cannot be delegated to a proxy that varies by deployment), and a
 `request_body max_size` in the Caddy vhost.
 
+### ✅ Fixed in v1.28.0
+
+⚠️ **A correction to the finding above, which understated one thing and
+overstated another.** `max_upload_bytes` (2 GiB) did exist, and every one of the
+thirteen handlers checked it. What none of them did was check it before
+`file.file.read()` had already materialised the body — so the 413 was correct and
+useless: a 50 GB POST was refused once 50 GB was resident.
+
+So this was never "no size limit". It was a limit applied at a point where it
+could not prevent anything.
+
+**The application.** [app/api/uploads.py](app/api/uploads.py) reads in 1 MiB
+chunks and raises `UploadTooLarge` the moment the running total passes the cap.
+Peak use is the cap plus one chunk, whatever the sender does. All thirteen sites
+converted; each keeps the error shape it had, because a JSON endpoint and a
+browser form need different refusals and the operator only ever sees one of them.
+
+⚠️ **The two multi-file handlers pass the *remaining* budget**, not the cap. Ten
+files of 300 MB is the same denial of service as one file of 3 GB, and checking
+each against the full cap would wave it through.
+
+**The proxy.** The ATLAS vhost now emits:
+
+```
+request_body {
+    max_size 2304MiB
+}
+```
+
+Deliberately **above** the application's 2 GiB, so an over-size upload is refused
+by ATLAS with a message naming the limit rather than by Caddy with a bare 413.
+Verified by adapting the box's real Caddyfile rather than by reading the docs:
+`caddy validate` accepts it, and the adapted JSON puts the `request_body` handler
+at index 1 of the vhost's handler chain — ahead of the subroute holding
+`forward_auth` and `reverse_proxy`, which is what makes it apply at all.
+
+⚠️ **`_run_update` did not regenerate the Caddyfile**, only `deploy` did. Without
+noticing that, this directive would have reached the box and sat inert until
+somebody happened to redeploy — the same shape of failure as the twelve releases
+of stale module pins. The update path re-emits the vhost now.
+
+#### What is still true
+
+A *permitted* upload is materialised as `bytes` and usually copied again into an
+`io.BytesIO`, so one 2 GiB upload costs roughly 4 GiB. The dev box has 31 GB, so
+the ceiling is survivable there and is not a claim about anyone else's. Bounding
+it properly means handing the file object to `inspect_apk` and `dted.plan`
+instead of bytes — a refactor of both, not a line in the reader. Recorded rather
+than implied, because "M-1 fixed" should not be read as "uploads are cheap now".
+
 ---
 
 ### M-2 — Server-side fetch of operator-supplied URLs, following redirects
@@ -643,6 +693,36 @@ real device are all ordinary events.
 in a `release/AndroidManifest.xml`, or `android:enabled="${debugReceiver}"` from
 a manifest placeholder. Keep the runtime check as the second layer, not the only
 one. A signature-level custom permission would also work.
+
+### ✅ Fixed in v1.28.0 — agent 0.70.1 (versionCode 116)
+
+[`agent/app/src/release/AndroidManifest.xml`](agent/app/src/release/AndroidManifest.xml)
+removes the declaration with `tools:node="remove"`. The first of the two
+recommended forms, chosen over the placeholder: a component absent from the
+merged manifest cannot be enabled by a `pm enable`, a package-manager call, or
+anything else, because there is nothing left to enable. `BuildConfig.DEBUG` stays
+in the Kotlin as the second layer — it does nothing about a *release* APK, but a
+debug build reaching a real device is the case it does cover.
+
+**Verified on the built artifacts, not on the source.** `aapt2 dump xmltree`:
+
+| Variant | `DebugConfigReceiver` |
+|---|---|
+| `app-debug.apk` | present, `exported=true` — bench provisioning over ADB still works |
+| `app-release.apk` | **absent** |
+
+⚠️ The class's own KDoc claimed it was "compiled out of release builds". It was
+not: the class shipped, the receiver was declared in every build type, and the
+runtime boolean was the whole defence. The comment is true now because the
+overlay exists; it was false when it was written, and a reader auditing this file
+would have believed it.
+
+`tests/test_debug_receiver_removed.py` guards what a source-only test can: that
+the overlay exists, that it *removes* rather than disables, that the name it
+removes is still the name the main manifest declares (⚠️ `tools:node="remove"`
+for a component nothing declares is a silent no-op — the build succeeds and the
+overlay reads exactly as it does today), and that the runtime guard is still the
+first statement of `onReceive`. Seven mutations of those; all seven fail.
 
 ---
 

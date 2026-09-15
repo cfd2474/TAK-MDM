@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, Upl
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api import uploads
 from app.api.deps import fetch_or_404, get_db, get_storage
 from app.api.schemas import (
     PackageRead,
@@ -52,14 +53,15 @@ def upload_package(
     itself rather than trusting form fields — a caller cannot claim an APK is
     something it is not.
     """
-    data = file.file.read()
-    if not data:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "uploaded file is empty")
-    if len(data) > settings.max_upload_bytes:
+    try:
+        data = uploads.read_capped(file.file, settings.max_upload_bytes)
+    except uploads.UploadTooLarge:
         raise HTTPException(
             status.HTTP_413_CONTENT_TOO_LARGE,
             f"upload exceeds {settings.max_upload_bytes} bytes",
-        )
+        ) from None
+    if not data:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "uploaded file is empty")
 
     try:
         result = package_service.ingest(session, storage, data, label=label)

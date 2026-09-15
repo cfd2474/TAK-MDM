@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, Upl
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api import uploads
 from app.api.deps import fetch_or_404, get_db, get_storage, require_device
 from app.api.schemas import FileSelectionRead, ManagedFileRead, ManagedFileUpdate
 from app.artifacts.storage import ArtifactStorage
@@ -42,12 +43,13 @@ def upload_file(
     storage: ArtifactStorage = Depends(get_storage),
     settings: Settings = Depends(get_settings),
 ) -> ManagedFile:
-    data = file.file.read()
-    if len(data) > settings.max_upload_bytes:
+    try:
+        data = uploads.read_capped(file.file, settings.max_upload_bytes)
+    except uploads.UploadTooLarge:
         raise HTTPException(
             status.HTTP_413_CONTENT_TOO_LARGE,
             f"upload exceeds {settings.max_upload_bytes} bytes",
-        )
+        ) from None
 
     try:
         managed = file_service.ingest_file(

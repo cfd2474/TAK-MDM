@@ -72,6 +72,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.routers.assignments import reject_unassignable
+from app.api import uploads
 from app.api.deps import (
     get_db,
     get_enrollment_qr_guard,
@@ -3009,13 +3010,14 @@ def upload_policy_image_form(
     Returns the id rather than redirecting because the policy has not been saved
     yet; the form holds the id until the operator commits the whole policy.
     """
-    data = file.file.read()
-    if not data:
-        return JSONResponse({"error": "the uploaded file is empty"}, status_code=422)
-    if len(data) > settings.max_upload_bytes:
+    try:
+        data = uploads.read_capped(file.file, settings.max_upload_bytes)
+    except uploads.UploadTooLarge:
         return JSONResponse(
             {"error": f"upload exceeds {settings.max_upload_bytes} bytes"}, status_code=413
         )
+    if not data:
+        return JSONResponse({"error": "the uploaded file is empty"}, status_code=422)
 
     media_type = file.content_type or ""
     if not media_type.startswith("image/"):
@@ -3418,11 +3420,12 @@ def upload_app_form(
     that. Both are gone: a device installs the build its policy names, so a new
     upload reaches a device only when someone chooses it in a policy.
     """
-    data = file.file.read()
+    try:
+        data = uploads.read_capped(file.file, settings.max_upload_bytes)
+    except uploads.UploadTooLarge:
+        return _redirect(f"/apps?error={_quote(f'upload exceeds {settings.max_upload_bytes} bytes')}")
     if not data:
         return _redirect("/apps?error=the+uploaded+file+is+empty")
-    if len(data) > settings.max_upload_bytes:
-        return _redirect(f"/apps?error={_quote(f'upload exceeds {settings.max_upload_bytes} bytes')}")
 
     try:
         comparison = package_service.compare_upload(session, data)
@@ -3472,13 +3475,14 @@ def preview_app_upload(
     the operator anything at all — for a first upload of a package there is no
     decision to make, and a dialog with one option is just an extra click.
     """
-    data = file.file.read()
-    if not data:
-        return JSONResponse({"error": "the uploaded file is empty"}, status_code=400)
-    if len(data) > settings.max_upload_bytes:
+    try:
+        data = uploads.read_capped(file.file, settings.max_upload_bytes)
+    except uploads.UploadTooLarge:
         return JSONResponse(
             {"error": f"upload exceeds {settings.max_upload_bytes} bytes"}, status_code=400
         )
+    if not data:
+        return JSONResponse({"error": "the uploaded file is empty"}, status_code=400)
     try:
         c = package_service.compare_upload(session, data)
     except package_service.PackageError as exc:
@@ -3834,11 +3838,12 @@ def upload_content_form(
     settings: Settings = Depends(get_settings),
     identity: AdminIdentity = Depends(admin_required),
 ) -> RedirectResponse:
-    data = file.file.read()
+    try:
+        data = uploads.read_capped(file.file, settings.max_upload_bytes)
+    except uploads.UploadTooLarge:
+        return _redirect(f"/content?error={_quote(f'upload exceeds {settings.max_upload_bytes} bytes')}")
     if not data:
         return _redirect("/content?error=the+uploaded+file+is+empty")
-    if len(data) > settings.max_upload_bytes:
-        return _redirect(f"/content?error={_quote(f'upload exceeds {settings.max_upload_bytes} bytes')}")
     try:
         file_service.ingest_file(
             session,
@@ -3882,13 +3887,14 @@ def upload_policy_file(
     control was not enough on its own, because the operator who needs it is the
     one who did not read it.
     """
-    data = file.file.read()
-    if not data:
-        return JSONResponse({"error": "the uploaded file is empty"}, status_code=422)
-    if len(data) > settings.max_upload_bytes:
+    try:
+        data = uploads.read_capped(file.file, settings.max_upload_bytes)
+    except uploads.UploadTooLarge:
         return JSONResponse(
             {"error": f"upload exceeds {settings.max_upload_bytes} bytes"}, status_code=413
         )
+    if not data:
+        return JSONResponse({"error": "the uploaded file is empty"}, status_code=422)
     if dted.looks_like_dted(data):
         # Same reasoning as the package refusal: accepted here it would unpack
         # wherever the destination said, and ATAK reads terrain from one
@@ -3991,13 +3997,14 @@ def upload_policy_dted(
     stored archive identical to what has to land on disk and leaves every fielded
     agent correct without an update.
     """
-    data = file.file.read()
-    if not data:
-        return JSONResponse({"error": "the uploaded file is empty"}, status_code=422)
-    if len(data) > settings.max_upload_bytes:
+    try:
+        data = uploads.read_capped(file.file, settings.max_upload_bytes)
+    except uploads.UploadTooLarge:
         return JSONResponse(
             {"error": f"upload exceeds {settings.max_upload_bytes} bytes"}, status_code=413
         )
+    if not data:
+        return JSONResponse({"error": "the uploaded file is empty"}, status_code=422)
     try:
         layout = dted.plan(data)
     except dted.DtedError as exc:
@@ -4065,13 +4072,14 @@ def upload_policy_data_package(
     package is fleet content someone may want to reuse or inspect, not an asset
     private to one policy.
     """
-    data = file.file.read()
-    if not data:
-        return JSONResponse({"error": "the uploaded file is empty"}, status_code=422)
-    if len(data) > settings.max_upload_bytes:
+    try:
+        data = uploads.read_capped(file.file, settings.max_upload_bytes)
+    except uploads.UploadTooLarge:
         return JSONResponse(
             {"error": f"upload exceeds {settings.max_upload_bytes} bytes"}, status_code=413
         )
+    if not data:
+        return JSONResponse({"error": "the uploaded file is empty"}, status_code=422)
     try:
         package = data_package_service.ingest_upload(
             session,
@@ -4118,17 +4126,23 @@ async def create_policy_data_package(
     for upload in form.getlist("files"):
         if not isinstance(upload, StarletteUploadFile):
             continue
-        content = await upload.read()
+        # ⚠️ The *remaining* budget, not the per-file cap. Ten files of
+        # 300 MB each is the same denial of service as one file of 3 GB, and
+        # checking each against the full cap would wave it through.
+        try:
+            content = await uploads.read_capped_async(
+                upload, settings.max_upload_bytes - total
+            )
+        except uploads.UploadTooLarge:
+            return JSONResponse(
+                {"error": f"the package exceeds {settings.max_upload_bytes} bytes"},
+                status_code=413,
+            )
         if not content:
             # An empty file input is a row the operator added and left blank, not
             # an error worth refusing the whole package for.
             continue
         total += len(content)
-        if total > settings.max_upload_bytes:
-            return JSONResponse(
-                {"error": f"the package exceeds {settings.max_upload_bytes} bytes"},
-                status_code=413,
-            )
         payloads.append((upload.filename or "file", content))
 
     try:
@@ -4168,13 +4182,14 @@ def upload_data_package_form(
     trace. The operator is standing in front of this form, so this is the only
     place the refusal can actually reach them.
     """
-    data = file.file.read()
-    if not data:
-        return _redirect("/content?error=the+uploaded+file+is+empty")
-    if len(data) > settings.max_upload_bytes:
+    try:
+        data = uploads.read_capped(file.file, settings.max_upload_bytes)
+    except uploads.UploadTooLarge:
         return _redirect(
             f"/content?error={_quote(f'upload exceeds {settings.max_upload_bytes} bytes')}"
         )
+    if not data:
+        return _redirect("/content?error=the+uploaded+file+is+empty")
     try:
         package = data_package_service.ingest_upload(
             session,
@@ -4214,20 +4229,28 @@ async def create_data_package_form(
     # subclass silently matches nothing and the package looks empty. It fails as
     # "a data package needs at least one file" while the operator is looking at
     # the files they just attached.
-    uploads = [u for u in form.getlist("files") if isinstance(u, StarletteUploadFile)]
+    # Named `attached`, not `uploads`: `app.api.uploads` is imported at module
+    # level and a local of that name shadows it, which fails as an
+    # AttributeError on a list halfway through building a package.
+    attached = [u for u in form.getlist("files") if isinstance(u, StarletteUploadFile)]
     payloads: list[tuple[str, bytes]] = []
     total = 0
-    for upload in uploads:
-        content = await upload.read()
+    for upload in attached:
+        # ⚠️ The *remaining* budget, not the per-file cap — see the note on the
+        # JSON variant of this loop.
+        try:
+            content = await uploads.read_capped_async(
+                upload, settings.max_upload_bytes - total
+            )
+        except uploads.UploadTooLarge:
+            return _redirect(
+                f"/content?error={_quote(f'the package exceeds {settings.max_upload_bytes} bytes')}"
+            )
         if not content:
             # A file input left empty submits as a zero-byte part; it is not an
             # error, it is a row the operator did not fill in.
             continue
         total += len(content)
-        if total > settings.max_upload_bytes:
-            return _redirect(
-                f"/content?error={_quote(f'the package exceeds {settings.max_upload_bytes} bytes')}"
-            )
         payloads.append((upload.filename or "file", content))
 
     try:
