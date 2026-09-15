@@ -487,6 +487,64 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W175 — Renewal did not actually save the fleet (v1.23.0)
+
+Operator, 2026-09-14: *"Does the 5 year cert need to be manually reissued?"*
+
+**Yes** — the intermediate is signed by the offline root, so reissuing it needs a
+human. That part was known and chosen. Checking the *timing* of it found that
+W174's renewal would not have rescued the fleet at all.
+
+#### ⚠️ The gap, in dates
+
+| Day | What happens |
+|---|---|
+| 0 | Intermediate issued, 5 years |
+| 1700 | A device renews; gets an 825-day certificate expiring **day 2525** |
+| 1825 | **The intermediate expires — that device stops authenticating** |
+| 2495 | When it would next have asked for renewal |
+
+Renewal fires on the *device certificate's* expiry, so a device holding a long
+certificate from a dying issuer never comes back to ask. Issuing a replacement
+intermediate rescues nobody, because nobody asks. The fleet dies at the five-year
+mark regardless — which is the opposite of what W174's commit message claimed.
+
+#### The fix: a certificate may never outlive its issuer
+
+`sign_csr` caps validity at the issuing certificate's expiry, less a one-day
+margin. Both enrolment and renewal go through it, so one change covers both.
+
+The behaviour inverts usefully: **as an issuer ages the certificates it signs get
+shorter**, so devices renew more often and roll onto a replacement quickly once one
+exists. The fleet converges on the new issuer by itself, which is what makes
+rotation cost a ceremony and nothing else.
+
+⚠️ **The margin is not zero.** A certificate expiring at the same instant as its
+issuer leaves no window in which to renew — the device would be due and unable to
+authenticate simultaneously.
+
+⚠️ **An expired issuer refuses rather than signing.** A certificate valid for
+minutes looks like success and strands the device anyway; the refusal names the
+command that fixes it.
+
+#### A test that documented the bug had to go
+
+`test_a_short_intermediate_expires_before_the_certificates_it_issues` asserted the
+intermediate expires *before* what it signs — true of the old code, and exactly the
+defect. Replaced with the inverse invariant, with the history kept in the
+docstring.
+
+#### ⚠️ Also found: the agent only ever parses the first certificate of a bundle
+
+`parseCertificate` uses `generateCertificate`, which reads one. The server returns
+root-first, so the agent stores `[leaf, root]` and never sees its own issuer.
+Harmless for the handshake — Caddy holds the whole trust pool — and it is *why* the
+cap belongs on the server: the device cannot reason about an issuer it cannot see.
+Recorded rather than fixed; nothing depends on it today.
+
+**1832 tests.** Three mutation checks, all caught.
+
+
 ### ✅ W174 — Certificates renew themselves; nobody touches a tablet
 
 Operator, 2026-09-14: *"I want all certs to be automated and have minimal impact

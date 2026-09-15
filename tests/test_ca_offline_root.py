@@ -48,6 +48,12 @@ def _root(pki):
     )
 
 
+def _utc_now():
+    import datetime as _dt
+
+    return _dt.datetime.now(_dt.timezone.utc)
+
+
 def _enrol(authority: CertificateAuthority):
     """A device certificate from whatever this CA currently signs with."""
     from cryptography.hazmat.primitives import hashes
@@ -281,17 +287,15 @@ def test_the_refusal_explains_the_ceremony(tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-def test_a_short_intermediate_expires_before_the_certificates_it_issues(tmp_path):
-    """⚠️ The fact that decides the interval, measured rather than argued.
+def test_the_issuer_always_outlives_what_it_signs(tmp_path):
+    """⚠️ This asserted the opposite until W175, and the old version was right
+    about the code at the time.
 
-    A device certificate is issued for 825 days and **nothing renews it** —
-    `sign_csr` is reachable from enrolment and nowhere else. A device
-    authenticates only while its issuer is also valid, so an intermediate shorter
-    than 825 days truncates every certificate it signs, and recovering one of
-    those tablets means a factory reset and a re-provision.
-
-    (That an expired issuer actually refuses the leaf is proven in
-    `test_ca_chain.py`; this pins the arithmetic that makes it matter.)
+    A 365-day intermediate used to issue 825-day certificates that outlived it —
+    which is exactly why a device could be stranded with most of its validity
+    unused. Certificates are now capped at the issuer's expiry, so the relationship
+    is inverted by construction and the truncation warning in the CLI is about
+    *ceremony frequency* rather than about stranding devices.
     """
     pki = tmp_path / "pki"
     _root(pki)
@@ -300,10 +304,7 @@ def test_a_short_intermediate_expires_before_the_certificates_it_issues(tmp_path
 
     device_cert = _enrol(authority)
 
-    assert authority.certificate.not_valid_after_utc < device_cert.not_valid_after_utc, (
-        "a 365-day intermediate outliving its 825-day certificates would mean the "
-        "truncation warning is unnecessary"
-    )
+    assert device_cert.not_valid_after_utc < authority.certificate.not_valid_after_utc
 
 
 def test_the_shipped_default_strands_nobody(cli_pki, capsys):
@@ -339,3 +340,86 @@ def test_a_truncating_interval_is_called_out(cli_pki, capsys):
     assert "460 days before" in output, output
     assert "factory reset" in output
     assert "--days 1190" in output, "the message must name the number that works"
+
+
+# --------------------------------------------------------------------------- #
+# ⚠️ A certificate must never outlive the one that signed it (W175)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_device_certificate_never_outlives_its_issuer(tmp_path):
+    """⚠️ Without this, automatic renewal does not save the fleet.
+
+    A device renews thirty days before *its own* expiry. One issued a long
+    certificate shortly before its issuer expires stops authenticating when the
+    issuer does — most of its own validity unused — and does not come back to ask
+    for another until long after. Issuing a replacement intermediate rescues
+    nobody, because nobody asks.
+    """
+    from app.security.ca import CertificateAuthority, issue_intermediate
+
+    pki = tmp_path / "pki"
+    _root(pki)
+    # An intermediate with 40 days left, signing a certificate asked to last 825.
+    issue_intermediate(pki, common_name="Short Issuer", validity_days=40)
+    authority = _root(pki)
+
+    device_cert = _enrol(authority)
+
+    assert device_cert.not_valid_after_utc < authority.certificate.not_valid_after_utc
+    remaining = (device_cert.not_valid_after_utc - _utc_now()).days
+    assert 35 <= remaining <= 40, remaining
+
+
+def test_a_certificate_well_inside_the_issuer_is_not_shortened(tmp_path):
+    """The cap must not quietly truncate the ordinary case."""
+    from app.security.ca import issue_intermediate
+
+    pki = tmp_path / "pki"
+    _root(pki)
+    issue_intermediate(pki, common_name="Long Issuer", validity_days=1825)
+    authority = _root(pki)
+
+    device_cert = _enrol(authority)
+
+    remaining = (device_cert.not_valid_after_utc - _utc_now()).days
+    assert 820 <= remaining <= 825, remaining
+
+
+def test_an_expired_issuer_refuses_rather_than_issuing_a_useless_certificate(tmp_path):
+    """⚠️ A certificate valid for minutes looks like success and strands the device.
+
+    The refusal names the command that fixes it, because this is reached by an
+    operator whose intermediate lapsed and whose devices are already failing.
+    """
+    from app.security.ca import CertificateAuthority, CertificateError
+
+    pki = tmp_path / "pki"
+    _root(pki)
+    # An issuer that expired yesterday.
+    from cryptography import x509 as _x509
+    from cryptography.hazmat.primitives import hashes, serialization as _ser
+    from cryptography.hazmat.primitives.asymmetric import ec as _ec
+    import datetime as _dt
+
+    root_cert = _x509.load_pem_x509_certificate((pki / "ca.crt").read_bytes())
+    root_key = _ser.load_pem_private_key((pki / "ca.key").read_bytes(), password=None)
+    key = _ec.generate_private_key(_ec.SECP256R1())
+    now = _dt.datetime.now(_dt.timezone.utc)
+    stale = (
+        _x509.CertificateBuilder()
+        .subject_name(_x509.Name([_x509.NameAttribute(
+            __import__("cryptography.x509.oid", fromlist=["NameOID"]).NameOID.COMMON_NAME,
+            "Lapsed Issuer")]))
+        .issuer_name(root_cert.subject)
+        .public_key(key.public_key())
+        .serial_number(_x509.random_serial_number())
+        .not_valid_before(now - _dt.timedelta(days=400))
+        .not_valid_after(now - _dt.timedelta(days=1))
+        .add_extension(_x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .sign(root_key, hashes.SHA256())
+    )
+    authority = CertificateAuthority(stale, key, trusted=[root_cert, stale])
+
+    with pytest.raises(CertificateError, match="ca-issue-intermediate"):
+        _enrol(authority)

@@ -203,6 +203,13 @@ class RootKeyMissing(CertificateError):
     """
 
 
+#: How long before its issuer's expiry a device certificate must end.
+#:
+#: ⚠️ Not zero. A certificate expiring at the same instant as its issuer leaves no
+#: window in which the device could renew — it would be due for renewal and unable
+#: to authenticate at the same moment.
+ISSUER_EXPIRY_MARGIN = dt.timedelta(days=1)
+
 #: How many certificates a chain may contain before we stop walking.
 #:
 #: Three: device, intermediate, root. ⚠️ A bound rather than a `while` because the
@@ -424,6 +431,7 @@ class CertificateAuthority:
             ]
         )
         now = _utcnow()
+        expires = self._capped_expiry(now, validity_days)
 
         certificate = (
             x509.CertificateBuilder()
@@ -432,7 +440,7 @@ class CertificateAuthority:
             .public_key(public_key)
             .serial_number(x509.random_serial_number())
             .not_valid_before(now - dt.timedelta(minutes=5))
-            .not_valid_after(now + dt.timedelta(days=validity_days))
+            .not_valid_after(expires)
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
             .add_extension(
                 x509.KeyUsage(
@@ -509,6 +517,49 @@ class CertificateAuthority:
                     if link is certificate
                     else "an issuing certificate has expired"
                 )
+
+    def _capped_expiry(self, now: dt.datetime, validity_days: int) -> dt.datetime:
+        """A device certificate must never outlive the certificate that signed it.
+
+        ⚠️ **Without this, automatic renewal does not save the fleet** (W175). A
+        device renews thirty days before *its own* expiry, so one issued a long
+        certificate shortly before its issuer expires stops authenticating when the
+        issuer does — with most of its own validity unused — and does not come back
+        to ask for another until long after. Issuing a replacement intermediate
+        rescues nobody, because nobody asks.
+
+        Capping inverts that. As an issuer ages the certificates it signs get
+        shorter, so devices renew more often and roll onto the replacement quickly
+        once one exists. The fleet converges on the new issuer by itself, which is
+        the property that makes rotation cost a ceremony and nothing else.
+
+        The margin keeps a device from expiring at the same instant as its issuer,
+        which would leave no window in which to renew at all.
+        """
+        wanted = now + dt.timedelta(days=validity_days)
+        issuer_expiry = _aware(self._certificate.not_valid_after_utc)
+        latest = issuer_expiry - ISSUER_EXPIRY_MARGIN
+
+        if latest <= now:
+            # The issuer is expired, or so close that nothing useful can be signed.
+            # Refusing is the honest answer: a certificate valid for minutes would
+            # look like success and strand the device anyway.
+            raise CertificateError(
+                f"the issuing certificate expires {issuer_expiry.date()} and cannot "
+                f"sign a usable device certificate. Issue a new intermediate "
+                f"(`python -m app.cli ca-issue-intermediate`) before enrolling or "
+                f"renewing anything else."
+            )
+
+        if wanted <= latest:
+            return wanted
+
+        logger.info(
+            "capping certificate validity at the issuer's expiry: %s rather than %s",
+            latest.date(),
+            wanted.date(),
+        )
+        return latest
 
     @staticmethod
     def device_id_from(certificate: x509.Certificate) -> uuid.UUID:
