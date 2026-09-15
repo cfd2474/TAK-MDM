@@ -743,6 +743,10 @@ class CheckinResponse(BaseModel):
     # An agent build this device should install now, or null. Decided server-side
     # per device (W27) — candidate builds reach canaries only.
     agent_update: dict[str, Any] | None = None
+    #: ⚠️ Optional so an older agent, which does not read it, is unaffected — and
+    #: so a device that has never seen it keeps its existing behaviour rather than
+    #: failing to parse the response it depends on to be managed at all.
+    certificate: CertificatePolicy | None = None
     # Omitted when the device already holds the current version — the bandwidth
     # saving that makes frequent check-in viable on a metered link.
     desired_state: dict[str, Any] | None = None
@@ -750,6 +754,16 @@ class CheckinResponse(BaseModel):
     commands: list[CommandEnvelope] = Field(default_factory=list)
     next_checkin_seconds: int
     unknown_command_ids: list[str] = Field(default_factory=list)
+
+
+class CertificatePolicy(BaseModel):
+    """What the server wants devices to do about their certificates (W174)."""
+
+    #: Renew once this many days of validity remain.
+    renew_within_days: int
+    #: How long a renewed certificate lasts, so a device can sanity-check what it
+    #: was given rather than assume.
+    validity_days: int
 
 
 class CertificateRenewalRequest(BaseModel):

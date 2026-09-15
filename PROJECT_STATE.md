@@ -487,7 +487,7 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
-### 🚧 W174 — Certificates renew themselves; nobody touches a tablet
+### ✅ W174 — Certificates renew themselves; nobody touches a tablet
 
 Operator, 2026-09-14: *"I want all certs to be automated and have minimal impact
 on the administrator. No manual cert rotations, no re-enroll, etc"* — and, given
@@ -568,8 +568,44 @@ removing the CSR signature check changes nothing observable, because the
 public-key match already confines the request to the caller's own key. The guard
 is kept as defence in depth and the test says why it cannot be exercised.
 
-**1829 tests.** Chunks 2–6 to go — short certificates, the agent side, expiry
-visibility, the 5-year intermediate, and the release.
+#### ✅ Chunks 2–6 done (v1.22.0, agent 0.70.0 / versionCode 115)
+
+* **The server states the policy.** `device_cert_renew_within_days` (30) rides on
+  every check-in beside the validity, so the window can change without an agent
+  release — which matters because a device that renews too late cannot be reached
+  to be corrected. Optional in the schema, so an older agent is unaffected.
+* **The agent renews.** `CertificateRenewal` decides; `ApiClient.renewCertificate`
+  asks; `DeviceIdentity.installCertificate` stores. ⚠️ It runs **before** the
+  self-update and is **not** gated on a clean sync: installing the agent kills the
+  process mid-call, and a device already failing to apply policy is exactly the one
+  that must not also lose its identity.
+* ⚠️ **The agent refuses a zero window.** A server sending `0` would mean "renew
+  once expired", and a device cannot renew a certificate it can no longer
+  authenticate with — unrecoverable without a factory reset. Clamped to a floor,
+  and that mutation is the first of five, all caught.
+* **The console names the issuing certificate** and its expiry, warning **180 days**
+  out. That much warning is deliberate: reissuing needs the root fetched from
+  wherever it was put.
+* **The intermediate default is now 5 years** (1825), because rotation no longer
+  costs a fleet anything.
+
+#### ⚠️ Short certificates are deliberately **not** done yet
+
+Dropping validity 825 → 90 is the real prize — a stolen device credential would
+expire on its own. But shortening before the fleet runs an agent that renews would
+strand every device still on an older one, in 90 days, with no recovery but a
+factory reset. It waits until 0.70.0 is everywhere.
+
+#### ⚠️ A decorator caught the wrong function
+
+Inserting the console helpers directly above `def admin_page(` put them **between
+`@router.get("/admin")` and the function it decorates**, so the route registered
+the helper instead. FastAPI refused to start over a return annotation it could not
+serialise, which is a better failure than the alternative — a `/admin` route that
+quietly returned a `CertificateAuthority`.
+
+**1829 server tests, 292 agent JVM tests.** Signature continuity verified,
+`versionCode` 114 → 115.
 
 
 ### ✅ W173 — The intermediate's life is a cap on every device (v1.20.0)

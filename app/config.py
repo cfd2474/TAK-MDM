@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     ca_common_name: str = "TAK-MDM Device CA"
     ca_validity_days: int = 3650
     device_cert_validity_days: int = 825
+    #: How close to expiry a device should renew.
+    #:
+    #: The server states it and the agent obeys, so the policy can change without
+    #: an agent release — which matters because the fleet updates on its own
+    #: schedule and a hardcoded window could not be corrected on a device that had
+    #: stopped checking in often enough to be corrected.
+    device_cert_renew_within_days: int = 30
 
     # mTLS is terminated at the reverse proxy, which forwards the verified client
     # certificate in this header. The app re-verifies chain, validity, and

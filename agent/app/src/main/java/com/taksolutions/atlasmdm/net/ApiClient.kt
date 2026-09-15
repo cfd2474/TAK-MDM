@@ -237,6 +237,27 @@ class ApiClient(private val config: AgentConfig) {
     }
 
     /**
+     * Ask for a new certificate, over the connection the current one authenticates.
+     *
+     * ⚠️ Uses the mTLS client deliberately: the server issues only to a device
+     * that is already authenticated, so this is not a way in — it is a way to stay
+     * in. A device whose certificate has fully expired cannot call this, which is
+     * why the renewal window has to be wide enough to be missed a few times.
+     */
+    fun renewCertificate(csrPem: String): RenewedCertificate {
+        val body = JSONObject().put("csr_pem", csrPem)
+        val request = Request.Builder()
+            .url("$baseUrl/api/v1/device/certificate")
+            .post(body.toString().toRequestBody(JSON))
+            .build()
+        val answer = mtlsClient.newCall(request).execute().readJson()
+        return RenewedCertificate(
+            certificatePem = answer.getString("certificate_pem"),
+            caPem = answer.optString("ca_pem").ifBlank { null },
+        )
+    }
+
+    /**
      * Upload a diagnostic log bundle.
      *
      * Its own endpoint rather than a field on check-in: this body is up to a
@@ -438,6 +459,15 @@ class ApiClient(private val config: AgentConfig) {
 
     /** What the server said about a typed bypass PIN. */
     data class BypassPinAnswer(val accepted: Boolean, val attemptsRemaining: Int)
+
+    /**
+     * A freshly issued certificate and the trust bundle to store beside it.
+     *
+     * ⚠️ `caPem` is the whole trust store, not just the issuer — a device that
+     * kept only its own issuer could not build a chain once that intermediate
+     * retired.
+     */
+    data class RenewedCertificate(val certificatePem: String, val caPem: String?)
 
     companion object {
         private const val TAG = "ApiClient"

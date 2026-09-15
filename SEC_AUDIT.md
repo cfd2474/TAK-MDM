@@ -307,8 +307,26 @@ and has not been run on the reference box** — shipping the capability is not t
 same as using it, and this finding stays Severe until the root is actually gone
 from that server.
 
-**What still has to happen:** run the ceremony; and for the remaining keys, custody
-the application only *asks* of — a KMS or an HSM (`R8`).
+### ✅ v1.22.0 — certificates now renew themselves
+
+Devices ask for a new certificate over their existing mTLS connection, before
+expiry, reusing their StrongBox key. Nothing is re-enrolled, and rotating an
+intermediate no longer touches a tablet. The renewal window is stated by the
+server on every check-in, so it can be corrected without shipping an agent.
+
+⚠️ **The key never changes, which is what makes it safe unattended.** There is no
+swap to get half-done: a failed renewal leaves the working certificate exactly
+where it was and tries again.
+
+This also unlocks **short device certificates** — the validity can drop from 825
+days to 90 once the fleet runs an agent that renews, so a stolen device credential
+expires on its own. ⚠️ **Not done yet, and the ordering matters**: shortening
+before the fleet has updated would strand every device still on an older agent in
+90 days.
+
+**What still has to happen:** run the offline-root ceremony; shorten device
+certificates once the fleet is on agent 0.70.0 or later; and for the remaining
+keys, custody the application only *asks* of — a KMS or an HSM (`R8`).
 
 **Why Severe and not accepted risk.** The existing acceptance ("acceptable on a
 single trusted host where the DB is equally exposed") holds for `ca.key` versus

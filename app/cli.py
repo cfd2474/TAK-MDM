@@ -312,13 +312,12 @@ def main(argv: list[str] | None = None) -> int:
     intermediate.add_argument("--pki-dir", default=None)
     intermediate.add_argument("--common-name", default=None)
     intermediate.add_argument(
-        "--days", type=int, default=1190,
-        help="how long the intermediate is valid. ⚠️ A device authenticates only "
-             "while its issuer is also valid, and there is no certificate renewal "
-             "— so an intermediate shorter than the device certificate validity "
-             "(825 days) truncates every certificate it issues, and those devices "
-             "must be re-enrolled by hand. The default is 825 + a year of "
-             "issuing.",
+        "--days", type=int, default=1825,
+        help="how long the intermediate is valid. Five years by default: devices "
+             "renew their own certificates (W174) and roll onto the current "
+             "issuer by themselves, so rotating costs a ceremony and nothing "
+             "else. ⚠️ It must still exceed the device certificate validity, or "
+             "certificates are truncated between renewals.",
     )
     intermediate.set_defaults(func=ca_issue_intermediate)
 

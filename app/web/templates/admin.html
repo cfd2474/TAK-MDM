@@ -36,9 +36,36 @@
       <p class="sub">
         <span class="mono">{{ ca.common_name }}</span> ·
         CA valid {{ ca.ca_validity_days }} days ·
-        device certificates valid {{ ca.device_cert_validity_days }} days.
+        device certificates valid {{ ca.device_cert_validity_days }} days,
+        renewed automatically {{ ca.renew_within_days }} days before they expire.
         Revocation is a database check during auth (D25), not a CRL.
       </p>
+      {#
+        ⚠️ The *issuing* certificate's expiry, which the configured numbers above
+        do not mention. When it passes, every device it signed stops
+        authenticating — and reissuing needs the offline root fetched from
+        wherever it was put, so the warning starts months out rather than days.
+      #}
+      {% if ca.issuing_known %}
+        <p class="sub">
+          Signing with <span class="mono">{{ ca.issuing_name }}</span>,
+          {% if ca.is_split %}
+            an intermediate ({{ ca.trust_anchors }} trust anchors).
+            The root is not on this server.
+          {% else %}
+            the root itself. See <code>docs/CA-OFFLINE-ROOT.md</code> to move it off.
+          {% endif %}
+          Expires {{ ca.issuing_expires | localtime('%Y-%m-%d') }}
+          ({{ ca.issuing_days_left }} days).
+        </p>
+        {% if ca.issuing_warn %}
+          <p class="banner bad">
+            The issuing certificate expires in {{ ca.issuing_days_left }} days.
+            When it does, <strong>every device it signed stops authenticating</strong>.
+            Reissue it before then &mdash; see <code>docs/CA-OFFLINE-ROOT.md</code>.
+          </p>
+        {% endif %}
+      {% endif %}
       <p class="muted" style="font-size:12px">
         The CA private key lives at <code>pki/ca.key</code> on the server (R8).
         Enrollment tokens are managed on the <a href="/enrollment">Enroll</a> page.

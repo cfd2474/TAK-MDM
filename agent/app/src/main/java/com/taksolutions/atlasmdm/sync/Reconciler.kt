@@ -52,6 +52,7 @@ import com.taksolutions.atlasmdm.policy.InstallRetryPlan
 import com.taksolutions.atlasmdm.policy.LauncherConfigPlan
 import com.taksolutions.atlasmdm.policy.GeofencePlan
 import com.taksolutions.atlasmdm.policy.LocationSamplingPlan
+import com.taksolutions.atlasmdm.net.CertificateRenewal
 import com.taksolutions.atlasmdm.policy.LocationTracker
 import com.taksolutions.atlasmdm.policy.PolicyApplier
 import com.taksolutions.atlasmdm.ui.DeviceIdLabelController
@@ -465,6 +466,15 @@ class Reconciler(private val context: Context) {
         // holds now rather than on what it held when the sync started.
         sweepArtifactCache(desired)
 
+        // ⚠️ Before the self-update, and deliberately. Installing the agent kills
+        // this process mid-call, so anything after it does not run — and a device
+        // whose certificate is days from expiry must not have its one chance to
+        // renew skipped because an unrelated APK happened to be offered.
+        //
+        // Not gated on `errors.isEmpty()` either: a device that is failing to
+        // apply policy is exactly the one that must not also lose its identity.
+        renewCertificateIfDue(response)
+
         // Absolutely last, and only from a clean pass (W27). Installing over
         // ourselves kills this process mid-call, so anything after it would not
         // run — and swapping the agent on a device that is already failing to
@@ -474,6 +484,33 @@ class Reconciler(private val context: Context) {
         }
 
         return SyncOutcome(config.stateVersion, config.appliedStateVersion, errors)
+    }
+
+    /**
+     * Renew the device certificate when it is close enough to expiry (W174).
+     *
+     * ⚠️ **Never throws.** A renewal that fails is not a failed sync: the device
+     * still holds a working certificate and has the rest of the window to try
+     * again. Letting it propagate would abort the reconcile and turn a retryable
+     * problem into an unmanaged device.
+     *
+     * The window comes from the server on every check-in, so it can be corrected
+     * without shipping an agent — which matters because a device that renews too
+     * late cannot be reached to be corrected.
+     */
+    private fun renewCertificateIfDue(response: JSONObject) {
+        runCatching {
+            val stated = response.optJSONObject("certificate")
+                ?.optInt("renew_within_days")
+            CertificateRenewal.renewIfDue(
+                identity = DeviceIdentity,
+                api = api,
+                serialNumber = serialNumber(),
+                windowDays = CertificateRenewal.windowDays(stated),
+            )
+        }.onFailure {
+            AgentLog.w(TAG, "certificate renewal check failed", it)
+        }
     }
 
     /**

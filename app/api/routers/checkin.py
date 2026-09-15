@@ -41,6 +41,7 @@ from app.api.deps import (
     presented_certificate,
 )
 from app.api.schemas import (
+    CertificatePolicy,
     CertificateRenewalRequest,
     CertificateRenewalResponse,
     CheckinRequest,
@@ -245,6 +246,13 @@ def checkin(
         name=device.name,
         policy_names=policy_names,
         agent_update=agent_offer,
+        # Stated on every check-in rather than at enrolment: a device enrolled a
+        # year ago must learn a changed window without being re-provisioned, which
+        # is the whole point of the exercise.
+        certificate=CertificatePolicy(
+            renew_within_days=settings.device_cert_renew_within_days,
+            validity_days=settings.device_cert_validity_days,
+        ),
         desired_state=bundle["desired_state"] if bundle else None,
         signature=bundle["signature"] if bundle else None,
         commands=[

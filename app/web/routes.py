@@ -79,6 +79,7 @@ from app.api.deps import (
     get_storage,
     get_token_vault,
 )
+from app.security.ca import CertificateAuthority
 from app.security import admin_auth, csrf
 from app.security.admin_auth import AdminIdentity, admin_required
 from app.security.enrollment_qr import EnrollmentQrGuard
@@ -4345,6 +4346,47 @@ def report_view(
 # --------------------------------------------------------------------------- #
 
 
+def get_ca_for_console() -> CertificateAuthority | None:
+    """The CA as the console should describe it, or None if it cannot be read.
+
+    ⚠️ Never raises. A deployment mid-ceremony — root key removed, intermediate
+    not yet issued — must still render the page that explains what to do about it.
+    """
+    from app.config import get_settings as _settings
+
+    try:
+        s = _settings()
+        return CertificateAuthority.load_or_create(
+            Path(s.pki_dir),
+            common_name=s.ca_common_name,
+            validity_days=s.ca_validity_days,
+        )
+    except Exception:
+        return None
+
+
+def _issuing_ca_panel(ca: "CertificateAuthority | None") -> dict:
+    """What is signing device certificates, and how long it has left."""
+    if ca is None:
+        return {"issuing_known": False}
+
+    certificate = ca.certificate
+    expires = certificate.not_valid_after_utc
+    days_left = (expires - datetime.now(timezone.utc)).days
+    anchors = ca.trusted
+    return {
+        "issuing_known": True,
+        "issuing_name": certificate.subject.rfc4514_string(),
+        "issuing_expires": expires,
+        "issuing_days_left": days_left,
+        # ⚠️ Warn in months, not days. Reissuing needs the offline root fetched
+        # from wherever it was put, which is not a same-afternoon task.
+        "issuing_warn": days_left < 180,
+        "is_split": len(anchors) > 1,
+        "trust_anchors": len(anchors),
+    }
+
+
 @router.get("/admin", response_class=HTMLResponse)
 def admin_page(
     request: Request,
@@ -4383,6 +4425,12 @@ def admin_page(
             "common_name": settings.ca_common_name,
             "ca_validity_days": settings.ca_validity_days,
             "device_cert_validity_days": settings.device_cert_validity_days,
+            "renew_within_days": settings.device_cert_renew_within_days,
+            # ⚠️ What is actually signing, read from the CA rather than from
+            # configuration. An operator needs to see the *issuer's* expiry: when
+            # it passes, every device it signed stops authenticating, and the
+            # configured numbers say nothing about it (W174).
+            **_issuing_ca_panel(get_ca_for_console()),
         },
         setting_groups=groups,
         env_settings=env_settings,

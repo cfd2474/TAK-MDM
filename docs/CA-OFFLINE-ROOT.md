@@ -142,39 +142,34 @@ The module does this on deploy; no Caddy configuration changes.
 
 ## Deciding the interval
 
-⚠️ **This is not simply "shorter is safer", and an earlier version of this page
-said it was.** A device authenticates only while **its issuer is also valid**, and
-**nothing renews a device certificate** — a certificate is issued at enrolment and
-never again. So the intermediate's life is a hard cap on every certificate it
-signs, and a truncated device needs a factory reset and a re-provision.
+**Devices renew their own certificates** (W174). Each one asks for a fresh
+certificate well before its own expires, over the connection it already has, and
+is re-issued by whichever intermediate is current. So rotating an intermediate
+costs a ceremony and nothing else — the fleet rolls onto the new one by itself,
+and no tablet is ever touched.
 
-Device certificates are **825 days**.
+⚠️ **An earlier version of this page said the opposite**, because renewal did not
+exist when it was written: it warned that a short intermediate meant re-enrolling
+the fleet. That was true then and is not now. The constraint that remains is
+narrower: **an intermediate must still outlive a device certificate**, or a device
+that fails to renew for a while has no valid issuer to renew against.
 
-| `--days` | A device enrolled on day 1 gets | Cost |
+| `--days` | Ceremonies | Note |
 |---|---|---|
-| 90 | 90 days | Re-enrol the entire fleet **four times a year** |
-| 365 | 365 days | Re-enrol the entire fleet **every year** |
-| 825 | 825 days, but only if enrolled on day 1 | Later enrolments truncated |
-| **1190** (default) | The full 825 days, for anything enrolled in the first year | A ceremony a year, no truncation |
-
-`1190` is 825 + 365: a year of issuing at full device life. Rotate yearly and the
-retired intermediate stays valid in the trust store until its last device ages
-out, so nothing is ever stranded.
+| 365 | Yearly | Fine, and tighter. More often than most operators will keep up. |
+| **1825** (default) | Every 5 years | The balance for a deployment with one operator. |
+| 3650 | Never, in practice | Matches the root; you stop getting the bounded-exposure benefit. |
 
 ### What actually bounds a compromise
 
 **Revocation, not expiry.** Deleting a stolen intermediate's certificate from
-`pki/retired/` kills every certificate it issued, immediately — that is the
-procedure above, and it works whatever the interval is. Natural expiry is only the
-backstop for a compromise you never noticed.
+`pki/retired/` kills every certificate it issued, immediately, at any interval.
+Devices then renew against the replacement on their next check-in — which is what
+makes revocation a thing you can actually do rather than a thing you plan a
+weekend around. Natural expiry is only the backstop for a theft nobody noticed.
 
-So the interval trades *how long an unnoticed theft keeps issuing* against *how
-often you re-enrol a fleet*. With no renewal, the second cost is brutal, and a
-short interval is the wrong answer until certificate renewal exists.
+### Watch the expiry, and the console does
 
-### The change that would make short intervals cheap
-
-**Certificate renewal**: a device re-requests over its existing mTLS connection
-before expiry, and is re-issued by whichever intermediate is current. Rotation
-then costs nothing and 90 days becomes reasonable. Until then, prefer the long
-intermediate and rely on revocation.
+Admin → Certificates names the issuing certificate and its expiry, and starts
+warning **180 days out**. ⚠️ That much warning is deliberate: reissuing needs the
+root fetched from wherever it was put, which is not a same-afternoon task.
