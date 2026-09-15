@@ -61,7 +61,7 @@ device-level access an admin has by design.
 | M-5 | ✅ Fixed | Outbound credentials stored in plaintext in the database — sealed in the token vault |
 | M-6 | ✅ Fixed | No security response headers anywhere — CSP with no inline script, plus four headers |
 | M-7 | Medium | The permanent enrollment QR is a non-expiring credential in a printable image |
-| M-8 | Medium | No rate limiting on any endpoint |
+| M-8 | ✅ Fixed | No rate limiting on any endpoint — keyed on device and token, never on the address |
 | L-1 | ✅ Fixed | DTED archive paths pass through the server unsanitised — escapes refused at plan time |
 | L-2 | ✅ Fixed | CSRF cookie is readable by JavaScript for no reason — now HttpOnly |
 | L-3 | ✅ Fixed | Markdown link URLs are injected into an attribute without quote escaping — quotes escaped, schemes allowlisted |
@@ -931,6 +931,76 @@ device port, and the memory amplification in **M-1**.
 
 **Recommendation.** A limiter on the enrolment and device endpoints, sized well
 above a real fleet's check-in rate.
+
+### ✅ Fixed in v1.30.0
+
+[app/security/ratelimit.py](app/security/ratelimit.py) — an in-process token
+bucket, no new dependency.
+
+⚠️ **The obvious implementation takes the fleet off the air.** Per-address
+keying is the reflex, and in a tactical deployment several hundred tablets sit
+behind one Wi-Fi uplink and therefore one NAT address: the first time such a
+limit actually fired it would throttle every device at once, and it would present
+as a server fault rather than as a limiter working.
+
+⚠️ **And the application cannot see the address anyway.** The image runs uvicorn
+with `--no-proxy-headers` on purpose (S-1), so `request.client.host` is the
+reverse proxy on every request. Keying on it would put the entire world in one
+bucket.
+
+So the rule is: **key on an identity, and where there is none, do not pretend.**
+
+| Surface | Key | Ceiling |
+|---|---|---|
+| `/api/v1/device/*` | the device, from its client certificate | 300/min, burst 60 |
+| `/api/v1/enroll` | the enrollment token, after it resolves | 60/min, burst 20 |
+
+The device limit lives inside `authenticated_device`, so a device endpoint added
+tomorrow is limited by construction rather than by somebody remembering — the
+same reasoning that puts admin authentication at router registration.
+
+#### Two sizes that are arguments rather than round numbers
+
+* **Device, burst 60.** Not the 5-minute check-in rate. ⚠️ An administrator
+  making a run of policy changes rings the long-poll doorbell once per change,
+  and the device answers each ring with a check-in — so the ceiling has to clear
+  a burst of doorbell-driven re-polls or bulk editing looks like a broken fleet.
+* **Enrolment, burst 20.** ⚠️ Sized for a provisioning bench, which is the case
+  that most resembles abuse: a permanent token is *designed* to be shared across
+  many tablets set up together (**M-7**).
+
+#### A limit that was written and then removed
+
+The bypass PIN looks like the obvious guessing oracle — six digits — and got a
+tight limit. It was wrong. `bypass_pin.verify` already caps guessing at
+`MAX_ATTEMPTS` per token *for the token's whole life*, which is strictly stronger
+than any per-minute rate, and the new limit fired **first**: it replaced the
+`attempts_remaining: 0` that a setup wizard shows the operator with a 429 the
+wizard has no handling for. A control that pre-empts a better control is a
+regression. `tests/test_ratelimit.py` pins its absence.
+
+#### What is deliberately not limited, and why
+
+* **`agent.apk`.** 21 MB, unauthenticated, on two listeners — the obvious
+  candidate, and the worst place to be wrong. ⚠️ A throttled download fails
+  inside Android's setup wizard, which reports "something went wrong" and nothing
+  else; the tablet is then a brick until somebody factory resets it and guesses
+  why. Its cost is bandwidth, which belongs to the network.
+* **Floods carrying no valid credential.** There is no identity to key on, and a
+  global cap would be its own denial of service. `docker/nginx/nginx.conf` now
+  carries `limit_req` on `/api/v1/enroll` and the bypass-PIN path (1r/s, burst
+  60 — a bench behind one NAT address passes, a flood does not). ⚠️ **Only the
+  standalone deployment has that.** The InfraTAK deployment fronts `:8449` with
+  Caddy straight to the application, and Caddy's standard build has no rate
+  limiting, so in that shape a credential-less flood is bounded by nothing ATLAS
+  controls.
+
+#### What the limits silently depend on
+
+The buckets are a dict in one process. `--workers 4` would multiply every ceiling
+by four — nothing would fail, no test would go red, and most of the control would
+quietly be gone. `tests/test_ratelimit.py` asserts the `Dockerfile` CMD carries no
+`--workers`.
 
 ---
 

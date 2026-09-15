@@ -31,6 +31,7 @@ from app.db.base import get_session
 from app.db.models import Device, DeviceCertificate, EnrollmentState
 from app.artifacts.storage import ArtifactStorage, LocalArtifactStorage
 from app.security.bundle import BundleSigner
+from app.security import ratelimit
 from app.security.ca import CertificateAuthority, CertificateError
 from app.security.enrollment_qr import EnrollmentQrGuard
 from app.security.token_vault import TokenVault
@@ -260,5 +261,21 @@ def authenticated_device(
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, f"device is {device.enrollment_state.value}, not enrolled"
         )
+
+    # ⚠️ Here, and not in each router, for the same reason admin authentication
+    # is applied at router registration: a device endpoint added tomorrow is
+    # limited by construction rather than by somebody remembering (SEC_AUDIT M-8).
+    #
+    # Keyed on the device, never on the address — several hundred tablets share
+    # one NAT address in a real deployment, so an address-keyed limit would
+    # throttle the whole fleet at once. See app/security/ratelimit.py.
+    try:
+        ratelimit.limiter.check("device", str(device.id), ratelimit.DEVICE)
+    except ratelimit.RateLimited as exc:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            str(exc),
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
 
     return device

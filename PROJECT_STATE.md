@@ -487,6 +487,113 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W184 — SEC_AUDIT M-8: rate limiting, keyed on something that is not the IP (v1.30.0)
+
+Nothing limits request rate anywhere. The audit is right that credential brute
+force is not the risk (256-bit enrollment secrets, `compare_digest`, a bypass-PIN
+attempt counter) and that resource exhaustion is.
+
+⚠️ **The obvious implementation takes the whole fleet down.** Per-IP limiting is
+the reflex, and in a tactical deployment 500 tablets sit behind one Wi-Fi uplink
+and therefore one NAT address. A per-IP limit on the device endpoints would
+throttle the entire fleet the first time it worked — and it would look like a
+server fault, not a limiter.
+
+⚠️ **And the app cannot see the client IP anyway.** The image runs uvicorn with
+`--no-proxy-headers` (S-1, deliberately), so `request.client.host` is the proxy
+for every request. Keying on it would put the whole world in one bucket.
+
+So the rule is: **key on identity, and where there is no identity, do not
+pretend.** A limiter that cannot tell two clients apart must not act as though it
+can.
+
+| Surface | Key | Why that key |
+|---|---|---|
+| `/api/v1/device/*` (mTLS) | the device, from its certificate | NAT-proof, and bounds a compromised device rather than its neighbours |
+| `/api/v1/enroll` | the presented enrollment token | Bounds the *expensive* path — a garbage token costs one indexed SELECT |
+| `/api/v1/provisioning/bypass-pin` | the presented token | A six-digit PIN is a guessing target; complements `Device.bypass_attempts` |
+| `agent.apk`, garbage-token floods | — | No identity. See below. |
+
+Steps:
+
+1. `app/security/ratelimit.py` — an in-process token bucket, no new dependency.
+   ⚠️ Correct only because the image runs **one** uvicorn worker; a guard test
+   pins that, because `--workers 4` would silently multiply every limit by four.
+2. Hook the device limit inside `authenticated_device`, so a new device endpoint
+   is limited by construction rather than by remembering — the same reasoning
+   that puts admin auth at router registration.
+3. Token-keyed limits on `enroll` and `bypass-pin`.
+4. Sizes far above real traffic, and justified against the doorbell case: an
+   admin making many policy changes rings the long-poll repeatedly, so the
+   device ceiling has to clear a burst of re-polls, not just the 5-minute
+   check-in.
+5. Tests, mutation checks, and an honest note on what is left: `agent.apk` is a
+   21 MB unauthenticated download with no identity to key on, and a global cap
+   would be its own denial of service. Volumetric defence belongs at the edge —
+   `limit_req` added to `docker/nginx/nginx.conf` for the standalone shape, and
+   ⚠️ **not available in the InfraTAK shape**, where Caddy fronts :8449 directly
+   and the standard build has no rate limiting.
+6. Version, tag, push, module pin.
+
+**Status: complete.** 2025 tests; fifteen mutations of the guard, all caught.
+
+#### A limit written, then deleted
+
+The bypass PIN got a tight limit first — six digits looks like the obvious
+guessing oracle. It was wrong, and the test suite said so within a minute:
+`bypass_pin.verify` already caps guessing at `MAX_ATTEMPTS` per token *for the
+token's whole life*, which is strictly stronger than any per-minute rate. The new
+limit fired **first**, replacing the `attempts_remaining: 0` a setup wizard shows
+the operator with a 429 it has no handling for.
+
+⚠️ **A control that pre-empts a better control is a regression**, and it would
+have looked like defence in depth in review. Its absence is now pinned by a test,
+because the reasoning is not recoverable from the code that is left.
+
+#### Three things measured before choosing the key
+
+* **`--no-proxy-headers` means there is no client address.** S-1 made that
+  deliberate; a consequence is that `request.client.host` is the proxy on every
+  request, so an address-keyed limiter would put the world in one bucket.
+* **Caddy fronts `:8449` straight to the application** in the InfraTAK shape —
+  ATLAS's own nginx is not in that path. So `limit_req` helps the standalone
+  deployment only, and Caddy's standard build has no rate limiting. Said plainly
+  in both the audit and nginx.conf rather than left to be assumed.
+* **The agent resumes downloads with one open-ended `Range`**, not many small
+  chunks (`ApiClient.kt`), so artifact fetches do not approach the device
+  ceiling.
+
+#### Two of my own tests were wrong in instructive ways
+
+* ⚠️ **The long poll refills the bucket while it is parked.** The first
+  end-to-end test made three five-second `/wait` calls against a burst of two and
+  saw three 200s — correct behaviour (60/minute is one per second, and the
+  endpoint blocks for five), useless as a test, and 40 seconds slower. It uses
+  check-in now.
+* ⚠️ **`agent.apk` is served from two listeners.** The guard asserting it is
+  *not* throttled matched only the first block, so adding `limit_req` to the
+  other survived a mutation sweep. It checks both, and asserts there are exactly
+  two.
+
+#### A justification of mine that was simply false
+
+The first comment on the enrolment limit said keying on the presented string
+would let an attacker mint buckets by inventing secrets. It would not — an
+invalid secret never reaches the limiter, because the check runs after the token
+resolves. The real reason is narrower and testable: **a QR-derived secret is a
+fresh string on every issue** while resolving to the same primary, so keying on
+the string would hand each QR its own allowance and defeat the limit for exactly
+the flow it exists to bound. The mutation sweep found this by surviving.
+
+#### ⚠️ ATLAS is not currently installed on the dev box
+
+`docker ps -a` shows no `takmdm`/`atlas` containers and there is no install
+directory; nothing listens on 8449. The `atlas.leckliter.net` vhost in
+`/etc/caddy/Caddyfile` is left over from an earlier generation. So the module
+pin, the `request_body` limit (W183) and everything since will take effect on the
+operator's next **deploy**, not on an update.
+
+
 ### ✅ W183 — SEC_AUDIT M-2: the geocoder is not a way into the host's network (v1.29.0)
 
 Two operator-set URLs (`location.geocoder_url`, `location.suggest_url`) are

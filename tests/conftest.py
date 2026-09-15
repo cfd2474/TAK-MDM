@@ -133,6 +133,22 @@ class StubResolver:
 
 
 @pytest.fixture(autouse=True)
+def fresh_rate_limits():
+    """⚠️ **Autouse, because the limiter is module-level state.**
+
+    `app.security.ratelimit.limiter` is one object for the process, so without
+    this a test that spends a device's allowance leaves it spent for every test
+    that runs afterwards — and the failure surfaces somewhere unrelated, as a
+    429 nobody asked for.
+    """
+    from app.security import ratelimit
+
+    ratelimit.limiter.reset()
+    yield
+    ratelimit.limiter.reset()
+
+
+@pytest.fixture(autouse=True)
 def resolves(monkeypatch) -> StubResolver:
     """⚠️ **Autouse, so no test ever performs a real DNS lookup.**
 

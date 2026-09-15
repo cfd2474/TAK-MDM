@@ -52,6 +52,7 @@ from app.config import Settings, get_settings
 from app.db.models import AppPackage, Device, EnrollmentToken, PartRole
 from app.security.admin_auth import AdminIdentity, admin_required
 from app.security.bundle import BundleSigner
+from app.security import ratelimit
 from app.security.enrollment_qr import EnrollmentQrGuard
 from app.security.token_vault import TokenVault
 from app.security.ca import CertificateAuthority, CertificateError
@@ -295,6 +296,12 @@ def check_bypass_pin(
     except EnrollmentError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
+    # ⚠️ **Deliberately not rate limited** (SEC_AUDIT M-8). `bypass_pin.verify`
+    # already caps this at MAX_ATTEMPTS guesses per token *for the token's whole
+    # life*, which is strictly stronger than any per-minute ceiling. A rate limit
+    # on top bought nothing and cost something real: it fired before the counter
+    # could, replacing `attempts_remaining: 0` — which the setup wizard shows to
+    # the operator — with a 429 it has no handling for.
     accepted = bypass_pin.verify(
         session, token, payload.pin, label=f"token {token.prefix}"
     )
@@ -388,6 +395,29 @@ def enroll(
     one (Chunk 14) — `enroll_device` tries the latter first and falls through to
     the former, so this endpoint's contract is unchanged for every existing caller.
     """
+    # ⚠️ Resolved here so the limit can be keyed on the **token**, not on the
+    # string the caller sent. A QR-derived secret is a fresh string on every
+    # issue (Chunk 14) while resolving to the same primary, so keying on the
+    # string would hand each QR its own allowance — defeating the limit for
+    # exactly the flow it exists to bound.
+    #
+    # A garbage secret never reaches the limiter and does not need to: rejecting
+    # it costs one indexed lookup, while everything expensive here (signing a
+    # CSR, creating a device, resolving policy) is behind a token that resolves.
+    try:
+        known = resolve_token(session, payload.token, qr_guard=qr_guard)
+    except EnrollmentError as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc)) from exc
+
+    try:
+        ratelimit.limiter.check("enroll", str(known.id), ratelimit.ENROLLMENT)
+    except ratelimit.RateLimited as exc:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            str(exc),
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+
     try:
         result = enroll_device(
             session,
