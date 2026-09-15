@@ -178,21 +178,30 @@ def ca_issue_intermediate(args: argparse.Namespace) -> int:
     settings = get_settings()
     pki_dir = Path(args.pki_dir or settings.pki_dir)
 
-    # ⚠️ A device authenticates only while its *issuer* is also valid, and
-    # nothing renews a device certificate — `sign_csr` is reachable from enrolment
-    # and nowhere else. So an intermediate shorter than the device certificate
-    # validity silently caps every certificate it issues, and recovering a
-    # truncated device means a factory reset and a re-provision.
+    # ⚠️ A device authenticates only while its *issuer* is also valid, so an
+    # intermediate shorter than a device certificate silently caps every
+    # certificate it issues.
+    #
+    # ⚠️ **This warning used to say "there is no renewal — each one needs a
+    # factory reset and re-provision".** That was true when it was written and
+    # stopped being true in v1.22.0: `certificate_renewal.py` reaches `sign_csr`
+    # too, so a capped device renews against whatever is current rather than
+    # dying. The consequence is now inconvenience, not a re-provision, and the
+    # wording says so — a warning that overstates its own stakes is one an
+    # operator learns to scroll past.
     device_days = settings.device_cert_validity_days
     if args.days < device_days:
         lost = device_days - args.days
         print(f"WARNING: this intermediate is valid for {args.days} days, but device")
-        print(f"certificates are issued for {device_days}. Every device this signs will")
-        print(f"stop authenticating {lost} days before its own certificate expires, and")
-        print("there is no renewal — each one needs a factory reset and re-provision.")
+        print(f"certificates are issued for {device_days}. Every certificate it signs")
+        print(f"will be truncated by up to {lost} days.")
         print()
-        print(f"Use --days {device_days + 365} to leave a year of issuing at full device life,")
-        print("or keep this if you have accepted the re-enrolment.")
+        print("Devices renew themselves, so they recover on their next check-in rather")
+        print("than needing a re-provision. But an intermediate shorter than a device")
+        print("certificate means the fleet renews far more often than intended, and a")
+        print("device offline across the gap comes back unable to authenticate.")
+        print()
+        print(f"Use --days {device_days + 365} to leave a year of issuing at full device life.")
         print()
 
     try:

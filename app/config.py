@@ -57,13 +57,30 @@ class Settings(BaseSettings):
     pki_dir: Path = Path("pki")
     ca_common_name: str = "TAK-MDM Device CA"
     ca_validity_days: int = 3650
-    device_cert_validity_days: int = 825
+    #: How long a device certificate lasts.
+    #:
+    #: 90 days, down from 825 (W186). ⚠️ **The short life is the control**: a
+    #: device credential copied off a tablet stops working on its own, without
+    #: anybody noticing the theft or reaching for revocation. 825 days made that
+    #: promise meaningless.
+    #:
+    #: ⚠️ **This is only safe because devices renew themselves** (W174). Before
+    #: renewal existed, shortening this meant re-enrolling the fleet by hand every
+    #: time it elapsed. An agent older than 0.70.0 does not renew, so a deployment
+    #: that somehow still had one would factory-reset that device in 90 days —
+    #: which is why the change waited for a fleet where no such agent exists.
+    device_cert_validity_days: int = 90
     #: How close to expiry a device should renew.
     #:
     #: The server states it and the agent obeys, so the policy can change without
     #: an agent release — which matters because the fleet updates on its own
     #: schedule and a hardcoded window could not be corrected on a device that had
     #: stopped checking in often enough to be corrected.
+    #:
+    #: ⚠️ Must stay comfortably **shorter** than `device_cert_validity_days`. At
+    #: or above it every certificate is born already due for renewal, and the
+    #: fleet renews on every check-in for ever. `tests/test_certificate_renewal.py`
+    #: asserts the gap rather than leaving it to whoever next edits either number.
     device_cert_renew_within_days: int = 30
 
     # mTLS is terminated at the reverse proxy, which forwards the verified client

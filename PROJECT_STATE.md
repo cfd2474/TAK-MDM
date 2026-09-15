@@ -487,6 +487,110 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W186 — The clean-slate window: 90-day device certificates, and L-4 (v1.32.0, agent 0.71.0)
+
+**2026-09-15: the fleet was purged, every device factory reset, and ATLAS
+uninstalled from the box.** The operator will redeploy once the security work is
+done. Two items that were blocked or expensive are now cheap, and one of them
+stops being cheap the moment the first device enrols.
+
+1. **Device certificates 825 → 90 days.** The remaining half of S-2's value: a
+   stolen device credential expires on its own. ⚠️ The hazard that blocked this
+   was stranding devices on a non-renewing agent — there are none. Everything
+   enrols fresh onto 0.70.1+, which renews.
+   * ⚠️ Also fixes a stale warning inside `ca-issue-intermediate`, which still
+     claims "nothing renews a device certificate — `sign_csr` is reachable from
+     enrolment and nowhere else". False since v1.22.0:
+     `certificate_renewal.py:126` calls `sign_csr` too. Same class as the S-2
+     table — true when written, quietly not since.
+   * Add the invariant nobody has asserted: **the renewal window must be shorter
+     than the certificate's life**, or every certificate is born already due.
+2. **L-4 — a signature permission on the two exported activities.** Verified
+   rather than assumed: agent and launcher carry the **same** signing
+   certificate (`2094bccc…`), so a signature permission admits exactly the
+   launcher. `exported="false"` cannot work — different `applicationId`, so the
+   launcher genuinely has to be let in.
+   * ⚠️ **The official documentation does not say** what happens when the app
+     *defining* a permission is installed after one requesting it. Our order is
+     the safe one and is structural: the agent is the Device Owner, installed
+     during provisioning; the launcher arrives later as a policy-required app.
+     Recorded in `docs/ANDROID_PLATFORM_REFERENCE.md` rather than trusted to
+     memory.
+   * The failure mode was checked before choosing: `HomeActivity.open()` already
+     wraps `startActivity` in `runCatching`, logs, and shows a toast — so a
+     permission that somehow did not grant produces a diagnosable message rather
+     than a crashed kiosk home screen.
+3. Agent `versionCode` 116 → 117, launcher 9 → 10, both rebuilt, `dist/`
+   refreshed, verified on the artifacts with `aapt2`.
+4. H-2: the operator chose **rotate**. The procedure and the recovery position
+   get written down here; generating the key is theirs. ⚠️ **Ordering:** a
+   rotation invalidates the APKs built in this work item, so `dist/` has to be
+   rebuilt afterwards — one command, and free only while nothing is fielded.
+
+**Status: complete.** 2042 server tests, agent and launcher JVM tests green;
+nine mutations, all caught.
+
+#### ⚠️ The audit's L-4 recommendation was half wrong
+
+"`exported="false"` if the launcher is same-signature" does not work. Same
+signature does not make it the same app — the launcher has its own
+`applicationId`, so an unexported activity locks it out along with everything
+else. The activities have to stay exported; the permission is what makes that
+safe. Recorded in SEC_AUDIT because the next person reading the recommendation
+would try it first.
+
+#### What was checked rather than recalled
+
+* **The signing certificates actually match** (`2094bccc…` for both APKs). The
+  whole mechanism rests on it and it took one command.
+* **The official Android documentation does not answer the install-order
+  question** — fetched and read, 2026-09-15, not remembered. It also suggests a
+  runtime signature check instead, which does not fit an Activity:
+  `getCallingPackage()` is populated only for `startActivityForResult`. Both are
+  in `docs/ANDROID_PLATFORM_REFERENCE.md` §7a with the reasoning.
+* **The failure mode, before choosing the mechanism.** `HomeActivity.open()`
+  already catches `SecurityException` and shows a toast, so a grant that did not
+  happen is diagnosable rather than a crashed kiosk home screen. Had it crashed,
+  a Low finding would not have been worth this fix.
+
+#### A test that broke for the right reason, and was then made not to
+
+`test_a_truncating_interval_is_called_out` asserted "460 days" and
+`--days 1190` — both derived from an 825-day certificate. Shortening to 90 broke
+the **test** rather than the code, which is the wrong way round for a guard. It
+computes from the setting now.
+
+#### The invariant that only started mattering at 90 days
+
+`device_cert_renew_within_days` (30) and `device_cert_validity_days` were a
+factor of twenty-seven apart and are now a factor of three. ⚠️ A window at or
+above the validity makes every certificate *born* due for renewal — the fleet
+re-issues on every check-in, for ever, and nothing looks broken. Asserted as a
+ratio and through `should_renew` itself, because asserting the numbers could pass
+while the comparison read them backwards.
+
+#### The certificate ceiling is a reason, not a number
+
+`LONGEST_USEFUL_DEVICE_CERTIFICATE_DAYS = 180`, not `== 90`. A guard that has to
+be edited by anyone tuning the value it guards is not a guard. ⚠️ The first
+version of this test did not exist at all, and the mutation sweep caught it:
+reverting to 825 passed everything, because every other assertion derived from
+the setting.
+
+#### H-2: documented, not closed
+
+The operator chose **rotate**. [docs/AGENT-SIGNING-KEY.md](docs/AGENT-SIGNING-KEY.md)
+has the procedure and the recovery position. ⚠️ **A document is not custody** —
+the finding closes when the key exists in two places that do not fail together,
+and that is an act on their machine. Two things the doc is emphatic about
+because both are easy to get wrong:
+
+* **Rebuild *both* APKs after rotating.** L-4's signature permission fails the
+  moment the agent and launcher stop matching.
+* **A backup on the build machine is not a backup.** The failures this guards
+  against take the machine and the copy together.
+
+
 ### ✅ W185 — SEC_AUDIT S-2: stop the console saying the root is gone when it is not (v1.31.0)
 
 S-2's fix is a ceremony only the operator can run, so the work here is the two

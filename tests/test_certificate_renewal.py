@@ -360,3 +360,84 @@ def test_a_naive_expiry_is_read_as_utc_not_as_the_hosts_zone():
     assert certificate_renewal.should_renew(
         naive, now=now, window_days=30
     ) == certificate_renewal.should_renew(aware, now=now, window_days=30)
+
+
+# --------------------------------------------------------------------------- #
+# The two numbers have to agree with each other (W186)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_renewal_window_is_shorter_than_the_certificate():
+    """⚠️ An invariant nobody had written down, and the shipped numbers now sit
+    much closer together.
+
+    At 825 days of validity and a 30-day window the two could not plausibly
+    collide. At 90 they are within one factor of three, and the next edit to
+    either is the one that matters: a window at or above the validity makes every
+    certificate *born* due for renewal, so the fleet re-issues on every check-in
+    for ever and the server signs continuously for no reason.
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
+
+    assert settings.device_cert_renew_within_days < settings.device_cert_validity_days
+    # Not merely smaller — a certificate should spend most of its life not
+    # renewing. Half is a generous floor; the shipped pair is a third.
+    assert (
+        settings.device_cert_renew_within_days
+        <= settings.device_cert_validity_days / 2
+    ), (
+        f"a {settings.device_cert_renew_within_days}-day window on a "
+        f"{settings.device_cert_validity_days}-day certificate leaves almost no "
+        f"quiet period"
+    )
+
+
+def test_a_device_certificate_is_not_born_due_for_renewal():
+    """The same invariant from the other side, through the code that decides.
+
+    Asserting the numbers could pass while `should_renew` read them backwards.
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
+    fresh = datetime.now(timezone.utc) + timedelta(
+        days=settings.device_cert_validity_days
+    )
+
+    assert not certificate_renewal.should_renew(
+        fresh, window_days=settings.device_cert_renew_within_days
+    )
+
+
+#: The longest a device credential may live and still be called a control.
+#:
+#: ⚠️ A ceiling, not the shipped number. Asserting `== 90` would pin a decision
+#: rather than the reason for it, and would have to be edited by anyone tuning
+#: the value — at which point it guards nothing. 180 days is the point beyond
+#: which "it expires on its own" stops being a meaningful answer to a stolen
+#: tablet.
+LONGEST_USEFUL_DEVICE_CERTIFICATE_DAYS = 180
+
+
+def test_a_device_certificate_is_short_enough_to_be_a_control():
+    """⚠️ The remaining half of SEC_AUDIT S-2's value.
+
+    825 days was chosen when nothing renewed, so a short life meant re-enrolling
+    the fleet by hand. Renewal (v1.22.0) removed that cost, and a credential
+    copied off a tablet now stops working on its own — without anyone noticing
+    the theft, and without reaching for revocation.
+
+    ⚠️ This is only safe while devices renew. Raising it back is a defensible
+    decision; making it at the same time as anything that weakens renewal is not,
+    which is why the two live in the same file.
+    """
+    from app.config import get_settings
+
+    validity = get_settings().device_cert_validity_days
+
+    assert validity <= LONGEST_USEFUL_DEVICE_CERTIFICATE_DAYS, (
+        f"device certificates last {validity} days; a stolen one is then usable "
+        f"for {validity} days unless somebody notices and revokes it"
+    )

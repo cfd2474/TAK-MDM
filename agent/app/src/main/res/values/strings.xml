@@ -166,6 +166,11 @@
     <string name="notify_installing">Installing %1$s</string>
     <string name="notify_percent">%1$d%%</string>
     <string name="power_tile_title">Power</string>
+
+    <!-- Shown if Android ever surfaces the permission to a person. It is
+         signature-level, so in practice nothing displays it — but a permission
+         with no label reads as a blank row in a settings screen. -->
+    <string name="launcher_tile_permission">Open the ATLAS kiosk tiles</string>
     <string name="power">Power</string>
     <string name="power_off">Power off</string>
     <string name="power_off_summary">Shows the power menu</string>

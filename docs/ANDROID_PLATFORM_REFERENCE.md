@@ -1937,6 +1937,58 @@ app.
 
 ---
 
+## 7a. Custom `signature` permissions between our own two apps
+
+Used by `SEC_AUDIT.md` **L-4**: the agent declares
+`com.taksolutions.atlasmdm.permission.LAUNCHER_TILE` at `protectionLevel="signature"`,
+guards `DeviceSettingsActivity` and `PowerTileActivity` with it, and the launcher
+requests it. Both APKs are signed by the same certificate (`2094bccc…`), so the
+launcher is the only holder.
+
+📖 [Define a custom app permission](https://developer.android.com/guide/topics/permissions/defining)
+recommends the alternative for exactly this shape:
+
+> "If the functionality is only available to apps signed with the same signature
+> as the providing app, you might be able to avoid defining custom permissions by
+> using signature checks. When one of your apps makes a request of another of your
+> apps, the second app can verify that both apps are signed with the same
+> certificate before complying with the request."
+
+We use the permission rather than a runtime signature check because an Activity
+has no reliable caller identity: `getCallingPackage()` is populated only for
+`startActivityForResult`, so a runtime check would mean changing both apps and
+refusing every other entry point. The permission is enforced by the system before
+our code runs, and there is no code to get wrong.
+
+### ⚠️ Install order is not documented, so do not depend on discovering it
+
+**The official page does not say what happens when the app *defining* a
+permission is installed after an app that requests it** — checked, 2026-09-15, not
+recalled. Neither does it say whether the grant is re-evaluated when the definer
+is later installed or updated.
+
+We do not rely on the answer, because our ordering is structural rather than
+lucky:
+
+1. The **agent** is the Device Owner. It is installed by the provisioning flow,
+   before anything else exists on the device.
+2. The **launcher** arrives afterwards, as a policy-required app
+   (`effective_policy.ATLAS_LAUNCHER_PACKAGE`).
+
+So the definer always precedes the requester. ⚠️ If that ever inverts — a
+launcher sideloaded onto a bench device first, say — this is the contract to go
+and establish properly rather than assume.
+
+### The failure is soft, and that was checked first
+
+`HomeActivity.open()` wraps `startActivity` in `runCatching`, logs the reason and
+shows a toast. A permission that somehow did not grant produces "cannot open" and
+a logcat line, not a crashed home screen — which matters because this runs on a
+kiosk the user cannot escape to investigate. `tests/test_launcher_tile_permission.py`
+pins that behaviour alongside the manifest halves.
+
+---
+
 ## 8. Version-specific behaviour
 
 | Version | Change | Effect here |

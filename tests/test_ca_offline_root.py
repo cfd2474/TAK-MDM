@@ -333,14 +333,26 @@ def test_a_truncating_interval_is_called_out(cli_pki, capsys):
     short intermediate. What they are not entitled to is finding out later.
     """
     from app.cli import main
+    from app.config import get_settings
 
-    assert main(["ca-issue-intermediate", "--days", "365"]) == 0
+    # ⚠️ Derived, not hardcoded. This test asserted "460 days" and "--days 1190",
+    # both computed from an 825-day device certificate — so shortening that
+    # default to 90 broke the test rather than the code, which is the wrong way
+    # round for a guard.
+    device_days = get_settings().device_cert_validity_days
+    short = max(1, device_days // 2)
+
+    assert main(["ca-issue-intermediate", "--days", str(short)]) == 0
     output = capsys.readouterr().out
 
     assert "WARNING" in output
-    assert "460 days before" in output, output
-    assert "factory reset" in output
-    assert "--days 1190" in output, "the message must name the number that works"
+    assert f"{device_days - short} days" in output, output
+    assert f"--days {device_days + 365}" in output, "it must name the number that works"
+    # ⚠️ And it must no longer claim a re-provision. Renewal exists (v1.22.0), so
+    # a truncated certificate recovers on the next check-in; the old wording
+    # promised a factory reset and was three releases out of date.
+    assert "factory reset" not in output, output
+    assert "renew themselves" in output, output
 
 
 # --------------------------------------------------------------------------- #

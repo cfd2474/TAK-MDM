@@ -23,6 +23,32 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
+    <!--
+      Who may open the two screens the kiosk launcher puts tiles on
+      (SEC_AUDIT.md L-4).
+
+      ⚠️ `exported="false"` cannot work here, and that is the whole reason this
+      permission exists. The launcher is a **separate application** — a different
+      applicationId — so it genuinely has to be let in; an unexported activity
+      would be unreachable by it as much as by anything else.
+
+      `signature` admits exactly one caller: an app signed by the same
+      certificate as this one. Verified rather than assumed — the agent and the
+      launcher are both signed by `2094bccc…`. No third party can hold this
+      without also holding the fleet's signing key, at which point it is not the
+      permission that failed.
+
+      ⚠️ The official documentation does not state what happens when the app
+      *defining* a permission is installed after one requesting it. Our order is
+      the safe one and it is structural rather than lucky: the agent is the
+      Device Owner, installed during provisioning, and the launcher arrives
+      afterwards as a policy-required app. See docs/ANDROID_PLATFORM_REFERENCE.md.
+    -->
+    <permission
+        android:name="com.taksolutions.atlasmdm.permission.LAUNCHER_TILE"
+        android:protectionLevel="signature"
+        android:label="@string/launcher_tile_permission" />
+
     <!-- Kiosk and compliance overlays. An app-op: needs a one-time user grant. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!--
@@ -163,12 +189,14 @@
           menu and get out of the way, and a window that appeared behind the menu
           would still be there when the user dismissed it.
 
-          Exported so the launcher can start it; it checks the policy itself, so
-          being exported does not make it a way round one.
+          Exported so the launcher can start it, and guarded by a signature
+          permission so *only* the launcher can (SEC_AUDIT.md L-4). It checks the
+          policy itself as well: being reachable has never been a way round one.
         -->
         <activity
             android:name=".ui.PowerTileActivity"
             android:exported="true"
+            android:permission="com.taksolutions.atlasmdm.permission.LAUNCHER_TILE"
             android:excludeFromRecents="true"
             android:noHistory="true"
             android:icon="@drawable/ic_power_tile"
@@ -189,9 +217,20 @@
             android:noHistory="true"
             android:label="@string/wifi_pick_title" />
 
+        <!--
+          Device Settings, the launcher's other tile. Same reasoning as the power
+          tile: exported because a separate application opens it, and guarded by
+          the signature permission so nothing else can (SEC_AUDIT.md L-4).
+
+          It renders only what the kiosk policy offers, so an app that summoned it
+          gained nothing the user was not already given — the finding was that a
+          surface meant to be reached from one place could be reached from
+          anywhere, not that it leaked.
+        -->
         <activity
             android:name=".ui.DeviceSettingsActivity"
             android:exported="true"
+            android:permission="com.taksolutions.atlasmdm.permission.LAUNCHER_TILE"
             android:excludeFromRecents="true"
             android:noHistory="true"
             android:icon="@drawable/ic_settings_gear"

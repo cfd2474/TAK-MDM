@@ -51,7 +51,7 @@ device-level access an admin has by design.
 | S-1 | ⚠️ High, part-fixed | Admin authentication trusts request headers with no proxy verification — peer check in force; host-local forgery needs the upstream change |
 | S-2 | **Severe**, tooling ready | Six private keys sit unencrypted in one directory — offline-root capability, ceremony and console nudge shipped; **the ceremony has not been run** |
 | H-1 | ⚠️ High, detected | Fleet authorization is delegated entirely to Authentik — loss of the binding is now noticed; the delegation stands |
-| H-2 | High | The agent signing key is an unrecoverable single point of failure |
+| H-2 | ⚠️ High, documented | The agent signing key is an unrecoverable single point of failure — rotation and recovery written down; **the custody act is the operator's** |
 | H-3 | ✅ Fixed | Dependencies pinned two years back, with no scanning and no CI — 24 advisories found and cleared |
 | H-4 | ✅ Fixed | A device's own serial number reached a JavaScript string in the console — found while fixing M-6 |
 | M-1 | ✅ Fixed | Uploads are read whole into memory with no size limit — the cap now bites during the read, plus a body limit at Caddy |
@@ -65,7 +65,7 @@ device-level access an admin has by design.
 | L-1 | ✅ Fixed | DTED archive paths pass through the server unsanitised — escapes refused at plan time |
 | L-2 | ✅ Fixed | CSRF cookie is readable by JavaScript for no reason — now HttpOnly |
 | L-3 | ✅ Fixed | Markdown link URLs are injected into an attribute without quote escaping — quotes escaped, schemes allowlisted |
-| L-4 | Low | Exported agent activities have no caller check |
+| L-4 | ✅ Fixed | Exported agent activities have no caller check — signature permission, launcher only |
 | L-5 | Low | Enrollment token hashes are unsalted |
 
 **18 findings: 1 severe, 4 high, 8 medium, 5 low.**
@@ -357,11 +357,34 @@ server on every check-in, so it can be corrected without shipping an agent.
 swap to get half-done: a failed renewal leaves the working certificate exactly
 where it was and tries again.
 
-This also unlocks **short device certificates** — the validity can drop from 825
-days to 90 once the fleet runs an agent that renews, so a stolen device credential
-expires on its own. ⚠️ **Not done yet, and the ordering matters**: shortening
-before the fleet has updated would strand every device still on an older agent in
-90 days.
+### ✅ v1.32.0 — device certificates are 90 days
+
+The other half of what renewal unlocked. 825 days was chosen when nothing
+renewed, so a short life meant re-enrolling the fleet by hand; a credential
+copied off a tablet was usable for over two years unless somebody noticed and
+revoked it. It now stops working on its own.
+
+⚠️ **The ordering hazard was real and is now moot.** Shortening while devices ran
+a non-renewing agent would have factory-reset every one of them in 90 days. The
+fleet was purged on 2026-09-15 and every device will enrol fresh onto 0.71.0,
+which renews — so there is no such device to strand.
+
+Two things were added with it, because the two numbers now sit within a factor of
+three of each other rather than a factor of twenty-seven:
+
+* **The renewal window must be shorter than the certificate's life**, asserted
+  both as a ratio and through `should_renew` itself. At or above it, every
+  certificate is born due for renewal and the fleet re-issues on every check-in
+  for ever.
+* **A ceiling on the validity** (180 days) rather than a pin on 90 — an
+  assertion of the reason, not of the decision, so tuning the number does not
+  require editing the guard that protects it.
+
+⚠️ And a stale warning inside `ca-issue-intermediate` was corrected. It claimed
+"there is no renewal — each one needs a factory reset and re-provision", which
+stopped being true in v1.22.0: `certificate_renewal.py` reaches `sign_csr` too.
+A truncated certificate now recovers on the next check-in. **A warning that
+overstates its own stakes is one an operator learns to scroll past.**
 
 **What still has to happen:** run the offline-root ceremony; shorten device
 certificates once the fleet is on agent 0.70.0 or later; and for the remaining
@@ -477,6 +500,33 @@ routine use on a workstation.
 **Recommendation.** Belongs with `S-2` in the same key-management answer. At
 minimum: an offline backup of the keystore held separately from the build
 machine, and a documented recovery position for "the key is gone".
+
+### ⚠️ v1.32.0 — the recovery position is written down; the key has not moved
+
+[docs/AGENT-SIGNING-KEY.md](docs/AGENT-SIGNING-KEY.md) covers rotation, custody,
+and — the half that was missing — what you can actually do in each failure. The
+short version:
+
+| Situation | What you can do |
+|---|---|
+| Key lost, **no device fielded** | Rotate. One rebuild. |
+| Key lost, **devices fielded** | Every tablet factory reset and re-provisioned **in person**. There is no remote path. |
+| Key stolen, devices fielded | An attacker with a distribution path can sign an agent the fleet accepts. ⚠️ ATLAS cannot detect it — the signature is valid. |
+
+**There is no revocation for this.** Android checks that the signature matches
+the installed app; nothing can say "not any more".
+
+⚠️ **This stays High.** A document is not custody. The finding closes when the
+key exists in two places that do not fail together, and that is an act on the
+operator's machine.
+
+#### The window that is open now
+
+Rotating costs nothing while no device has installed a build signed by the key —
+and the fleet was purged on 2026-09-15. The operator has chosen to **rotate**.
+⚠️ **Ordering:** a rotation invalidates the APKs built in v1.32.0, so `dist/` has
+to be rebuilt and re-released afterwards — and **both** APKs, because L-4's
+signature permission fails if the agent and launcher stop matching.
 
 ---
 
@@ -1180,6 +1230,35 @@ from anywhere.
 
 **Recommendation.** `exported="false"` if the launcher is same-signature, or a
 signature-level permission if not.
+
+### ✅ Fixed in v1.32.0 — agent 0.71.0 (117), launcher 0.10.0 (10)
+
+⚠️ **The first half of that recommendation does not work, and it is worth saying
+why.** `exported="false"` would lock the launcher out too: it is a *separate
+application* with its own `applicationId`, so "same signature" does not make it
+the same app. The activities have to stay exported.
+
+So the second half: the agent declares
+`com.taksolutions.atlasmdm.permission.LAUNCHER_TILE` at `protectionLevel="signature"`
+and guards both activities with it; the launcher requests it. Verified rather
+than assumed — both APKs are signed by `2094bccc…`, so the launcher is the only
+holder and nothing else can become one without the fleet's signing key.
+
+Checked on the built artifacts with `aapt2`: `protectionLevel=0x2` (signature),
+the attribute present on both activities, the `uses-permission` in the launcher,
+and M-4's release-manifest removal still holding.
+
+⚠️ **The official documentation does not say what happens when the app defining
+a permission is installed after one requesting it**, so we do not depend on the
+answer. Our ordering is structural: the agent is the Device Owner, installed
+during provisioning; the launcher arrives later as a policy-required app. Both
+that and the reason we did not use the runtime signature check Google suggests
+instead are recorded in `docs/ANDROID_PLATFORM_REFERENCE.md` §7a.
+
+The failure mode was checked *before* choosing the mechanism, not after:
+`HomeActivity.open()` already wraps `startActivity` in `runCatching`, so a grant
+that somehow did not happen shows "cannot open" and logs the reason rather than
+crashing a kiosk home screen the user cannot escape.
 
 ---
 

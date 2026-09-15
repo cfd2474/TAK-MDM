@@ -27,6 +27,19 @@
          only permission this app asks for. -->
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
 
+    <!--
+      Opens the agent's Device Settings and Power tiles (SEC_AUDIT.md L-4).
+
+      A `signature` permission the agent declares, so this is granted only
+      because both APKs carry the same signing certificate — and cannot be held
+      by anything else. ⚠️ If it is ever missing, the tiles do not vanish: the
+      activities still resolve, and `HomeActivity.open()` catches the
+      SecurityException, logs the reason and shows "cannot open". Chosen that way
+      deliberately — a silent tile on a locked kiosk is indistinguishable from a
+      frozen device.
+    -->
+    <uses-permission android:name="com.taksolutions.atlasmdm.permission.LAUNCHER_TILE" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
