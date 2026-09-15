@@ -487,6 +487,95 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### 🚧 W187 — The CA split as a product feature, not a ceremony
+
+**Constraint, from the operator:** customers are not IT experts. Anything that
+depends on a manual procedure will not happen, so the control has to be "click
+here" or it is not a control.
+
+⚠️ **The mechanism already exists and nobody has to build it.**
+`certificate_renewal.py:158` returns `ca.trust_bundle_pem()` and the agent's
+`CertificateRenewal.kt:132` installs it — so every renewal hands a device the
+*current* trust bundle. With 90-day certificates and a 30-day window, **the fleet
+rolls onto a new CA chain by itself within ~90 days, with nobody touching a
+tablet.** What is missing is not plumbing; it is the two minutes of UI that make
+the root key leave the server.
+
+So there is exactly one irreducible manual moment, and it is not a ceremony: the
+customer must *have* the root key, roughly twice a decade.
+
+**The design: the root key is a recovery file, not a PKI artifact.** The mental
+model is a 2FA backup code — one non-experts have already met.
+
+1. `ca-export-root` and `ca-delete-root` in the ATLAS CLI. ⚠️ Deleting refuses
+   unless an intermediate exists and can sign; deleting a root with nothing to
+   succeed it bricks the CA and every device with it.
+2. `ca-verify-root` — does this key match `ca.crt`'s public key? Reads from
+   **stdin**, never a temp file. Works before *and* after deletion, so the same
+   command backs "prove you saved it" at install and "check it still works"
+   years later.
+3. Deploy issues the intermediate automatically. The customer never meets the
+   word "intermediate".
+4. The module's CA card gains the three-step flow: **Download → re-upload to
+   prove it round-trips → root deleted.** Resumable — close the browser and the
+   card still says the recovery file is unsaved.
+5. Tests and mutation checks, with the refusal paths first: they are the ones
+   that turn a security feature into an outage.
+6. Version, tag, push, pin.
+
+⚠️ **The failure this design has to survive is the customer losing the file**,
+and with a 5-year intermediate they would not find out for 5 years. Hence the
+forced round-trip at install, and the existing 180-day expiry warning becoming a
+"can you still find it?" prompt.
+
+**Rejected:** a vendor-held root. Most "click here" of all — the customer never
+sees a key — but it puts us in every customer's trust path and gives one root a
+cross-customer blast radius, which is the mistake the agent signing key already
+makes. TAK customers are frequently the people who would refuse it outright.
+
+**Status: chunk 1 of 2 complete — the ATLAS side.** The three commands exist,
+are tested and mutation-checked. The module's card and the automatic issue at
+deploy are chunk 2.
+
+#### What the sweep found, twice
+
+⚠️ **Both of the refusal paths I called "the most important" survived the first
+sweep**, and for the same reason: they are layered, so each masks the other. The
+lesson is not that layering is wrong — it is that a redundant guard cannot be
+tested by the outcome it shares with its neighbour.
+
+Resolved by testing what each one actually delivers:
+
+* `exists()` on the issuing pair produces **the sentence naming
+  `ca-issue-intermediate`**. The chain check refuses that case anyway, so the
+  branch changes no outcome — only whether a non-expert knows what to click. The
+  test asserts the wording, because the wording is the feature.
+* The empty-stdin check is the same shape: the parser refuses `""` regardless,
+  and the value is that "no key on stdin" does not arrive as "that is not a
+  readable private key", which sends someone hunting for a corrupt file they do
+  not have.
+* ⚠️ **`len(authority.trusted) < 2` was dead code and is now deleted.** If the
+  issuing pair loads at all, the root and the intermediate are both anchors, so
+  the count is always 2 and the branch could never fire. It read as a control.
+  The `try/except` around the load is the real check — it catches the truncated
+  key that `exists()` cannot see.
+
+#### Design notes worth keeping
+
+* **`ca-verify-root` compares against `ca.crt`, never `ca.key`.** That is what
+  lets the same command answer "prove you saved it" at install and "does my
+  recovery file still work?" five years later — and the second is the only way a
+  customer finds out they lost it before the day they need it.
+* **It reads stdin, not a path**, so the recovery file never lands on the
+  server's disk on its way through.
+* **Deleting twice succeeds.** The flow is resumable and a customer will click
+  again; a failure on the second click reads as "it did not work", and the
+  obvious response — put the key back — undoes the entire exercise.
+* **`keyfiles.shred` does not promise what it cannot deliver.** Wear levelling,
+  journalling and snapshots all defeat an overwrite. It defeats casual recovery,
+  and the docstring says exactly that rather than implying erasure.
+
+
 ### ✅ W186 — The clean-slate window: 90-day device certificates, and L-4 (v1.32.0, agent 0.71.0)
 
 **2026-09-15: the fleet was purged, every device factory reset, and ATLAS

@@ -7,21 +7,40 @@ could not verify something, it says so rather than guessing.
 
 ---
 
+## ⚠️ Credentials are not in this file any more
+
+They were, and **this repository is public**. Two root passwords were readable on
+`raw.githubusercontent.com` from 2026-09-07 until 2026-09-15. Both have been
+treated as burned; `199.241.139.160` was rotated on 2026-09-15 and the old value
+is confirmed refused.
+
+**Passwords and host keys now live in `docs/TEST-SERVER-CONNECTION.md`, which is
+gitignored.** This file keeps the procedures, which are the part worth sharing —
+every command below has been run successfully, and several have a non-obvious
+flag whose absence hangs the call or fails it misleadingly.
+
+⚠️ **Rotation was the fix, not deletion.** The old values remain in git history on
+a public remote and always will unless the history is rewritten. Never re-use
+either string.
+
+⚠️ **The justification that used to be here was "the repo is private".** It was
+not, or stopped being so. If you find yourself writing a credential into a
+tracked file again, that sentence is the one to distrust.
+
 ## 1. The host
 
 | | |
 |---|---|
 | Address | `209.182.235.108` (hostname `taksolutions`) |
 | User | `root` |
-| Password | `fkktpe5bQd` |
-| SSH host key | `SHA256:BaB64OAdIoT8g1dARdzHOIfKcVhBg0Bev4GcR779VQ8` |
+| Password, host key | **`docs/TEST-SERVER-CONNECTION.md`** (gitignored) |
 | Repo on the host | `/opt/atlas` |
 | Compose services | `api`, `db`, `proxy` (containers `takmdm-api-1`, `takmdm-db-1`, `takmdm-proxy-1`) |
 
-⚠️ **This is a development host and the operator has said so explicitly.** The
-password is in this file because the next session cannot do the job without it and
-the repo is private. It is *not* a pattern to repeat for anything that carries
-real fleet data — a production host gets a key, not a password in a doc.
+⚠️ **This is a development host.** That is why a password was acceptable at all
+— and it still was not acceptable in a *tracked* file on a *public* repository,
+which is what actually happened. A production host gets a key, not a password,
+and neither belongs in git.
 
 ### Standing authorization
 
@@ -55,13 +74,13 @@ section 1 is about `209.182.235.108` and does not describe this box.
 | Address | `199.241.139.160` |
 | SSH port | **2222** — ⚠️ port 22 is refused, not filtered |
 | User | `root` |
-| Password | `4qKDPhmbWb` |
+| Password | **`docs/TEST-SERVER-CONNECTION.md`** (gitignored) |
 | SSH host key | `SHA256:p7DMadNOaIoZH1J3j+Yfe18dZPhSiTe3QsZsqQtYscs` |
 | OS / arch | Ubuntu 22.04.5, x86_64 |
 | InfraTAK | `/root/infra-TAK`, console as **root**, gunicorn on `0.0.0.0:5001` |
 
 ```bash
-"/c/Program Files/PuTTY/plink" -batch -ssh -P 2222   -pw '4qKDPhmbWb'   -hostkey "SHA256:p7DMadNOaIoZH1J3j+Yfe18dZPhSiTe3QsZsqQtYscs"   root@199.241.139.160 "uptime"
+"/c/Program Files/PuTTY/plink" -batch -ssh -P 2222   -pw '<see docs/TEST-SERVER-CONNECTION.md>'   -hostkey "SHA256:p7DMadNOaIoZH1J3j+Yfe18dZPhSiTe3QsZsqQtYscs"   root@199.241.139.160 "uptime"
 ```
 
 ⚠️ **`-P 2222` is as load-bearing as `-batch` and `-hostkey`.** Port 22 answers
@@ -93,13 +112,13 @@ resolve. From the PowerShell tool the same binaries need Windows-style paths.
 ```bash
 # Run a command on the host
 "/c/Program Files/PuTTY/plink" -batch -ssh \
-  -pw 'fkktpe5bQd' \
+  -pw '<see docs/TEST-SERVER-CONNECTION.md>' \
   -hostkey "SHA256:BaB64OAdIoT8g1dARdzHOIfKcVhBg0Bev4GcR779VQ8" \
   root@209.182.235.108 "cd /opt/atlas && docker compose ps"
 
 # Copy a file up
 "/c/Program Files/PuTTY/pscp" -batch \
-  -pw 'fkktpe5bQd' \
+  -pw '<see docs/TEST-SERVER-CONNECTION.md>' \
   -hostkey "SHA256:BaB64OAdIoT8g1dARdzHOIfKcVhBg0Bev4GcR779VQ8" \
   ./local-file "root@209.182.235.108:/tmp/local-file"
 ```

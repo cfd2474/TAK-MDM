@@ -642,3 +642,199 @@ def test_the_console_never_claims_the_key_is_somewhere_it_is_not(
     body = client.get("/admin", headers=ADMIN_HEADERS).text
 
     assert "lives at" not in body
+
+
+# --------------------------------------------------------------------------- #
+# The recovery file (W187)
+#
+# The ceremony became a product feature: the root key is a file the customer
+# saves at install, and the three commands below are what the console drives.
+# ⚠️ The refusal paths are first because they are the ones that turn a security
+# feature into an outage — a root deleted with nothing to succeed it takes the
+# whole deployment with it.
+# --------------------------------------------------------------------------- #
+
+
+def test_deleting_the_root_is_refused_while_nothing_else_can_sign(cli_pki, capsys):
+    """⚠️ The single most important refusal in this feature.
+
+    Without an intermediate, removing the root does not harden the deployment —
+    it destroys it. Nothing can issue a certificate, no device can enrol or
+    renew, and recovery depends on a file the customer has not been asked to
+    save yet.
+    """
+    from app.cli import main
+
+    assert main(["ca-delete-root"]) == 1
+    assert "refusing" in capsys.readouterr().err
+
+    assert (cli_pki / "ca.key").exists(), "the root key was removed anyway"
+
+
+def test_the_refusal_names_the_command_that_fixes_it(cli_pki, capsys):
+    """⚠The message *is* the feature here.
+
+    The chain check refuses this case regardless, so the branch that produces
+    this sentence changes no outcome — a mutation sweep confirmed it. Its whole
+    value is telling a non-expert customer what to click, which is the
+    difference between a resumable flow and a support ticket.
+    """
+    from app.cli import main
+
+    assert main(["ca-delete-root"]) == 1
+
+    assert "ca-issue-intermediate" in capsys.readouterr().err
+
+
+def test_delete_refuses_an_intermediate_that_is_present_but_broken(cli_pki, capsys):
+    """⚠️ The case `exists()` cannot see.
+
+    A truncated or half-written issuing key looks exactly like a working one on
+    disk. This is the last moment the root is available to fix it, so the check
+    is whether the chain actually *loads* — not whether two files are there.
+    """
+    from app.cli import main
+
+    assert main(["ca-issue-intermediate"]) == 0
+    capsys.readouterr()
+    (cli_pki / "issuing.key").write_text("-----BEGIN PRIVATE KEY-----\ntruncated\n")
+
+    assert main(["ca-delete-root"]) == 1
+    assert "refusing" in capsys.readouterr().err
+    assert (cli_pki / "ca.key").exists(), "the root was removed despite the refusal"
+
+
+def test_empty_input_is_reported_as_empty_not_as_corrupt(cli_pki, capsys):
+    """Same reasoning as the delete message. "That is not a readable private
+    key" sends someone hunting for a corrupt file; "no key on stdin" tells them
+    the upload did not happen."""
+    assert _verify("") == 1
+
+    assert "no key on stdin" in capsys.readouterr().err
+
+
+def test_the_root_survives_a_refused_delete_well_enough_to_sign(cli_pki):
+    """A refusal that corrupted the thing it declined to remove would be worse
+    than doing the deletion."""
+    from app.cli import main
+
+    assert main(["ca-delete-root"]) == 1
+
+    assert _enrol(_root(cli_pki)) is not None
+
+
+def test_the_whole_flow(cli_pki, capsys, tmp_path):
+    """Export, issue, verify, delete — the four clicks, in order."""
+    from app.cli import main
+
+    assert main(["ca-export-root"]) == 0
+    saved = capsys.readouterr().out
+    assert "BEGIN" in saved and "PRIVATE KEY" in saved
+
+    assert main(["ca-issue-intermediate"]) == 0
+    capsys.readouterr()
+
+    assert _verify(saved) == 0
+
+    assert main(["ca-delete-root"]) == 0
+    capsys.readouterr()
+    assert not (cli_pki / "ca.key").exists()
+
+
+def test_a_saved_file_still_verifies_after_the_root_is_gone(cli_pki, capsys):
+    """⚠️ The property the whole design rests on.
+
+    Verification compares against `ca.crt`, not `ca.key`, so the same command
+    backs "prove you saved it" at install *and* "does my recovery file still
+    work?" years later. Comparing against the key would make the second
+    impossible — and the second is the only way a customer discovers they lost
+    the file before the day they need it.
+    """
+    from app.cli import main
+
+    assert main(["ca-export-root"]) == 0
+    saved = capsys.readouterr().out
+    assert main(["ca-issue-intermediate"]) == 0
+    assert main(["ca-delete-root"]) == 0
+    capsys.readouterr()
+
+    assert _verify(saved) == 0
+
+
+def test_a_recovery_file_from_a_different_install_is_rejected(cli_pki, capsys, tmp_path):
+    """⚠️ An operator with several deployments will mix these up. Accepting the
+    wrong one at install would let them delete a root whose recovery file they
+    have not actually saved."""
+    from app.cli import main
+
+    stranger = tmp_path / "other"
+    _root(stranger)
+    foreign = (stranger / "ca.key").read_text()
+
+    assert _verify(foreign) == 1
+    assert "different ATLAS install" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("junk", ["", "   ", "not a key at all", "-----BEGIN PRIVATE KEY-----\nnope\n"])
+def test_rubbish_on_stdin_is_refused_rather_than_crashing(cli_pki, junk):
+    """This is fed by a file upload, so the input is whatever a browser sent."""
+    assert _verify(junk) == 1
+
+
+def test_deleting_twice_is_not_an_error(cli_pki, capsys):
+    """⚠️ The flow is resumable and a customer will click twice.
+
+    A second click returning failure would read as "it did not work", and the
+    obvious response — try to put the key back — is the one thing that undoes
+    the whole exercise.
+    """
+    from app.cli import main
+
+    assert main(["ca-issue-intermediate"]) == 0
+    assert main(["ca-delete-root"]) == 0
+    capsys.readouterr()
+
+    assert main(["ca-delete-root"]) == 0
+    assert "already off this server" in capsys.readouterr().out
+
+
+def test_exporting_after_deletion_says_so_rather_than_printing_nothing(cli_pki, capsys):
+    from app.cli import main
+
+    assert main(["ca-issue-intermediate"]) == 0
+    assert main(["ca-delete-root"]) == 0
+    capsys.readouterr()
+
+    assert main(["ca-export-root"]) == 1
+    assert "already been moved off" in capsys.readouterr().err
+
+
+def test_the_deployment_still_works_with_the_root_gone(cli_pki, capsys):
+    """The end-to-end promise: a customer clicks through this and nothing about
+    their fleet changes."""
+    from app.cli import main
+
+    assert main(["ca-issue-intermediate"]) == 0
+    assert main(["ca-delete-root"]) == 0
+    capsys.readouterr()
+
+    authority = _root(cli_pki)
+    device_cert = _enrol(authority)
+
+    authority.verify(device_cert)
+    assert len(authority.trusted) == 2
+
+
+def _verify(material: str) -> int:
+    """Run ca-verify-root with `material` on stdin."""
+    import io as _io
+    import sys
+
+    from app.cli import main
+
+    original = sys.stdin
+    sys.stdin = _io.StringIO(material)
+    try:
+        return main(["ca-verify-root"])
+    finally:
+        sys.stdin = original

@@ -155,6 +155,34 @@ def write_private(path: Path, data: bytes) -> Path:
     return path
 
 
+def shred(path: Path) -> None:
+    """Overwrite a key file and remove it. Best effort, and the word is chosen.
+
+    ⚠️ **This does not guarantee the bytes are gone**, and claiming otherwise
+    would be worse than not doing it. On an SSD wear levelling means the
+    overwrite lands somewhere else; on a journalling or copy-on-write filesystem
+    the old extent may survive; and a VM snapshot or a backup taken while the key
+    was present is untouched by anything this process can do.
+
+    It is still worth doing: it defeats casual recovery and undelete, and it
+    makes the file unreadable to anything that opens it afterwards. The controls
+    that actually bound this are that the key was on the disk only briefly, and
+    that the disk should be encrypted.
+    """
+    try:
+        size = path.stat().st_size
+        with open(path, "r+b", buffering=0) as handle:
+            handle.write(bytes(size))
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError:
+        # An unwritable or already-missing file still gets the unlink below;
+        # failing the removal because the overwrite failed would leave the key
+        # exactly where it was, which is the worse outcome.
+        pass
+    path.unlink(missing_ok=True)
+
+
 def audit(pki_dir: Path) -> list[Exposure]:
     """Report any key in ``pki_dir`` whose permissions are too wide.
 

@@ -52,3 +52,11 @@ cache/
 
 # Written at pack time by scripts/write_build.py (W102). Per-deploy, never committed.
 BUILD
+
+# Live host credentials. NEVER committed.
+#
+# ⚠️ This repository is PUBLIC. docs/REMOTE_SERVER.md carried two root
+# passwords in the clear from 2026-09-07 to 2026-09-15 and they are still in git
+# history, which is why they were rotated rather than merely deleted.
+# Connection details for the test host live in the ignored file below.
+docs/TEST-SERVER-CONNECTION.md

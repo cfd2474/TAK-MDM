@@ -27,6 +27,7 @@ uploading the agent by hand first.
 from __future__ import annotations
 
 import argparse
+import sys
 import datetime as dt
 import ipaddress
 from pathlib import Path
@@ -164,6 +165,151 @@ def ca_status(args: argparse.Namespace) -> int:
         needs_attention=remaining.days < 180,
     )
     print(_json.dumps(report, indent=2))
+    return 0
+
+
+
+# --------------------------------------------------------------------------- #
+# The recovery file (W187)
+#
+# The root key leaves the server as a file the customer saves, and comes back
+# twice a decade to sign a new intermediate. These three commands are what the
+# InfraTAK module's card drives; none of them is meant to be typed by hand.
+# --------------------------------------------------------------------------- #
+
+
+def ca_export_root(args: argparse.Namespace) -> int:
+    """Print the root private key so it can be handed to the operator.
+
+    ⚠️ **This is the most dangerous output this program produces.** It goes to
+    stdout on purpose — a caller pipes it somewhere — and it must never be
+    written to a file on this host by us. Whoever calls it is responsible for
+    what happens next.
+    """
+    pki_dir = Path(args.pki_dir or get_settings().pki_dir)
+    root_key = pki_dir / ca_module.ROOT_KEY
+    if not root_key.exists():
+        print(
+            f"there is no root key at {root_key}. Either it has already been "
+            f"moved off this server, or this deployment never had one.",
+            file=sys.stderr,
+        )
+        return 1
+    sys.stdout.write(root_key.read_text())
+    return 0
+
+
+def ca_verify_root(args: argparse.Namespace) -> int:
+    """Does the key on stdin actually belong to this CA?
+
+    ⚠️ **Compared against `ca.crt`, not against `ca.key`**, which is what makes
+    this work *after* the key has gone. The same command therefore backs both
+    halves of the product flow: "prove you saved it" before deletion, and "check
+    your recovery file still works" years later, which is the only way a customer
+    ever discovers they lost it before they need it.
+
+    Reads stdin rather than a path so the key never lands on this host's disk.
+    """
+    pki_dir = Path(args.pki_dir or get_settings().pki_dir)
+    root_cert_path = pki_dir / ca_module.ROOT_CERT
+    if not root_cert_path.exists():
+        print(f"no root certificate at {root_cert_path}", file=sys.stderr)
+        return 1
+
+    material = sys.stdin.read()
+    # Same shape as the delete guard above: the parser below refuses empty
+    # input anyway. This exists so "you uploaded nothing" does not arrive as
+    # "that is not a readable private key", which sends someone looking for a
+    # corrupt file they do not have.
+    if not material.strip():
+        print("no key on stdin", file=sys.stderr)
+        return 1
+
+    try:
+        candidate = serialization.load_pem_private_key(
+            material.encode(), password=None
+        )
+    except Exception as exc:
+        print(f"that is not a readable private key: {exc}", file=sys.stderr)
+        return 1
+
+    certificate = x509.load_pem_x509_certificate(root_cert_path.read_bytes())
+    expected = certificate.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    actual = candidate.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    if expected != actual:
+        print(
+            "that key does not match this deployment's certificate authority. "
+            "It may be the recovery file from a different ATLAS install.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print("ok: this key matches the certificate authority")
+    return 0
+
+
+def ca_delete_root(args: argparse.Namespace) -> int:
+    """Remove the root key from this server. The point of the whole exercise.
+
+    ⚠️ **Refuses unless something else can sign.** Deleting the root with no
+    intermediate in place does not harden the deployment, it destroys it: nothing
+    can issue a certificate, no device can enrol or renew, and the only way back
+    is the recovery file the customer may not have saved yet. The refusal is the
+    most important line in this file.
+    """
+    pki_dir = Path(args.pki_dir or get_settings().pki_dir)
+    root_key = pki_dir / ca_module.ROOT_KEY
+
+    if not root_key.exists():
+        # Already gone is success, not an error — the flow is resumable and a
+        # retried click must not look like a failure.
+        print("the root key is already off this server")
+        return 0
+
+    # ⚠️ **This check is a better message, not a second control.** The chain
+    # check below refuses this case too — a root-only PKI loads with one trust
+    # anchor. What this adds is the sentence naming `ca-issue-intermediate`,
+    # which is the difference between a customer who knows what to click and one
+    # who files a support ticket. A mutation sweep proved the point: deleting
+    # this branch changed no outcome, only the wording, so the test asserts the
+    # wording.
+    issuing_key = pki_dir / ca_module.ISSUING_KEY
+    issuing_cert = pki_dir / ca_module.ISSUING_CERT
+    if not (issuing_key.exists() and issuing_cert.exists()):
+        print(
+            "refusing: there is no intermediate to sign with. Deleting the root "
+            "now would leave this deployment unable to enrol or renew any "
+            "device. Run ca-issue-intermediate first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    # ⚠️ Not merely present on disk — **loadable**. A truncated or half-written
+    # issuing key is indistinguishable from a working one by `exists()`, and this
+    # is the last moment the root is here to fix it with.
+    #
+    # There was a `len(authority.trusted) < 2` check here as well. A mutation
+    # sweep showed it can never fire: if the issuing pair loads at all, the root
+    # and the intermediate are both anchors, so the count is always 2. It was
+    # removed rather than left in place looking load-bearing.
+    try:
+        ca_module.CertificateAuthority.load_or_create(
+            pki_dir,
+            common_name=get_settings().ca_common_name,
+            validity_days=get_settings().ca_validity_days,
+        )
+    except Exception as exc:
+        print(f"refusing: the intermediate is not usable ({exc})", file=sys.stderr)
+        return 1
+
+    keyfiles.shred(root_key)
+    print(f"the root key has been removed from {pki_dir}")
     return 0
 
 
@@ -394,6 +540,27 @@ def main(argv: list[str] | None = None) -> int:
              "certificates are truncated between renewals.",
     )
     intermediate.set_defaults(func=ca_issue_intermediate)
+
+    export_root = subparsers.add_parser(
+        "ca-export-root",
+        help="print the root private key, for the operator to save (W187)",
+    )
+    export_root.add_argument("--pki-dir", default=None)
+    export_root.set_defaults(func=ca_export_root)
+
+    verify_root = subparsers.add_parser(
+        "ca-verify-root",
+        help="check a saved recovery file against this CA. Reads stdin.",
+    )
+    verify_root.add_argument("--pki-dir", default=None)
+    verify_root.set_defaults(func=ca_verify_root)
+
+    delete_root = subparsers.add_parser(
+        "ca-delete-root",
+        help="remove the root key from this server, once an intermediate exists",
+    )
+    delete_root.add_argument("--pki-dir", default=None)
+    delete_root.set_defaults(func=ca_delete_root)
 
     seed = subparsers.add_parser(
         "seed-packages", help="load the applications bundled in dist/ into the library"
