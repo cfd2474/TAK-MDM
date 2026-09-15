@@ -49,9 +49,9 @@ device-level access an admin has by design.
 | ID | Severity | Finding |
 |---|---|---|
 | S-1 | ⚠️ High, part-fixed | Admin authentication trusts request headers with no proxy verification — peer check in force; host-local forgery needs the upstream change |
-| S-2 | **Severe**, tooling ready | Six private keys sit unencrypted in one directory — offline-root capability, ceremony and console nudge shipped; **the ceremony has not been run** |
+| S-2 | ⚠️ High, root is off the box | Six private keys sit unencrypted in one directory — the root is gone from the reference box and from every install made the same way; residual is `issuing.key` and `token_vault.key`, both bounded |
 | H-1 | ⚠️ High, detected | Fleet authorization is delegated entirely to Authentik — loss of the binding is now noticed; the delegation stands |
-| H-2 | ⚠️ High, decoupled | The agent signing key is an unrecoverable single point of failure — ATLAS now has its own key, separate from Google Play; **the off-machine backup is the operator's** |
+| H-2 | ✅ Addressed | The agent signing key is an unrecoverable single point of failure — ATLAS has its own key, separate from Google Play, and the operator has attested to an off-machine backup |
 | H-3 | ✅ Fixed | Dependencies pinned two years back, with no scanning and no CI — 24 advisories found and cleared |
 | H-4 | ✅ Fixed | A device's own serial number reached a JavaScript string in the console — found while fixing M-6 |
 | M-1 | ✅ Fixed | Uploads are read whole into memory with no size limit — the cap now bites during the read, plus a body limit at Caddy |
@@ -316,10 +316,21 @@ life buys nothing. Retired intermediates stay in the trust store, because the
 certificates they signed remain valid and dropping the issuer would lock out the
 fleet.
 
-The ceremony is [docs/CA-OFFLINE-ROOT.md](docs/CA-OFFLINE-ROOT.md). **It is opt-in
-and has not been run on the reference box** — shipping the capability is not the
-same as using it, and this finding stays Severe until the root is actually gone
-from that server.
+The ceremony is [docs/CA-OFFLINE-ROOT.md](docs/CA-OFFLINE-ROOT.md).
+
+### ✅ 2026-09-15 — the root is off the reference box
+
+Verified on the live deployment, twice, through the console flow rather than a
+procedure: `ca-status` reports `root_key_on_server: false` with a split chain and
+two trust anchors. Doing it twice was not ceremony — the box was uninstalled and
+reinstalled in between, so the second pass proves the flow is repeatable rather
+than a one-off somebody nursed through.
+
+**Severity drops from Severe to High**, on the re-derivation already written
+below: what remains in `pki/` is `issuing.key` (revocable, and the fleet renews
+onto a replacement by itself) and `token_vault.key` (only interesting away from
+the box). The unrecoverable ten-year root — the thing that made this Severe — is
+gone.
 
 ### ✅ v1.33.0 — the ceremony became a product feature
 
@@ -546,9 +557,16 @@ short version:
 **There is no revocation for this.** Android checks that the signature matches
 the installed app; nothing can say "not any more".
 
-⚠️ **This stays High.** A document is not custody. The finding closes when the
-key exists in two places that do not fail together, and that is an act on the
-operator's machine.
+### ✅ Closed 2026-09-15 — by the operator, on their attestation
+
+The key is on a private machine with a backup in place. ⚠️ **Recorded as
+attested, not verified** — a backup on somebody else's machine is not something
+this audit can check, and saying otherwise would be the kind of claim the rest
+of this document exists to avoid.
+
+What the code side guarantees, and a reader can verify: the key is ATLAS's own
+(`c037760…`), it is not the Google Play key, and `tests/test_signing_key.py`
+fails if that ever changes.
 
 ### ⚠️ v1.34.0 — it was the Google Play key
 
