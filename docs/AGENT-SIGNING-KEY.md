@@ -2,133 +2,147 @@
 
 **Why:** `SEC_AUDIT.md` **H-2**. Android refuses an update signed by a different
 key than the installed app. The key in `agent/keystore.properties` is therefore
-the fleet's identity: **lose it and no device can ever be updated again** without
-a factory reset of every tablet, and the agent's own over-the-air update channel
-is the delivery mechanism for everything.
+the identity of every fleet at every customer: **lose it and no device can be
+updated again** without factory-resetting every tablet, and the agent's own
+over-the-air channel is how everything else is delivered.
+
+---
+
+## ⚠️ ATLAS has its own key. Never share it with a Play app.
+
+| | |
+|---|---|
+| ATLAS signing key | `c037760255391d7ffca1fb6137490db1d56267c0caf4949a66028ff12d1b876b` |
+| **Google Play key — never use for ATLAS** | `2094bccc054c681f46d8c812378c07657cf339dd7d4e80b546026b77aff2c644` |
+
+Until v1.34.0 the build used `D:/Code/ANDROID/APK Keys/AppSign.jks` — a
+general-purpose workstation keystore that **also signs an app published on
+Google Play** (confirmed against the Play Console, 2026-09-15). One secret
+therefore stood behind two unrelated trust domains: a Play listing, and the
+Device Owner on every customer's fleet. A compromise of either was a compromise
+of both.
+
+⚠️ **Play App Signing does not protect the agent, and it is easy to assume it
+does.** The agent is sideloaded by a Device Owner during provisioning and is
+never installed from Play. Whatever key signs the file in `dist/` is what
+devices pin; Google holding an app signing key protects the listing and nothing
+about the fleet.
+
+`tests/test_signing_key.py` fails if anything in `dist/` carries the Play
+fingerprint. It reads the APK Signing Block directly, so it runs in CI with no
+Android SDK — ⚠️ and it has to, because these APKs are v2/v3-signed and the
+old `META-INF/*.RSA` path finds nothing at all.
 
 ---
 
 ## ⚠️ There is exactly one cheap moment, and it is before the first enrolment
 
-Rotating this key costs nothing while **no device has installed a build signed by
-it**. After the first enrolment it costs a fleet-wide factory reset, for ever.
+Changing this key costs nothing while **no device has installed a build signed
+by it**. After the first enrolment it needs `apksigner rotate` and a signing
+certificate lineage — which requires the old key, and every device to have
+accepted the lineage first.
 
-That window is open now: the fleet was purged and every device factory reset on
-2026-09-15. It closes the moment the first tablet is provisioned.
+That window is open now: the fleet was purged on 2026-09-15. It closes the
+moment the first tablet is provisioned.
 
 ---
 
-## Rotating
-
-### 1. Generate the new key
+## Generating a replacement
 
 ```bash
-cd agent
 keytool -genkeypair -v \
-  -keystore atlas-release-NEW.jks \
+  -keystore "D:/Code/ANDROID/ATLAS Signing/atlas-release.jks" \
   -alias atlas \
   -keyalg RSA -keysize 4096 \
-  -validity 10950 \
-  -dname "CN=TAK-Solutions LLC, O=TAK-Solutions LLC, C=US"
+  -validity 18250 \
+  -dname "CN=ATLAS Agent Signing, O=TAK-Solutions LLC, C=US"
 ```
 
-⚠️ **30 years (`10950`), not the 25-year default and not less.** The certificate
-outliving every device that will ever install a build signed by it is the point;
-an expired signing certificate does not stop updates, but it removes the option
-of ever proving provenance again.
+⚠️ **Its own directory, not the shared `APK Keys` folder.** A key that lives
+among general-purpose ones gets used as one — which is exactly how this became a
+finding.
 
-Choose a passphrase you can retrieve without this machine. It is protecting the
-same thing the key is.
+Then point `agent/keystore.properties` (gitignored) at it, and **back the
+keystore and its passphrase up somewhere this machine is not**: an encrypted USB
+stick, or a password manager entry with the `.jks` attached. ⚠️ A backup on the
+build machine is not a backup — disk death, theft and ransomware take the
+machine and the copy together.
 
-### 2. Point the build at it
+---
 
-`agent/keystore.properties` — machine-local, gitignored, never committed:
-
-```properties
-storeFile=atlas-release-NEW.jks
-storePassword=<the passphrase>
-keyAlias=atlas
-keyPassword=<the passphrase>
-```
-
-### 3. Put a copy somewhere this machine is not
-
-The `.jks` **and** the passphrase, in two places that do not fail together:
-
-- a password manager entry (the passphrase, and the `.jks` as an attachment), and
-- an encrypted USB stick or a printed base64 dump kept physically elsewhere.
-
-⚠️ **A backup on the build machine is not a backup.** The failure this guards
-against — disk death, theft, ransomware, a reinstall — takes the machine and the
-copy together.
-
-⚠️ **Verify you can read both back before step 4.** A key you cannot restore is a
-key you have destroyed.
-
-### 4. Rebuild and republish
+## Rebuilding after any key change
 
 ```bash
 cd agent
 ./gradlew :app:assembleRelease :launcher:assembleRelease
-cp app/build/outputs/apk/release/app-release.apk       ../dist/atlas-agent.apk
+cp app/build/outputs/apk/release/app-release.apk           ../dist/atlas-agent.apk
 cp launcher/build/outputs/apk/release/launcher-release.apk ../dist/atlas-launcher.apk
 ```
 
-⚠️ **Both APKs, not just the agent.** They share this key, and the launcher's
-access to the agent's kiosk tiles is a `signature` permission (`SEC_AUDIT.md`
-L-4) — two APKs signed by different keys means the tiles stop opening.
+⚠️ **Both APKs, always.** They share this key, and the launcher reaches the
+agent's kiosk tiles through a `signature` permission (`SEC_AUDIT.md` L-4). Two
+APKs signed by different keys means the tiles silently stop opening.
 
-Confirm they match each other and not the old key:
+⚠️ **Raise both `versionCode`s.** The seeder treats a repeated code as already
+present and keeps the old build, so a re-signed APK at the same code ships
+nothing. A re-signed artifact is a new identity even when no source changed.
+
+Then confirm:
 
 ```bash
-apksigner verify --print-certs ../dist/atlas-agent.apk
-apksigner verify --print-certs ../dist/atlas-launcher.apk
+python -m pytest tests/test_signing_key.py -q
 ```
 
-Both digests must be identical, and different from `2094bccc…` (the retired key).
+---
 
-### 5. Release
+## Rotating once devices *are* fielded
 
-Commit the rebuilt `dist/` with a version bump and a raised Android
-`versionCode`, per `CLAUDE.md` §9. ⚠️ The seeder treats a repeated `versionCode`
-as already present and silently keeps the old build.
+Possible, and narrower than it sounds — but it needs the old key.
 
-### 6. Destroy the old key
+`apksigner rotate` builds a **signing certificate lineage**, and rotated keys
+are accepted by default on **Android 13+**. `minSdk` here is 33, so every device
+in the fleet qualifies and no `--rotation-min-sdk-version` is needed.
 
-Only once a device has enrolled on the new build and taken an update. Until then
-the old key is the fallback; after that it is liability.
+```bash
+apksigner rotate --out lineage.bin \
+  --old-signer --ks old.jks \
+  --new-signer --ks new.jks
+```
+
+⚠️ **An earlier version of this page said there was "no rotation path at all
+once devices are fielded".** That was wrong, and wrong in a way that mattered:
+it made the catastrophe sound broader than it is. Wanting to rotate is
+recoverable. **Losing the key is not** — without it there is no lineage, and
+nothing else can stand in.
 
 ---
 
 ## The recovery position
 
-Written down because the honest answer is short and nobody wants to discover it
-during the incident.
-
 | Situation | What you can do |
 |---|---|
 | Key present, passphrase lost | Nothing. The keystore is useless without it; treat it as lost. |
-| Key lost, **no device fielded** | Rotate. Costs one rebuild. |
-| Key lost, **devices fielded** | ⚠️ **Every tablet must be factory reset and re-provisioned in person.** There is no remote path: a build signed by a new key is, to Android, a different application, and a Device Owner cannot be replaced over the air. |
-| Key stolen, devices fielded | An attacker who also controls a distribution path can sign an agent your devices accept as genuine. ⚠️ ATLAS cannot detect this — the update channel verifies the signature, and the signature is valid. Recovery is the row above, plus rotating everything else. |
+| Key lost, **no device fielded** | Generate a new one. Costs one rebuild. |
+| Key lost, **devices fielded** | ⚠️ **Every tablet factory reset and re-provisioned in person.** No remote path exists: to Android a differently-signed build is a different application, and a Device Owner cannot be replaced over the air. |
+| Key present, want to change it, devices fielded | `apksigner rotate` with a lineage, as above. |
+| Key stolen, devices fielded | An attacker with a distribution path can sign an agent the fleet accepts. ⚠️ ATLAS cannot detect this — the update channel verifies the signature, and the signature is valid. Rotate with a lineage, and treat every fielded device as suspect. |
 
-**There is no revocation for this.** Android checks that the signature matches
-the installed app; it does not consult anything that could say "not any more".
+**There is no revocation.** Android checks that the signature matches the
+installed app; nothing can say "not any more".
 
 ---
 
-## Why this is not solved by the offline-root work
+## Why the offline-root work does not cover this
 
-`SEC_AUDIT.md` S-2 takes the *device CA* root off the server, and device
-certificates renew themselves, so that key's compromise now ends. This one is
-different in kind:
+`SEC_AUDIT.md` S-2 takes the *device CA* root off each customer's server, and
+v1.33.0 made that two clicks. This key is different in kind:
 
-- it lives on a **build machine**, not the server, so the server's hardening does
-  nothing for it;
-- it is used **rarely and by hand**, so there is no automation to bound its
-  exposure;
-- and there is **no rotation path at all** once devices are fielded, which is the
-  property the CA no longer has.
+- it lives on a **build machine**, so nothing done to a customer's server
+  touches it;
+- it is **shared across every customer**, so its blast radius is the product
+  rather than one deployment;
+- and it is used **by hand, rarely**, so there is no automation to bound its
+  exposure.
 
-Custody is the whole control. That is why the recovery position is written down
-rather than assumed.
+Custody is the entire control, which is why the recovery position is written
+down rather than assumed.

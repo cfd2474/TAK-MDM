@@ -60,3 +60,7 @@ BUILD
 # history, which is why they were rotated rather than merely deleted.
 # Connection details for the test host live in the ignored file below.
 docs/TEST-SERVER-CONNECTION.md
+
+# The ATLAS signing key's passphrase. NEVER committed — it is the fleet's
+# identity, and this repository is public.
+docs/ATLAS-SIGNING-KEY.local.md

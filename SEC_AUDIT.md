@@ -51,7 +51,7 @@ device-level access an admin has by design.
 | S-1 | ⚠️ High, part-fixed | Admin authentication trusts request headers with no proxy verification — peer check in force; host-local forgery needs the upstream change |
 | S-2 | **Severe**, tooling ready | Six private keys sit unencrypted in one directory — offline-root capability, ceremony and console nudge shipped; **the ceremony has not been run** |
 | H-1 | ⚠️ High, detected | Fleet authorization is delegated entirely to Authentik — loss of the binding is now noticed; the delegation stands |
-| H-2 | ⚠️ High, documented | The agent signing key is an unrecoverable single point of failure — rotation and recovery written down; **the custody act is the operator's** |
+| H-2 | ⚠️ High, decoupled | The agent signing key is an unrecoverable single point of failure — ATLAS now has its own key, separate from Google Play; **the off-machine backup is the operator's** |
 | H-3 | ✅ Fixed | Dependencies pinned two years back, with no scanning and no CI — 24 advisories found and cleared |
 | H-4 | ✅ Fixed | A device's own serial number reached a JavaScript string in the console — found while fixing M-6 |
 | M-1 | ✅ Fixed | Uploads are read whole into memory with no size limit — the cap now bites during the read, plus a body limit at Caddy |
@@ -549,6 +549,40 @@ the installed app; nothing can say "not any more".
 ⚠️ **This stays High.** A document is not custody. The finding closes when the
 key exists in two places that do not fail together, and that is an act on the
 operator's machine.
+
+### ⚠️ v1.34.0 — it was the Google Play key
+
+Found by asking, not by auditing: the operator recognised the fingerprint.
+`agent/keystore.properties` pointed at `D:/Code/ANDROID/APK Keys/AppSign.jks`,
+a general-purpose workstation keystore that **also signs an app published on
+Google Play** (confirmed against the Play Console, 2026-09-15).
+
+So one secret stood behind two unrelated trust domains — a Play listing and the
+Device Owner on every customer's fleet — and a compromise of either was a
+compromise of both.
+
+⚠️ **This also invalidated the advice in this file.** "Rotate the key" was
+written for an ATLAS-only key. Rotating a key Google holds on file is a Play
+operation with its own consequences, and following that advice could have
+damaged something outside this project. The recommendation is now **a dedicated
+key**, which is better on every axis and touches Google not at all.
+
+⚠️ **Play App Signing does not protect the agent.** It is sideloaded by a
+Device Owner and never installed from Play, so whatever key signs `dist/` is
+what devices pin. Google's custody of a Play signing key protects the listing
+and nothing about the fleet.
+
+**Done:** a dedicated RSA-4096 key
+(`c037760255391d7ffca1fb6137490db1d56267c0caf4949a66028ff12d1b876b`), in its own
+directory rather than among general-purpose keys, signing both the agent and the
+launcher. Agent 0.72.0 (118), launcher 0.11.0 (11).
+
+**The guard is the durable part.** `tests/test_signing_key.py` fails if anything
+in `dist/` carries the Play fingerprint, and checks the agent and launcher still
+match each other (L-4's signature permission depends on it). ⚠️ It reads the APK
+Signing Block directly, because CI has no Android SDK and because these APKs are
+v2/v3-signed — the `META-INF/*.RSA` path a naive implementation reaches for finds
+nothing and would report a signed APK as unsigned.
 
 #### The window that is open now
 
