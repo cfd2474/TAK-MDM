@@ -487,6 +487,95 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W189 — Closing S-1 and H-1: prove the headers came from Caddy, and check the group
+
+Two gates against two different attacks, built together because they touch the
+same files and neither substitutes for the other:
+
+| Attack | Stopped by |
+|---|---|
+| A **real but unauthorised** user signs in | the group check (H-1) |
+| Any host-local process **forges** `X-Authentik-Username` | the proxy-auth header (S-1) |
+
+**H-1 — the bootstrap objection has expired.** `TAKMDM_ADMIN_GROUP` was left
+blank because "a group ATLAS required would be a bootstrap nobody could
+complete". True for an invented group; ⚠️ **not true for `authentik Admins`**,
+which Authentik creates itself and which necessarily contains whoever installed
+ATLAS. Confirmed present on the box, `is_superuser = t`.
+
+**S-1 — everything needed is already in core**, wired to one vhost:
+`_proxy_auth_state()` manages the secret, every vhost already *strips* the
+client header, and `caddy_proxy_auth_gate_v1` is an existing verify-before-arm
+migration to copy. Only the **injection** is console-only.
+
+Order matters and is the whole risk management:
+
+1. **ATLAS first.** `proxy_auth_secret`, checked before identity headers are
+   read — inert while unset, so nothing can break.
+2. A startup log of the groups actually received, so `TAKMDM_ADMIN_GROUP` is
+   verifiable rather than guessed.
+3. **The fork's `app.py`** emits the injection on the ATLAS vhost.
+4. **The module last**, writing both settings — and ⚠️ only after confirming the
+   generated Caddyfile really contains the injection. Version skew between the
+   fork and the module would otherwise reject every admin request and lock the
+   console.
+5. ⚠️ **Both must be named in `docker-compose.yml`.** A value in `.env` that
+   compose does not name reaches nothing; that has bitten twice and
+   `tests/test_compose_env.py` exists because of it.
+6. Tests, mutation checks, release, pin.
+
+**Break-glass, written down before it is needed:** SSH in, clear the line from
+`/root/atlas/.env`, `docker compose up -d api`.
+
+**Status: complete.** 2082 tests; nine mutations, all caught.
+
+#### Why this did not need to wait for upstream
+
+The letter asked for something **core already had**, wired to one vhost.
+`_proxy_auth_state()` manages the secret, every vhost already strips a
+client-supplied header, and `caddy_proxy_auth_gate_v1` is an existing
+verify-before-arm migration. Only the injection was console-only, so the fork
+change is three lines in a block that is already fork-only and cannot conflict
+with upstream. ⚠️ If takwerx later ships option B, the header would be injected
+twice — same name, same value, harmless — and our copy should come out.
+
+#### The bootstrap objection expired rather than being overruled
+
+H-1's blank group was justified as "a bootstrap nobody could complete". That is
+true of `takmdm-admins`, which no Authentik has. It is false of
+`authentik Admins`: Authentik creates it, it is the superuser group, and the
+person installing ATLAS is necessarily in it. Checked on the box before relying
+on it — `is_superuser = t`, among seven other groups that now cannot reach the
+console even if the binding vanishes.
+
+#### Three lockout paths, each closed deliberately
+
+⚠️ Every part of this can lock an operator out of the console they would use to
+undo it. That shaped the design more than the threat did:
+
+* **ATLAS demanding a header nothing sends** — fail-open while unset. Shipping
+  the check before the proxy emits it is therefore safe.
+* **The module arming it against a fork that does not inject** — the secret is
+  written only after reading the generated Caddyfile back. ⚠️ Matched against
+  the **ATLAS block**, not the file: the console's own injection has been there
+  for releases, and matching the file would report success for exactly the skew
+  being guarded against.
+* **A group nobody is in** — hence a group Authentik creates, plus a one-time
+  log of the groups actually received so the setting is verifiable rather than
+  guessed.
+
+Break-glass is written into the audit: clear the line from `.env`, `up -d api`.
+
+#### A test that would have been meaningless
+
+The first version of `test_proxy_auth.py` failed on two cases, and the reason
+mattered: the `settings` fixture defaults `admin_group` to `takmdm-admins`, so
+every request was refused by the **group** check before reaching the
+**proxy-auth** one. Had those two assertions happened to be `401`-shaped, they
+would have passed while testing nothing. The fixture now clears the group where
+the test is about something else.
+
+
 ### ✅ W188 — A refused APK stops being invisible (v1.35.0)
 
 **Found by verifying a real deployment, not by reading code.** ATLAS was

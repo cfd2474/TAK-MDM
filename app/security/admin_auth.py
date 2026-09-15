@@ -35,6 +35,7 @@ device-facing port keeps mTLS with no Authentik in the path.
 from __future__ import annotations
 
 import enum
+import hmac
 import ipaddress
 import logging
 from dataclasses import dataclass, field
@@ -95,6 +96,28 @@ def _split_groups(raw: str | None) -> tuple[str, ...]:
 
 #: The literal that means "I have decided not to enforce this".
 ANY = "any"
+
+#: Whether this process has already said which groups the proxy sends.
+_ANNOUNCED_GROUPS = False
+
+
+def _proxy_auth_ok(request: Request, settings: Settings) -> bool:
+    """Did this request really come through the authenticating proxy?
+
+    ⚠️ **The peer check cannot answer this and never could.** Caddy runs on the
+    host and reaches the container through the bridge gateway; so does every
+    other process on that host, so `TAKMDM_TRUSTED_PROXIES` admits them all
+    equally. This is the half that separates them: the proxy holds a secret and
+    attaches it only after `forward_auth` has passed.
+
+    Unset means unchecked, deliberately — see the setting. `compare_digest`
+    rather than `==` because the comparison is against a secret.
+    """
+    expected = (settings.proxy_auth_secret or "").strip()
+    if not expected:
+        return True
+    presented = request.headers.get(settings.proxy_auth_header) or ""
+    return hmac.compare_digest(presented, expected)
 
 
 def _trusted_networks(raw: str) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
@@ -161,6 +184,21 @@ def identify(request: Request, settings: Settings) -> AdminIdentity:
     if mode is AuthMode.DISABLED:
         return ANONYMOUS
 
+    # ⚠️ Before the identity headers are read, for the same reason the peer
+    # check is: a refused caller must never be authenticated, even briefly.
+    if not _proxy_auth_ok(request, settings):
+        logger.error(
+            "admin request refused: %s is missing or wrong. The reverse proxy "
+            "attaches it after forward_auth; a request without it did not come "
+            "through the proxy. To disable this check, clear "
+            "TAKMDM_PROXY_AUTH_SECRET.",
+            settings.proxy_auth_header,
+        )
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "this endpoint must be reached through the authenticating proxy",
+        )
+
     if not _peer_is_trusted(request, settings):
         # ⚠️ Logged at ERROR with both halves of the comparison, because the
         # recovery for a misconfiguration is to read this line: it names what
@@ -192,6 +230,20 @@ def identify(request: Request, settings: Settings) -> AdminIdentity:
 
     groups = _split_groups(request.headers.get(settings.admin_groups_header))
     required = settings.admin_group
+
+    # ⚠️ Logged once per process, at INFO, and only on success. Choosing a value
+    # for TAKMDM_ADMIN_GROUP otherwise means guessing what Authentik actually
+    # sends — and guessing wrong locks every administrator out of the console
+    # they would use to correct it. One line makes the setting verifiable.
+    global _ANNOUNCED_GROUPS
+    if not _ANNOUNCED_GROUPS:
+        _ANNOUNCED_GROUPS = True
+        logger.info(
+            "admin %s authenticated; groups as received: %s. Set "
+            "TAKMDM_ADMIN_GROUP to one of these to have ATLAS check membership "
+            "itself rather than trusting the proxy's binding alone (H-1).",
+            username, ", ".join(groups) or "none",
+        )
 
     if required and required not in groups:
         # Authenticated but not authorized. Logged because it is the interesting

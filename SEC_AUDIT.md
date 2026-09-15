@@ -48,9 +48,9 @@ device-level access an admin has by design.
 
 | ID | Severity | Finding |
 |---|---|---|
-| S-1 | ⚠️ High, part-fixed | Admin authentication trusts request headers with no proxy verification — peer check in force; host-local forgery needs the upstream change |
+| S-1 | ✅ Fixed | Admin authentication trusts request headers with no proxy verification — Caddy now attaches a secret after forward_auth, implemented in the fork rather than waiting upstream |
 | S-2 | ⚠️ High, root is off the box | Six private keys sit unencrypted in one directory — the root is gone from the reference box and from every install made the same way; residual is `issuing.key` and `token_vault.key`, both bounded |
-| H-1 | ⚠️ High, detected | Fleet authorization is delegated entirely to Authentik — loss of the binding is now noticed; the delegation stands |
+| H-1 | ✅ Fixed | Fleet authorization is delegated entirely to Authentik — ATLAS now checks `authentik Admins` itself, so losing the binding is a lockout rather than a silent promotion |
 | H-2 | ✅ Addressed | The agent signing key is an unrecoverable single point of failure — ATLAS has its own key, separate from Google Play, and the operator has attested to an off-machine backup |
 | H-3 | ✅ Fixed | Dependencies pinned two years back, with no scanning and no CI — 24 advisories found and cleared |
 | H-4 | ✅ Fixed | A device's own serial number reached a JavaScript string in the console — found while fixing M-6 |
@@ -171,7 +171,34 @@ but the generator **sets** it only for InfraTAK's own upstream at
 mechanism is half-present on ATLAS: protected against forgery, and carrying
 nothing to verify.
 
-### ⚠️ Status: partially mitigated in v1.16.0 — the finding stays open
+### ✅ v1.36.0 — closed, by implementing the upstream change in the fork
+
+The upstream request (`docs/UPSTREAM-proxy-auth-for-modules.md`) was sent and
+does not need to be waited for: **everything it asks for already existed in
+core**, wired to one vhost. `_proxy_auth_state()` manages the secret, every
+vhost already *strips* a client-supplied `X-Infratak-Proxy-Auth`, and
+`caddy_proxy_auth_gate_v1` is an existing verify-before-arm migration. Only the
+**injection** was console-only.
+
+So the fork's ATLAS vhost now emits the same line the console gets, after
+`forward_auth`, and ATLAS refuses any admin request without it.
+
+⚠️ **Fail-open while unset, fail-closed once set** — the same shape as
+`trusted_proxies`, and for a sharper reason: the header exists only where the
+proxy emits it, so an ATLAS that demanded it unconditionally would lock out
+every operator whose infra-TAK predates the injection, using the console as the
+thing they would need to recover.
+
+⚠️ **The module writes the secret only after confirming the generated Caddyfile
+really injects it**, matched against the ATLAS block specifically — matching the
+file as a whole would find the console's own injection and report success for a
+fork whose ATLAS vhost has no such line, which is exactly the skew being guarded
+against.
+
+Break-glass, should it ever be needed: clear `TAKMDM_PROXY_AUTH_SECRET` from
+`/root/atlas/.env` and `docker compose up -d api`.
+
+### ⚠️ Status: partially mitigated in v1.16.0 — superseded by the above
 
 **What shipped (option 3 below):** `TAKMDM_TRUSTED_PROXIES` bounds which peer
 addresses the administrative surface answers. The check runs **before** the
@@ -488,7 +515,26 @@ ATLAS administrator. The binding is created by a module that runs at install; if
 it fails, is edited, or is lost in an Authentik restore, **ATLAS has no second
 check and no way to notice**.
 
-### ⚠️ Status: detection added in v1.17.1 — the delegation itself is unchanged
+### ✅ v1.36.0 — ATLAS checks the group itself
+
+`TAKMDM_ADMIN_GROUP` is now set to **`authentik Admins`** at deploy, so
+authorization no longer rests on the Authentik application binding alone.
+
+⚠️ **The documented objection has expired, rather than been overruled.** The
+reason for leaving it blank was that a required group would be "a bootstrap
+nobody could complete — until somebody created it and added themselves, nobody
+could sign in at all". True of an invented group like `takmdm-admins`, which no
+Authentik has. False of `authentik Admins`: Authentik creates it, it is the
+superuser group, and whoever installed ATLAS is necessarily in it. Confirmed on
+the reference box — `is_superuser = t`, alongside seven other groups that now
+cannot reach the console even if the binding disappears.
+
+⚠️ **The value is verifiable rather than guessed.** ATLAS logs the groups it
+actually received, once per process, on the first successful admin request —
+because choosing this setting by guessing what Authentik sends, and guessing
+wrong, locks every administrator out of the console they would use to fix it.
+
+### ⚠️ Status: detection added in v1.17.1 — superseded by the above
 
 The empty group stays. A group ATLAS required would be a second place to manage
 access and a bootstrap nobody could complete — until somebody created it and added

@@ -82,6 +82,15 @@ services:
       # `takmdm-admins`, a group no Authentik has, and every administrator was
       # refused with nothing to explain why.
       TAKMDM_ADMIN_GROUP: ${TAKMDM_ADMIN_GROUP-takmdm-admins}
+      # Proves an admin request came through the authenticating proxy
+      # (SEC_AUDIT.md S-1). Caddy attaches it only after forward_auth passes, so
+      # a forged X-Authentik-Username from any host-local process is refused.
+      #
+      # ⚠️ `-` and not `:-`, so an explicitly empty value survives and the check
+      # stays off. A deployment whose proxy does not inject the header must not
+      # find itself rejecting every administrator, with the console as the thing
+      # it would use to fix that.
+      TAKMDM_PROXY_AUTH_SECRET: ${TAKMDM_PROXY_AUTH_SECRET-}
       # The console's public origin, used to reject cross-origin unsafe
       # requests. Blank disables that check; the app warns loudly at startup
       # when auth is on and this is unset.

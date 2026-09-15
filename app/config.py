@@ -133,6 +133,22 @@ class Settings(BaseSettings):
     # Membership required to administer. Blank means any authenticated user, which
     # is only sensible if Authentik already restricts the application.
     admin_group: str = "takmdm-admins"
+    #: Shared secret Caddy injects as `X-Infratak-Proxy-Auth` on requests that
+    #: passed `forward_auth` (`SEC_AUDIT.md` S-1).
+    #:
+    #: ⚠️ **Blank means the check is off, and that is deliberate.** The header is
+    #: only present where the reverse proxy emits it; a deployment whose proxy
+    #: does not would reject every administrator, with the console as the thing
+    #: you would use to fix it. Fail-open when unconfigured, fail-closed when
+    #: configured — the same shape as `trusted_proxies`.
+    #:
+    #: What it buys is the half `trusted_proxies` provably cannot: Caddy runs on
+    #: the host and reaches the container through the bridge gateway, and so does
+    #: every other process on that host. A peer address cannot separate them; a
+    #: secret the proxy holds can.
+    proxy_auth_secret: str = ""
+    #: Header carrying it. Named by infra-TAK, not by us.
+    proxy_auth_header: str = "x-infratak-proxy-auth"
 
     # Headers an Authentik proxy provider sets. The proxy MUST strip inbound copies
     # of these, exactly as it must for the mTLS client-certificate header.

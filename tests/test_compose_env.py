@@ -49,6 +49,10 @@ MUST_BE_PASSED = (
     "TAKMDM_CONSOLE_ORIGIN",
     # SEC_AUDIT S-1. Written by the module; inert until compose named it.
     "TAKMDM_TRUSTED_PROXIES",
+    # SEC_AUDIT S-1's other half, and H-1's. Same failure if compose forgets
+    # them: the module writes a correct value and the application never sees it.
+    "TAKMDM_PROXY_AUTH_SECRET",
+    "TAKMDM_ADMIN_GROUP",
 )
 
 
