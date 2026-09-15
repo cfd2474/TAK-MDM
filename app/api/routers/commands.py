@@ -54,7 +54,7 @@ def enqueue_command(
             max_attempts=payload.max_attempts,
         )
     except command_service.CommandError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
     session.commit()
     return command

@@ -45,7 +45,7 @@ def upload_file(
     data = file.file.read()
     if len(data) > settings.max_upload_bytes:
         raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status.HTTP_413_CONTENT_TOO_LARGE,
             f"upload exceeds {settings.max_upload_bytes} bytes",
         )
 
@@ -60,7 +60,7 @@ def upload_file(
             media_type=file.content_type or "application/octet-stream",
         )
     except file_service.FileError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
     session.commit()
     return managed

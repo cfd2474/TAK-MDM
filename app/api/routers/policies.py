@@ -50,7 +50,7 @@ def _validated_spec(policy_type: str, spec: dict) -> dict:
     try:
         return registry.validate_spec(policy_type, spec)
     except PolicyTypeError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
 
 def _refuse_misplaced_plugins(session: Session, spec: dict) -> None:
@@ -64,7 +64,7 @@ def _refuse_misplaced_plugins(session: Session, spec: dict) -> None:
     misplaced = atak_compat.misplaced_plugins(session, spec)
     if misplaced:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, atak_compat.refusal_for(misplaced)
+            status.HTTP_422_UNPROCESSABLE_CONTENT, atak_compat.refusal_for(misplaced)
         )
 
 
@@ -83,7 +83,7 @@ def _refuse_stranded_fence(
         return
     refusal = fence_rules.violation(spec, sibling_password)
     if refusal:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, refusal)
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, refusal)
 
 
 def _sibling_password_spec(session: Session, policy: Policy) -> dict | None:

@@ -81,7 +81,7 @@ def preview_effective_policy(
 
         if version is None:
             raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
                 f"policy {policy.name!r} has no published version to preview",
             )
 

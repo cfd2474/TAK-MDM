@@ -54,7 +54,7 @@ def create_group(payload: AppGroupCreate, session: Session = Depends(get_db)) ->
         if payload.package_ids:
             service.set_members(session, group, payload.package_ids)
     except service.AppGroupError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     try:
         session.commit()
     except IntegrityError as exc:
@@ -83,7 +83,7 @@ def update_group(
             description=payload.description,
         )
     except service.AppGroupError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     session.commit()
     return group
 
@@ -96,7 +96,7 @@ def set_members(
     try:
         service.set_members(session, group, payload.package_ids)
     except service.AppGroupError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     session.commit()
     return group
 

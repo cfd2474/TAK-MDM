@@ -52,7 +52,7 @@ def create_attribute(
             description=payload.description,
         )
     except service.AttributeError_ as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     try:
         session.commit()
     except IntegrityError as exc:

@@ -65,7 +65,7 @@ def upload_logs(
         # 413 rather than 400: the agent should stop retrying a bundle it cannot
         # shrink, and the status says which of the two problems it has.
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(exc)
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=str(exc)
         ) from exc
 
     session.commit()

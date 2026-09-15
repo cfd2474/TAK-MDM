@@ -54,17 +54,17 @@ def upload_package(
     """
     data = file.file.read()
     if not data:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "uploaded file is empty")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "uploaded file is empty")
     if len(data) > settings.max_upload_bytes:
         raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status.HTTP_413_CONTENT_TOO_LARGE,
             f"upload exceeds {settings.max_upload_bytes} bytes",
         )
 
     try:
         result = package_service.ingest(session, storage, data, label=label)
     except package_service.PackageError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
     # A new build changes what devices requiring this app must do, without any
     # policy text changing. Their resolved desired state has to be recomputed.

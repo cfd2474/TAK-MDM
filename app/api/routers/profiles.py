@@ -84,7 +84,7 @@ def create_profile(
             created_by=None if identity.is_anonymous else identity.username,
         )
     except profile_service.ProfileError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
     try:
         session.commit()
@@ -120,7 +120,7 @@ def upsert_section(
             published_by=None if identity.is_anonymous else identity.username,
         )
     except profile_service.ProfileError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     session.commit()
     return profile
 

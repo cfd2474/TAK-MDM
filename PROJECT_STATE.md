@@ -487,6 +487,56 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W179 — SEC_AUDIT H-3: 24 advisories, found and cleared (v1.26.0)
+
+The audit's own recommended first action, and the only finding whose size was
+unknown. `pip-audit` turned it into a list.
+
+| Package | Pinned | Advisories | Fixed in |
+|---|---|---|---|
+| `python-multipart` | 0.0.12 | 7 | 0.0.31 |
+| `starlette` | 0.38.6 | 7 | 1.3.1 |
+| `cryptography` | 43.0.1 | 6 | 49.0.0 |
+| `jinja2` | 3.1.4 | 3 | 3.1.6 |
+| `pytest` | 8.3.3 | 1 | 9.0.3 |
+
+⚠️ **The two worst are the two that read untrusted input**: `python-multipart`
+parses every file upload, `starlette` is the HTTP layer under every request. Once
+the list existed there was no judgement left to make.
+
+#### The upgrade
+
+`fastapi` 0.115.0 → 0.141.1 (bringing `starlette` 1.6.0 — a major version),
+`cryptography` → 50.0.1, `python-multipart` → 0.0.32, `jinja2` → 3.1.6,
+`sqlalchemy` → 2.0.53, `pydantic` → 2.13.5, `uvicorn` → 0.53.0.
+
+**1850 tests pass** on the new stack, run on Linux. The only breakage was 26
+deprecation warnings for three renamed Starlette status constants; 22 references
+updated. That a two-year, cross-major upgrade produced nothing worse is the
+suite earning its keep.
+
+#### ⚠️ The pytest advisory was a production finding, and should not have been
+
+`requirements.txt` is what the Dockerfile installs, so **test tooling was shipping
+into the running image** and its advisory counted against the deployment. Split
+into runtime and dev. Both now report no known vulnerabilities.
+
+#### The control, because this is the finding about not having one
+
+`.github/workflows/ci.yml` — the repository had no CI at all. Suite on **Linux**
+(the six key-permission tests skip on Windows, and running them on Linux is how
+two were found broken in W170), plus `pip-audit` against the production
+requirements, failing the build. Dev audited non-blocking.
+
+⚠️ **Weekly schedule as well as on push.** Dependencies rot without anyone
+touching the code. Pinning without scanning means the versions cannot drift *into*
+a fix on their own, which is precisely how 24 advisories accumulated while every
+release looked clean.
+
+**Still to do:** Dependabot or Renovate, so the weekly failure arrives with a pull
+request rather than a chore.
+
+
 ### ✅ W178 — The same compose trap, twice (v1.25.0)
 
 Operator: *"update triggered. check now"*. The update landed (ATLAS **1.24.1**),

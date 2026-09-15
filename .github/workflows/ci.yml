@@ -1,0 +1,48 @@
+# The check that would have caught SEC_AUDIT H-3 two years earlier.
+#
+# ⚠️ Pinning without scanning is the worst of both worlds: the versions are
+# reproducible and cannot drift *into* a fix on their own. This repository had
+# 24 advisories across five packages, pinned and unnoticed, because nothing ever
+# looked.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Dependencies rot without anyone touching the code, so time has to be a
+  # trigger too. A Monday-morning failure is the point.
+  schedule:
+    - cron: "0 7 * * 1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements-dev.txt
+      # ⚠️ Linux, deliberately. Six key-permission tests skip on Windows, where
+      # `st_mode` reports 0o666 whatever is asked for — and running them on Linux
+      # is how two of them were found broken (W170). The developer workstation is
+      # not the thing these protect.
+      - run: python -m pytest -q
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install pip-audit
+      # The production image installs `requirements.txt` and nothing else, so
+      # that is the file whose advisories reach a deployment.
+      - run: pip-audit -r requirements.txt
+      # ⚠️ Dev too, but non-blocking. A test-only advisory should be visible
+      # without stopping a release for something no running server imports —
+      # the judgement an operator would make anyway, made in advance.
+      - run: pip-audit -r requirements-dev.txt
+        continue-on-error: true

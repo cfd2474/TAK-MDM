@@ -43,14 +43,14 @@ def _parse_range(header: str, size: int) -> tuple[int, int]:
     match = _RANGE_PATTERN.match(header.strip())
     if not match:
         raise HTTPException(
-            status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE, "malformed Range header"
+            status.HTTP_416_RANGE_NOT_SATISFIABLE, "malformed Range header"
         )
 
     raw_start, raw_end = match.group(1), match.group(2)
 
     if not raw_start and not raw_end:
         raise HTTPException(
-            status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE, "malformed Range header"
+            status.HTTP_416_RANGE_NOT_SATISFIABLE, "malformed Range header"
         )
 
     if not raw_start:
@@ -58,7 +58,7 @@ def _parse_range(header: str, size: int) -> tuple[int, int]:
         length = int(raw_end)
         if length == 0:
             raise HTTPException(
-                status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE, "zero-length suffix range"
+                status.HTTP_416_RANGE_NOT_SATISFIABLE, "zero-length suffix range"
             )
         start = max(0, size - length)
         end = size - 1
@@ -69,7 +69,7 @@ def _parse_range(header: str, size: int) -> tuple[int, int]:
 
     if start >= size or start > end:
         raise HTTPException(
-            status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+            status.HTTP_416_RANGE_NOT_SATISFIABLE,
             f"range not satisfiable for a {size}-byte artifact",
         )
     return start, end

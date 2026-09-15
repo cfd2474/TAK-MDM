@@ -52,7 +52,7 @@ device-level access an admin has by design.
 | S-2 | **Severe** | Five private keys sit unencrypted in one directory |
 | H-1 | High | Fleet authorization is delegated entirely to Authentik, with no check in ATLAS |
 | H-2 | High | The agent signing key is an unrecoverable single point of failure |
-| H-3 | High | Dependencies pinned two years back, with no scanning and no CI |
+| H-3 | ✅ Fixed | Dependencies pinned two years back, with no scanning and no CI — 24 advisories found and cleared |
 | M-1 | Medium | Uploads are read whole into memory with no size limit |
 | M-2 | Medium | Server-side fetch of operator-supplied URLs, following redirects (SSRF) |
 | M-3 | Medium | Private key files are created before they are made private (TOCTOU) |
@@ -437,20 +437,51 @@ The project operates in September 2026 against pins from late 2024:
 | `sqlalchemy` | 2.0.35 | Sept 2024 |
 | `python-multipart` | 0.0.12 | Oct 2024 |
 
-`cryptography` and `jinja2` both have publicly known security releases after
-these pins, and `python-multipart` — which parses every file upload — has had
-DoS advisories historically. ⚠️ **I have not verified which CVEs apply**; that
-requires `pip-audit` against the lockfile and is the single highest-value action
-in this report, because it is the one finding where the answer is a list rather
-than a judgement.
+### ✅ Resolved in v1.26.0 — the list, and then the fix
 
-There is **no CI** (`no .github/workflows`), **no pre-commit config**, and no
-dependency scanning of any kind. Pinning without scanning is the worst of both:
-the versions cannot drift *into* a fix on their own.
+`pip-audit` was run. The answer was **24 advisories across five packages**:
 
-**Recommendation.** `pip-audit` in CI, failing the build on a known-exploitable
-advisory; Dependabot or Renovate for the upgrade cadence. The 1753-test suite is
-what makes routine dependency bumps safe, and it is currently unused for that.
+| Package | Pinned | Advisories | Fixed in |
+|---|---|---|---|
+| `python-multipart` | 0.0.12 | 7 | 0.0.31 |
+| `starlette` | 0.38.6 | 7 | 1.3.1 |
+| `cryptography` | 43.0.1 | 6 | 49.0.0 |
+| `jinja2` | 3.1.4 | 3 | 3.1.6 |
+| `pytest` | 8.3.3 | 1 | 9.0.3 |
+
+⚠️ **The two worst are the two that read untrusted input.** `python-multipart`
+parses every file upload this system accepts, and `starlette` is the HTTP layer
+under every request. Neither was a judgement call about exploitability once the
+list existed.
+
+Upgraded to `fastapi` 0.141.1 (bringing `starlette` 1.6.0), `cryptography` 50.0.1,
+`python-multipart` 0.0.32, `jinja2` 3.1.6, `sqlalchemy` 2.0.53, `pydantic` 2.13.5,
+`uvicorn` 0.53.0. **1850 tests pass** on the new stack; 22 references to three
+Starlette status constants renamed where they had been deprecated.
+
+### ⚠️ The pytest advisory was a *production* finding, and should not have been
+
+`requirements.txt` is what the Dockerfile installs, and it carried `pytest` — so
+test tooling shipped into the running image, and its advisory counted against the
+deployment. Split into `requirements.txt` (runtime) and `requirements-dev.txt`.
+Both now report **no known vulnerabilities**.
+
+### The control
+
+`.github/workflows/ci.yml` — the repository had none. It runs the suite **on
+Linux** (six key-permission tests skip on Windows, and running them on Linux is
+how two were found broken) and `pip-audit` against the production requirements,
+failing the build. Dev requirements are audited too but non-blocking: a test-only
+advisory should be visible without stopping a release for something no running
+server imports.
+
+⚠️ **It also runs weekly on a schedule.** Dependencies rot without anyone
+touching the code, so time has to be a trigger — pinning without scanning means
+the versions cannot drift *into* a fix on their own, which is exactly how 24
+advisories accumulated unnoticed.
+
+**Remaining:** Dependabot or Renovate for the upgrade cadence, so the weekly
+failure arrives with a pull request attached rather than a chore.
 
 ---
 

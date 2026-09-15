@@ -1,0 +1,17 @@
+# Development and test dependencies.
+#
+# ⚠️ Separate from `requirements.txt` because the Dockerfile installs that one
+# into the production image. Test tooling shipped to a running server is attack
+# surface that nothing there uses — and it is not hypothetical: the dependency
+# audit that prompted this split reported a pytest advisory against the
+# *production* image, for a package no production code imports.
+#
+#   pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+pytest==9.0.3
+
+# Dependency scanning. Run it before a release, and in CI:
+#   pip-audit -r requirements.txt
+pip-audit==2.9.0
