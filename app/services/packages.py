@@ -33,6 +33,7 @@ import json
 import io
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -740,3 +741,107 @@ def declared_activities(
         ({"name": n, "launcher": is_launcher} for n, is_launcher in names.items()),
         key=lambda a: (not a["launcher"], a["name"]),
     )
+
+
+# --------------------------------------------------------------------------- #
+# What the shipped APKs would do if they were loaded now (W188)
+#
+# ⚠️ The seeder refuses an APK whose signing certificate differs from the stored
+# one, which is correct — Android would reject it as an update. But the refusal
+# was a line in `docker logs` and nowhere else, so an operator who changed the
+# signing key saw a console reporting the *old* agent as current, no error
+# anywhere, and no reason to look. Every device would go on being offered a
+# build the release no longer ships.
+#
+# Re-derived on each render rather than recorded when the seeder ran. A stored
+# warning would outlive its cause: fix the problem and the message stays until
+# something clears it, which is its own kind of lie.
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class ShippedButRefused:
+    """An APK in the release that the library will not accept."""
+
+    filename: str
+    package_name: str
+    version_name: str
+    version_code: int
+    reason: str
+
+
+def shipped_but_refused(session: Session, seed_dir: Path) -> list[ShippedButRefused]:
+    """APKs shipped with this release that the library has not loaded, and why.
+
+    Returns an empty list for the normal case — everything shipped is present,
+    or the seed directory does not exist.
+
+    ⚠️ Never raises. This is called while rendering a page; a malformed APK in
+    `dist/` must not be able to take the admin console down, which would turn a
+    warning about a stale agent into an outage.
+    """
+    # ⚠️ `not seed_dir` is the half that does something. A missing directory
+    # needs no guard — `glob` on one yields nothing — but `Path("")` is `.`, so an
+    # empty setting would quietly scan the working directory instead. A mutation
+    # sweep showed the `is_dir()` half changing no outcome; it is kept only
+    # because it says what the argument is meant to be.
+    if not seed_dir:
+        return []
+    if not Path(seed_dir).is_dir():
+        return []
+
+    refused: list[ShippedButRefused] = []
+    for path in sorted(Path(seed_dir).glob("*.apk")):
+        try:
+            bundle = inspect_apk(path.read_bytes())
+        except Exception:
+            # Unreadable here is not necessarily unreadable to the seeder, and
+            # guessing produces a warning nobody can act on.
+            continue
+
+        stored = session.scalar(
+            select(AppPackage).where(AppPackage.package_name == bundle.package_name)
+        )
+        if stored is None:
+            # Nothing stored means nothing refused: the next seed loads it.
+            continue
+
+        have = session.scalar(
+            select(AppPackageVersion).where(
+                AppPackageVersion.package_id == stored.id,
+                AppPackageVersion.version_code == bundle.version_code,
+            )
+        )
+        if have is not None:
+            continue
+
+        if (
+            stored.signature_sha256
+            and bundle.signature_sha256
+            and stored.signature_sha256 != bundle.signature_sha256
+        ):
+            reason = (
+                f"its signing certificate differs from the one already stored "
+                f"({stored.signature_sha256[:16]}\u2026 vs "
+                f"{bundle.signature_sha256[:16]}\u2026). Android refuses an update "
+                f"signed by a different key, so the library will not take it. "
+                f"With no device enrolled you can delete this package and let it "
+                f"re-seed; with a fleet in the field you need a signing lineage "
+                f"\u2014 see docs/AGENT-SIGNING-KEY.md."
+            )
+        else:
+            reason = (
+                "it has not been loaded into the library. Restarting the "
+                "application re-runs the seeder and reports why."
+            )
+
+        refused.append(
+            ShippedButRefused(
+                filename=path.name,
+                package_name=bundle.package_name,
+                version_name=bundle.version_name or "?",
+                version_code=bundle.version_code or 0,
+                reason=reason,
+            )
+        )
+    return refused

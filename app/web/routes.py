@@ -4620,6 +4620,11 @@ def _agent_update_panel(session: Session, settings: Settings) -> dict:
         "published_name": published.version_name if published else None,
         "published_uploaded": published is not None,
         "devices": devices,
+        # ⚠️ An APK this release ships that the library refused. Until W188 the
+        # only trace was a line in `docker logs`, so an operator who changed the
+        # signing key saw a console calling the *old* agent current, with no
+        # error anywhere and no reason to look.
+        "refused": package_service.shipped_but_refused(session, settings.seed_dir),
     }
 
 

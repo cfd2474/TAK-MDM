@@ -36,6 +36,12 @@ class Settings(BaseSettings):
 
     # --- Artifact storage ----------------------------------------------------
     artifact_dir: Path = Path("artifacts")
+    #: Where the APKs shipped with a release are mounted (`./dist:/seed:ro`).
+    #:
+    #: Read at start by the seeder, and on every Admin render by
+    #: `packages.shipped_but_refused`, which is what turns a refused APK from a
+    #: line in `docker logs` into something an operator can see (W188).
+    seed_dir: Path = Path("/seed")
     # 2 GiB. XAPKs with OBB payloads get large; nginx has a matching limit.
     max_upload_bytes: int = 2 * 1024 * 1024 * 1024
     # ⚠️ Deliberately not inside `artifact_dir` (W97). That directory is addressed

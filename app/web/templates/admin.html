@@ -406,6 +406,25 @@
         took the bad one. Publish builds you have already run on a test instance.
       </div>
 
+      {#
+        ⚠️ An APK this release ships that the library would not take. Before
+        W188 this was a line in `docker logs` and nothing else: the console
+        reported the old agent as current, showed no error, and gave nobody a
+        reason to look — while every device went on being offered a build the
+        release no longer contains.
+
+        Re-derived on each render rather than recorded when the seeder ran, so
+        it disappears by itself once the cause is fixed.
+      #}
+      {% for item in agent.refused %}
+        <p class="banner bad">
+          <strong>{{ item.filename }} is not in the library.</strong>
+          This release ships <span class="mono">{{ item.package_name }}</span>
+          {{ item.version_name }} (versionCode {{ item.version_code }}), but
+          {{ item.reason }}
+        </p>
+      {% endfor %}
+
       {% if agent.rollout.published %}
       <p>
         Published: <span class="pill good">{{ agent.rollout.published }}</span>

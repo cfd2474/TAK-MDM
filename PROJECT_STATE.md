@@ -487,7 +487,52 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
-### 🚧 W187 — The CA split as a product feature, not a ceremony
+### ✅ W188 — A refused APK stops being invisible (v1.35.0)
+
+**Found by verifying a real deployment, not by reading code.** ATLAS was
+installed, the signing key changed between the install and the update, and the
+seeder correctly refused the new APKs — Android would reject an update signed by
+a different key.
+
+⚠️ **Correct behaviour the operator could not possibly have known about.** The
+refusal was a line in `docker logs`. The console reported the old agent as
+current, showed no error, and every device would have gone on being offered a
+build the release no longer ships. `app/cli.py` printed it and nothing else ever
+learned.
+
+`packages.shipped_but_refused()` now compares what the release ships against
+what the library holds, and Admin → Agent updates shows it with the remedy —
+which differs by whether a fleet exists: delete the package and re-seed, or a
+signing lineage.
+
+⚠️ **Re-derived on each render, not recorded when the seeder ran.** A stored
+warning outlives its cause: fix the problem and the message stays until
+something clears it, which is its own kind of lie.
+
+#### Two pieces of my own work corrected
+
+* ⚠️ **`tests/apk_signing.py` was a reimplementation of production code.**
+  `app/artifacts/apk.py:extract_signature` already parses v1/v2/v3 and is what
+  the upload path uses. Mine agreed with it exactly — verified before deleting —
+  and was still wrong to exist: two implementations of one format drift, and the
+  copy with no production traffic drifts first.
+* The guard `if not seed_dir or not Path(seed_dir).is_dir()` was half dead.
+  `glob` on a missing directory yields nothing, so the `is_dir()` half changed
+  no outcome. The `not seed_dir` half matters and was untested: ⚠️ `Path("")` is
+  `.`, so an unset setting would have scanned the working directory for APKs.
+
+#### What the live deployment verified
+
+Every fix from this session, on a fresh install: `root_key_on_server` false via
+the recovery-file flow (twice — so it is repeatable, not a one-off), 90-day
+device certificates, the Caddy body limit, the security headers, the dedicated
+signing key on both APKs, and `TAKMDM_TRUSTED_PROXIES` detecting the real bridge
+subnet on a brand-new network.
+
+Nine mutations of the new guard, all caught.
+
+
+### ✅ W187 — The CA split as a product feature, not a ceremony
 
 **Constraint, from the operator:** customers are not IT experts. Anything that
 depends on a manual procedure will not happen, so the control has to be "click

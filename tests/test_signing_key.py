@@ -32,15 +32,22 @@ holding an app signing key protects the Play listing and nothing about the fleet
 These guards exist because the failure is silent: signing with the wrong key
 produces a perfectly working APK, and the damage only becomes visible years
 later when the two domains have to be separated and cannot be.
+
+⚠️ The signature is read with `app.artifacts.apk.extract_signature` — the same
+function the upload path uses. A first version of this file shipped its own
+parser of the APK Signing Block, which agreed with it exactly and was still
+wrong to exist: two implementations of one format drift, and the copy with no
+production traffic drifts first.
 """
 
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 
 import pytest
 
-from tests.apk_signing import NotSigned, signer_sha256
+from app.artifacts.apk import extract_signature
 
 AGENT = Path("dist/atlas-agent.apk")
 LAUNCHER = Path("dist/atlas-launcher.apk")
@@ -53,6 +60,14 @@ LAUNCHER = Path("dist/atlas-launcher.apk")
 PLAY_KEY_SHA256 = "2094bccc054c681f46d8c812378c07657cf339dd7d4e80b546026b77aff2c644"
 
 
+def _signer(apk: Path) -> str | None:
+    """The signing certificate's SHA-256, or None if there is no signature."""
+    data = apk.read_bytes()
+    with zipfile.ZipFile(apk) as archive:
+        digest, _scheme = extract_signature(data, archive)
+    return digest
+
+
 @pytest.mark.parametrize("apk", [AGENT, LAUNCHER], ids=lambda p: p.name)
 def test_the_artifact_is_signed_and_readable(apk):
     """If this breaks, every assertion below is vacuously true.
@@ -60,8 +75,9 @@ def test_the_artifact_is_signed_and_readable(apk):
     A parser that returned nothing useful would make "is not the Play key" pass
     for an APK signed with anything at all.
     """
-    digest = signer_sha256(apk)
+    digest = _signer(apk)
 
+    assert digest is not None, f"{apk} has no readable signature"
     assert len(digest) == 64 and int(digest, 16) >= 0, digest
 
 
@@ -74,7 +90,7 @@ def test_no_shipped_artifact_is_signed_with_the_play_key(apk):
     incident becomes a Play incident, and separating them afterwards needs a
     signing lineage and every device to have already accepted it.
     """
-    assert signer_sha256(apk) != PLAY_KEY_SHA256, (
+    assert _signer(apk) != PLAY_KEY_SHA256, (
         f"{apk} is signed with the Google Play key. ATLAS must use its own "
         f"keystore — see docs/AGENT-SIGNING-KEY.md. Signing with the Play key "
         f"puts a Play listing and every customer's fleet behind one secret."
@@ -89,24 +105,21 @@ def test_the_agent_and_launcher_share_one_key():
     different keys means the tiles stop opening — on a locked kiosk, with
     "cannot open" as the only symptom.
     """
-    assert signer_sha256(AGENT) == signer_sha256(LAUNCHER), (
+    assert _signer(AGENT) == _signer(LAUNCHER), (
         "the agent and launcher are signed by different keys; the kiosk tiles "
         "will not open (SEC_AUDIT L-4)"
     )
 
 
-def test_an_unsigned_file_is_reported_rather_than_passing(tmp_path):
-    """The parser must refuse what it cannot read.
+def test_an_unsigned_file_reads_as_unsigned(tmp_path):
+    """The extractor must not invent a value for a file it cannot read.
 
-    ⚠️ Returning a placeholder for an unreadable APK would turn both guards
-    above into decoration — "not the Play key" is trivially true of a value that
-    is not a key at all.
+    ⚠️ A placeholder would turn both guards above into decoration — "not the
+    Play key" is trivially true of something that is not a key at all, which is
+    why `test_the_artifact_is_signed_and_readable` exists alongside them.
     """
-    import zipfile
-
     plain = tmp_path / "unsigned.apk"
     with zipfile.ZipFile(plain, "w") as archive:
         archive.writestr("AndroidManifest.xml", "not really")
 
-    with pytest.raises(NotSigned):
-        signer_sha256(plain)
+    assert _signer(plain) is None

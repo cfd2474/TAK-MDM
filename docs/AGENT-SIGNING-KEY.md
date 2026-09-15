@@ -29,9 +29,11 @@ devices pin; Google holding an app signing key protects the listing and nothing
 about the fleet.
 
 `tests/test_signing_key.py` fails if anything in `dist/` carries the Play
-fingerprint. It reads the APK Signing Block directly, so it runs in CI with no
-Android SDK — ⚠️ and it has to, because these APKs are v2/v3-signed and the
-old `META-INF/*.RSA` path finds nothing at all.
+fingerprint. It reads the signature with `app.artifacts.apk.extract_signature`
+— the same function the upload path uses — so it needs no Android SDK and runs
+in CI. ⚠️ A first version shipped its own parser of the APK Signing Block. It
+agreed exactly, and was still wrong to exist: two implementations of one format
+drift, and the copy with no production traffic drifts first.
 
 ---
 
@@ -92,6 +94,36 @@ Then confirm:
 ```bash
 python -m pytest tests/test_signing_key.py -q
 ```
+
+---
+
+## ⚠️ A key change is refused by every deployment that already has the old one
+
+Before the lineage question, there is one that bites first and is easy to miss.
+
+The seeder **refuses** an APK whose signing certificate differs from the one
+already stored for that package — correctly, because Android would reject it as
+an update. So on any deployment that has already seeded the old build:
+
+```
+seed: atlas-agent.apk not loaded — signing certificate for com.taksolutions.atlasmdm
+does not match the stored one (have 2094bccc…, got c037760…).
+```
+
+The release updates, the library keeps the **old** agent, and devices go on
+being offered it.
+
+⚠️ **This was observed on a real install, not imagined.** It is also why
+v1.35.0 surfaces the refusal in Admin → Agent updates: until then it existed
+only in `docker logs`, so the console reported the old agent as current and
+nothing anywhere suggested otherwise.
+
+**What to do depends on whether a fleet exists:**
+
+| | |
+|---|---|
+| **No device enrolled** | Delete the package from the Apps page and let it re-seed, or uninstall and reinstall. Nothing is lost. |
+| **Devices in the field** | Deleting does not help — the *devices* hold the old signature, not just the library. You need `apksigner rotate` and a lineage, below. |
 
 ---
 
