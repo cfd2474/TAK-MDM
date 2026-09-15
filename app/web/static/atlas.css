@@ -133,6 +133,114 @@ header .brand .brand-logo {
   header .brand .brand-logo { height: 68px; }
 }
 
+/* --------------------------------------------------------------------------- */
+/* Mobile navigation (W190)                                                     */
+/*                                                                              */
+/* The banner's eight sections wrap to three rows on a phone and take most of   */
+/* the screen before any content appears. Below, they become a dismissable      */
+/* grid of tiles instead.                                                       */
+/*                                                                              */
+/* The toggle is off on wide pointer-driven screens and takes no space there.   */
+/* --------------------------------------------------------------------------- */
+
+.nav-toggle { display: none; }
+.nav-grid { display: none; }
+
+/* ⚠️ Width *or* touch, never a user-agent string. `hover: none` is what keeps a
+   touch laptop on the banner: it has a mouse, so it hovers. A UA string would
+   hand a 1024px tablet the phone menu and a 500px desktop window a banner that
+   does not fit — and would know nothing about a device released next year. */
+@media (max-width: 720px), (hover: none) and (pointer: coarse) {
+  header { gap: 12px; min-height: 0; padding: 8px 14px; }
+  header nav { display: none; }
+  header .who { font-size: 13px; }
+
+  .nav-toggle {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-left: auto;
+    padding: 9px 13px;
+    border: 1px solid var(--brandbar-line);
+    border-radius: 8px;
+    color: var(--brandbar-ink);
+    cursor: pointer;
+    /* Comfortably past the 44px Apple and Google both use as the floor for a
+       reliable thumb target. */
+    min-height: 44px;
+    user-select: none;
+  }
+
+  .nav-toggle:focus-visible {
+    outline: 2px solid var(--accent-2);
+    outline-offset: 2px;
+  }
+
+  .nav-toggle-bars {
+    position: relative;
+    width: 18px;
+    height: 2px;
+    background: currentColor;
+    border-radius: 2px;
+  }
+  .nav-toggle-bars::before,
+  .nav-toggle-bars::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    width: 18px;
+    height: 2px;
+    background: currentColor;
+    border-radius: 2px;
+  }
+  .nav-toggle-bars::before { top: -6px; }
+  .nav-toggle-bars::after  { top: 6px; }
+
+  .nav-toggle-text { font-size: 15px; font-weight: 600; }
+
+  /* Open. The sibling selector is the whole mechanism — decided by CSS, so it
+     is correct on the first paint rather than after a deferred script runs. */
+  .nav-switch:checked ~ .nav-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    width: 100%;
+    padding: 4px 0 12px;
+    /* A long menu on a short phone in landscape still has to reach its last
+       tile. */
+    max-height: calc(100vh - 120px);
+    overflow-y: auto;
+  }
+
+  /* The bars become an X, so the control says what it will do next. */
+  .nav-switch:checked ~ .nav-toggle .nav-toggle-bars { background: transparent; }
+  .nav-switch:checked ~ .nav-toggle .nav-toggle-bars::before { top: 0; transform: rotate(45deg); }
+  .nav-switch:checked ~ .nav-toggle .nav-toggle-bars::after  { top: 0; transform: rotate(-45deg); }
+
+  .nav-grid a {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 62px;
+    padding: 12px;
+    border: 1px solid var(--brandbar-line);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--brandbar-ink);
+    text-decoration: none;
+    font-size: 17px;
+    font-weight: 600;
+    text-align: center;
+  }
+
+  /* The section you are on, marked the same way the banner marks it. */
+  .nav-grid a.on {
+    color: #fff;
+    border-color: var(--accent-2);
+    background: rgba(255, 255, 255, 0.14);
+  }
+}
+
 header nav {
   display: flex;
   gap: 2px;

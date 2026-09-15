@@ -40,7 +40,41 @@
     <img class="brand-logo" src="/static/atlas-logo.png"
          alt="ATLAS MDM — ATAK Tactical Lifecycle &amp; Administration System">
   </a>
+  {#
+    ⚠️ A checkbox, not a button, and the reason is the first paint.
+
+    A `<button>` toggled by `atlas.js` needs the panel to start open in the
+    markup (so it still works if the script never arrives) — and `defer` runs
+    after the browser has painted, so every page load on a phone flickers a
+    full-screen menu before collapsing it.
+
+    A checkbox is decided by CSS, which means it is right on the very first
+    frame. It is focusable and space-toggleable natively, the label is its
+    accessible name, and none of it needs script — which also keeps it clear of
+    M-6's `script-src 'self'` (no inline handler anywhere).
+
+    `atlas.js` only enhances: Escape, tapping outside, and keeping
+    `aria-expanded` truthful for a screen reader.
+  #}
+  <input class="nav-switch" type="checkbox" id="nav-switch" hidden>
+  <label class="nav-toggle" for="nav-switch"
+         role="button" tabindex="0" aria-expanded="false" aria-controls="nav-grid">
+    <span class="nav-toggle-bars" aria-hidden="true"></span>
+    <span class="nav-toggle-text">Menu</span>
+  </label>
+
   <nav>
+    {% for key, label, href in sections %}
+      <a href="{{ href }}" class="{{ 'on' if nav == key }}">{{ label }}</a>
+    {% endfor %}
+  </nav>
+
+  {#
+    The same eight sections as tiles. A second list rather than a reflow of the
+    first: at this size the banner's job is to be out of the way, and the grid's
+    is to be a target you can hit with a thumb.
+  #}
+  <nav class="nav-grid" id="nav-grid" aria-label="Sections">
     {% for key, label, href in sections %}
       <a href="{{ href }}" class="{{ 'on' if nav == key }}">{{ label }}</a>
     {% endfor %}

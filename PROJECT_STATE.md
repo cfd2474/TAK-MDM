@@ -487,6 +487,74 @@ Full rationale in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Chunk plan
 
+### ✅ W190 — A mobile navigation grid for the console
+
+The eight-section banner wraps to three rows on a phone and eats the screen.
+On a narrow or touch-only device it becomes a dismissable grid instead.
+
+**Detection: width *or* touch capability**, chosen over user-agent sniffing.
+
+```css
+@media (max-width: 720px), (hover: none) and (pointer: coarse)
+```
+
+⚠️ A UA string is the one option that can be wrong about the thing it
+measures: it hands a 1024px tablet the phone menu, hands a 500px-wide desktop
+window a banner that does not fit, and knows nothing about devices that do not
+exist yet. `hover: none` is what keeps a touch *laptop* on the banner — it has a
+mouse, so it hovers.
+
+**Two constraints the implementation has to respect, both self-inflicted and
+both good:**
+
+1. ⚠️ **No inline handlers.** M-6's CSP is `script-src 'self'` with no
+   `unsafe-inline`, and `test_no_template_carries_an_inline_event_handler`
+   fails the build on an `onclick`.
+2. ⚠️ **No flash of an open menu.** The obvious `<button>` + JS approach has the
+   panel visible until `atlas.js` collapses it, and `defer` runs after paint —
+   so every page load on a phone would flicker a full-screen menu. A
+   checkbox-and-label toggle is CSS-only: correct on first paint, keyboard
+   operable natively, and it still works if the script never arrives. JS is
+   enhancement only — Escape, tapping outside, and keeping `aria-expanded`
+   honest.
+
+Matches the existing `.choice-grid` pattern and the existing 720px breakpoint
+rather than inventing either.
+
+**Status: complete.** 2095 tests; eleven mutations, all caught.
+
+#### Why a checkbox rather than a button
+
+⚠️ **The first paint.** A `<button>` toggled by `atlas.js` needs the panel to
+start open in the markup so it still works if the script never arrives — and
+`defer` runs *after* the browser paints, so every page load on a phone would
+flash a full-screen menu before collapsing it. A checkbox is decided by CSS, so
+it is correct on the first frame, is focusable and space-toggleable natively,
+and never touches M-6's `script-src 'self'`.
+
+The script is enhancement only, and a test enforces that: it may **close** the
+menu but never open it, because if script could open it the no-script path
+would be a lie.
+
+#### A pre-existing test that failed for the right reason
+
+`test_nav_marks_the_active_section` asserted exactly one `class="on"` per page.
+There are now two nav lists and both mark the current section, so it failed
+legitimately. ⚠️ It was tightened rather than loosened: `== [label, label]`
+rather than `label in active`, because the latter would pass just as happily
+for a page that marked *every* section in both lists.
+
+#### What the grid guards that a screenshot would not show
+
+* `aria-expanded` kept in step — the one thing CSS cannot update, and without
+  it the control announces "collapsed" the whole time it is open.
+* Space and Enter wired, because a `<label>` gets click and nothing else.
+* The grid offers **every** section the banner does. Two lists of the same
+  thing is a drift risk, and a menu that silently drops a section is worse than
+  no menu: the page is still there and the only way to reach it is a URL nobody
+  has.
+
+
 ### ✅ W189 — Closing S-1 and H-1: prove the headers came from Caddy, and check the group
 
 Two gates against two different attacks, built together because they touch the

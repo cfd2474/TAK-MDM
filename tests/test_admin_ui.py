@@ -101,12 +101,20 @@ def test_every_section_is_reachable(client: TestClient):
 
 
 def test_nav_marks_the_active_section(client: TestClient):
-    """The nav link for the page you are on carries the `on` class, and only it."""
+    """The link for the page you are on carries `on`, in both navs, and nothing
+    else does.
+
+    ⚠️ **Twice, not once** (W190). There are two lists of the same sections now
+    — the desktop banner and the mobile grid — and both mark the current one.
+    The assertion counts rather than merely looking for the label, because
+    `label in active` would pass just as happily for a page that marked every
+    section in both.
+    """
     for path, label in SECTIONS.items():
         body = client.get(path).text
         # The active link renders as: <a href="..." class="on">Label</a>
         active = re.findall(r'<a href="[^"]*" class="on">([^<]+)</a>', body)
-        assert active == [label], (path, active)
+        assert active == [label, label], (path, active)
 
 
 def test_no_section_is_a_stub_any_more(client: TestClient):

@@ -1115,6 +1115,63 @@
     addAppGroup(btn.getAttribute("data-add-app-group"), packages);
   });
 
+  /* --- Mobile navigation (W190) -----------------------------------------------
+     The menu itself is CSS: a checkbox and a label, so it is right on the first
+     paint and works with no script at all. Everything here is enhancement.
+
+     ⚠️ None of it may *open* the menu or the no-script path would be a lie. It
+     only closes it, and keeps what a screen reader is told in step with what a
+     sighted user can see. */
+
+  var navSwitch = document.getElementById("nav-switch");
+  var navToggle = document.querySelector(".nav-toggle");
+
+  function syncNavState() {
+    if (navToggle && navSwitch) {
+      navToggle.setAttribute("aria-expanded", navSwitch.checked ? "true" : "false");
+    }
+  }
+
+  function closeNav() {
+    if (navSwitch && navSwitch.checked) {
+      navSwitch.checked = false;
+      syncNavState();
+    }
+  }
+
+  if (navSwitch) {
+    syncNavState();
+    navSwitch.addEventListener("change", syncNavState);
+
+    /* A label is not a button, so the browser gives it click and nothing else.
+       Space and Enter have to be wired for a keyboard, and both are what
+       somebody will try. */
+    if (navToggle) {
+      navToggle.addEventListener("keydown", function (e) {
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          navSwitch.checked = !navSwitch.checked;
+          syncNavState();
+        }
+      });
+    }
+
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") closeNav();
+    });
+
+    /* Tapping anywhere that is not the menu or its button. ⚠️ A tap on a *link*
+       is deliberately left alone — the page is navigating anyway, and closing
+       first makes the menu flicker shut before it goes. */
+    document.addEventListener("click", function (e) {
+      if (!navSwitch.checked) return;
+      if (e.target.closest && (e.target.closest(".nav-grid") || e.target.closest(".nav-toggle"))) {
+        return;
+      }
+      closeNav();
+    });
+  }
+
   /* --- Confirm before submit --------------------------------------------------
      <form data-confirm="This retires the token. Continue?"> */
 
