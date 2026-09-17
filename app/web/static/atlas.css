@@ -1,0 +1,1253 @@
+/* Copyright 2026 TAK-Solutions LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * ATLAS console design system. One stylesheet for the whole console, served from
+ * /static so it is cached and edited in one place. Colours are taken from the
+ * ATLAS banner: a deep navy ground, a chrome-silver wordmark, an electric-blue
+ * accent, and a cyan highlight (the "MDM" badge).
+ *
+ * Light is the default palette; the dark palette redefines the same tokens inside
+ * a prefers-color-scheme block, matching the pattern the console already used.
+ * Every legacy class name from the old inline <style> is preserved so existing
+ * templates keep rendering unchanged.
+ */
+
+/* The `hidden` attribute must win, everywhere.
+ *
+ * The browser's own rule is `[hidden] { display: none }`, which any class setting
+ * `display` outranks — so an element toggled with `el.hidden = true` in JS stays
+ * on screen if its class happens to set `display: flex`. That has bitten this
+ * stylesheet three times already (`.tab-panel`, `.modal-backdrop`, filtered TPC
+ * rows each carry their own `[hidden]` patch) and a fourth time on
+ * `.wallpaper-preview`, whose empty frames rendered whenever no image was chosen.
+ * One rule instead of a fifth patch. */
+[hidden] { display: none !important; }
+
+:root {
+  --bg: #eef2f7;
+  --bg-2: #e6ecf4;
+  --panel: #ffffff;
+  --panel-2: #f4f7fb;
+  --ink: #14202e;
+  --muted: #5a6b7d;
+  --line: #d8e0ea;
+  --accent: #1c63c4;
+  --accent-ink: #ffffff;
+  --accent-2: #0f7fac;
+  --silver: #33475c;
+  --warn: #a8611a;
+  --bad: #b4341f;
+  --good: #1d7a4d;
+  --code: #f0f3f7;
+
+  /* The brand bar is dark in both themes — it is the one piece of fixed ATLAS
+     identity on the page. Near-black so the logo lockup (which carries its own
+     dark ground) sits on it without a visible seam. */
+  --brandbar: #05090f;
+  --brandbar-line: #23384f;
+  --brandbar-ink: #e8eef6;
+  --brandbar-muted: #8fa6be;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0a1420;
+    --bg-2: #0d1a29;
+    --panel: #13243b;
+    --panel-2: #182f4a;
+    --ink: #e8eef6;
+    --muted: #8fa6be;
+    --line: #24384f;
+    --accent: #2f7fe0;
+    --accent-ink: #ffffff;
+    --accent-2: #3fc8f0;
+    --silver: #c9d4e0;
+    --warn: #d99a4e;
+    --bad: #e8705a;
+    --good: #5cc48d;
+    --code: #0c1928;
+
+    --brandbar: #04070c;
+    --brandbar-line: #1c2f43;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* --------------------------------------------------------------------------- */
+/* Brand bar + navigation                                                       */
+/* --------------------------------------------------------------------------- */
+
+header {
+  background: var(--brandbar);
+  border-bottom: 1px solid var(--brandbar-line);
+  color: var(--brandbar-ink);
+  padding: 0 20px;
+  display: flex;
+  gap: 26px;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  /* 92px logo + the brand's 5px padding top and bottom. A floor, not the
+     height — it keeps the bar from collapsing and snapping back while the logo
+     is still loading. */
+  min-height: 102px;
+  flex-wrap: wrap;
+}
+
+header .brand {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+  padding: 5px 0;
+}
+
+header .brand .brand-logo {
+  display: block;
+  /* Twice the old 46px. `width: auto` is what keeps the artwork in proportion;
+     setting both would stretch a 560x153 banner. */
+  height: 92px;
+  width: auto;
+}
+
+@media (max-width: 720px) {
+  header .brand .brand-logo { height: 68px; }
+}
+
+header nav {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  align-self: stretch;
+}
+
+header nav a {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  color: var(--brandbar-muted);
+  text-decoration: none;
+  font-size: 19.5px;   /* 13px, scaled by half again */
+  font-weight: 550;
+  border-bottom: 2px solid transparent;
+}
+
+header nav a:hover { color: var(--brandbar-ink); }
+
+header nav a.on {
+  color: #fff;
+  border-bottom-color: var(--accent-2);
+}
+
+header .who {
+  margin-left: auto;
+  color: var(--brandbar-muted);
+  font-size: 18.75px;  /* 12.5px, scaled by half again */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The signed-in pill scales with the bar it sits in. Scoped, because `.pill`
+   is used throughout the console and only the menu bar was asked to grow. */
+header .who .pill { font-size: 18px; padding: 2px 12px; }
+
+/* --------------------------------------------------------------------------- */
+/* Mobile navigation (W190)                                                     */
+/*                                                                              */
+/* The banner's eight sections wrap to three rows on a phone and take most of   */
+/* the screen before any content appears. Below, they become a dismissable      */
+/* grid of tiles instead.                                                       */
+/*                                                                              */
+/* The toggle is off on wide pointer-driven screens and takes no space there.   */
+/* --------------------------------------------------------------------------- */
+
+.nav-toggle { display: none; }
+.nav-grid { display: none; }
+
+/* ⚠️ Width *or* touch, never a user-agent string. `hover: none` is what keeps a
+   touch laptop on the banner: it has a mouse, so it hovers. A UA string would
+   hand a 1024px tablet the phone menu and a 500px desktop window a banner that
+   does not fit — and would know nothing about a device released next year. */
+@media (max-width: 720px), (hover: none) and (pointer: coarse) {
+  header { gap: 12px; min-height: 0; padding: 8px 14px; }
+  header nav { display: none; }
+  header .who { font-size: 13px; }
+
+  .nav-toggle {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-left: auto;
+    padding: 9px 13px;
+    border: 1px solid var(--brandbar-line);
+    border-radius: 8px;
+    color: var(--brandbar-ink);
+    cursor: pointer;
+    /* Comfortably past the 44px Apple and Google both use as the floor for a
+       reliable thumb target. */
+    min-height: 44px;
+    user-select: none;
+  }
+
+  .nav-toggle:focus-visible {
+    outline: 2px solid var(--accent-2);
+    outline-offset: 2px;
+  }
+
+  .nav-toggle-bars {
+    position: relative;
+    width: 18px;
+    height: 2px;
+    background: currentColor;
+    border-radius: 2px;
+  }
+  .nav-toggle-bars::before,
+  .nav-toggle-bars::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    width: 18px;
+    height: 2px;
+    background: currentColor;
+    border-radius: 2px;
+  }
+  .nav-toggle-bars::before { top: -6px; }
+  .nav-toggle-bars::after  { top: 6px; }
+
+  .nav-toggle-text { font-size: 15px; font-weight: 600; }
+
+  /* Open. The sibling selector is the whole mechanism — decided by CSS, so it
+     is correct on the first paint rather than after a deferred script runs. */
+  .nav-switch:checked ~ .nav-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    width: 100%;
+    padding: 4px 0 12px;
+    /* A long menu on a short phone in landscape still has to reach its last
+       tile. */
+    max-height: calc(100vh - 120px);
+    overflow-y: auto;
+  }
+
+  /* The bars become an X, so the control says what it will do next. */
+  .nav-switch:checked ~ .nav-toggle .nav-toggle-bars { background: transparent; }
+  .nav-switch:checked ~ .nav-toggle .nav-toggle-bars::before { top: 0; transform: rotate(45deg); }
+  .nav-switch:checked ~ .nav-toggle .nav-toggle-bars::after  { top: 0; transform: rotate(-45deg); }
+
+  .nav-grid a {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 62px;
+    padding: 12px;
+    border: 1px solid var(--brandbar-line);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--brandbar-ink);
+    text-decoration: none;
+    font-size: 17px;
+    font-weight: 600;
+    text-align: center;
+  }
+
+  /* The section you are on, marked the same way the banner marks it. */
+  .nav-grid a.on {
+    color: #fff;
+    border-color: var(--accent-2);
+    background: rgba(255, 255, 255, 0.14);
+  }
+}
+
+main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 64px; }
+main.wide { max-width: 1440px; }
+
+h1 { font-size: 20px; margin: 0 0 4px; }
+h2 { font-size: 15px; margin: 28px 0 10px; }
+h3 { font-size: 13px; margin: 20px 0 8px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+.sub { color: var(--muted); margin: 0 0 20px; }
+
+a { color: var(--accent); }
+
+/* --------------------------------------------------------------------------- */
+/* Panels, tables, code                                                         */
+/* --------------------------------------------------------------------------- */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  margin-bottom: 18px;
+}
+
+.panel > h2:first-child, .panel > h3:first-child { margin-top: 0; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+tr:last-child td { border-bottom: none; }
+tbody tr:hover td { background: var(--panel-2); }
+
+code, pre, .mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+pre {
+  background: var(--code);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  margin: 0;
+}
+
+.logdump {
+  max-height: 70vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* --------------------------------------------------------------------------- */
+/* Forms and buttons                                                            */
+/* --------------------------------------------------------------------------- */
+
+input, select, textarea, button {
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 9px;
+}
+textarea { width: 100%; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
+
+button, .btn {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  cursor: pointer;
+  font-weight: 550;
+  padding: 8px 16px;
+  text-decoration: none;
+  display: inline-block;
+}
+button:hover, .btn:hover { filter: brightness(1.08); }
+
+button.ghost, .btn.ghost {
+  background: transparent;
+  color: var(--accent);
+}
+
+/* Destructive actions read as destructive before they are clicked, not after. */
+button.danger, .btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+
+button:disabled { opacity: .5; cursor: not-allowed; filter: none; }
+
+label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 12.5px; }
+
+.row { display: flex; gap: 16px; flex-wrap: wrap; }
+.row > * { flex: 1 1 320px; min-width: 0; }
+
+/* One field per line, label directly above its input (W147).
+   ⚠️ For name-and-description forms. Spread across columns, a label sits at the
+   left of a 320px track while its input starts wherever the text ended, which
+   reads as two unrelated things — the wider the panel, the further apart they
+   look. The column gap goes too: `label` already carries its own top margin,
+   and adding 16px on top of it double-spaces the list. */
+.row.stacked { flex-direction: column; gap: 0; }
+.row.stacked > * { flex: 0 0 auto; width: 100%; }
+
+.field-full { width: 100%; }
+
+/* An input paired with a button, e.g. the Wi-Fi password's show/hide toggle. */
+.input-group { display: flex; gap: 8px; align-items: stretch; }
+.input-group input { flex: 1 1 auto; min-width: 0; }
+.input-group .btn { flex: 0 0 auto; white-space: nowrap; }
+
+/* --------------------------------------------------------------------------- */
+/* Pills, banners, stats                                                        */
+/* --------------------------------------------------------------------------- */
+
+.pill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 20px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+}
+.pill.good { color: var(--good); border-color: var(--good); }
+.pill.warn { color: var(--warn); border-color: var(--warn); }
+.pill.bad { color: var(--bad); border-color: var(--bad); }
+.pill.accent { color: var(--accent); border-color: var(--accent); }
+
+.muted { color: var(--muted); }
+
+.banner {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  padding: 8px 14px;
+  border-radius: 6px;
+  margin-bottom: 18px;
+  font-size: 13px;
+}
+.banner.bad { background: color-mix(in srgb, var(--bad) 12%, transparent); border-color: var(--bad); color: var(--bad); }
+.banner.good { background: color-mix(in srgb, var(--good) 12%, transparent); border-color: var(--good); color: var(--good); }
+.banner.info { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: var(--accent); color: var(--accent); }
+
+.checks {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: var(--code);
+}
+.checks label { display: flex; gap: 8px; align-items: center; margin: 4px 0; color: var(--ink); }
+.checks input { width: auto; }
+
+/* --- A device in a picker: its name, then what identifies it (W78) ----------
+   Two lines rather than one, because a name and a serial run together read as a
+   single odd string - "TEST TAB R5GL40MMHRN SM-X520" - and the operator has to
+   parse where one ends. Stacked, the name is what they scan and the serial is
+   there to confirm against the tablet in their hand. */
+.checks label:has(.dev) { align-items: flex-start; }
+.dev { flex: 1; min-width: 0; }
+.dev-name { display: block; line-height: 1.3; }
+.dev-id {
+  display: block;
+  font-size: 11px;
+  line-height: 1.3;
+  /* The serial is a fallback identity, not the headline - legible when looked
+     for, quiet when not. */
+  color: var(--muted);
+}
+
+.stat { display: flex; gap: 28px; flex-wrap: wrap; }
+.stat div span { display: block; font-size: 22px; font-weight: 600; }
+.stat div small { color: var(--muted); }
+
+/* --------------------------------------------------------------------------- */
+/* Tabs                                                                         */
+/* --------------------------------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.tabs a, .tabs button.tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  padding: 8px 14px;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 550;
+  font-size: 13px;
+  text-decoration: none;
+}
+.tabs a:hover, .tabs button.tab:hover { color: var(--ink); }
+.tabs a.on, .tabs button.tab.on {
+  color: var(--ink);
+  border-color: var(--line);
+  background: var(--panel);
+  margin-bottom: -1px;
+}
+
+.tab-panel[hidden] { display: none; }
+
+/* --------------------------------------------------------------------------- */
+/* Modal                                                                        */
+/* --------------------------------------------------------------------------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 10, 18, .55);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 8vh 16px 16px;
+  z-index: 50;
+}
+.modal-backdrop[hidden] { display: none; }
+
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 22px;
+  width: 100%;
+  max-width: 560px;
+  max-height: 84vh;
+  overflow-y: auto;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .35);
+}
+.modal h2 { margin-top: 0; }
+.modal h3 { margin: 16px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.modal ul.checks { margin: 4px 0 0; padding-left: 18px; }
+.modal ul.checks li { list-style: disc; }
+.modal .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+
+.choice-grid { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+.choice-grid a {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  text-decoration: none;
+  color: var(--ink);
+  background: var(--panel-2);
+}
+.choice-grid a:hover { border-color: var(--accent); }
+.choice-grid strong { display: block; margin-bottom: 4px; color: var(--accent); }
+
+/* --------------------------------------------------------------------------- */
+/* Toolbar (search / filter above a table)                                      */
+/* --------------------------------------------------------------------------- */
+
+.toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.toolbar input[type="search"] { min-width: 240px; }
+.toolbar .spacer { flex: 1; }
+
+.stack-name { display: flex; flex-direction: column; }
+.stack-name .mono { font-size: 12px; color: var(--muted); }
+
+
+/* --------------------------------------------------------------------------- */
+/* Section stub (pages not built yet)                                           */
+/* --------------------------------------------------------------------------- */
+
+.stub {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--muted);
+}
+.stub .big { font-size: 15px; color: var(--ink); margin-bottom: 6px; }
+
+/* --------------------------------------------------------------------------- */
+/* Form-driven policy editor (W10)                                              */
+/* --------------------------------------------------------------------------- */
+
+.pf-group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 16px 14px;
+  margin: 0 0 14px;
+}
+.pf-group legend {
+  padding: 0 8px;
+  font-weight: 650;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--muted);
+}
+.pf-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 14px;
+  align-items: start;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+.pf-field:last-child { border-bottom: none; }
+.pf-label label { margin: 0; color: var(--ink); font-size: 13.5px; }
+.pf-control { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pf-control select, .pf-control input[type="text"], .pf-control input[type="number"] { max-width: 100%; }
+.pf-preview { margin-top: 14px; }
+.pf-preview pre { margin-top: 8px; }
+
+/* Readable spec summary (a version's stored fields), instead of a JSON dump. */
+dl.kv { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; }
+dl.kv dt { color: var(--muted); font-size: 12px; }
+dl.kv dd { margin: 0; font-size: 13px; }
+
+.rowset { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.rs-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+@media (max-width: 720px) {
+  .pf-field { grid-template-columns: 1fr; gap: 6px; }
+}
+
+/* --------------------------------------------------------------------------- */
+/* Rendered Markdown (Guides)                                                    */
+/* --------------------------------------------------------------------------- */
+
+.prose { max-width: 760px; }
+.prose h1 { font-size: 20px; margin: 0 0 12px; }
+.prose h2 { font-size: 15px; margin: 22px 0 8px; text-transform: none; letter-spacing: 0; color: var(--ink); }
+.prose h3 { font-size: 13.5px; margin: 18px 0 6px; text-transform: none; letter-spacing: 0; color: var(--ink); }
+.prose p { margin: 10px 0; }
+.prose ul, .prose ol { margin: 10px 0; padding-left: 22px; }
+.prose li { margin: 4px 0; }
+.prose code { background: var(--code); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; font-size: 12.5px; }
+.prose pre { margin: 12px 0; }
+.prose pre code { background: none; border: none; padding: 0; }
+.prose blockquote {
+  margin: 12px 0; padding: 4px 14px; border-left: 3px solid var(--line); color: var(--muted);
+}
+.prose hr { border: none; border-top: 1px solid var(--line); margin: 20px 0; }
+
+/* --------------------------------------------------------------------------- */
+/* Left-rail layout (policy creator, admin)                                     */
+/* --------------------------------------------------------------------------- */
+
+.railed { display: flex; gap: 24px; align-items: flex-start; }
+.rail {
+  flex: 0 0 240px;
+  position: sticky;
+  top: 68px;
+  max-height: calc(100vh - 90px);
+  overflow-y: auto;
+}
+.rail ul { list-style: none; margin: 0; padding: 0; }
+.rail a {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  border-radius: 6px;
+}
+.rail a:hover { background: var(--panel-2); }
+.rail a.on { background: var(--accent); color: #fff; }
+.rail a.on .rail-check { color: #fff; border-color: rgba(255,255,255,.6); }
+
+/* Category header */
+.rail-cat-head {
+  padding: 7px 10px;
+  color: var(--ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+.rail-cat-head.active-cat { color: var(--accent); }
+.rail-cat-head::before {
+  content: "▸";
+  font-size: 10px;
+  color: var(--muted);
+  transition: transform .12s;
+}
+.rail-cat.open > .rail-cat-head::before { transform: rotate(90deg); }
+/* a leaf category (its head is itself a page link) needs no disclosure triangle */
+.rail-cat-head[data-page]::before { content: ""; }
+
+/* Sub-pages */
+.rail-sub { display: none; margin: 2px 0 6px !important; }
+.rail-cat.open > .rail-sub { display: block; }
+.rail-sub a {
+  padding: 4px 10px 4px 26px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Green check when a page / category has data */
+.rail-check {
+  margin-left: auto;
+  width: 15px; height: 15px;
+  border: 1px solid var(--good);
+  border-radius: 50%;
+  color: var(--good);
+  font-size: 10px;
+  line-height: 13px;
+  text-align: center;
+  flex: none;
+}
+
+.rail .placeholder .rail-cat-head::after {
+  content: "soon";
+  font-size: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 5px;
+  margin-left: 6px;
+  color: var(--muted);
+}
+.rail-body { flex: 1; min-width: 0; }
+
+@media (max-width: 780px) {
+  .railed { flex-direction: column; }
+  .rail { position: static; flex-basis: auto; max-height: none; width: 100%; }
+}
+
+/* --- TPC plugin catalog ----------------------------------------------------
+   Fixed layout with percentages that sum to 100. In `ch` the three narrow
+   columns under-claimed, the Plugin column absorbed all the slack, and the
+   Import button overflowed a cell too small to hold it. Percentages keep the
+   proportions stable at any panel width. */
+.tpc-table { table-layout: fixed; }
+.tpc-table th:nth-child(1), .tpc-table td:nth-child(1) { width: 50%; }
+.tpc-table th:nth-child(2), .tpc-table td:nth-child(2) { width: 22%; }
+.tpc-table th:nth-child(3), .tpc-table td:nth-child(3) { width: 12%; text-align: right; }
+.tpc-table th:nth-child(4), .tpc-table td:nth-child(4) { width: 16%; text-align: right; }
+.tpc-table td { overflow-wrap: anywhere; vertical-align: top; }
+/* Spelled out rather than trusting the UA default: a filtered-out row that still
+   occupies a line is the kind of failure that looks like the filter is broken. */
+.tpc-table tbody tr[hidden] { display: none; }
+/* Sized by its label rather than stretched to the column: a full-width button
+   in a narrow cell is what pushed it past the table edge. */
+.tpc-table td:nth-child(4) button { white-space: nowrap; padding: 6px 14px; }
+
+/* Determinate progress bar for a running import. */
+.progress {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.progress > span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent, #387aff);
+  transition: width .25s ease;
+}
+
+/* --- Wallpaper preview -----------------------------------------------------
+   `cover`, not `contain`: Android fills the screen with a wallpaper and crops
+   the overflow, so a tidier `contain` preview would misrepresent what the
+   device actually shows. The frames carry each form factor's real aspect
+   ratio. */
+.wallpaper-preview { display: flex; gap: 18px; margin-top: 12px; flex-wrap: wrap; }
+.wallpaper-preview figure { margin: 0; }
+.wallpaper-preview figcaption {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  margin-top: 4px;
+  text-align: center;
+}
+.wallpaper-preview .frame {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel-2);
+}
+.wallpaper-preview .frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Phone: 9:19.5. Tablet: 3:4. Heights fixed so the two orientations sit level. */
+[data-form-factor="phone"] .frame.portrait  { height: 190px; aspect-ratio: 9 / 19.5; }
+[data-form-factor="phone"] .frame.landscape { height: 190px; aspect-ratio: 19.5 / 9; }
+[data-form-factor="tablet"] .frame.portrait  { height: 190px; aspect-ratio: 3 / 4; }
+[data-form-factor="tablet"] .frame.landscape { height: 190px; aspect-ratio: 4 / 3; }
+
+/* --- App icons (W53) -------------------------------------------------------
+   The launcher icon pulled out of the APK, shown left of the app name.
+
+   Two shapes arrive here and they must be displayed differently. An **adaptive**
+   icon's bytes are its foreground layer, drawn on a 108dp canvas of which only
+   the centre 72dp is guaranteed visible — the rest is bleed for the launcher's
+   mask and parallax. Shown whole it looks shrunken and off-centre, so it is
+   scaled by 108/72 inside a clipping box. A **legacy** icon is already the
+   finished artwork and is shown as-is; scaling that one would crop the picture.
+
+   Doing the crop here rather than server-side is what keeps Pillow out of the
+   dependencies — the stored bytes are the APK's own PNG/WEBP, untouched. */
+.app-icon-col { width: 40px; padding-right: 0; }
+
+.app-icon {
+  display: block;
+  width: 28px;
+  height: 28px;
+  border-radius: 22%;      /* approximates Android's squircle mask */
+  overflow: hidden;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+
+.app-icon img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.app-icon img.adaptive { transform: scale(1.5); }
+
+/* No extractable icon — a vector-drawable icon needs a renderer we do not have.
+   A monogram is deliberate-looking and consistent, where a broken-image glyph or
+   an empty cell reads as a fault. */
+.app-icon-blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--panel-2);
+}
+
+/* --- Managed-configuration option lists (W54) ------------------------------
+   A multi-select's accepted values, read out of the APK's resource arrays. A
+   checklist rather than a text box: Android wants a String[] of the selected
+   entries, and asking an operator to type values they cannot see is how the
+   wrong ones get sent. */
+.config-options {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  background: var(--panel);
+}
+
+.config-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 2px 0;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.config-option input { margin: 0; }
+
+
+/* --- Multi-app kiosk preview (W68) -----------------------------------------
+   Not a mockup for its own sake: the column count and the app order have no
+   other visible effect until the policy reaches a device, so without this an
+   operator arranges a home screen blind and finds out on the tablet. */
+.kiosk-preview {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line, #2a3646);
+  border-radius: 10px;
+  background: #0b1524;
+}
+.kiosk-preview .kp-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted, #8fa3b8);
+  margin-bottom: 10px;
+}
+.kiosk-preview .kp-screen {
+  display: grid;
+  gap: 12px 8px;
+  max-width: 420px;
+}
+.kiosk-preview .kp-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.kiosk-preview .kp-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: linear-gradient(160deg, #2f4d75, #1b2f4a);
+  border: 1px solid #3c5a82;
+  flex: none;
+}
+.kiosk-preview .kp-name {
+  font-size: 10px;
+  line-height: 1.2;
+  color: #cfdcea;
+  text-align: center;
+  /* Two lines then ellipsis, as the tile itself does — a preview that showed a
+     name the device will truncate would be a preview of a different screen. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  max-width: 100%;
+}
+.kiosk-preview .kp-dock {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px dashed #2a3646;
+}
+
+/* --- ATAK settings table (W90) ---------------------------------------------
+   293 settings for ATAK 5.8.0.4, 158 for one plugin. A rail of sub-pages cannot
+   carry that, so it is a filtered, paged table: 50 rows a page.
+
+   ⚠️ Rows off the current page are hidden, never removed or disabled — a hidden
+   input still submits, and a removed one would drop the operator's value the
+   moment they turned a page. */
+.prefs-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.prefs-toolbar input[type="search"] { width: 260px; margin: 0; }
+.prefs-table { table-layout: fixed; }
+.prefs-table th, .prefs-table td { vertical-align: top; padding: 7px 10px; }
+.prefs-table .prefs-setting { width: 46%; }
+.prefs-table .prefs-value { width: 34%; }
+.prefs-table .prefs-group { width: 20%; color: var(--muted); font-size: 12px; }
+.prefs-table td input, .prefs-table td select { width: 100%; margin: 0; }
+.prefs-key {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  word-break: break-all;
+}
+.prefs-summary { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.prefs-default { font-size: 11px; color: var(--muted); }
+.prefs-pager {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.prefs-pager .muted { font-size: 12px; }
+/* A setting the policy carries that the scanned build no longer declares. Kept
+   editable and marked, never dropped — see the note in atlas.js. */
+.prefs-row-unknown td { background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.prefs-empty { color: var(--muted); padding: 14px 10px; }
+/* The plugin picker holds the same table, so it needs the same room. */
+.modal.modal-wide { max-width: 900px; }
+
+/* --- Field tips (W92) -------------------------------------------------------
+   Guidance sits beside a field, not inside it.
+
+   ⚠️ A placeholder renders as grey text *within* the box, which reads as a value
+   the field already holds — an operator leaves it and saves, and for a required
+   field the form then rejects the entry the hint was meant to help them fill. It
+   also vanishes the moment anyone types, which is when a format hint is most
+   wanted. A tip does neither. */
+.field-tip {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+  margin: 3px 0 0;
+}
+/* Above the field rather than below, for the few where the guidance has to be
+   read before typing rather than while checking. */
+.field-tip.above { margin: 0 0 4px; }
+/* Inside a wrapping .rs-row the tip belongs to one control, not the row, so it
+   takes the full width and drops below rather than squeezing between fields. */
+.rs-row .field-tip { flex-basis: 100%; }
+
+/* The build footer (W102). Deliberately quiet: it is for the moment someone asks
+   "which build is this", not something to read on every page. */
+.site-footer {
+  padding: 18px 24px 26px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  opacity: .75;
+}
+.site-footer:hover { opacity: 1; }
+
+/* --------------------------------------------------------------------------
+   Location: the map, and the history page (W106)
+   -------------------------------------------------------------------------- */
+
+.device-map,
+.location-history-map {
+  height: 340px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  /* Leaflet positions tiles absolutely; without this they escape the corners. */
+  overflow: hidden;
+}
+
+.location-history-map { height: 460px; }
+
+/* ⚠️ Leaflet's panes sit at z-index 400-700 and will ride over a sticky header
+   or a modal unless the map is given a stacking context of its own. */
+.device-map, .location-history-map { position: relative; z-index: 0; }
+
+/* Numbered markers, as divIcons — no image assets to resolve. */
+.location-marker-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .4);
+  font: 600 12px/1 system-ui, sans-serif;
+}
+
+.location-marker-badge.selected {
+  background: var(--warn);
+  transform: scale(1.25);
+}
+
+/* The reported accuracy, drawn to scale. Deliberately faint: it is a caveat on
+   the marker, not a second thing to look at. */
+.location-accuracy {
+  stroke: var(--accent);
+  stroke-opacity: .5;
+  fill: var(--accent);
+  fill-opacity: .12;
+}
+
+.location-history-table-wrap { max-height: 460px; overflow: auto; }
+
+.location-history-row { cursor: pointer; }
+.location-history-row:hover { background: var(--panel-2); }
+.location-history-row.selected { background: var(--panel-2); font-weight: 600; }
+
+.location-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.location-filters label { display: flex; flex-direction: column; gap: 4px; }
+
+.location-stale { color: var(--warn); }
+
+/* A control the operator may not use yet, without disabling it — a disabled
+   select submits nothing, and these rows are paired by position (W106). */
+.greyed {
+  opacity: .5;
+  pointer-events: none;
+  background: var(--panel-2);
+}
+
+/* The geofence picker (W109): one map under the fence rows. */
+.geofence-picker { margin: 12px 0 16px; }
+.geofence-picker .location-history-map { height: 380px; }
+
+.geofence-shape {
+  stroke: var(--accent);
+  stroke-opacity: .7;
+  fill: var(--accent);
+  fill-opacity: .12;
+}
+
+/* The one being edited, so it is obvious which row a click will move. */
+.geofence-shape.selected {
+  stroke: var(--warn);
+  stroke-opacity: 1;
+  fill: var(--warn);
+  fill-opacity: .2;
+}
+
+.geofence-row.selected {
+  outline: 2px solid var(--warn);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Address candidates, when a search matches more than one place (W109a). */
+.geofence-results { margin: 6px 0 10px; display: flex; flex-direction: column; gap: 4px; }
+/* ⚠️ The colour is set explicitly, and that is the whole point of this rule.
+   The global `button` rule sets `color: var(--accent-ink)` — white — for the
+   filled blue buttons everywhere else. Overriding only the background here left
+   white text on a near-white panel: legible to nobody, and reported from the
+   field. A control that changes its background must set its foreground. */
+.geofence-results button {
+  text-align: left;
+  background: #fff;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.geofence-results button:hover,
+.geofence-results button:focus-visible {
+  border-color: var(--accent);
+  background: var(--panel-2);
+  color: var(--ink);
+}
+
+/* Required-field marker (W146). Red, and not only red: colour alone is not a
+   distinction for a red-green colourblind reader, so the mark is also a glyph
+   that is not there on optional fields, and it carries a title of "required". */
+.req-star {
+  color: var(--bad, #b4341f);
+  font-weight: 700;
+  text-decoration: none;      /* abbr[title] is underlined by default */
+  border-bottom: 0;
+  cursor: help;
+}
+
+/* App-store shortcuts above the blocklist (W153). */
+.store-toggles { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 14px; }
+.store-toggle { display: flex; gap: 10px; align-items: flex-start; margin: 0; cursor: pointer; }
+.store-toggle input { margin-top: 3px; flex: 0 0 auto; }
+.store-toggle strong { font-weight: 600; color: var(--text); }
+
+/* --------------------------------------------------------------------------- */
+/* The device page's summary cards (W160)                                       */
+/* --------------------------------------------------------------------------- */
+
+/* Status, directly under the name, before anything that needs reading. */
+.device-pills { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
+
+/* ⚠️ The two cards keep equal height so the pair reads as one band, and the
+   map does not leave a ragged edge beside a short info list. */
+.device-cards > div { display: flex; flex-direction: column; }
+.device-cards > div > .panel { flex: 1 1 auto; }
+.device-cards h2 { margin-top: 0; }
+
+/* Label above value, rather than a two-column grid. At this width a long
+   address wrapped under its own label and the columns stopped lining up;
+   stacking reads the same whatever the value's length. */
+.device-cards dl.kv { display: block; }
+.device-cards dl.kv dt {
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-top: 12px;
+}
+.device-cards dl.kv dt:first-child { margin-top: 0; }
+.device-cards dl.kv dd { font-size: 14px; margin: 2px 0 0; }
+.rename-row { display: flex; gap: 6px; align-items: center; margin: 0; }
+.rename-row input[type="text"] { flex: 1 1 auto; min-width: 0; }
+
+/* The three-way deployment choice (W191).
+   One row per answer, so the radio, its wording and — for the scheduled one —
+   its date field read as a single line rather than a form the eye has to
+   reassemble. Wrapping rather than scrolling, because the last row is widest
+   and a phone must not push the date input off the panel. */
+.deploy-choice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+.deploy-choice input[type="radio"] { margin: 0; flex: 0 0 auto; }
+.deploy-choice strong { color: var(--ink); }
+.deploy-choice input[type="datetime-local"] { margin: 0; }
+
+/* --- Search a policy's settings (W201) ------------------------------------ */
+
+.policy-search { position: relative; margin: 0 0 14px; }
+
+/* The results float over the page rather than pushing it down: the operator is
+   reading the list and the form behind it at the same time, and a list that
+   reflowed the page would move the thing they were about to click. */
+.policy-search-results {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  margin: 4px 0 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 22rem;
+  overflow-y: auto;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.policy-search-results li { margin: 0; }
+
+.policy-search-hit {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  padding: 7px 9px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.policy-search-hit:hover,
+.policy-search-hit:focus-visible {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* The section name has to stay readable once the row is selected, and `.muted`
+   on an accent background does not. */
+.policy-search-hit:hover .muted,
+.policy-search-hit:focus-visible .muted { color: var(--accent-ink); opacity: 0.85; }
+
+/* A flash, not a mark. The eye needs to land on the right row after the panel
+   changes under it; a highlight left in place would read as a validation error
+   on a field nobody has touched. */
+.pf-field.pf-found {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* --- Storage meter (W208) -------------------------------------------------- */
+
+.storage-meter { margin-bottom: 14px; }
+
+.storage-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.storage-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.storage-legend b { color: var(--ink); font-weight: 600; }
