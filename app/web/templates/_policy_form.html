@@ -1,0 +1,1604 @@
+{#
+  Copyright 2026 TAK-Solutions LLC — Apache 2.0.
+
+  Form-driven policy editor (W10), sub-paged (W12). No JSON typing (DW6). Import:
+    {% from "_policy_form.html" import policy_subform, resulting_spec, app_group_buttons %}
+  `policy_subform(page.fields, spec, app_packages, managed_files, geofence_tiles, storefronts, app_kinds)`
+  renders one
+  ui_group's controls; the caller places each sub-page in a rail. All sub-pages of
+  a category share one <form>, so `parse_form(type, whole_form)` reads every field
+  whether or not its page is on screen. Field names are globally unique across the
+  wired types, so the profile creator can carry several in one <form>.
+#}
+
+{% macro _bool(f, value, name) %}
+  <select name="{{ name }}">
+    <option value="" {{ 'selected' if value is none }}>Not managed</option>
+    <option value="true" {{ 'selected' if value is true }}>{{ f.true_label }}</option>
+    <option value="false" {{ 'selected' if value is false }}>{{ f.false_label }}</option>
+  </select>
+{% endmacro %}
+
+{% macro _int(f, value, name) %}
+  <input type="number" name="{{ name }}" value="{{ '' if value is none else value }}"
+         {% if f.minimum is not none %}min="{{ f.minimum }}"{% endif %}
+         {% if f.maximum is not none %}max="{{ f.maximum }}"{% endif %}
+         placeholder="not managed" style="width:160px">
+  {% if f.unit %}<span class="muted">{{ f.unit }}</span>{% endif %}
+  {% if f.minimum is not none or f.maximum is not none %}
+    <span class="muted" style="font-size:11px">({{ f.minimum }}–{{ f.maximum }})</span>
+  {% endif %}
+{% endmacro %}
+
+{% macro _enum(f, value, name) %}
+  <select name="{{ name }}">
+    <option value="" {{ 'selected' if value is none }}>Not managed</option>
+    {% for c in f.choices %}
+      <option value="{{ c.value }}" {{ 'selected' if value is not none and (value | string) == c.value }}>{{ c.label }}</option>
+    {% endfor %}
+  </select>
+{% endmacro %}
+
+{% macro _str(f, value, name) %}
+  <input type="text" name="{{ name }}" value="{{ value or '' }}"
+         {% if f.pattern %}pattern="{{ f.pattern }}"{% endif %}
+         placeholder="not managed" style="min-width:280px">
+{% endmacro %}
+
+{% macro _text(f, value, name) %}
+  {# Multi-line, for operator-authored prose rather than an identifier. The
+     character counter is the point: Android silently truncates a support message
+     past its limit, so the console has to be where an over-long one is noticed. #}
+  <textarea name="{{ name }}" rows="3" class="field-full"
+            {% if f.maximum %}maxlength="{{ f.maximum }}"{% endif %}
+            placeholder="not managed">{{ value or '' }}</textarea>
+  {% if f.maximum %}
+    <div class="muted" style="font-size:12px">
+      <span data-char-count-for="{{ name }}">{{ (value or '') | length }}</span> / {{ f.maximum }}
+    </div>
+  {% endif %}
+{% endmacro %}
+
+{% macro _password(f, value, name) %}
+  {# Shown in the clear on the admin console — an operator setting the device
+     passcode needs to see it. It is masked only on the on-device app. #}
+  <input type="text" name="{{ name }}" value="{{ value or '' }}"
+         autocomplete="off" spellcheck="false"
+         {% if f.minimum %}minlength="{{ f.minimum }}"{% endif %}
+         {% if f.maximum %}maxlength="{{ f.maximum }}"{% endif %}
+         placeholder="not set" style="min-width:220px">
+{% endmacro %}
+
+{% macro _geofences(f, items, name, geofence_tiles) %}
+  {#
+    Geofences (W106 C4). One row per fence: where it is, how big, when it applies
+    and what it does.
+
+    ⚠️ Rows pair **by position** across the parallel field lists, which is safe
+    here and is not in `_kiosk_apps` — because every control below is an input or
+    a select, and both submit on every row. Password enforced is a yes/no select
+    rather than a checkbox for exactly that reason: an unchecked checkbox submits
+    nothing at all, so one would shift every later row's setting onto the wrong
+    fence, which is the bug the kiosk favourites note records. A select cannot.
+  #}
+  <div class="rowset" data-rowset data-geofences>
+    {% for item in items or [] %}
+      <div class="rs-row geofence-row">
+        <label>Name
+          <input type="text" name="{{ name }}__name" value="{{ item.name }}"
+                 maxlength="64">
+        </label>
+        <label>Latitude
+          <input type="number" step="any" min="-90" max="90"
+                 name="{{ name }}__latitude" value="{{ item.latitude }}">
+        </label>
+        <label>Longitude
+          <input type="number" step="any" min="-180" max="180"
+                 name="{{ name }}__longitude" value="{{ item.longitude }}">
+        </label>
+        <label>Radius (m)
+          <input type="number" min="25" max="500000"
+                 name="{{ name }}__radius_m" value="{{ item.radius_m }}">
+        </label>
+        <label>Behaviour
+          <select name="{{ name }}__trigger">
+            <option value="entry" {{ 'selected' if item.trigger == 'entry' }}>
+              Entry &mdash; while inside</option>
+            <option value="exit" {{ 'selected' if item.trigger == 'exit' }}>
+              Exit &mdash; while outside</option>
+          </select>
+        </label>
+        <label>Wi-Fi
+          <select name="{{ name }}__wifi">
+            <option value="unmanaged" {{ 'selected' if item.wifi == 'unmanaged' }}>Not managed</option>
+            <option value="on" {{ 'selected' if item.wifi == 'on' }}>On</option>
+            <option value="off" {{ 'selected' if item.wifi == 'off' }}>Off</option>
+          </select>
+        </label>
+        <label>Bluetooth
+          <select name="{{ name }}__bluetooth">
+            <option value="unmanaged" {{ 'selected' if item.bluetooth == 'unmanaged' }}>Not managed</option>
+            <option value="on" {{ 'selected' if item.bluetooth == 'on' }}>On</option>
+            <option value="off" {{ 'selected' if item.bluetooth == 'off' }}>Off</option>
+          </select>
+        </label>
+        <label>Reporting override (min)
+          <input type="number" min="0" max="360"
+                 name="{{ name }}__reporting_interval_override_minutes"
+                 value="{{ item.reporting_interval_override_minutes or 0 }}">
+        </label>
+        <label>Screen lock
+          <select name="{{ name }}__password">
+            <option value="none" {{ 'selected' if (item.password or 'none') == 'none' }}>Not managed</option>
+            <option value="off" {{ 'selected' if item.password == 'off' }}>Off &mdash; trusted area</option>
+            <option value="on" {{ 'selected' if item.password == 'on' }}>On &mdash; require a lock</option>
+          </select>
+        </label>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    {% endfor %}
+
+    <template data-row-template>
+      <div class="rs-row geofence-row">
+        <label>Name
+          <input type="text" name="{{ name }}__name" maxlength="64">
+        </label>
+        <label>Latitude
+          <input type="number" step="any" min="-90" max="90" name="{{ name }}__latitude">
+        </label>
+        <label>Longitude
+          <input type="number" step="any" min="-180" max="180" name="{{ name }}__longitude">
+        </label>
+        <label>Radius (m)
+          <input type="number" min="25" max="500000" name="{{ name }}__radius_m" value="200">
+        </label>
+        <label>Behaviour
+          <select name="{{ name }}__trigger">
+            <option value="entry">Entry &mdash; while inside</option>
+            <option value="exit">Exit &mdash; while outside</option>
+          </select>
+        </label>
+        <label>Wi-Fi
+          <select name="{{ name }}__wifi">
+            <option value="unmanaged">Not managed</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
+        <label>Bluetooth
+          <select name="{{ name }}__bluetooth">
+            <option value="unmanaged">Not managed</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
+        <label>Reporting override (min)
+          <input type="number" min="0" max="360"
+                 name="{{ name }}__reporting_interval_override_minutes" value="0">
+        </label>
+        <label>Screen lock
+          <select name="{{ name }}__password">
+            <option value="none" selected>Not managed</option>
+            <option value="off">Off &mdash; trusted area</option>
+            <option value="on">On &mdash; require a lock</option>
+          </select>
+        </label>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    </template>
+
+    <button type="button" class="ghost" data-add-row>Add geofence</button>
+  </div>
+
+  {#
+    ⚠️ One map for every fence, not one per row. Per-row maps would put N Leaflet
+    instances in a form whose rows sit behind tabs, and a map that is measured
+    while hidden renders as a grey box — the failure `atlas-map.js` already
+    carries a note about. A single map also answers the question an operator
+    actually has, which is whether two fences overlap.
+  #}
+  <div class="geofence-picker" data-geofence-picker>
+    <div class="location-filters">
+      <label style="flex:1 1 320px">
+        <span>Find an address</span>
+        {# No placeholder: W92's rule is that a hint inside a box reads as a
+           value the field already holds, and dressing one up as state to satisfy
+           the lint would be worse than a plain hint. What to type is said in the
+           tips below, where it cannot be mistaken for content. #}
+        <input type="text" data-geofence-address>
+      </label>
+      <button type="button" class="ghost" data-geofence-find>Find</button>
+    </div>
+    <p class="field-tip" data-geofence-status hidden></p>
+    {# ⚠️ More than one match is the normal case for a street name. Picking the
+       first silently is how a fence ends up on the right-named road in the wrong
+       town, which nothing downstream would ever flag. #}
+    <div class="geofence-results" data-geofence-results hidden></div>
+    <div class="location-history-map" data-geofence-map
+         data-tiles='{{ geofence_tiles }}'></div>
+    <p class="field-tip">
+      Click the map to place the selected fence. The circle is its real radius, so
+      what you see is what the device will answer to. Selecting a row focuses it;
+      coordinates can still be typed directly.
+    </p>
+    <p class="field-tip">
+      <strong>Find</strong> sends the address you typed to the lookup service
+      configured under <strong>Admin → Location</strong> &mdash; from this server,
+      not from your browser, and only when you press it. What it sends is where a
+      geofence is about to go, so point that setting at your own geocoder if that
+      matters here.
+    </p>
+  </div>
+
+  <p class="field-tip">
+    Name each fence for the place rather than the rule &mdash; the name is what
+    appears in the device's log when the fence takes effect, and it is what
+    matches this fence to the same one in another policy.
+  </p>
+  <p class="field-tip">
+    Where two active fences disagree, the more restrictive answer wins: a radio
+    off beats it on, a password required beats not, and the shorter reporting
+    interval beats the longer.
+  </p>
+  <p class="field-tip">
+    <strong>Turning Wi-Fi off also cuts the path this server uses to reach the
+    device.</strong> Fences are evaluated on the device itself, so leaving one
+    restores the radio without needing the network &mdash; but a device switched
+    off inside a fence and moved keeps the radio off until it next gets a fix.
+  </p>
+  <p class="field-tip">
+    <strong>Screen lock &mdash; On</strong> requires a lock while the fence applies
+    and locks the device at once. On a device with no password set, Android will
+    prompt whoever is holding it to create one.
+  </p>
+  <p class="field-tip">
+    <strong>Screen lock &mdash; Off</strong> is a trusted area: it suspends the
+    passcode <em>this policy set</em> while the device is inside, and restores it
+    on leaving. It needs a <strong>Password</strong> section in this same profile
+    that sets a passcode &mdash; that passcode is what gets put back.
+    &#9888; It cannot remove a PIN the user chose themselves, and if the device
+    stops reporting its position the passcode returns rather than staying off.
+  </p>
+  <p class="field-tip banner warn" data-fence-lock-note>
+    <strong>Screen lock needs a Password policy in this same profile</strong>, and
+    is unavailable until there is one. <em>On</em> without one only tells the
+    device that <em>some</em> lock is required &mdash; whoever is holding it then
+    picks the PIN, and that becomes the rule. <em>Off</em> needs one that sets a
+    passcode, because that passcode is what gets restored on leaving. Fill in the
+    <strong>Password</strong> section and this becomes available.
+  </p>
+{% endmacro %}
+
+{% macro _package_list(f, items, name) %}
+  {#
+    ⚠️ The store shortcuts write into the list below rather than storing a flag
+    that expands later. Ticking one is a shortcut for typing ten package names
+    nobody remembers — the operator still sees exactly what will be blocked, can
+    add a store we missed, and can drop one that is wrong for their fleet.
+
+    A hidden expansion would put the least complete part of this feature where
+    nothing can show it: "which packages did that actually block" has to stay a
+    question the page can answer.
+  #}
+  {% if f.store_toggles %}
+    <div class="store-toggles" data-store-toggles>
+      {% for store in store_groups %}
+        <label class="store-toggle">
+          <input type="checkbox" data-store-group
+                 data-packages="{{ store.package_names | join(',') }}">
+          <span>
+            <strong>{{ store.label }}</strong>
+            <span class="field-tip" style="display:block;margin:2px 0 0">{{ store.help }}</span>
+          </span>
+        </label>
+      {% endfor %}
+    </div>
+  {% endif %}
+  <div class="rowset" data-rowset>
+    {% for item in items or [] %}
+      <div class="rs-row"><input type="text" name="{{ name }}" value="{{ item }}">
+        <button type="button" class="ghost" data-remove-row>Remove</button></div>
+    {% endfor %}
+    <template data-row-template>
+      <div class="rs-row"><input type="text" name="{{ name }}">
+        <button type="button" class="ghost" data-remove-row>Remove</button></div>
+    </template>
+    <button type="button" class="ghost" data-add-row>Add package</button>
+  </div>
+{% endmacro %}
+
+{% macro _path_list(f, items, name) %}
+  {#
+    Absolute device paths, one per row — the same rowset as `_package_list` with
+    the wording that belongs to a directory rather than an app.
+
+    ⚠️ No store toggles and no picker. There is nothing on the server that knows
+    what directories a given tablet has, so this is typed, and the spec refuses
+    at publish time what the device could only refuse in the field: a relative
+    path, a path outside external storage, and the whole of /sdcard.
+
+    ⚠️ **No placeholder**, though an empty box asking for a path is exactly
+    where one is tempting. W92: a hint inside the box reads as a value the field
+    already holds, and this field's values are directories that get deleted. The
+    example lives in the field tip, from the spec's own description.
+  #}
+  <div class="rowset" data-rowset>
+    {% for item in items or [] %}
+      <div class="rs-row"><input type="text" name="{{ name }}" value="{{ item }}" spellcheck="false">
+        <button type="button" class="ghost" data-remove-row>Remove</button></div>
+    {% endfor %}
+    <template data-row-template>
+      <div class="rs-row"><input type="text" name="{{ name }}" spellcheck="false">
+        <button type="button" class="ghost" data-remove-row>Remove</button></div>
+    </template>
+    <button type="button" class="ghost" data-add-row>Add directory</button>
+  </div>
+{% endmacro %}
+
+{% macro _kiosk_app_row(name, app_packages, item) %}
+  {#
+    One tile. ⚠️ **Defined once and used twice** — for the saved rows and for
+    the `<template>` that "Add app" clones from (W196).
+
+    It used to be written out twice, and the copies drifted the moment anything
+    was added to one: the build select went into the rendered rows and not into
+    the template, so a *fresh* policy offered no way to choose a build while an
+    edited one did. Found by a test asserting the field was on the page, not by
+    reading either copy.
+  #}
+  <div class="rs-row" data-kiosk-app-row>
+    <button type="button" class="ghost" data-move-up title="Move up">↑</button>
+    <button type="button" class="ghost" data-move-down title="Move down">↓</button>
+    <select name="{{ name }}__package_name" class="field-grow">
+      <option value="">— pick an uploaded app —</option>
+      {% for p in app_packages %}
+        <option value="{{ p.package_name }}"
+          {{ 'selected' if item and item.package_name == p.package_name }}>
+          {{ p.label or p.package_name }} ({{ p.package_name }})
+        </option>
+      {% endfor %}
+    </select>
+    {#
+      ⚠️ Which build, per tile (W196). Every tile is auto-required, and since
+      W139 a required entry naming no build resolves to nothing — so none of them
+      installed and the launcher had an empty grid to show.
+
+      A select, like the activity beside it, so it always submits and the index
+      pairing in `form_parse` stays safe.
+    #}
+    <select name="{{ name }}__version_choice" class="field-grow" data-version-choice>
+      {% if item and item.artifact_sha256 %}
+        <option value="pin:{{ item.artifact_sha256 }}" selected>the saved build</option>
+      {% endif %}
+      {{ _version_options(app_packages) }}
+    </select>
+    <div>
+      {#
+        ⚠️ A select, and it must always submit something — `form_parse` pairs
+        activities to packages **by index**. A control that can be absent from the
+        submission (an unchecked checkbox) would shift every activity after it
+        onto the wrong app; a select never is.
+      #}
+      <select name="{{ name }}__activity" data-kiosk-activity aria-label="Activity">
+        <option value="">Default — open the app normally</option>
+        {% if item and item.activity %}
+          <option value="{{ item.activity }}" selected>{{ item.activity }}</option>
+        {% endif %}
+      </select>
+      <p class="field-tip" data-kiosk-activity-note>Optional. A specific activity to launch.</p>
+    </div>
+    <label style="display:flex; align-items:center; gap:6px; margin:0; white-space:nowrap">
+      <input type="checkbox" name="{{ name }}__favorite"
+             value="{{ item.package_name if item else '' }}" data-favorite
+             {{ 'checked' if item and item.favorite }}>
+      Dock
+    </label>
+    <button type="button" class="ghost" data-remove-row>Remove</button>
+  </div>
+{% endmacro %}
+
+{% macro _kiosk_console_row(name, item) %}
+  {#
+    The ATLAS console tile (W197). Always on the home screen, never removable,
+    and the operator decides where it sits.
+
+    ⚠️ **Three hidden inputs, and every one of them is load-bearing.**
+    `form_parse` pairs the activity and the build to the package **by index**, so
+    a row that submits a package and nothing else would shift every activity and
+    every build after it onto the wrong app — the trap `_kiosk_app_row` uses a
+    select to avoid. This row has no select, so it says the same three things in
+    hidden fields instead.
+
+    ⚠️ **The activity is empty and must stay empty.** The agent recognises its
+    own console tile as "this package with *no* activity"
+    (`LauncherConfigPlan.withAgent`); a console tile carrying one would look like
+    a different tile and the agent would append a second console beside it.
+
+    ⚠️ **No build select, because there is nothing to choose.** The console is
+    the Device Owner: it is installed by definition and updated through the
+    agent-update channel, and `resolve_required_apps` refuses to require it at
+    all.
+  #}
+  <div class="rs-row" data-kiosk-app-row data-console-tile
+       data-tile-label="ATLAS Console">
+    <button type="button" class="ghost" data-move-up title="Move up">↑</button>
+    <button type="button" class="ghost" data-move-down title="Move down">↓</button>
+    <div class="field-grow">
+      <strong>ATLAS Console</strong>
+      <p class="field-tip" style="margin:2px 0 0">
+        Always on the home screen and always the shipped build. In a multi-app
+        kiosk the launcher is the only way to anything, so this is the route to
+        sync, permissions and the device's own state. Move it where you want it,
+        or dock it.
+      </p>
+    </div>
+    <input type="hidden" name="{{ name }}__package_name" value="{{ atlas_console_package }}">
+    <input type="hidden" name="{{ name }}__version_choice" value="">
+    <input type="hidden" name="{{ name }}__activity" value="">
+    <label style="display:flex; align-items:center; gap:6px; margin:0; white-space:nowrap">
+      <input type="checkbox" name="{{ name }}__favorite"
+             value="{{ atlas_console_package }}" data-favorite
+             {{ 'checked' if item and item.favorite }}>
+      Dock
+    </label>
+  </div>
+{% endmacro %}
+
+{% macro _kiosk_apps(f, items, name, app_packages) %}
+  {#
+    Multi-app kiosk (W68). An ordered list of tiles plus a live preview of the
+    grid they make.
+
+    ⚠️ The favourite checkbox carries the **package name** as its value, not a
+    positional index. An unchecked checkbox does not submit at all, so pairing by
+    position would shift every favourite after the first unchecked row onto the
+    wrong app — and a wrong favourite looks deliberate rather than broken.
+
+    ⚠️ Order is the DOM order of the rows, so moving a row *is* the edit. There
+    is no stored index to disagree with what the operator sees.
+  #}
+  {#
+    ⚠️ The console tile is rendered **where the saved policy put it**, and
+    appended only when the policy does not carry one (W197) — including on a
+    brand-new policy, so the list an operator first sees is the list the device
+    will have. `selectattr` reads dicts here: `items` comes from the stored spec,
+    not from `KioskSpec`.
+  #}
+  {% set placed = (items or []) | selectattr('package_name', 'equalto', atlas_console_package) | list %}
+  <div class="rowset" data-rowset data-kiosk-apps>
+    {% for item in items or [] %}
+      {% if item.package_name == atlas_console_package %}
+        {{ _kiosk_console_row(name, item) }}
+      {% else %}
+        {{ _kiosk_app_row(name, app_packages, item) }}
+      {% endif %}
+    {% endfor %}
+    {% if not placed %}{{ _kiosk_console_row(name, none) }}{% endif %}
+    <template data-row-template>{{ _kiosk_app_row(name, app_packages, none) }}</template>
+    <button type="button" class="ghost" data-add-row>Add app</button>
+
+    <div class="muted" style="font-size:12px; margin-top:8px">
+      Only apps uploaded to this server can be placed — the device is told exactly
+      which build to install. The ATLAS launcher is added automatically, and the
+      ATLAS console is always a tile. ⚠️ A home screen holding nothing but the
+      console is not a multi-app kiosk: add at least one app, or this section
+      saves nothing.
+    </div>
+
+    <div class="kiosk-preview" data-kiosk-preview hidden>
+      <div class="kp-label">Home screen</div>
+      <div class="kp-screen" data-kiosk-preview-grid></div>
+      <div class="kp-dock" data-kiosk-preview-dock hidden></div>
+    </div>
+  </div>
+{% endmacro %}
+
+{% macro _version_options(app_packages) %}
+  {#
+    Every build of every app, each option carrying `data-package` so `atlas.js`
+    can narrow the list to the app that was picked. Shared by the required-apps
+    rows and both kiosk controls (W196) — they were three copies of this list,
+    and the kiosk ones were missing entirely, which is the bug.
+  #}
+  <option value=""></option>
+  {% for p in app_packages %}
+    {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
+      {% set base = (v.files | selectattr('role.value', 'equalto', 'base') | list | first) %}
+      {% if base %}
+        <option value="pin:{{ base.artifact_sha256 }}" data-package="{{ p.package_name }}">
+          {{ v.version_code }}{% if v.version_name %} ({{ v.version_name }}){% endif %}{% if loop.first %} — newest{% endif %}
+        </option>
+      {% endif %}
+    {% endfor %}
+  {% endfor %}
+{% endmacro %}
+
+{% macro _kiosk_app_version(f, value, name, app_packages) %}
+  {#
+    Which build of the kiosk app to install (W196).
+
+    ⚠️ **Without this the kiosk could not engage at all.** The app select
+    beside it has always claimed "the device is told exactly which build to
+    install and run", and since W139 that was false: an entry naming no build
+    resolves to "no version chosen", so the app never installed and the device
+    reported having nothing to lock to.
+  #}
+  <select name="{{ name }}" class="field-full" data-version-choice>
+    {% if value %}
+      <option value="pin:{{ value }}" selected>the saved build</option>
+    {% endif %}
+    {{ _version_options(app_packages) }}
+  </select>
+{% endmacro %}
+
+{% macro _kiosk_app(f, value, name, app_packages) %}
+  {#
+    Single-app kiosk (W61). Two shapes, because they are genuinely different
+    instructions and the field alone could not tell them apart: lock to an app, or
+    lock to one screen *of* an app.
+
+    The mode is not stored, and the initial choice is made in JS from whether an
+    activity class is already set — so there is no third piece of state that can
+    disagree with the other two.
+  #}
+  {# ⚠️ `data-version-scope` is how the build select below finds this
+     app select. The required-apps rows are `.rs-row`s and were found that way;
+     this control is not a row, so it says where it is instead (W196). #}
+  <div data-kiosk-app data-version-scope>
+    <div class="toolbar" style="gap:16px; margin-bottom:10px">
+      <label style="display:flex; align-items:center; gap:6px; margin:0">
+        <input type="radio" name="__kiosk_mode" value="app"
+               data-kiosk-mode checked>
+        Select app
+      </label>
+      <label style="display:flex; align-items:center; gap:6px; margin:0">
+        <input type="radio" name="__kiosk_mode" value="activity"
+               data-kiosk-mode>
+        Select app with activity
+      </label>
+    </div>
+
+    <select name="{{ name }}" class="field-full" data-version-picker>
+      <option value="">— pick an uploaded app —</option>
+      {% for p in app_packages %}
+        <option value="{{ p.package_name }}" {{ 'selected' if value == p.package_name }}>
+          {{ p.label or p.package_name }} ({{ p.package_name }})
+        </option>
+      {% endfor %}
+    </select>
+    <div class="muted" style="font-size:12px; margin-top:6px">
+      Only apps uploaded to this server can be locked to. ⚠️ Pick the build
+      as well — without one the app cannot be installed, and the device has
+      nothing to lock to.
+    </div>
+  </div>
+{% endmacro %}
+
+{% macro _activity_choice(f, value, name) %}
+  {#
+    Filled by atlas.js from /policies/app-activities once an app is chosen (W62).
+    Rendered with only the saved value so a saved policy still shows its activity
+    before the fetch lands — and so the field is never empty-but-set, which would
+    silently drop the activity on the next save.
+  #}
+  <select name="{{ name }}" class="field-full" data-activity-choice>
+    <option value="">— pick an app first —</option>
+    {% if value %}<option value="{{ value }}" selected>{{ value }}</option>{% endif %}
+  </select>
+  <div class="muted" style="font-size:12px; margin-top:6px" data-activity-note></div>
+{% endmacro %}
+
+{#
+  The ATLAS store a policy hands out (W140).
+
+  ⚠️ **One per policy, because the field holds one value** — not because a
+  validator says so. A device has one store, and letting an operator pick two
+  here would mean inventing a rule for which one a device sees.
+#}
+{% macro _storefront(f, value, name, storefronts) %}
+  <select name="{{ name }}" class="field-full">
+    <option value="">&mdash; no store on this policy &mdash;</option>
+    {% for sf in storefronts %}
+      <option value="{{ sf.id }}" {{ 'selected' if (value | string) == (sf.id | string) }}>
+        {{ sf.name }} ({{ sf.items | length }} app{{ '' if sf.items | length == 1 else 's' }})
+      </option>
+    {% endfor %}
+  </select>
+  {#
+    ⚠️ The warning the operator asked for, next to the control that causes it.
+    The device page reports the conflict when it actually happens; this is what
+    stops it being created in the first place.
+  #}
+  <div class="banner warn" style="margin-top:10px">
+    <strong>One store per device, not per policy.</strong>
+    If two policies reach the same device and name <em>different</em> storefronts,
+    the higher-ranked policy wins and the other's shelf is discarded entirely —
+    reported as a conflict on the device's page. The loser is not a fallback:
+    apps only on that shelf are offered nowhere, and where both shelves list the
+    same app at different builds, only the winner's build can ever be installed.
+    Assign one storefront across the policies that share a device, or keep the
+    store on a single policy.
+  </div>
+  {% if not storefronts %}
+    <p class="field-tip">
+      No storefronts exist yet — create one under <a href="/apps#tab-store">Apps › Store</a>.
+    </p>
+  {% endif %}
+{% endmacro %}
+
+{#
+  ATAK Core: one build, and the fixed point every plugin below is checked
+  against (W141).
+
+  ⚠️ Wrapped in `.rs-row` although it is not a row in a set. `atlas.js` finds a
+  version select's package picker with `closest(".rs-row")`, and a core select
+  outside one would list every build of every ATAK at once — which is exactly
+  the way to install the wrong one.
+#}
+{% macro _atak_core(f, value, name, atak_packages) %}
+  <div class="rs-row">
+    <select name="{{ name }}__package_name">
+      <option value="">&mdash; no ATAK on this policy &mdash;</option>
+      {% for p in atak_packages %}
+        <option value="{{ p.package_name }}"
+          {{ 'selected' if value and value.package_name == p.package_name }}>
+          {{ p.label or p.package_name }} ({{ p.package_name }})
+        </option>
+      {% endfor %}
+    </select>
+    <select name="{{ name }}__version_choice" style="min-width:280px">
+      {#
+        ⚠️ An empty first option, so the select holds nothing until an ATAK is
+        picked (W142). Without it the browser selects the first build the moment
+        the page renders, and a page nobody has touched reports itself as
+        configured — W135 again, in a control that did not exist then.
+
+        `atlas.js` drops this option as soon as a package is chosen: the rebuild
+        keeps only options carrying a matching `data-package`, and this one has
+        none.
+      #}
+      <option value=""></option>
+      {% for p in atak_packages %}
+        {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
+          {% set base = (v.files | selectattr('role.value', 'equalto', 'base') | list | first) %}
+          {% if base %}
+            <option value="pin:{{ base.artifact_sha256 }}"
+                    data-package="{{ p.package_name }}"
+                    data-atak-line="{{ v.version_name | atak_line_of }}"
+                    {{ 'selected' if value and value.artifact_sha256 == base.artifact_sha256 }}>
+              {{ v.version_code }}{% if v.version_name %} ({{ v.version_name }}){% endif %}{% if loop.first %} — newest{% endif %}
+            </option>
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+    </select>
+  </div>
+  {% if not atak_packages %}
+    <p class="field-tip">
+      No ATAK build in the library yet — upload one under
+      <a href="/apps">Apps</a>, or import it from TPC.
+    </p>
+  {% endif %}
+{% endmacro %}
+
+{#
+  The plugins, each at a chosen build. Same shape as required apps, drawn from
+  the plugins in the library rather than everything.
+#}
+{% macro _atak_plugins(f, items, name, plugin_packages) %}
+  <div class="rowset" data-rowset="{{ name }}" data-atak-plugins>
+    {% for entry in items or [] %}
+      {{ _atak_plugin_row(name, plugin_packages, entry) }}
+    {% endfor %}
+    <template data-row-template>{{ _atak_plugin_row(name, plugin_packages, none) }}</template>
+    <button type="button" class="ghost" data-add-row>Add plugin</button>
+  </div>
+  {% if not plugin_packages %}
+    <p class="field-tip">
+      No plugins in the library yet. Import them from the
+      <a href="/apps?tab=tpc">TPC Plugins</a> tab, or upload one.
+    </p>
+  {% endif %}
+{% endmacro %}
+
+{% macro _atak_plugin_row(name, plugin_packages, entry) %}
+  <div class="rs-row">
+    <select name="{{ name }}__package_name">
+      <option value="">&mdash; pick a plugin &mdash;</option>
+      {% for p in plugin_packages %}
+        <option value="{{ p.package_name }}" {{ 'selected' if entry and entry.package_name == p.package_name }}>
+          {{ p.label or p.package_name }} ({{ p.package_name }})
+        </option>
+      {% endfor %}
+    </select>
+    <select name="{{ name }}__version_choice" style="min-width:280px">
+      {#
+        ⚠️ Empty first option, so a freshly added row holds nothing until an app
+        is picked (W142). The browser selects the first option the moment a row
+        exists, which ticks the section's rail check before anyone has chosen
+        anything. `atlas.js` drops this option once a package is chosen — the
+        rebuild keeps only options whose `data-package` matches, and this one
+        has none.
+      #}
+      <option value=""></option>
+      {% for p in plugin_packages %}
+        {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
+          {% set base = (v.files | selectattr('role.value', 'equalto', 'base') | list | first) %}
+          {% if base %}
+            <option value="pin:{{ base.artifact_sha256 }}"
+                    data-package="{{ p.package_name }}"
+                    data-plugin-target="{{ v.plugin_api | atak_target }}"
+                    {{ 'selected' if entry and entry.artifact_sha256 == base.artifact_sha256 }}>
+              {{ v.version_code }}{% if v.version_name %} ({{ v.version_name }}){% endif %}{% if v.plugin_api | atak_target %} — for ATAK {{ v.plugin_api | atak_target }}{% endif %}{% if loop.first %} — newest{% endif %}
+            </option>
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+    </select>
+    <button type="button" class="ghost" data-remove-row>Remove</button>
+    {# Filled by atlas.js when this plugin's target disagrees with ATAK Core. #}
+    <div class="app-compat-warning banner" hidden></div>
+  </div>
+{% endmacro %}
+
+{% macro _app_list(f, items, name, app_packages) %}
+  <div class="rowset" data-rowset="{{ name }}">
+    {% for entry in items or [] %}
+      {{ _app_row(name, app_packages, entry) }}
+    {% endfor %}
+    <template data-row-template>{{ _app_row(name, app_packages, none) }}</template>
+    <button type="button" class="ghost" data-add-row>Add app</button>
+  </div>
+{% endmacro %}
+
+{% macro _app_row(name, app_packages, entry) %}
+  <div class="rs-row">
+    <select name="{{ name }}__package_name">
+      <option value="">— pick an uploaded app —</option>
+      {% for p in app_packages %}
+        <option value="{{ p.package_name }}" {{ 'selected' if entry and entry.package_name == p.package_name }}>
+          {{ p.label or p.package_name }} ({{ p.package_name }})
+        </option>
+      {% endfor %}
+    </select>
+    {#
+      ⚠️ **Which build, and nothing else** (W139). This select used to carry
+      three mutually exclusive intents — "Latest published", "At least N", and
+      "Exactly this build" — because two of them were automatic-selection modes
+      the server has since stopped honouring. An option that quietly selected
+      nothing would be worse than no option, so only real builds are listed.
+
+      Filled in by `atlas.js` once an app is picked: every option carries
+      `data-package`, and a list of every build of every app is not a list
+      anyone can use.
+
+      ⚠️ A policy saved under the old model carries a floor, or nothing, and so
+      matches no option here. It falls back to the newest build, which is what
+      re-saving such a policy converts it to — the intended way an old entry
+      becomes a real one.
+    #}
+    <select name="{{ name }}__version_choice" style="min-width:280px">
+      {#
+        ⚠️ Empty first option, so a freshly added row holds nothing until an app
+        is picked (W142). The browser selects the first option the moment a row
+        exists, which ticks the section's rail check before anyone has chosen
+        anything. `atlas.js` drops this option once a package is chosen — the
+        rebuild keeps only options whose `data-package` matches, and this one
+        has none.
+      #}
+      <option value=""></option>
+      {% for p in app_packages %}
+        {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
+          {% set base = (v.files | selectattr('role.value', 'equalto', 'base') | list | first) %}
+          {% if base %}
+            <option value="pin:{{ base.artifact_sha256 }}"
+                    data-package="{{ p.package_name }}"
+                    {{ 'selected' if entry and entry.artifact_sha256 == base.artifact_sha256 }}>
+              {{ v.version_code }}{% if v.version_name %} ({{ v.version_name }}){% endif %}{% if v.plugin_api | atak_target %} — for ATAK {{ v.plugin_api | atak_target }}{% endif %}{% if loop.first %} — newest{% endif %}
+            </option>
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+    </select>
+    {#
+      ⚠️ **The value is the package name, never the row's position** (W192).
+      An unchecked checkbox does not submit at all, so pairing by index would
+      shift every tick after the first unticked row onto the wrong app — the
+      trap `_kiosk_apps` records, and here the consequence is uninstalling an
+      app nobody marked. `atlas.js` keeps the value in step with the select,
+      the same way it does for a kiosk favourite.
+    #}
+    <label style="display:flex; align-items:center; gap:6px; margin:0; white-space:nowrap">
+      <input type="checkbox" name="{{ name }}__remove_when_no_longer_required"
+             value="{{ entry.package_name if entry else '' }}" data-remove-withdrawn
+             {{ 'checked' if entry and entry.remove_when_no_longer_required }}
+             {{ 'disabled' if not entry }}>
+      Uninstall if withdrawn
+    </label>
+    <button type="button" class="ghost" data-remove-row>Remove</button>
+    {# Filled by atlas.js when the selection implies a mismatch. Warn, never
+       forbid — and always on the plugin, since ATAK is the fixed point. #}
+    <div class="app-compat-warning banner" hidden></div>
+  </div>
+{% endmacro %}
+
+{#
+  One uploaded image, with a preview.
+
+  The frames use `object-fit: cover`, which is what Android does to a wallpaper —
+  it fills the screen and crops the overflow. A `contain` preview would look
+  tidier and would lie about what the device shows.
+#}
+{% macro _image_file(f, value, name) %}
+  {#
+    Upload straight into the policy (W46). No Content dropdown: the operator is
+    choosing a picture for this policy, not publishing an asset to the library, and
+    making them go and do that first was two clicks in the wrong place.
+    The id lives in a hidden input, set by the upload before the policy is saved.
+  #}
+  {% set is_tablet = 'tablet' in name %}
+  <div class="image-slot" data-image-slot data-form-factor="{{ 'tablet' if is_tablet else 'phone' }}">
+    <input type="hidden" name="{{ name }}" value="{{ value or '' }}" data-image-select>
+
+    <div class="toolbar" style="gap:8px; align-items:center">
+      <input type="file" accept="image/*" data-image-upload style="max-width:260px">
+      <span class="muted" data-image-status style="font-size:12px">
+        {% if value %}current image{% else %}no image chosen{% endif %}
+      </span>
+      <button type="button" class="ghost" data-image-clear {{ 'hidden' if not value }}>Remove</button>
+    </div>
+    <div class="wallpaper-preview" data-image-preview hidden>
+      <figure>
+        <div class="frame portrait"><img alt="Portrait preview"></div>
+        <figcaption>Portrait</figcaption>
+      </figure>
+      <figure>
+        <div class="frame landscape"><img alt="Landscape preview"></div>
+        <figcaption>Landscape</figcaption>
+      </figure>
+    </div>
+  </div>
+{% endmacro %}
+
+{% macro _ca_list(f, items, name, managed_files) %}
+  {#
+    Trust anchors (W112). Deliberately *not* `_file_list`: that control carries a
+    destination path, extraction and persistence, none of which mean anything for
+    a certificate. Asking an operator where to put a trust anchor would be asking
+    a question with no correct answer.
+  #}
+  <div class="rowset" data-rowset>
+    {% for entry in items or [] %}
+      <div class="rs-row">
+        <select name="{{ name }}" class="field-full">
+          <option value="">&mdash; pick an uploaded certificate &mdash;</option>
+          {% for mf in managed_files %}
+            <option value="{{ mf.id }}"
+              {{ 'selected' if (entry | string) == (mf.id | string) }}>
+              {{ mf.name }}
+            </option>
+          {% endfor %}
+        </select>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    {% endfor %}
+    <template data-row-template>
+      <div class="rs-row">
+        <select name="{{ name }}" class="field-full">
+          <option value="">&mdash; pick an uploaded certificate &mdash;</option>
+          {% for mf in managed_files %}
+            <option value="{{ mf.id }}">{{ mf.name }}</option>
+          {% endfor %}
+        </select>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    </template>
+    <button type="button" class="ghost" data-add-row>Add certificate</button>
+  </div>
+
+  <p class="field-tip">
+    Upload the authority's certificate (PEM or DER) in <strong>Content</strong>
+    first, then pick it here. It goes into Android's own trust store &mdash; what
+    Wi-Fi EAP, the browser, VPN clients and apps asking the platform for a
+    certificate consult.
+  </p>
+  <p class="field-tip banner warn">
+    &#9888; <strong>This is not what configures ATAK.</strong> ATAK reads its CA
+    and client certificates from <code>.p12</code> files under
+    <code>/sdcard/atak/</code> that its own preferences point at &mdash; place
+    those with <strong>File management</strong> and name them in
+    <strong>ATAK Config</strong>. A TAK server CA installed here will not make
+    ATAK connect.
+  </p>
+  <p class="field-tip">
+    Removing an authority from this list removes it from the device on its next
+    check-in. Only certificates ATLAS installed are removed &mdash; anything a
+    user added themselves is left alone.
+  </p>
+  <p class="field-tip">
+    &#9888; <strong>A user can delete these from the device</strong> (Settings
+    &rsaquo; Encryption &amp; credentials &rsaquo; Trusted credentials &rsaquo;
+    User), and Android shows a <em>"CA cert installed"</em> notification when one
+    arrives. ATLAS notices and puts it back on the next check-in, so trust here is
+    <strong>maintained rather than enforced</strong> &mdash; a device can be
+    without it for up to one check-in cycle.
+  </p>
+  <p class="field-tip">
+    To close that window, deny <strong>Credential configuration</strong> under
+    <strong>Restrictions</strong>: the user then cannot reach the credentials
+    screen at all. &#9888; That blocks their own certificates too, not only these.
+  </p>
+{% endmacro %}
+
+{% macro _file_list(f, items, name, managed_files) %}
+  <div class="rowset" data-rowset data-general-files>
+    {% for entry in items or [] %}{{ _file_row(name, managed_files, entry) }}{% endfor %}
+    <template data-row-template>{{ _file_row(name, managed_files, none) }}</template>
+    <div class="prefs-toolbar" style="margin-top:10px">
+      <button type="button" class="ghost" data-add-row>Add file</button>
+      <button type="button" class="ghost" data-file-upload-open>Upload a file</button>
+      <input type="file" data-file-upload hidden>
+      <span class="muted" data-file-upload-status style="font-size:12px"></span>
+    </div>
+    <p class="muted" style="font-size:12px; margin-top:8px">
+      An uploaded file lands in the Content section and is added here with an
+      empty destination — fill that in before saving.
+    </p>
+    <p class="muted" style="font-size:12px">
+      ⚠️ <strong>ATAK data packages and DTED archives do not belong here</strong>,
+      and both are <strong>refused</strong>. Use <strong>ATAK Data Packages</strong>
+      or <strong>ATAK DTED</strong>: each checks its own layout and delivers to
+      the one directory ATAK reads. Placed through this section either would go
+      wherever the destination said — where ATAK is not looking, so nothing would
+      happen at all.
+    </p>
+  </div>
+{% endmacro %}
+
+{% macro _file_row(name, managed_files, entry) %}
+  <div class="rs-row" style="flex-wrap:wrap">
+    <select name="{{ name }}__file_id">
+      <option value="">— pick an uploaded file —</option>
+      {#
+        ⚠️ Data packages are deliberately absent. They are placed by the ATAK
+        Data Packages sub-topic, which fixes the destination ATAK watches and
+        delivers exactly once; offered here they would get a free-text
+        destination and a `persist` control, and either one set wrongly is a
+        package ATAK re-imports on every sync.
+
+        A package already on this policy still renders — `selected` below — so an
+        older policy that placed one through General Files stays visible and
+        editable rather than silently losing its file.
+      #}
+      {% for mf in managed_files %}
+        {% if not mf.is_data_package or (entry and (entry.file_id | string) == (mf.id | string)) %}
+          <option value="{{ mf.id }}" {{ 'selected' if entry and (entry.file_id | string) == (mf.id | string) }}>{{ mf.name }}</option>
+        {% endif %}
+      {% endfor %}
+    </select>
+    {#
+      ⚠️ A tip, not a placeholder. Grey text inside the box reads as a value the
+      field already holds — an operator leaves it and saves, and the spec then
+      rejects the entry for having no destination, so the hint meant to help is
+      what caused the refusal. It also disappears the moment anyone types, which
+      is when a format hint is most wanted.
+    #}
+    <div>
+      <input type="text" name="{{ name }}__dest_path" style="min-width:220px"
+             value="{{ entry.dest_path if entry else '' }}" aria-label="Destination">
+      <p class="field-tip">Directory on the device, e.g. <code>/sdcard/atak/imagery</code>. ⚠️ Must sit under <code>/sdcard</code> — written the way ATAK’s own docs do, <code>/atak/imagery</code> resolves from the filesystem root where nothing is writable, and the policy refuses it.</p>
+    </div>
+    <select name="{{ name }}__availability">
+      <option value="required" {{ 'selected' if not entry or entry.availability != 'optional' }}>required</option>
+      <option value="optional" {{ 'selected' if entry and entry.availability == 'optional' }}>optional (marketplace)</option>
+    </select>
+    <select name="{{ name }}__persist">
+      <option value="inherit" {{ 'selected' if not entry or entry.persist is none }}>persist: from tier</option>
+      <option value="yes" {{ 'selected' if entry and entry.persist is true }}>persist: yes</option>
+      <option value="no" {{ 'selected' if entry and entry.persist is false }}>persist: no</option>
+    </select>
+    <label class="muted" style="display:flex;gap:4px;align-items:center;margin:0">
+      <input type="checkbox" name="{{ name }}__extract" style="width:auto" {{ 'checked' if entry and entry.extract }}> extract
+    </label>
+    <div>
+      <input type="text" name="{{ name }}__extract_to" style="width:180px"
+             value="{{ entry.extract_to if entry and entry.extract_to else '' }}" aria-label="Extract to">
+      <p class="field-tip">Optional. Where an archive unpacks; defaults to the destination.</p>
+    </div>
+    <select name="{{ name }}__overwrite">
+      {% for o in ['if_newer', 'always', 'if_absent'] %}
+        <option value="{{ o }}" {{ 'selected' if entry and entry.overwrite == o }}>{{ o }}</option>
+      {% endfor %}
+    </select>
+    <button type="button" class="ghost" data-remove-row>Remove</button>
+  </div>
+{% endmacro %}
+
+{% macro _yesno(name, on) %}
+  <select name="{{ name }}">
+    <option value="yes" {{ 'selected' if on }}>Yes</option>
+    <option value="no" {{ 'selected' if not on }}>No</option>
+  </select>
+{% endmacro %}
+
+{% macro _wifi_list(f, items, name) %}
+  <div class="rowset" data-rowset>
+    {% for e in items or [] %}{{ _wifi_row(name, e) }}{% endfor %}
+    <template data-row-template>{{ _wifi_row(name, none) }}</template>
+    <button type="button" class="ghost" data-add-row>Add Wi-Fi network</button>
+  </div>
+{% endmacro %}
+
+{% macro _wifi_row(name, e) %}
+  <div class="rs-row" style="flex-wrap:wrap; align-items:flex-end">
+    <div><label>SSID</label>
+      <input type="text" name="{{ name }}__ssid" value="{{ e.ssid if e else '' }}" style="min-width:180px">
+      <p class="field-tip">The network name.</p></div>
+    <div><label>Security</label>
+      <select name="{{ name }}__security">
+        {% for v, lbl in [('open','Open'),('wep','WEP'),('wpa_psk','WPA/WPA2 PSK'),('wpa3_sae','WPA3 SAE')] %}
+          <option value="{{ v }}" {{ 'selected' if (e.security if e else 'wpa_psk') == v }}>{{ lbl }}</option>
+        {% endfor %}
+      </select></div>
+    <div><label>Password</label>
+      <input type="password" name="{{ name }}__password" value="{{ e.password if e and e.password else '' }}" style="width:130px">
+      <p class="field-tip">At least 8 characters.</p></div>
+    <div><label>Hidden</label>{{ _yesno(name ~ '__hidden', (e.hidden if e else false)) }}</div>
+    <button type="button" class="ghost" data-remove-row>Remove</button>
+  </div>
+{% endmacro %}
+
+{% macro _usage_rule_row(name, e, app_packages) %}
+  {# One "when <metric> over <period> exceeds <n> MB" line. The app-wise variant
+     is the same line with a package picker in front, so both share this row. #}
+  <div class="rs-row">
+    {% if app_packages is not none %}
+      <select name="{{ name }}__package_name">
+        <option value="">— pick an uploaded app —</option>
+        {% for p in app_packages %}
+          <option value="{{ p.package_name }}" {{ 'selected' if e and e.package_name == p.package_name }}>
+            {{ p.label or p.package_name }} ({{ p.package_name }})
+          </option>
+        {% endfor %}
+      </select>
+    {% endif %}
+    <select name="{{ name }}__period">
+      {% for v, label in [(0, 'Daily'), (1, 'Weekly'), (2, 'Monthly')] %}
+        <option value="{{ v }}" {{ 'selected' if e and e.period == v or (not e and v == 2) }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <span class="muted">when</span>
+    <select name="{{ name }}__metric">
+      {% for v, label in [(0, 'Mobile data'), (1, 'Wi-Fi data'), (2, 'Total data')] %}
+        <option value="{{ v }}" {{ 'selected' if e and e.metric == v or (not e and v == 0) }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <span class="muted">exceeds</span>
+    <input type="number" name="{{ name }}__threshold_mb" min="1"
+           value="{{ e.threshold_mb if e else '' }}" style="width:110px">
+    <span class="muted">MB</span>
+    <button type="button" class="ghost" data-remove-row>Remove</button>
+  </div>
+{% endmacro %}
+
+{% macro _usage_rules(f, items, name, app_packages) %}
+  <div class="rowset" data-rowset="{{ name }}">
+    {% for entry in items or [] %}
+      {{ _usage_rule_row(name, entry, app_packages) }}
+    {% endfor %}
+    <template data-row-template>{{ _usage_rule_row(name, none, app_packages) }}</template>
+    <button type="button" class="ghost" data-add-row>Add rule</button>
+  </div>
+{% endmacro %}
+
+{% macro _app_configs(f, items, name, app_packages) %}
+  {#
+    Saved configurations, one row each (W49). A row carries its package and its
+    values as JSON in hidden inputs: the keys belong to the app, not to us, so
+    there is no fixed set of field names to spread them across.
+    The "Add" button opens the frame below, which fetches the app's declared keys
+    and writes a new row here on save.
+  #}
+  <div class="rowset" data-rowset="{{ name }}" data-app-configs>
+    {% for entry in items or [] %}
+      {#
+        ⚠️ `entry['values']`, never `entry.values`. Jinja tries attribute access
+        before item access, and on a dict `.values` finds the built-in **method** —
+        so `entry.values | tojson` serialises a bound method and 500s. The key
+        being named "values" is the whole trap; `entry.package_name` is fine
+        because dicts have no such attribute.
+      #}
+      {% set config_values = entry['values'] or {} %}
+      <div class="rs-row">
+        <input type="hidden" name="{{ name }}__package_name" value="{{ entry.package_name }}">
+        {# ⚠️ **Single quotes.** `tojson` returns Markup, so autoescape does not
+           run over it, and Jinja's `htmlsafe_json_dumps` escapes `<`, `>`, `&`
+           and `'` — but **not** `"`. JSON is made of double quotes, so in a
+           double-quoted attribute the value terminates at the first key and the
+           browser reads `value` as the single character `{`.
+
+           That is not cosmetic: on re-save the row submits `{`, `json.loads`
+           raises, `form_parse` swallows it and drops the row — and the next
+           check-in calls `setApplicationRestrictions` with an empty Bundle,
+           wiping the app's entire configuration off the fleet with no error
+           anywhere. Single quotes close it because `tojson` does escape those. #}
+        <input type="hidden" name="{{ name }}__values" value='{{ config_values | tojson }}'>
+        <div style="flex:1">
+          <strong>{{ entry.package_name }}</strong>
+          <span class="muted" style="font-size:12px">
+            · {{ config_values | length }} key{{ '' if (config_values | length) == 1 else 's' }}
+          </span>
+          <div class="muted" style="font-size:12px">
+            {% for k, v in config_values.items() %}{{ k }}={{ v | truncate(40) }}{{ ', ' if not loop.last }}{% endfor %}
+          </div>
+        </div>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    {% endfor %}
+    <template data-row-template></template>
+    <button type="button" class="ghost" data-app-config-add>Add configuration</button>
+  </div>
+
+  <div class="modal-backdrop" id="app-config-frame" hidden>
+    <div class="modal">
+      <h3>App configuration</h3>
+      <label>Application</label>
+      <select data-app-config-package class="field-full">
+        <option value="">— pick an uploaded app —</option>
+        {% for p in app_packages %}
+          <option value="{{ p.package_name }}">{{ p.label or p.package_name }} ({{ p.package_name }})</option>
+        {% endfor %}
+      </select>
+      <p class="muted" style="font-size:12px">
+        Only the keys the app itself declares can be set. Pick an app to see them.
+      </p>
+      <div data-app-config-fields style="margin-top:12px"></div>
+      <div class="toolbar" style="margin-top:16px; justify-content:flex-end">
+        <button type="button" class="ghost" data-modal-close>Cancel</button>
+        <button type="button" data-app-config-save disabled>Save configuration</button>
+      </div>
+    </div>
+  </div>
+{% endmacro %}
+
+{% macro _prefs_table() %}
+  {#
+    The shell the table is built into. Rows come from the scanned APK, which is
+    fetched rather than rendered here: 293 settings for ATAK and 158 for one
+    plugin is not something to put through Jinja twice per page, and the plugin's
+    schema is not even known until the operator picks one.
+  #}
+  <div class="banner" data-prefs-status>Reading the app's settings…</div>
+  <div data-prefs-table hidden>
+    <div class="prefs-toolbar">
+      <div>
+        <input type="search" data-prefs-filter aria-label="Filter settings">
+        <p class="field-tip">Filter by name or key.</p>
+      </div>
+      <span class="muted" data-prefs-count></span>
+    </div>
+    <table class="prefs-table">
+      <thead>
+        <tr>
+          <th class="prefs-setting">Setting</th>
+          <th class="prefs-value">Value</th>
+          <th class="prefs-group">Section</th>
+        </tr>
+      </thead>
+      <tbody data-prefs-body></tbody>
+    </table>
+    <div class="prefs-pager" data-prefs-pager hidden>
+      <button type="button" class="ghost" data-prefs-prev>← Previous</button>
+      <span class="muted" data-prefs-page></span>
+      <button type="button" class="ghost" data-prefs-next>Next →</button>
+    </div>
+  </div>
+{% endmacro %}
+
+{% macro _atak_core_prefs(f, items, name) %}
+  {#
+    ATAK's own settings, read from the build in the app library (D91).
+
+    ⚠️ The saved entries are rendered as hidden inputs **first**, and the script
+    only removes them once it has built the table from them. If the schema cannot
+    be fetched — the ATAK build was deleted, the request failed — the operator
+    still sees the category as managed and a save preserves every setting it
+    already carried. Building the table first and seeding it afterwards would
+    make a failed fetch look like an empty policy, and saving would then wipe the
+    whole category in silence.
+  #}
+  <div data-atak-prefs data-prefs-field="{{ name }}">
+    <div data-prefs-fallback>
+      {% for entry in items or [] %}
+        <input type="hidden" name="{{ name }}__key" value="{{ entry.key }}">
+        <input type="hidden" name="{{ name }}__value" value="{{ entry.value }}">
+      {% endfor %}
+    </div>
+    {{ _prefs_table() }}
+  </div>
+{% endmacro %}
+
+{% macro _plugin_prefs(f, items, name, app_packages) %}
+  {#
+    One row per configured plugin, carrying its values as JSON — the same shape
+    as `_app_configs`, and for the same reason: the keys belong to the plugin.
+  #}
+  <div class="rowset" data-rowset="{{ name }}" data-plugin-prefs>
+    {% for entry in items or [] %}
+      {% set plugin_values = entry['values'] or {} %}
+      <div class="rs-row">
+        <input type="hidden" name="{{ name }}__package_name" value="{{ entry.package_name }}">
+        {# ⚠️ Single quotes. `tojson` escapes `'` but not `"`, and JSON is made of
+           double quotes — in a double-quoted attribute the value would end at the
+           first key. See the same note on `_app_configs`, where that bug wiped an
+           app's whole configuration on re-save. #}
+        <input type="hidden" name="{{ name }}__values" value='{{ plugin_values | tojson }}'>
+        <div style="flex:1">
+          <strong>{{ entry.package_name }}</strong>
+          <span class="muted" style="font-size:12px">
+            · {{ plugin_values | length }} setting{{ '' if (plugin_values | length) == 1 else 's' }}
+          </span>
+          <div class="muted" style="font-size:12px">
+            {% for k, v in plugin_values.items() %}{{ k }}={{ v | truncate(40) }}{{ ', ' if not loop.last }}{% endfor %}
+          </div>
+        </div>
+        <button type="button" class="ghost" data-plugin-prefs-edit>Edit</button>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    {% endfor %}
+    <button type="button" class="ghost" data-plugin-prefs-add>Add plugin</button>
+  </div>
+
+  <div class="modal-backdrop" id="plugin-prefs-frame" hidden>
+    <div class="modal modal-wide">
+      <h3>Plugin settings</h3>
+      <label>Plugin</label>
+      <select data-plugin-prefs-package class="field-full">
+        <option value="">— pick an uploaded app —</option>
+        {% for p in app_packages %}
+          {% set api = p | plugin_api %}
+          <option value="{{ p.package_name }}" {% if api %}data-plugin="1"{% endif %}>
+            {{ p.label or p.package_name }} ({{ p.package_name }}){% if api %} · plugin for ATAK {{ api | atak_target }}{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+      <p class="muted" style="font-size:12px">
+        Plugins have no naming convention, so pick from the apps you have
+        uploaded. Any app can be picked; the ones whose build declares a
+        <code>plugin-api</code> are marked, but an older upload may not have
+        recorded one — an unmarked app is not necessarily not a plugin. Only
+        settings a plugin declares in its resources can be read; ones it writes
+        from code are invisible here, and most plugins have none at all.
+      </p>
+      <div data-plugin-prefs-host style="margin-top:12px"></div>
+      <div class="toolbar" style="margin-top:16px; justify-content:flex-end">
+        <button type="button" class="ghost" data-modal-close>Cancel</button>
+        <button type="button" data-plugin-prefs-save disabled>Save settings</button>
+      </div>
+    </div>
+  </div>
+{% endmacro %}
+
+{% macro _data_package_list(f, items, name, managed_files) %}
+  {#
+    Data packages already on this policy. Uploading and building them is the
+    Content library's job (W91 B2); this picks from what is there.
+
+    ⚠️ There is deliberately no destination, overwrite or persist control here.
+    ATAK watches one directory and consumes what it finds, so the only honest
+    settings are *which* package and *what to call it*.
+  #}
+  <div class="rowset" data-rowset="{{ name }}" data-data-packages>
+    {% for entry in items or [] %}
+      <div class="rs-row">
+        <input type="hidden" name="{{ name }}__file_id" value="{{ entry.file_id }}">
+        <div style="flex:1">
+          <strong>{{ entry.title or (managed_files | selectattr('id', 'equalto', entry.file_id) | map(attribute='name') | first) or entry.file_id }}</strong>
+          <div class="muted" style="font-size:12px">
+            Delivered once per device, then never re-sent.
+          </div>
+        </div>
+        <div style="max-width:260px">
+          <input name="{{ name }}__title" value="{{ entry.title or '' }}" aria-label="Name">
+          <p class="field-tip">Optional. Shown in the console.</p>
+        </div>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    {% endfor %}
+    <div class="toolbar" style="margin-top:10px">
+      <select data-package-pick>
+        <option value="">— add a data package —</option>
+        {% for p in managed_files or [] if p.is_data_package %}
+          <option value="{{ p.id }}">{{ p.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% if not (managed_files | selectattr('is_data_package') | list) %}
+      <p class="muted" style="font-size:12px">
+        No data packages in the library yet. Upload or build one on the Content
+        page — ⚠️ only packages validated against ATAK's rules are offered here,
+        so an arbitrary zip cannot be sent as one.
+      </p>
+    {% endif %}
+    <template data-row-template>
+      <div class="rs-row">
+        <input type="hidden" name="{{ name }}__file_id">
+        <div style="flex:1"><strong data-package-label></strong>
+          <div class="muted" style="font-size:12px">
+            Delivered once per device, then never re-sent.
+          </div>
+        </div>
+        <div style="max-width:260px">
+          <input name="{{ name }}__title" aria-label="Name">
+          <p class="field-tip">Optional. Shown in the console.</p>
+        </div>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    </template>
+    <div class="prefs-toolbar" style="margin-top:12px">
+      {#
+        ⚠️ A real <button>, not a <label class="ghost">. `button.ghost` is the
+        styled selector, and a label's own rule — block, muted, 12.5px — wins
+        over it, so the first version rendered as grey clickable text that did
+        not read as an action at all.
+      #}
+      <button type="button" class="ghost" data-package-upload-open>Upload package zip</button>
+      <input type="file" accept=".zip,application/zip" data-package-upload hidden>
+      <button type="button" class="ghost" data-package-create-open>Create data package</button>
+      <span class="muted" data-package-status style="font-size:12px"></span>
+    </div>
+    <p class="muted" style="font-size:12px; margin-top:8px">
+      ⚠️ A data package is delivered <strong>once</strong> and never re-sent —
+      ATAK imports the zip, and pushing it again makes ATAK import it again. The
+      device's own Files screen has a <strong>Re-download</strong> button for when
+      it genuinely needs sending twice.
+    </p>
+    <p class="muted" style="font-size:12px">
+      Uploads are checked for <code>MANIFEST/manifest.xml</code> before they are
+      accepted, and land in the Content section.
+    </p>
+  </div>
+{% endmacro %}
+
+{% macro _dted_list(f, items, name, managed_files) %}
+  {#
+    Terrain archives on this policy. Same shape as the data-package list, and
+    for the same reason: ATAK reads DTED from one directory, so there is no
+    destination to offer and nothing an operator could usefully set.
+  #}
+  <div class="rowset" data-rowset="{{ name }}" data-dted-list>
+    {% for entry in items or [] %}
+      <div class="rs-row">
+        <input type="hidden" name="{{ name }}__file_id" value="{{ entry.file_id }}">
+        <div style="flex:1">
+          <strong>{{ entry.title or (managed_files | selectattr('id', 'equalto', entry.file_id) | map(attribute='name') | first) or entry.file_id }}</strong>
+          <div class="field-tip">Unpacked into <code>/sdcard/atak/DTED</code>.</div>
+        </div>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    {% endfor %}
+    <template data-row-template>
+      <div class="rs-row">
+        <input type="hidden" name="{{ name }}__file_id">
+        <div style="flex:1"><strong data-dted-label></strong>
+          <div class="field-tip">Unpacked into <code>/sdcard/atak/DTED</code>.</div>
+        </div>
+        <button type="button" class="ghost" data-remove-row>Remove</button>
+      </div>
+    </template>
+
+    <div class="prefs-toolbar" style="margin-top:12px">
+      <button type="button" class="ghost" data-dted-upload-open>Upload DTED archive</button>
+      <input type="file" accept=".zip,application/zip" data-dted-upload hidden>
+      <span class="muted" data-dted-status style="font-size:12px"></span>
+    </div>
+    <p class="field-tip">
+      The longitude folders — <code>w115</code>, <code>e007</code> — have to sit at
+      the <strong>top</strong> of the zip. ATAK unpacks terrain flat into its DTED
+      directory, so a nested archive extracts perfectly and shows no terrain at
+      all. <strong>Nested is fine to upload:</strong> the cells are found wherever
+      they are and moved to the top before the archive is stored, and you are told
+      when that happened. A zip holding no cells is refused.
+    </p>
+  </div>
+{% endmacro %}
+
+{% macro data_package_check_modal() %}
+  {#
+    What happened to an uploaded zip, while it happens (W91 B5).
+
+    The check is the interesting part of an upload here — a package ATAK will not
+    import fails on a tablet as nothing at all — so it gets a surface of its own
+    rather than a line of muted text beside the control, where a refusal is easy
+    to miss on a page this long.
+  #}
+  <div class="modal-backdrop" id="package-check" hidden>
+    <div class="modal">
+      <h3 data-check-title>Checking data package</h3>
+      <p class="muted" data-check-file style="font-size:12px"></p>
+
+      <div data-check-progress>
+        <p>Reading <code>MANIFEST/manifest.xml</code> and checking it against
+        ATAK's own rules…</p>
+      </div>
+
+      <div class="banner bad" data-check-error hidden></div>
+
+      <p class="muted" data-check-note style="font-size:12px" hidden>
+        ⚠️ ATAK <em>would</em> unpack a zip without a manifest — as a plain
+        archive, with none of the manifest's placement rules. ATLAS refuses it so
+        that what lands on a device is predictable, not because the file is
+        broken.
+      </p>
+
+      <div class="toolbar" style="margin-top:16px; justify-content:flex-end">
+        <button type="button" class="ghost" data-modal-close data-check-close hidden>Close</button>
+      </div>
+    </div>
+  </div>
+{% endmacro %}
+
+{% macro data_package_modal(csrf_token) %}
+  {#
+    Create Data Package, from inside the policy editor (W91 B4).
+
+    ⚠️ Not a nested <form>: HTML forbids it, and this markup sits inside the
+    policy's own form. The fields are posted by script with FormData instead, so
+    the surrounding policy is neither submitted nor lost.
+  #}
+  <div class="modal-backdrop" id="policy-package-create" hidden>
+    <div class="modal">
+      <h3>Create data package</h3>
+      <label for="ppkg-name">Package name</label>
+      <input id="ppkg-name" data-ppkg-name class="field-full">
+      <p class="field-tip">Written into the package’s manifest, e.g. “Ops overlay — north”.</p>
+      <label for="ppkg-desc">Description (optional)</label>
+      <input id="ppkg-desc" data-ppkg-desc class="field-full">
+
+      <label>Files</label>
+      <div data-ppkg-files>
+        <div class="rs-row"><input type="file" data-ppkg-file></div>
+      </div>
+      <button type="button" class="ghost" data-ppkg-add-file>Add another file</button>
+      <p class="muted" style="font-size:12px; margin-top:10px">
+        ATLAS writes the manifest. ⚠️ Names must be unique, and nothing may sit
+        inside <code>MANIFEST/</code> — the package is refused rather than
+        quietly renamed.
+      </p>
+      <div class="banner bad" data-ppkg-error hidden></div>
+
+      <div class="toolbar" style="margin-top:16px; justify-content:flex-end">
+        <button type="button" class="ghost" data-modal-close>Cancel</button>
+        <button type="button" data-ppkg-save>Create package</button>
+      </div>
+    </div>
+  </div>
+{% endmacro %}
+
+{% macro _control(f, spec, name, app_packages, managed_files, geofence_tiles='{}', storefronts=[], app_kinds={}) %}
+  {% set value = spec.get(f.name) %}
+  {% if f.requires %}
+    {#
+      The platform has no route to this control yet (Android reference §W43).
+      Shown rather than hidden, and disabled rather than merely labelled: a
+      disabled input submits nothing, so an operator cannot save a restriction
+      that would never be enforced. The spec refuses the value too — this is the
+      polite half of that, not the guard.
+    #}
+    <fieldset disabled style="border:0; padding:0; margin:0; opacity:.55">
+      {{ _live_control(f, value, name, app_packages, managed_files, geofence_tiles, storefronts, app_kinds) }}
+    </fieldset>
+    <div class="muted" style="font-size:12px; margin-top:4px">
+      <span class="pill warn">needs {{ f.requires }}</span>
+      No AOSP Device Owner API can do this, so it cannot be saved yet.
+    </div>
+  {% else %}
+    {{ _live_control(f, value, name, app_packages, managed_files, geofence_tiles, storefronts, app_kinds) }}
+  {% endif %}
+{% endmacro %}
+
+{% macro _live_control(f, value, name, app_packages, managed_files, geofence_tiles='{}', storefronts=[], app_kinds={}) %}
+  {% if f.control == 'bool' %}{{ _bool(f, value, name) }}
+  {% elif f.control == 'int' %}{{ _int(f, value, name) }}
+  {% elif f.control == 'enum' %}{{ _enum(f, value, name) }}
+  {% elif f.control == 'str' %}{{ _str(f, value, name) }}
+  {% elif f.control == 'text' %}{{ _text(f, value, name) }}
+  {% elif f.control == 'password' %}{{ _password(f, value, name) }}
+  {% elif f.control == 'package_list' %}{{ _package_list(f, value, name) }}
+  {% elif f.control == 'path_list' %}{{ _path_list(f, value, name) }}
+  {% elif f.control == 'app_list' %}{{ _app_list(f, value, name, app_kinds.get('plain', app_packages)) }}
+  {% elif f.control == 'atak_core' %}{{ _atak_core(f, value, name, app_kinds.get('atak', [])) }}
+  {% elif f.control == 'atak_plugins' %}{{ _atak_plugins(f, value, name, app_kinds.get('plugins', [])) }}
+  {% elif f.control == 'kiosk_apps' %}{{ _kiosk_apps(f, value, name, app_packages) }}
+  {% elif f.control == 'geofences' %}{{ _geofences(f, value, name, geofence_tiles) }}
+  {% elif f.control == 'kiosk_app' %}{{ _kiosk_app(f, value, name, app_packages) }}
+  {% elif f.control == 'kiosk_app_version' %}{{ _kiosk_app_version(f, value, name, app_packages) }}
+  {% elif f.control == 'activity_choice' %}{{ _activity_choice(f, value, name) }}
+  {% elif f.control == 'file_list' %}{{ _file_list(f, value, name, managed_files) }}
+  {% elif f.control == 'ca_list' %}{{ _ca_list(f, value, name, managed_files) }}
+  {% elif f.control == 'image_file' %}{{ _image_file(f, value, name) }}
+  {% elif f.control == 'wifi_list' %}{{ _wifi_list(f, value, name) }}
+  {% elif f.control == 'usage_rules' %}{{ _usage_rules(f, value, name, none) }}
+  {% elif f.control == 'app_usage_rules' %}{{ _usage_rules(f, value, name, app_packages) }}
+  {% elif f.control == 'app_configs' %}{{ _app_configs(f, value, name, app_packages) }}
+  {% elif f.control == 'storefront' %}{{ _storefront(f, value, name, storefronts) }}
+  {% elif f.control == 'atak_core_prefs' %}{{ _atak_core_prefs(f, value, name) }}
+  {% elif f.control == 'plugin_prefs' %}{{ _plugin_prefs(f, value, name, app_packages) }}
+  {% elif f.control == 'data_package_list' %}{{ _data_package_list(f, value, name, managed_files) }}
+  {% elif f.control == 'dted_list' %}{{ _dted_list(f, value, name, managed_files) }}
+  {% endif %}
+{% endmacro %}
+
+{% macro app_group_buttons(app_groups) %}
+  {% if app_groups %}
+  <div class="toolbar" style="margin-bottom:10px">
+    <span class="muted" style="font-size:12px">Add an app group to Required apps:</span>
+    {% for grp in app_groups %}
+      <button type="button" class="ghost"
+              data-add-app-group="required_apps"
+              data-packages='{{ grp.packages | tojson }}'>
+        {{ grp.name }} ({{ grp.packages | length }})
+      </button>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endmacro %}
+
+{#
+  One sub-page's worth of controls (W12) — the fields of a single ui_group.
+  `fields` is a SubPage.fields list; `spec` is the whole section spec dict (only
+  this page's names are read, but hidden pages' inputs stay in the same <form>).
+#}
+{#
+  Emitted once per page rather than inside a macro: Jinja macros do not inherit the
+  page context, and threading one more argument through every call site to carry
+  data the browser reads globally is worse than a named block.
+#}
+
+{% macro policy_search() %}
+  {#
+    Find a setting without knowing which section holds it (W201, W202).
+
+    ⚠️ **Defined once and used by every page with a rail.** It shipped inlined
+    in `policy_detail.html` and was therefore missing from the profile editor —
+    which is the page an operator reaches from "New policy" and the one with
+    **94 settings across 42 sections** to get lost in, against 41 on a policy's
+    own page. The same shape of mistake as the kiosk tile markup written out
+    twice (W196), caught here by an operator instead of a test.
+
+    ⚠️ No server-side index. Every panel is already on the page and merely
+    hidden, so `atlas.js` reads the labels, help text and merge hints that are
+    actually in front of the operator. A second copy built on the server would be
+    free to disagree with the first.
+
+    ⚠️ The input carries **no `name`**, and that is load-bearing twice over: it
+    submits nothing into the policy, and it is what exempts its placeholder from
+    W92's rule about hints inside fields.
+
+    The results list stays `hidden` until there is something to say, so an
+    untouched page shows a search box and nothing else.
+  #}
+  <div class="policy-search" data-policy-search>
+    <input type="search" class="field-full" data-policy-search-input
+           placeholder="Search this policy&#39;s settings…"
+           aria-label="Search this policy's settings" autocomplete="off">
+    <ul class="policy-search-results" data-policy-search-results hidden></ul>
+    <p class="field-tip" data-policy-search-note hidden></p>
+  </div>
+{% endmacro %}
+
+{% macro policy_subform(fields, spec, app_packages, managed_files, geofence_tiles='{}', storefronts=[], app_kinds={}) %}
+  {% for f in fields %}
+  <div class="pf-field" data-field="{{ f.name }}">
+    <div class="pf-label">
+      <label>{{ f.label }}</label>
+      {% if f.help %}<div class="muted" style="font-size:12px">{{ f.help }}</div>{% endif %}
+      {% if f.merge_hint %}<div class="muted" style="font-size:11px">↳ {{ f.merge_hint }}</div>{% endif %}
+    </div>
+    <div class="pf-control">
+      {{ _control(f, spec, f.name, app_packages, managed_files, geofence_tiles, storefronts, app_kinds) }}
+    </div>
+  </div>
+  {% endfor %}
+{% endmacro %}
+

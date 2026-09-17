@@ -1,0 +1,795 @@
+{% extends "base.html" %}
+{% set nav = 'manage' %}
+{% block title %}{{ device.name or device.serial_number }} — ATLAS{% endblock %}
+
+{% block page_styles %}
+  <link rel="stylesheet" href="/static/vendor/leaflet.css?v={{ build.revision }}">
+{% endblock %}
+
+{% block page_scripts %}
+  {#
+    ⚠️ Both `defer`, so they run in order and Leaflet is parsed before the code
+    that uses it. `async` here would race and fail only sometimes.
+  #}
+  <script src="/static/vendor/leaflet.js?v={{ build.revision }}" defer></script>
+  <script src="/static/atlas-map.js?v={{ build.revision }}" defer></script>
+{% endblock %}
+
+{% block content %}
+<h1{% if not device.name %} class="mono"{% endif %}>{{ device.name or device.serial_number }}</h1>
+<p class="sub">
+  {% if device.name %}<span class="mono">{{ device.serial_number }}</span> · {% endif %}
+  {{ device.model or 'unknown model' }} · Android {{ device.os_version or '?' }} ·
+  agent {{ device.agent_version or '—' }} ·
+  server has v{{ device.state_version }}, device applied v{{ device.acked_state_version }}
+</p>
+
+{#
+  Status at a glance, before anything that needs reading. Convergence is the one
+  fact that decides whether the rest of this page describes the device or
+  describes what it is about to become.
+#}
+<p class="device-pills">
+  {% if device.acked_state_version == device.state_version %}
+    <span class="pill good">Converged</span>
+  {% else %}
+    <span class="pill warn">Behind &mdash; applied v{{ device.acked_state_version }} of v{{ device.state_version }}</span>
+  {% endif %}
+  {% set c = device.compliance_status.value %}
+  <span class="pill {{ 'good' if c == 'compliant' else 'warn' if c == 'degraded' else 'bad' }}">{{ c }}</span>
+  {#
+    ⚠️ Engaged and confirmed are different facts and the pill says which
+    (W193). A tablet that was switched off, or is already out of contact, shows
+    "breach sent" for ever and never "breach applied" — and during an incident
+    those two must not look the same.
+  #}
+  {% if device.breach_engaged_at %}
+    {% if device.breach_confirmed_at %}
+      <span class="pill bad">breach applied</span>
+    {% else %}
+      <span class="pill warn">breach sent — not yet confirmed</span>
+    {% endif %}
+  {% endif %}
+</p>
+
+<div class="toolbar">
+  <form method="post" action="/devices/{{ device.id }}/checkin" style="margin:0">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit">Check in now</button>
+  </form>
+</div>
+
+{% if request.query_params.get('unassigned') %}
+  <div class="banner good">
+    Removed <strong>{{ request.query_params.get('unassigned') }}</strong> from this device.
+    It converges on the next check-in.
+  </div>
+{% endif %}
+
+{% set ci = request.query_params.get('checkin') %}
+{% if ci == 'now' %}
+  <div class="banner good">Ringing the device — it will check in within a second.</div>
+{% elif ci == 'queued' %}
+  <div class="banner warn">The device is not connected right now. It will pick up any change when it reconnects.</div>
+{% endif %}
+
+{% set br = request.query_params.get('breach') %}
+{% if br == 'engaged' %}
+  <div class="banner bad">
+    <strong>Breach mode engaged.</strong> Every policy this device had is
+    replaced. It applies at its next check-in — watch for
+    <em>breach applied</em> above.
+  </div>
+{% elif br == 'cleared' %}
+  <div class="banner warn">
+    <strong>Breach mode cleared.</strong> This device’s policies are back
+    exactly as they were. Its apps and the emptied directories are not.
+  </div>
+{% endif %}
+
+{% if device.breach_engaged_at %}
+  <div class="banner bad">
+    <strong>This device is in breach mode.</strong>
+    Engaged {{ device.breach_engaged_at | localtime }}
+    {%- if device.breach_engaged_by %} by {{ device.breach_engaged_by }}{% endif %}.
+    {% if device.breach_confirmed_at %}
+      Confirmed applied {{ device.breach_confirmed_at | localtime }}.
+    {% else %}
+      <strong>Not yet confirmed by the device</strong> — it has not checked in
+      since. A device that is switched off or out of contact will stay in this
+      state.
+    {% endif %}
+    Its own policies do not apply while this is in force.
+  </div>
+{% endif %}
+
+{% if device.compliance_detail %}
+  <div class="banner">Last reported problem: {{ device.compliance_detail }}</div>
+{% endif %}
+{#
+  Warnings sit apart from problems on purpose (W50): the device applied its
+  policy, and this is something the operator should know rather than fix. Shown
+  even when the device is compliant — which is exactly when it would otherwise
+  go unnoticed.
+#}
+{% if device.compliance_warnings %}
+  <div class="banner warn">Worth knowing: {{ device.compliance_warnings }}</div>
+{% endif %}
+
+{% if conflicts %}
+  <div class="banner bad">
+    <strong>{{ conflicts|length }} conflict(s).</strong>
+    Two policies set the same field to different values and one had to be discarded.
+    <ul style="margin:6px 0 0">
+      {% for c in conflicts %}
+        <li>
+          <code>{{ c.policy_type }}.{{ c.field }}</code> resolved to
+          <code>{{ c.winning_value }}</code>
+          {% if c.winning_source %}from <em>{{ c.winning_source.policy_name }}</em>{% endif %},
+          discarding
+          {% for d in c.discarded %}<code>{{ d.value }}</code>
+            {%- if d.source %} from <em>{{ d.source.policy_name }}</em>{% endif %}{% if not loop.last %}, {% endif %}
+          {% endfor %}
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
+{#
+  ⚠️ Actions first, then the two cards side by side. What an operator comes to
+  this page to do — sound it, locate it, lock it — used to sit below four
+  sections of policy detail, so the page had to be scrolled past its own
+  explanation to be used.
+
+  Device info and Location are paired because they answer one question
+  together: which device is this, and where. `.row` wraps them onto separate
+  lines on a narrow screen rather than squeezing both.
+#}
+<h2 id="actions">Actions</h2>
+<div class="panel">
+  {#
+    One-shot actions (W107). Queued as commands, so a device that is asleep or
+    out of coverage takes them when it comes back rather than losing them —
+    except a ping, which expires after an hour on purpose: it answers "where is
+    this thing while I am standing in the room", and an hour later that question
+    has been settled one way or the other.
+  #}
+  {% set done = request.query_params.get('action') %}
+  {% if done == 'ping' %}
+    <div class="banner good">
+      Sounding the device — an alarm for 30 seconds, through silent mode. Whoever
+      finds it can stop it from the screen.
+    </div>
+  {% elif done == 'lock' %}
+    <div class="banner good">Locking the device screen.</div>
+  {% elif done == 'locate' %}
+    <div class="banner good">
+      Asked the device for its position. It appears under
+      <a href="#location">Location</a> once it reports.
+    </div>
+  {% endif %}
+
+  <div class="toolbar">
+    <form method="post" action="/devices/{{ device.id }}/action/ping" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit">Play sound</button>
+    </form>
+    <form method="post" action="/devices/{{ device.id }}/action/lock" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit">Lock screen</button>
+    </form>
+    <form method="post" action="/devices/{{ device.id }}/action/locate" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="ghost">Locate</button>
+    </form>
+  </div>
+
+  <p class="field-tip">
+    <strong>Play sound</strong> rings the device for 30 seconds on the alarm
+    channel, so it is audible even when the device is silenced &mdash; which is
+    usually the state of a device somebody is looking for. It vibrates as well,
+    and whoever finds it can stop it from the screen without unlocking.
+  </p>
+  <p class="field-tip">
+    {#
+      ⚠️ Said plainly rather than implying the device has been secured. lockNow()
+      on a device with no password drops to a lock screen a swipe dismisses —
+      the same honesty the geofence lock needed.
+    #}
+    <strong>Lock screen</strong> locks the device immediately. It asks for
+    whatever credential the device already has, so on a device with no PIN or
+    password set this is only a swipe &mdash; set a Password policy if it needs to
+    be more than that.
+  </p>
+</div>
+
+<div class="row device-cards">
+  <div>
+    <h2 id="hardware">Device info</h2>
+<div class="panel">
+  {#
+    ⚠️ Renaming lives here and nowhere else. The fleet table used to carry a
+    text box per row, which put an edit one stray keystroke away from every
+    device on the page and turned a list meant for scanning into a wall of
+    inputs. Here there is one device to be wrong about, and its name is the
+    first thing the card is about.
+  #}
+  <dl class="kv">
+    <dt>Device name</dt>
+    <dd>
+      <form method="post" action="/devices/{{ device.id }}/rename" class="rename-row">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {#
+          ⚠️ No placeholder. A greyed serial inside the box reads as a name the
+          device already has, and an empty field is exactly the case where that
+          matters most. The fallback is stated below instead.
+        #}
+        <input type="text" name="name" value="{{ device.name or '' }}"
+               maxlength="128" aria-label="Device name">
+        <button type="submit" class="ghost">Save</button>
+      </form>
+      {% if not device.name %}
+        <p class="field-tip">Unnamed — shown as its serial until you name it.</p>
+      {% endif %}
+    </dd>
+    <dt>Serial</dt>
+    <dd class="mono">{{ device.serial_number }}</dd>
+    <dt>Model</dt>
+    <dd>{{ device.model or '—' }}</dd>
+    <dt>Android / agent</dt>
+    <dd class="mono">{{ device.os_version or '?' }} / {{ device.agent_version or '—' }}</dd>
+    <dt>Battery</dt>
+    <dd>
+      {#
+        ⚠️ `is not none`, not truthiness. A flat device reports 0, and `{% if
+        device.battery_level %}` would render that as "not reported" — hiding
+        precisely the reading worth seeing.
+      #}
+      {% if device.battery_level is not none %}
+        <strong{% if device.battery_level <= 15 and not device.battery_charging %}
+          class="location-stale"{% endif %}>{{ device.battery_level }}%</strong>
+        {% if device.battery_charging %}
+          &middot; charging
+        {% endif %}
+        {#
+          Always against a time. 4% reported a minute ago and 4% reported
+          yesterday are different situations, and the bare figure reads as
+          current.
+        #}
+        <span class="muted">
+          &mdash; as of
+          {% if device.last_checkin_at %}
+            {{ device.last_checkin_at | localtime('%Y-%m-%d %H:%M %Z') }}
+          {% else %}
+            its last check-in
+          {% endif %}
+        </span>
+      {% else %}
+        <span class="muted">Not reported &mdash; the agent on this device is
+        older than battery reporting.</span>
+      {% endif %}
+    </dd>
+
+    {#
+      ⚠️ Three different silences, and the whole point of `has_telephony`.
+      Collapsed into one blank, an operator would go looking for a permission bug
+      on a tablet that simply has no modem.
+    #}
+    {% if device.has_telephony is none %}
+      <dt>IMEI</dt>
+      <dd class="muted">
+        Not reported &mdash; the agent on this device is older than IMEI
+        reporting.
+      </dd>
+    {% elif not device.has_telephony %}
+      <dt>IMEI</dt>
+      <dd class="muted">
+        No cellular radio &mdash; this device has no IMEI and no phone number.
+      </dd>
+    {% else %}
+      <dt>IMEI 1</dt>
+      <dd>
+        {% if device.imei %}
+          <span class="mono">{{ device.imei }}</span>
+        {% else %}
+          <span class="muted">Not readable</span>
+        {% endif %}
+      </dd>
+
+      <dt>IMEI 2</dt>
+      <dd>
+        {% if device.imei2 %}
+          <span class="mono">{{ device.imei2 }}</span>
+        {% else %}
+          <span class="muted">None &mdash; one SIM slot, or the second is empty</span>
+        {% endif %}
+      </dd>
+
+      <dt>Phone number</dt>
+      <dd>
+        {% if device.phone_number %}
+          <span class="mono">{{ device.phone_number }}</span>
+        {% else %}
+          {#
+            Absence here is ordinary. The number is on the SIM only if the
+            carrier provisioned it, and many never do — saying "not available"
+            without saying why invites someone to go and fix nothing.
+          #}
+          <span class="muted">
+            Not provisioned &mdash; carriers only store a number on the SIM
+            sometimes, so this is often blank on a working device.
+          </span>
+        {% endif %}
+      </dd>
+    {% endif %}
+  </dl>
+</div>
+  </div>
+  <div>
+    <h2 id="location">Location</h2>
+<div class="panel">
+  {% if latest_location %}
+    <dl class="kv">
+      <dt>Coordinates</dt>
+      <dd class="mono">
+        {{ '%.5f'|format(latest_location.latitude) }},
+        {{ '%.5f'|format(latest_location.longitude) }}
+      </dd>
+
+      <dt>Accuracy</dt>
+      <dd>
+        {#
+          ⚠️ "The device did not say" is not "accurate to 0 m". Showing an
+          unreported accuracy as a number would invent precision the device
+          never claimed.
+        #}
+        {% if latest_location.accuracy_m is not none %}
+          &plusmn;{{ latest_location.accuracy_m|round|int }} m
+        {% else %}
+          <span class="muted">Not reported by device</span>
+        {% endif %}
+      </dd>
+
+      <dt>Fix taken</dt>
+      <dd>
+        {#
+          ⚠️ The age, not just the timestamp — and this is the whole reason the
+          agent reports last-known rather than a live fix. A position from
+          yesterday drawn on a map looks exactly like one from a minute ago.
+        #}
+        <span title="{{ latest_location.recorded_at | localtime('%Y-%m-%d %H:%M:%S %Z') }}">
+          {{ location_age }}
+        </span>
+        {% if location_stale %}
+          <span class="location-stale">— this position may be out of date</span>
+        {% endif %}
+      </dd>
+
+      <dt>Source</dt>
+      <dd>
+        {% if latest_location.source.value == 'command' %}
+          Answer to a <code>locate</code> command
+        {% elif latest_location.source.value == 'periodic' %}
+          Reported on the tracking interval
+        {% else %}
+          {{ latest_location.source.value }}
+        {% endif %}
+      </dd>
+    </dl>
+
+    <div class="device-map" data-map-latest data-map='{{ latest_map_json }}'></div>
+
+    <p>
+      <a href="/devices/{{ device.id }}/location-history">Location history</a>
+    </p>
+  {% else %}
+    {#
+      Two different silences, and telling them apart is the point. "Nothing is
+      collecting" sends an operator to the policy; "collecting but nothing has
+      arrived" sends them to the device. A single "no data" message would send
+      them to neither.
+    #}
+    {% if tracking_interval %}
+      <p class="muted">
+        No position reported yet. Tracking is on at
+        <strong>{{ tracking_interval }} minute</strong>{{ '' if tracking_interval == 1 else 's' }};
+        the device reports at its next check-in after it has a fix.
+      </p>
+    {% else %}
+      <p class="muted">
+        No position recorded, and location tracking is switched off for this
+        device. Since every enrolled device reports by default, off means
+        something set the interval to <strong>0</strong> &mdash; a
+        <strong>Tracking and fencing</strong> policy reaching this device, or the
+        fleet default under <strong>Admin &rarr; Location</strong>. Change either,
+        or send a <code>locate</code> command to record a single position.
+      </p>
+    {% endif %}
+  {% endif %}
+</div>
+  </div>
+</div>
+
+<h2>Policies reaching this device</h2>
+<div class="panel">
+  {% if not considered %}
+    <p class="muted">Nothing assigned. This device has an empty desired state.</p>
+  {% else %}
+  <p class="sub">
+    In resolution order — highest precedence first. Rank decides; scope only breaks ties.
+  </p>
+  <table>
+    <thead><tr><th>#</th><th>Policy</th><th>Version</th><th>Scope</th><th>Rank</th><th></th></tr></thead>
+    <tbody>
+    {% for source in considered %}
+      <tr>
+        <td class="muted">{{ loop.index }}</td>
+        {#
+          The name goes to the editor. This table answers "why is the device
+          doing that", and the next question is always "let me change it" — which
+          meant reading the name, going to Policies, and finding it again by eye.
+
+          ⚠️ A section of a profile links here too, and lands on the *profile*
+          editor: `/policies/{id}` redirects when the policy has a `profile_id`,
+          because a section is only editable through the composite that owns it
+          (W21). Linking sections to somewhere they cannot be edited would be
+          worse than not linking them, so the redirect is what makes one link
+          correct for both kinds of row.
+        #}
+        <td><a href="/policies/{{ source.policy_id }}">{{ source.policy_name }}</a></td>
+        <td class="mono">v{{ source.policy_version }}</td>
+        <td><span class="pill">{{ source.scope }}</span></td>
+        <td class="mono">{{ source.rank }}</td>
+        <td>
+          {# ⚠️ A button only where removing it means *this device* (W118). A
+             group or tag assignment belongs to the group or the tag, so the
+             same click would unassign the policy from every device sharing it.
+             Those rows say where they come from instead, because that is what
+             the operator needs in order to go and change it. #}
+          {% if source.removable %}
+            <form method="post"
+                  action="/devices/{{ device.id }}/assignments/{{ source.assignment_id }}/remove"
+                  class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="linklike">Remove</button>
+            </form>
+          {% elif source.origin %}
+            <span class="muted">{{ source.origin }}</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="field-tip">
+    Only policies assigned directly to this device can be removed here. One
+    inherited from a group or a tag is shown with where it comes from — removing
+    it there would change every device that shares it.
+  </p>
+  {% endif %}
+</div>
+
+<h2>Effective policy</h2>
+<p class="sub">
+  Every field traced to the policy it came from, the strategy that chose it, and
+  what it beat. This is the question stacking makes hard: why does this value hold?
+</p>
+
+{% for policy_type, fields in values.items() %}
+<div class="panel">
+  <strong>{{ policy_type }}</strong>
+  <table style="margin-top:10px">
+    <thead><tr><th>Field</th><th>Value</th><th>Strategy</th><th>From</th><th>Overrode</th></tr></thead>
+    <tbody>
+    {% for field, value in fields.items() %}
+      {% set p = provenance.get(policy_type, {}).get(field, {}) %}
+      <tr>
+        <td class="mono">{{ field }}</td>
+        <td class="mono">{{ value }}</td>
+        <td><span class="pill">{{ p.strategy or '—' }}</span></td>
+        <td>
+          {% if p.source %}{{ p.source.policy_name }}
+          {% elif p.contributors %}<span class="muted">{{ p.contributors|length }} policies combined</span>
+          {% else %}—{% endif %}
+        </td>
+        <td class="muted">
+          {% for o in p.overridden or [] %}
+            {{ o.value }}{% if o.source %} ({{ o.source.policy_name }}){% endif %}{% if not loop.last %}; {% endif %}
+          {% else %}—{% endfor %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  <div class="panel"><p class="muted">No resolved values.</p></div>
+{% endfor %}
+
+{% if apps %}
+<h2>Apps</h2>
+<div class="panel">
+  <p class="muted" style="font-size:12px">
+    {% if device.atak_version %}
+      This device reports ATAK <span class="mono">{{ device.atak_version }}</span>
+      (<span class="mono">{{ device.atak_package }}</span>). Plugins are checked against it.
+    {% else %}
+      This device has not reported an ATAK version, so plugin compatibility cannot
+      be checked here — an older agent, or no ATAK installed.
+    {% endif %}
+  </p>
+  <table>
+<thead><tr><th>Package</th><th>Version</th><th>Parts</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for app in apps %}
+      <tr>
+        <td class="mono">
+          {{ app.package_name }}
+          {% if atak_mismatches.get(app.package_name) %}
+            {# The device's own ATAK is the evidence; a plugin built for another
+               line installs and then never appears, which reads as an MDM fault. #}
+            <div class="muted" style="font-size:12px; color:var(--warn, #b26b00)">
+              ⚠ {{ atak_mismatches.get(app.package_name) }}
+            </div>
+          {% endif %}
+        </td>
+        <td class="mono">{{ app.version_code or '—' }}</td>
+        <td class="muted">{{ (app.files or [])|length }}</td>
+        <td>
+          {% if app.available %}<span class="pill good">resolved</span>
+          {% else %}
+            <span class="pill bad">unresolved</span>
+            <div class="muted" style="font-size:12px">{{ app.reason or 'nothing uploaded for it' }}</div>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if files.required or files.available %}
+<h2>Files</h2>
+<div class="panel">
+  <table>
+    <thead><tr><th>Name</th><th>Destination</th><th>Tier</th><th>Extract</th></tr></thead>
+    <tbody>
+    {% for f in files.required %}
+      <tr>
+        <td>{{ f.name or f.file_id }}</td>
+        <td class="mono">{{ f.dest_path or '—' }}</td>
+        <td><span class="pill">required</span></td>
+        <td class="muted">{{ f.extract_to if f.extract else '—' }}</td>
+      </tr>
+    {% endfor %}
+    {% for f in files.available %}
+      <tr>
+        <td>{{ f.title or f.name }}</td>
+        <td class="mono">{{ f.dest_path or '—' }}</td>
+        <td><span class="pill warn">optional</span></td>
+        <td class="muted">{{ f.extract_to if f.extract else '—' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<h2 id="lifecycle">Lifecycle</h2>
+<div class="panel">
+  {#
+    Breach mode (W193). Sits above disenroll because it is the one to reach for
+    while the device is still worth tracking: it makes the tablet useless and
+    keeps it reporting where it is. Disenroll wipes it and ends both.
+  #}
+  {% if device.breach_engaged_at %}
+    <form method="post" action="/devices/{{ device.id }}/breach/clear" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <p>
+        <strong>Take this device out of breach mode.</strong>
+        Its policies come back exactly as they were — none of them were ever
+        unassigned.
+      </p>
+      <p class="field-tip">
+        ⚠️ This is not resecuring the device. The apps it lost and the files in
+        the emptied directories do not come back, and a device that has been in
+        someone else’s hands should be factory wiped and reprovisioned before it
+        is trusted again. This button is for a breach engaged by mistake.
+      </p>
+      <div><button type="submit">Clear breach mode</button></div>
+    </form>
+    <hr>
+  {% elif device.enrollment_state.value != 'retired' %}
+    <form method="post" action="/devices/{{ device.id }}/breach" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <p>
+        <strong>Breach mode.</strong>
+        For <span class="mono">{{ device.serial_number }}</span> in the wrong
+        hands. Every policy it has is replaced by the breach policy: its apps
+        are uninstalled, the configured directories are emptied, it is locked
+        with the breach passcode, and it reports its position every minute.
+      </p>
+      <p class="field-tip">
+        ⚠️ <strong>The apps and files do not come back.</strong> Clearing breach
+        mode later restores the device’s policies, not its data.
+      </p>
+      <p class="field-tip">
+        This is not a factory reset — deliberately. A wiped device stops
+        reporting where it is. See <a href="/admin#tab-breach">Admin → Breach
+        mode</a> for exactly what it will do.
+      </p>
+      <label for="breach-confirm">Type the serial number to confirm</label>
+      <input type="text" id="breach-confirm" name="confirm" class="field-full"
+             autocomplete="off">
+      <div><button type="submit" class="danger">Engage breach mode</button></div>
+    </form>
+    <hr>
+  {% endif %}
+  {#
+    ⚠️ Disenroll is the destructive one and sits apart from retire and delete.
+    Retire revokes certificates and leaves the tablet as it is; this erases the
+    tablet.
+  #}
+  {% if disenrolling %}
+    <div class="banner warn">
+      <strong>Factory reset queued.</strong>
+      Sent at {{ disenrolling.created_at | localtime }}. The device
+      resets when it next checks in and acknowledges the command — and this record
+      is removed at that moment, because nothing can report back afterwards.
+    </div>
+  {% elif device.enrollment_state.value != 'retired' %}
+    <form method="post" action="/devices/{{ device.id }}/disenroll" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <p>
+        <strong>Disenroll and factory reset.</strong>
+        This erases <span class="mono">{{ device.serial_number }}</span> completely —
+        apps, accounts, settings and its external storage — and returns it to
+        out-of-box state. <strong>It cannot be undone</strong>, and the data on the
+        device is not recoverable.
+      </p>
+      <p class="field-tip">
+        The reset runs only once the device confirms it received the instruction,
+        so a tablet that is off or offline resets when it next comes back. This
+        record is removed at that confirmation — the last message it will ever send.
+      </p>
+      <p class="field-tip">
+        ⚠️ Factory Reset Protection is cleared too, so the device comes up ready
+        for whoever receives it rather than demanding the Google account that was
+        signed in before the wipe. A wipe sent to a <em>lost</em> device would
+        leave that protection in place; this one is for handing a device back.
+      </p>
+      <label for="disenroll-confirm">Type the serial number to confirm</label>
+      <input type="text" id="disenroll-confirm" name="confirm" class="field-full"
+             autocomplete="off">
+      <div>
+        <button type="submit" class="danger">Disenroll and factory reset</button>
+      </div>
+    </form>
+    <hr>
+  {% endif %}
+
+  {% if device.enrollment_state.value == 'retired' %}
+    <p class="muted">
+      <span class="pill bad">retired</span>
+      Certificates are revoked, so this device can no longer authenticate.
+    </p>
+    <form method="post" action="/devices/{{ device.id }}/delete"
+          data-confirm="Permanently delete {{ device.serial_number }}? Its history, logs, identifiers and assignments go with it. This cannot be undone.">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="danger">Delete permanently</button>
+      <span class="muted">
+        For records that should never have existed — a failed enrolment, or a test
+        device. A device that genuinely served is usually worth keeping retired.
+      </span>
+    </form>
+  {% else %}
+    <form method="post" action="/devices/{{ device.id }}/retire"
+          data-confirm="Retire {{ device.serial_number }}? Its certificates are revoked and it stops being managed.">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit">Retire</button>
+      <span class="muted">
+        Revokes its certificates and takes it out of service. Deleting the record
+        outright is only possible once it is retired.
+      </span>
+    </form>
+  {% endif %}
+</div>
+
+<h2 id="identity">Identity</h2>
+<div class="panel">
+  {% set kinds = identifiers | map(attribute='kind') | map(attribute='value') | list %}
+  {% if identifiers and 'serial' not in kinds %}
+    <div class="banner warn">
+      <strong>No hardware serial.</strong>
+      This device is identified only by values that change on a factory reset, so a
+      wipe will enrol it as a <em>new</em> record and it will lose its policy stack.
+      The agent needs <code>READ_PHONE_STATE</code> to report its real serial.
+    </div>
+  {% endif %}
+
+  {% if identifiers %}
+  <table>
+    <thead><tr><th>Kind</th><th>Value</th><th>First seen</th><th>Last seen</th></tr></thead>
+    <tbody>
+    {% for i in identifiers %}
+      <tr>
+        <td>
+          {% if i.kind.value == 'serial' %}<span class="pill good">serial</span>
+          {% elif i.kind.value == 'android_id' %}<span class="pill warn">android_id</span>
+          {% else %}<span class="pill">{{ i.kind.value }}</span>{% endif %}
+        </td>
+        <td class="mono">{{ i.value }}</td>
+        <td class="muted">{{ i.first_seen_at | localtime }}</td>
+        <td class="muted">{{ i.last_seen_at | localtime }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">
+    Re-enrolment matches on any of these, so a device that changes identity source
+    re-adopts this record instead of creating a second one.
+  </p>
+  {% else %}
+    <p class="muted">No identifiers recorded — this device enrolled before they were tracked.</p>
+  {% endif %}
+</div>
+
+<h2 id="attributes">Custom attributes</h2>
+<div class="panel">
+  {% if not attributes %}
+    <p class="muted">
+      No custom attributes defined. Add them on the
+      <a href="/admin#tab-attributes">Admin</a> page.
+    </p>
+  {% else %}
+    {% for attr, value in attributes %}
+      <form method="post" action="/devices/{{ device.id }}/attributes" class="toolbar" style="margin:4px 0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="attribute_id" value="{{ attr.id }}">
+        <label style="margin:0; min-width:160px">{{ attr.name }} <span class="muted">({{ attr.attr_type }})</span></label>
+        <input type="text" name="value" value="{{ value }}" style="min-width:220px">
+        <button type="submit" class="ghost">Save</button>
+      </form>
+    {% endfor %}
+  {% endif %}
+</div>
+
+<h2 id="logs">Diagnostics</h2>
+<div class="panel">
+  <p class="muted">
+    The agent keeps its own log on the device. Collecting it wakes the device
+    immediately rather than waiting for its next check-in.
+  </p>
+
+  <form method="post" action="/devices/{{ device.id }}/collect-logs">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit">Collect logs</button>
+    {% if pending_log_request %}
+      <span class="pill warn">a request is already in flight</span>
+    {% endif %}
+  </form>
+
+  {% if log_bundles %}
+  <table>
+    <thead><tr><th>Collected</th><th>Size</th><th>Agent</th><th></th></tr></thead>
+    <tbody>
+    {% for bundle in log_bundles %}
+      <tr>
+        <td class="mono">{{ bundle.collected_at | localtime('%Y-%m-%d %H:%M:%S %Z') }}</td>
+        <td class="muted">
+          {{ '%.1f'|format(bundle.size_bytes / 1024) }} KB
+          {% if bundle.truncated %}<span class="pill warn">truncated</span>{% endif %}
+        </td>
+        <td class="mono muted">{{ bundle.agent_version or '—' }}</td>
+        <td><a href="/devices/{{ device.id }}/logs/{{ bundle.id }}">view</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">No logs collected from this device yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

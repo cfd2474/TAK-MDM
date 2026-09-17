@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf_field %}
+{% set nav = 'enroll' %}
+{% block title %}Enroll — ATLAS{% endblock %}
+
+{% block content %}
+{#
+  ⚠️ **No `?error=` banner here: `base.html` already renders one** for every
+  page. This template had its own for a while, and a mutation sweep found it by
+  disabling it and watching nothing fail — the message was being drawn twice and
+  the test could not tell which copy it was reading.
+#}
+{% if request.query_params.get('forgotten') %}
+  <div class="banner">
+    Removed from the list. ⚠️ The code itself still works — only
+    “Retire &amp; create new” stops that.
+  </div>
+{% endif %}
+{{ page_header(
+  'Enroll',
+  'One persistent enrollment credential. Its raw secret is never shown here — every QR is a 15-minute derivative of it, so a leaked photo of the code is a 15-minute problem, not a standing one.'
+) }}
+
+{#
+  ⚠️ **A token is not scoped to groups. Its QR is** (W207).
+
+  There used to be a "Place enrolling devices in these groups" picker on both
+  token forms, and it was the same decision offered twice: the QR form below
+  already asks which group to enrol into, and a group there resolves to that
+  group's own standing token (W121) rather than changing the QR's shape.
+
+  Two places to set one thing is two places to set it *differently* — a primary
+  scoped to "Field Tablets" plus a QR scoped to "Bench" reads as a contradiction
+  the page cannot resolve, and the answer it actually gives (the QR wins, because
+  it is a different token entirely) is not one anybody could guess.
+#}
+
+{% if not primary %}
+<div class="panel">
+  <h2>No active enrollment token</h2>
+  <p class="sub">Create one to start enrolling devices.</p>
+  <form method="post" action="/enrollment/primary">
+    {{ csrf_field(csrf_token) }}
+    <div>
+      <label for="name">Name</label>
+      <input id="name" name="name" required class="field-full">
+      <p class="field-tip">
+        What this token is for, e.g. “Fleet enrollment”. Which group a device
+        lands in is chosen when you generate its QR, not here.
+      </p>
+    </div>
+    <button type="submit" style="margin-top:14px">Create enrollment token</button>
+  </form>
+</div>
+
+{% else %}
+<div class="panel">
+  <h2>Active token</h2>
+  <p class="sub">
+    <strong>{{ primary.name }}</strong> ·
+    used {{ primary.use_count }} time{{ 's' if primary.use_count != 1 }} ·
+    created {{ primary.created_at | localtime }}
+    {% if primary.created_by %}by {{ primary.created_by }}{% endif %}
+    {% if primary.groups %}· joins {{ primary.groups | map(attribute='name') | join(', ') }}{% endif %}
+  </p>
+</div>
+
+<div class="panel">
+  <h2>Generate enrollment QR</h2>
+  <p class="sub">
+    A factory-reset tablet has no network. Fill in Wi-Fi and the tablet joins it
+    and downloads the agent with nobody touching the setup wizard. The QR is good
+    for {{ (qr_ttl_seconds // 60) }} minutes and any number of devices in that
+    window — or permanently, if you tick the box below.
+  </p>
+  <form method="post" action="/enrollment/qr">
+    {{ csrf_field(csrf_token) }}
+    <div class="row">
+      <div>
+        <label for="wifi_ssid">Wi-Fi network (SSID) — optional</label>
+        <input id="wifi_ssid" name="wifi_ssid" class="field-full">
+        <p class="field-tip">The network a device joins during provisioning.</p>
+      </div>
+      <div>
+        <label for="wifi_password">Wi-Fi password</label>
+        <div class="input-group">
+          <input id="wifi_password" name="wifi_password" type="password" class="field-full">
+          <button type="button" class="btn ghost" data-toggle-password="wifi_password">Show</button>
+        </div>
+        <p class="field-tip">Leave blank for an open network.</p>
+      </div>
+      <div>
+        <label for="wifi_security">Wi-Fi security</label>
+        <select id="wifi_security" name="wifi_security" class="field-full">
+          {% for option in ['WPA', 'WEP', 'NONE'] %}
+            <option value="{{ option }}">{{ option }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="qr_group">Enrol into group — optional</label>
+        <select id="qr_group" name="group_id" class="field-full">
+          <option value="">No group</option>
+          {% for g in groups %}
+            <option value="{{ g.id }}">{{ g.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <p class="field-tip">
+      A group here means the tablet joins it as it enrols and picks up that
+      group's policies on its first check-in, with no second step. Manage groups
+      on the <a href="/groups">Groups</a> page.
+    </p>
+    {#
+      ⚠️ Off by default, and worded so the trade is visible before the box is
+      ticked rather than on the page that follows. A persistent QR is a picture
+      that stays a live credential — which is exactly what a provisioning bench
+      wants and exactly what a photograph should not be.
+    #}
+    <label style="display:block; margin-top:14px">
+      <input type="checkbox" name="persistent" value="true">
+      Make this QR permanent — it never expires
+    </label>
+    <p class="field-tip">
+      The same QR keeps working, and re-generating it gives the identical code,
+      so it can be printed for a provisioning bench. Anyone who photographs it
+      can enrol devices until this token is retired — “Retire &amp; create new”
+      below is how that is undone.
+    </p>
+    <button type="submit" style="margin-top:14px">Generate enrollment QR</button>
+  </form>
+</div>
+
+{#
+  Permanent QRs this console can draw again (W204, GitHub issue #2).
+
+  ⚠️ **A shelf of live credentials, not a history of past actions.** Every
+  row here is a picture that enrols a device right now, and the wording has to
+  carry that — the Generate form above spends a whole paragraph making the trade
+  visible before the box is ticked, and a tidy list of "recently generated" would
+  quietly undo it.
+
+  ⚠️ Nothing here is a stored QR or a stored enrollment secret. Each row is
+  the *options* the code was made with, and the picture is drawn again on demand
+  from the token's own secret.
+
+  ⚠️ `live()` has already dropped anything whose token was retired, expired
+  or used up, so every row shown still works. That filter is the reason this list
+  can be trusted at a glance.
+#}
+{% if saved_qrs %}
+<div class="panel">
+  <h3>Permanent QR codes</h3>
+  <p class="sub">
+    ⚠️ Each of these is a <strong>live credential</strong>, not a record of
+    something that happened. Showing one draws the same code again — anyone who
+    photographs it can enrol devices until this token is retired.
+  </p>
+  <table class="list">
+    <thead>
+      <tr><th>Enrols into</th><th>Last shown</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for qr in saved_qrs %}
+      <tr>
+        <td>
+          {{ qr.label }}
+          {% if qr.wifi_ssid %}
+            <div class="muted" style="font-size:11px">
+              Wi-Fi credentials are baked into this code.
+            </div>
+          {% endif %}
+        </td>
+        <td class="muted" style="font-size:12px; white-space:nowrap">
+          {{ (qr.last_shown_at or qr.created_at) | localtime }}
+        </td>
+        <td style="text-align:right; white-space:nowrap">
+          {#
+            ⚠️ POST, not a link. The result is a standing credential on
+            screen, and a GET would leave it in browser history, in a bookmark,
+            and in any URL pasted to a colleague.
+          #}
+          <form method="post" action="/enrollment/qr/{{ qr.id }}/show"
+                style="display:inline">
+            {{ csrf_field(csrf_token) }}
+            <button type="submit" class="ghost">Show QR</button>
+          </form>
+          {#
+            ⚠️ "Forget" removes the row, not the credential. The QR keeps
+            working — it carries the token's own secret — so the confirmation says
+            so rather than letting an operator believe they revoked something.
+          #}
+          <form method="post" action="/enrollment/qr/{{ qr.id }}/forget"
+                style="display:inline"
+                data-confirm="Forget this saved QR? The code itself keeps working — only “Retire &amp; create new” stops that.">
+            {{ csrf_field(csrf_token) }}
+            <button type="submit" class="ghost">Forget</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="field-tip" style="margin-top:10px">
+    Forgetting a code removes it from this list only. To stop every code this
+    token can produce, use <strong>Retire &amp; create new</strong> below.
+  </p>
+</div>
+{% endif %}
+
+<div class="panel">
+  <h3>Replace or retire this token</h3>
+  <details>
+    <summary class="muted">Retire this token and start a new one</summary>
+    <p class="muted" style="font-size:12px; margin-top:8px">
+      Retiring takes effect immediately — including on any QR still on screen
+      elsewhere. Devices already enrolled are unaffected; this only governs new
+      enrollments.
+    </p>
+    <form method="post" action="/enrollment/primary" style="margin-top:8px">
+      {{ csrf_field(csrf_token) }}
+      <div>
+        <label for="new_name">New name</label>
+        <input id="new_name" name="name" required class="field-full">
+        <p class="field-tip">
+          What this token is for, e.g. “Fleet enrollment”. Which group a device
+          lands in is chosen when you generate its QR, not here.
+        </p>
+      </div>
+      <button type="submit" style="margin-top:14px">Retire &amp; create new</button>
+    </form>
+  </details>
+
+  <details style="margin-top:12px">
+    <summary class="muted">Retire without replacing</summary>
+    <p class="muted" style="font-size:12px; margin-top:8px">
+      No enrollment token will be active until a new one is created. Existing
+      devices are unaffected.
+    </p>
+    <form method="post" action="/enrollment/retire" style="margin-top:8px"
+          data-confirm="Retire {{ primary.name }}? No device will be able to enrol until a new token is created.">
+      {{ csrf_field(csrf_token) }}
+      <button type="submit" class="danger">Retire</button>
+    </form>
+  </details>
+</div>
+{% endif %}
+{% endblock %}
