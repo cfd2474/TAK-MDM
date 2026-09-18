@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, empty_state %}
+{% set nav = 'reports' %}
+{% block title %}{{ report.title }} — ATLAS{% endblock %}
+{% block main_class %}wide{% endblock %}
+
+{% block content %}
+{{ page_header(report.title, report.description) }}
+<p class="sub">
+  <a href="/reports">← all reports</a> ·
+  <a href="/reports/{{ report.key }}?format=csv">download CSV</a> ·
+  {{ rows | length }} row{{ 's' if rows | length != 1 }}
+</p>
+
+<div class="panel">
+  {% if not rows %}
+    {{ empty_state('No data for this report yet.') }}
+  {% else %}
+  <div class="toolbar">
+    <div>
+      <input type="search" data-filter="#report-table" aria-label="Filter rows">
+      <p class="field-tip">Filter the rows below.</p>
+    </div>
+    <span class="muted" data-filter-count="#report-table">{{ rows | length }} rows</span>
+  </div>
+  <div style="overflow-x:auto">
+    <table id="report-table" data-sortable>
+      <thead><tr>{% for c in columns %}<th data-sort>{{ c }}</th>{% endfor %}</tr></thead>
+      <tbody>
+      {% for row in rows %}
+        <tr>{% for cell in row %}<td class="{{ 'mono' if cell is number }}">{{ cell }}</td>{% endfor %}</tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
