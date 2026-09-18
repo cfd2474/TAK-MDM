@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf_field, empty_state, storage_meter %}
+{% set nav = 'content' %}
+{% block title %}Content — ATLAS{% endblock %}
+
+{% block content %}
+{{ page_header('Content', 'Files published for deployment. A file’s destination, persistence and zip-expansion live on the FILES policy that places it — shown here per file, with editable defaults the policy editor pre-fills.') }}
+
+{{ storage_meter(storage_usage) }}
+
+<div class="panel">
+  <h2>Upload a file</h2>
+  <form method="post" action="/content/upload" enctype="multipart/form-data" class="toolbar">
+    {{ csrf_field(csrf_token) }}
+    <input type="file" name="file" required>
+    <div>
+      <input type="text" name="name" aria-label="Name">
+      <p class="field-tip">Defaults to the filename.</p>
+    </div>
+    <div>
+      <input type="text" name="description" aria-label="Description">
+      <p class="field-tip">Optional.</p>
+    </div>
+    <button type="submit">Upload</button>
+  </form>
+  <p class="muted" style="font-size:12px">
+    Any file — a zip, a <code>.pref</code>, a certificate, an ATAK map source. Zips
+    are detected at upload so a policy can mark them for extraction (F5).
+  </p>
+</div>
+
+<div class="panel">
+  <h2>ATAK data packages</h2>
+  <p class="sub" style="margin-bottom:14px">
+    A data package is a zip carrying <code>MANIFEST/manifest.xml</code>. ATAK
+    imports it and files the contents itself, so nothing here needs a destination.
+    ⚠️ Delivered to a device <strong>once</strong> and never re-sent — ATAK
+    consumes the file, and importing the same package repeatedly can take the app
+    down.
+  </p>
+
+  <div class="row">
+    <div>
+      <label data-required>Upload a package you already have</label>
+      <form method="post" action="/content/data-package/upload"
+            enctype="multipart/form-data" class="toolbar">
+        {{ csrf_field(csrf_token) }}
+        <input type="file" name="file" accept=".zip,application/zip" required>
+        <input type="text" name="name" aria-label="Name">
+        <p class="field-tip">Defaults to the name inside the package's manifest.</p>
+        <button type="submit">Upload package</button>
+      </form>
+      <p class="muted" style="font-size:12px">
+        Checked against ATAK's own rules before it is catalogued. A zip without a
+        valid manifest is refused here, where you can see why.
+      </p>
+    </div>
+    <div>
+      <label>Or build one from loose files</label>
+      <div class="toolbar">
+        <button type="button" data-package-create-open>Create Data Package</button>
+      </div>
+      <p class="muted" style="font-size:12px">
+        Name it, add the files, and ATLAS writes the manifest.
+      </p>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="package-create" hidden>
+  <div class="modal">
+    <h3>Create data package</h3>
+    <form method="post" action="/content/data-package/create" enctype="multipart/form-data">
+      {{ csrf_field(csrf_token) }}
+      <label for="pkg-name">Package name</label>
+      <p class="field-tip">Shown in the console and written into the package's manifest, e.g. “Ops overlay — north”.</p>
+      <input id="pkg-name" name="name" class="field-full" required>
+      <label for="pkg-desc">Description (optional)</label>
+      <input id="pkg-desc" name="description" class="field-full">
+
+      {# Names the whole list, whose rows are added on demand — `for` could
+         only ever point at the first one, so the marker is opted into. #}
+      <label data-required>Files</label>
+      <div data-package-files>
+        <div class="rs-row"><input type="file" name="files" required></div>
+      </div>
+      <button type="button" class="ghost" data-package-add-file>Add another file</button>
+      <p class="muted" style="font-size:12px; margin-top:10px">
+        Every file is listed in the manifest ATLAS writes. ⚠️ Names must be
+        unique, and nothing can be placed inside <code>MANIFEST/</code> — the
+        package is rejected rather than silently renamed.
+      </p>
+
+      <div class="toolbar" style="margin-top:16px; justify-content:flex-end">
+        <button type="button" class="ghost" data-modal-close>Cancel</button>
+        <button type="submit">Create package</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if not rows %}
+  <div class="panel">{{ empty_state('No files uploaded yet.') }}</div>
+{% endif %}
+
+{% for row in rows %}
+{% set f = row.file %}
+<div class="panel">
+  <div class="toolbar">
+    <strong>{{ f.name }}</strong>
+    {% if f.is_data_package %}<span class="pill accent">data package</span>{% endif %}
+
+    {% if f.is_archive %}<span class="pill accent">archive</span>{% endif %}
+    <span class="muted">{{ f.original_filename }} · {{ row.size_bytes | filesizeformat }} · {{ f.media_type }}</span>
+    <span class="spacer"></span>
+    {% set mf = manifests.get(f.id | string) if manifests else none %}
+    {% if f.is_data_package and mf %}
+      <span class="muted" style="font-size:12px">
+        · {{ mf.content_count }} file{{ '' if mf.content_count == 1 else 's' }}
+        · manifest name “{{ mf.name }}”
+      </span>
+    {% endif %}
+    <form method="post" action="/content/{{ f.id }}/delete" style="margin:0"
+          data-confirm="Delete {{ f.name }}?">
+      {{ csrf_field(csrf_token) }}
+      <button type="submit" class="danger">Delete</button>
+    </form>
+  </div>
+  {% if f.description %}<p class="sub">{{ f.description }}</p>{% endif %}
+  {% set mf = manifests.get(f.id | string) if manifests else none %}
+  {% if mf and mf.missing %}
+    {#
+      ATAK tolerates this — it imports what is there — so it is a warning, not a
+      refusal. The operator still wants telling: a package that silently carries
+      less than its manifest claims is one nobody notices is short.
+    #}
+    <div class="banner warn" style="margin-top:10px">
+      The manifest names {{ mf.missing | length }} file(s) this zip does not
+      contain: {{ mf.missing | join(', ') }}. ATAK will import what is present.
+    </div>
+  {% endif %}
+
+  <h3>Deployed by</h3>
+  {% if not row.references %}
+    <p class="muted">No policy places this file yet.</p>
+  {% else %}
+  <table>
+    <thead><tr><th>Policy</th><th>Destination</th><th>Tier</th><th>Persist</th><th>Extract</th><th>Overwrite</th></tr></thead>
+    <tbody>
+    {% for r in row.references %}
+      <tr>
+        <td><a href="{{ ('/profiles/' if r.is_profile_section else '/policies/') ~ r.policy_id }}">{{ r.policy_name }}</a></td>
+        <td class="mono">{{ r.dest_path }}</td>
+        <td><span class="pill {{ 'warn' if r.availability == 'optional' }}">{{ r.availability }}</span></td>
+        <td>{{ {none: '—', true: 'yes', false: 'no'}[r.persist] }}</td>
+        <td class="mono">{{ r.extract_to if r.extract else '—' }}</td>
+        <td class="muted">{{ r.overwrite }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <details style="margin-top:10px">
+    <summary class="muted">Metadata &amp; suggested deployment defaults</summary>
+    <form method="post" action="/content/{{ f.id }}/edit" style="margin-top:10px">
+      {{ csrf_field(csrf_token) }}
+      <div class="row">
+        <div>
+          <label>Name</label>
+          <input name="name" value="{{ f.name }}" class="field-full">
+          <label>Description</label>
+          <input name="description" value="{{ f.description or '' }}" class="field-full">
+        </div>
+        <div>
+          <label>Default destination</label>
+          <input name="default_dest_path" value="{{ f.default_dest_path or '' }}" class="field-full">
+          <label>Default persist</label>
+          <select name="default_persist" class="field-full">
+            <option value="inherit" {{ 'selected' if f.default_persist == none }}>inherit from tier</option>
+            <option value="yes" {{ 'selected' if f.default_persist == true }}>yes — keep it present</option>
+            <option value="no" {{ 'selected' if f.default_persist == false }}>no — place once</option>
+          </select>
+        </div>
+        <div>
+          <label>Default extraction</label>
+          <label class="muted" style="display:flex; gap:8px; align-items:center">
+            <input type="checkbox" name="default_extract" value="true" style="width:auto"
+                   {{ 'checked' if f.default_extract }}>
+            expand this archive on the device
+          </label>
+          <label>Default extract-to</label>
+          <input name="default_extract_to" value="{{ f.default_extract_to or '' }}" class="field-full">
+          <label>Default overwrite</label>
+          <select name="default_overwrite" class="field-full">
+            <option value="" {{ 'selected' if not f.default_overwrite }}>—</option>
+            {% for o in ['always', 'if_newer', 'if_absent'] %}
+              <option value="{{ o }}" {{ 'selected' if f.default_overwrite == o }}>{{ o }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <button type="submit" style="margin-top:10px">Save</button>
+    </form>
+  </details>
+</div>
+{% endfor %}
+{% endblock %}
