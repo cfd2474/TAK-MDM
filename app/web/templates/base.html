@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ATLAS{% endblock %}</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png">
+  {#
+    ⚠️ Versioned by the running build (W103). Without this a browser keeps a
+    cached `atlas.js` across deploys, and old script against new markup fails in
+    ways that look like the server hanging rather than like a stale file —
+    which is precisely the shape of the bug this was found alongside.
+  #}
+  <link rel="stylesheet" href="/static/atlas.css?v={{ build.revision }}">
+  {% block page_styles %}{% endblock %}
+</head>
+<body>
+{#
+  ⚠️ Manage is `/fleet`, not `/`. On `mdm.tak-solutions.com` the bare root
+  redirects to the enrolment page, which is what that hostname is for — and with
+  this link pointing at `/` the redirect swallowed it, so Manage went to Enroll
+  (W105). A nav link names the page it opens rather than relying on what the root
+  happens to mean on the host someone is using.
+
+  (A Jinja comment cannot live inside the set expression below — Jinja parses
+  that as a single expression, not as a block of statements.)
+#}
+{% set sections = [
+  ('enroll',   'Enroll',   '/enrollment'),
+  ('manage',   'Manage',   '/fleet'),
+  ('policies', 'Policies', '/policies'),
+  ('apps',     'Apps',     '/apps'),
+  ('content',  'Content',  '/content'),
+  ('reports',  'Reports',  '/reports'),
+  ('admin',    'Admin',    '/admin'),
+  ('guides',   'Guides',   '/guides'),
+] %}
+<header>
+  <a class="brand" href="/fleet">
+    <img class="brand-logo" src="/static/atlas-logo.png"
+         alt="ATLAS MDM — ATAK Tactical Lifecycle &amp; Administration System">
+  </a>
+  {#
+    ⚠️ A checkbox, not a button, and the reason is the first paint.
+
+    A `<button>` toggled by `atlas.js` needs the panel to start open in the
+    markup (so it still works if the script never arrives) — and `defer` runs
+    after the browser has painted, so every page load on a phone flickers a
+    full-screen menu before collapsing it.
+
+    A checkbox is decided by CSS, which means it is right on the very first
+    frame. It is focusable and space-toggleable natively, the label is its
+    accessible name, and none of it needs script — which also keeps it clear of
+    M-6's `script-src 'self'` (no inline handler anywhere).
+
+    `atlas.js` only enhances: Escape, tapping outside, and keeping
+    `aria-expanded` truthful for a screen reader.
+  #}
+  <input class="nav-switch" type="checkbox" id="nav-switch" hidden>
+  <label class="nav-toggle" for="nav-switch"
+         role="button" tabindex="0" aria-expanded="false" aria-controls="nav-grid">
+    <span class="nav-toggle-bars" aria-hidden="true"></span>
+    <span class="nav-toggle-text">Menu</span>
+  </label>
+
+  <nav>
+    {% for key, label, href in sections %}
+      <a href="{{ href }}" class="{{ 'on' if nav == key }}">{{ label }}</a>
+    {% endfor %}
+  </nav>
+
+  {#
+    The same eight sections as tiles. A second list rather than a reflow of the
+    first: at this size the banner's job is to be out of the way, and the grid's
+    is to be a target you can hit with a thumb.
+  #}
+  <nav class="nav-grid" id="nav-grid" aria-label="Sections">
+    {% for key, label, href in sections %}
+      <a href="{{ href }}" class="{{ 'on' if nav == key }}">{{ label }}</a>
+    {% endfor %}
+  </nav>
+  <span class="who">
+    {% if identity and not identity.is_anonymous %}
+      {{ identity.label }}
+      {% if identity.groups %}<span class="pill">{{ identity.groups | join(', ') }}</span>{% endif %}
+    {% else %}
+      <span class="pill warn">not signed in</span>
+    {% endif %}
+  </span>
+</header>
+<main class="{% block main_class %}{% endblock %}">
+  {% if not identity or identity.is_anonymous %}
+  <div class="banner">
+    Admin authentication is disabled. This console is bound to loopback and blocked
+    at the device-facing port, but anyone who reaches it has full control — set
+    <code>TAKMDM_ADMIN_AUTH_MODE=forward_auth</code> behind Authentik before it is
+    reachable by anyone else.
+  </div>
+  {% endif %}
+  {% if request.query_params.get('error') %}
+    <div class="banner bad">{{ request.query_params.get('error') }}</div>
+  {% endif %}
+  {% block content %}{% endblock %}
+</main>
+{#
+  ⚠️ The running release, on every page (W102, W144). A footer answers two
+  questions — "which release is this" and "is this exactly the code I think it
+  is" — and they need different answers, because a tag can move and a commit
+  cannot. The version leads, since that is what an operator compares against a
+  release note and what InfraTAK offers to update to; the revision stays one
+  hover away rather than being dropped.
+
+  The old warning still stands: a hand-maintained version goes stale silently,
+  which `version="0.1.0"` in main.py did for a hundred work items. What makes
+  this one safe is not care, it is `tests/test_version.py` refusing a VERSION
+  that does not match the newest tag.
+
+  It reads "build unknown" when nothing could be established, rather than
+  showing something plausible. A wrong build number is believed; a missing one
+  is not.
+#}
+{#
+  ⚠️ The agency **above** the version, because they answer different questions
+  and the agency is the one an administrator needs first. Two ATLAS consoles on
+  one box are identical once you are signed in; the hostname is not on screen,
+  and pushing a policy to the wrong fleet is not an error anything catches.
+
+  Rendered only when there is one. A single-agency box shows exactly what it
+  showed before — a footer reading "Agency: " would be worse than no line.
+
+  ⚠️ Escaped, not marked safe. This is operator-supplied text on every page.
+#}
+<footer class="site-footer">
+  {% if agency_name %}<div class="site-footer-agency">{{ agency_name }}</div>{% endif %}
+  <span class="mono" title="{{ build.detail }}">{{ build.label }}</span>
+</footer>
+<script src="/static/atlas.js?v={{ build.revision }}" defer></script>
+{#
+  Page-specific assets, opted into rather than loaded everywhere. Leaflet is
+  ~150 KB and only two pages draw a map; putting it in the common bundle would
+  make every other page pay for it (W106).
+
+  ⚠️ Both `defer` scripts, so ordering is preserved and Leaflet is parsed before
+  the page script that uses it. An `async` here would race and fail intermittently
+  — the worst kind of failure to reproduce.
+#}
+{% block page_scripts %}{% endblock %}
+</body>
+</html>
