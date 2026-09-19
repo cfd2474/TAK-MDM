@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% set nav = 'manage' %}
+{% block title %}Location history — {{ device.name or device.serial_number }}{% endblock %}
+
+{% block page_styles %}
+  <link rel="stylesheet" href="/static/vendor/leaflet.css?v={{ build.revision }}">
+{% endblock %}
+
+{% block page_scripts %}
+  <script src="/static/vendor/leaflet.js?v={{ build.revision }}" defer></script>
+  <script src="/static/atlas-map.js?v={{ build.revision }}" defer></script>
+{% endblock %}
+
+{% block content %}
+<p class="crumbs">
+  <a href="/fleet">Manage</a> /
+  <a href="/devices/{{ device.id }}">{{ device.name or device.serial_number }}</a> /
+  Location history
+</p>
+
+<h1>Location history</h1>
+<p class="muted">{{ device.name or device.serial_number }}</p>
+
+<h2>Date range</h2>
+<div class="panel">
+  {#
+    ⚠️ The bounds read backwards, and that is deliberate rather than a slip.
+    "From" is the *recent* end and "To" is further back, because the question an
+    operator actually asks is "where has this been, starting now, going back how
+    far" — you begin at the present and walk backwards. The reference portal
+    settled on the same shape, and the wording below says so plainly, since a
+    range whose ends are the other way round to the reader's expectation is a
+    silent way to look at the wrong window and believe it.
+  #}
+  {# utc-by-design: naming UTC to say what the dates are *not* taken at. #}
+  <p class="field-tip">
+    <strong>From</strong> is the most recent bound; <strong>To</strong> is further
+    back in time. Calendar dates are taken at midnight in the console's timezone,
+    the same one the times below are shown in &mdash; so a date here means that
+    whole day as you would read it, not as UTC would.
+  </p>
+
+  <form method="get" class="location-filters">
+    <label>
+      <span>From (most recent)</span>
+      <select name="from_mode">
+        <option value="now" {{ 'selected' if from_mode == 'now' }}>Now</option>
+        <option value="date" {{ 'selected' if from_mode == 'date' }}>Calendar date</option>
+      </select>
+    </label>
+    <label>
+      <span>From date</span>
+      <input type="date" name="from_date" value="{{ from_date }}">
+    </label>
+    <label>
+      <span>To (older)</span>
+      <input type="date" name="to_date" value="{{ to_date }}">
+    </label>
+    <button type="submit" class="primary">Apply</button>
+  </form>
+
+  {% if range_error %}
+    <p class="banner bad">{{ range_error }}</p>
+  {% endif %}
+</div>
+
+<h2>Map</h2>
+<div class="panel">
+  {% if points %}
+    <div class="location-history-map" data-map-history data-map='{{ map_json }}'></div>
+    {% if thinned %}
+      {#
+        ⚠️ Said out loud. A thinned track looks exactly like a device that was
+        reporting less often, and an operator who mistakes one for the other
+        concludes the agent is failing.
+      #}
+      <p class="field-tip">
+        Showing <strong>{{ points|length }}</strong> of {{ total }} recorded points.
+        Older stretches are thinned for drawing — every point is still stored, and
+        <strong>Export all history</strong> below contains all {{ total }}.
+      </p>
+    {% endif %}
+  {% else %}
+    <p class="muted">No location points in this range.</p>
+  {% endif %}
+</div>
+
+<h2>Records</h2>
+<div class="panel">
+  <p>
+    <a class="button" href="/devices/{{ device.id }}/location-history.csv">
+      Export all history
+    </a>
+    <span class="field-tip">
+      Every stored point, unthinned and ignoring the range above.
+    </span>
+  </p>
+
+  {% if points %}
+    <div class="location-history-table-wrap">
+      <table class="grid">
+        <thead>
+          <tr>
+            <th>#</th>
+            {#
+              ⚠️ The rows below carry no zone of their own, so this header is the
+              only thing that says what `13:23:19` means. It read "(UTC)" while the
+              times beneath it had already moved to the console's zone — a column
+              of correct numbers under a wrong label, which is worse than the
+              all-UTC table it replaced.
+            #}
+            <th>Date / time ({{ zone_label(points | map(attribute='recorded_at') | list) }})</th>
+            <th>Coordinates</th>
+            <th>Accuracy</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for point in points %}
+          <tr class="location-history-row" data-point="{{ point.number }}">
+            <td>{{ point.number }}</td>
+            <td class="mono">{{ point.recorded_at | localtime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td class="mono">
+              {{ '%.5f'|format(point.latitude) }}, {{ '%.5f'|format(point.longitude) }}
+            </td>
+            <td>
+              {% if point.accuracy_m is not none %}
+                &plusmn;{{ point.accuracy_m|round|int }} m
+              {% else %}
+                <span class="muted">&mdash;</span>
+              {% endif %}
+            </td>
+            <td>{{ point.source }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="muted">no records</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,22 @@
+# When to attempt the console certificate renewal (W100).
+#
+# Twice a day is the standard certbot recommendation, and it is what makes the
+# job forgiving: a certificate becomes renewable 30 days before it expires, so by
+# the time expiry could matter this has had roughly sixty chances to succeed.
+#
+# ⚠️ `Persistent=true` matters on a box that is not always up. Without it a run
+# missed while the host was off is simply skipped; with it, the run happens at the
+# next boot. A renewal that silently never ran is exactly how certificates expire.
+
+[Unit]
+Description=Renew the ATLAS console TLS certificate twice daily
+
+[Timer]
+OnCalendar=*-*-* 03,15:00:00
+# Spread the load away from the top of the hour, which is when everyone else's
+# renewal cron fires at Let's Encrypt.
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
