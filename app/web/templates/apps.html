@@ -1,0 +1,639 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf_field, tabs, empty_state, storage_meter %}
+{% set nav = 'apps' %}
+{% block title %}Apps — ATLAS{% endblock %}
+
+{% block content %}
+{{ page_header('Apps', 'Application packages on the server: what has been uploaded, what the ATLAS store offers, and app groups for assigning several at once.') }}
+
+{{ storage_meter(storage_usage) }}
+
+{{ tabs([
+  ('local', 'Local apps'),
+  ('store', 'ATLAS store'),
+  ('tpc', 'TPC Plugins'),
+  ('play', 'Google Play'),
+  ('repo', '3rd Party Repos'),
+  ('groups', 'App groups'),
+], active=(request.query_params.get('tab') if request.query_params.get('tab') in ['local','store','tpc','play','repo','groups'] else 'local'), scope='apps-tabs') }}
+
+<div id="apps-tabs">
+  <div class="tab-panel" data-tab-panel="local">
+    <div class="panel">
+      <h2>Upload a package</h2>
+      {# data-upload-form: atlas.js takes this over so a 130 MB package reports
+         progress instead of looking like nothing happened (W51). #}
+      <form method="post" action="/apps/upload" enctype="multipart/form-data" class="toolbar"
+            data-upload-form>
+        {{ csrf_field(csrf_token) }}
+        <input type="file" name="file" accept=".apk,.xapk,.apks,.apkm" required>
+        <div>
+          <input type="text" name="label" aria-label="Label">
+          <p class="field-tip">Optional. Overrides the label read from the APK.</p>
+        </div>
+        <button type="submit">Upload</button>
+      </form>
+
+      {# Blocking on purpose: navigating away mid-upload abandons a transfer with
+         no sign it was ever running. #}
+      <div class="modal-backdrop" id="upload-modal" hidden>
+        <div class="modal">
+          <h3 data-upload-title>Uploading</h3>
+          <p class="muted" data-upload-detail>Starting…</p>
+          {# The stylesheet's .progress expects a <span> child; reusing it rather than
+             adding a second bar style. #}
+          <div class="progress"><span data-upload-bar></span></div>
+          <p class="muted" style="font-size:12px" data-upload-bytes></p>
+          <div class="toolbar" style="margin-top:16px; justify-content:flex-end">
+            <button type="button" class="danger" data-upload-cancel>Cancel upload</button>
+            <button type="button" data-upload-close hidden>Close</button>
+          </div>
+        </div>
+      </div>
+      <p class="muted" style="font-size:12px">
+        The server reads the package name, version, and signing certificate from the
+        file. An XAPK is unpacked into base + splits + OBB server-side (D13).
+        A package that carries an <span class="pill">OBB</span> expansion file is
+        flagged below: a Device Owner cannot place OBB files on the device
+        (Android scoped storage), so the APK installs <strong>without</strong> it
+        and the app will be missing the assets it expects.
+      </p>
+    </div>
+
+    <div class="panel">
+      {% if request.query_params.get('uploaded') %}
+        <div class="banner good">{{ request.query_params.get('uploaded') }}</div>
+      {% endif %}
+      {% if not packages %}
+        {{ empty_state('No packages uploaded yet.') }}
+      {% else %}
+      <table data-sortable>
+        <thead><tr>
+          {# Icon column: no header text, and not sortable — there is nothing to
+             order by, and a sort control over pictures would be noise. #}
+          <th class="app-icon-col"></th>
+          <th data-sort>App name</th><th data-sort>Latest version</th>
+          <th data-sort>Parts</th><th>Store</th><th></th>
+        </tr></thead>
+        <tbody>
+        {% for p in packages %}
+          <tr>
+            <td class="app-icon-col">
+              {# The real launcher icon when it could be pulled out of the APK
+                 (W53). An adaptive icon's foreground is drawn on a 108dp canvas
+                 of which only the centre 72dp is meant to be seen, so it is
+                 scaled up inside a clipping box; a legacy icon is already the
+                 finished artwork and is shown whole.
+
+                 Apps whose icon is a vector drawable get a monogram instead —
+                 rasterising one needs Android's drawable pipeline. #}
+              {# Presence is asked of `icon_media_type`, not `icon_data`: the bytes
+                 are a deferred column, and touching them here would load one blob
+                 per row on every render of this page. #}
+              {% if p.icon_media_type %}
+                <span class="app-icon">
+                  <img src="/api/v1/packages/{{ p.id }}/icon" alt=""
+                       loading="lazy"
+                       class="{{ 'adaptive' if p.icon_adaptive else '' }}">
+                </span>
+              {% else %}
+                <span class="app-icon app-icon-blank" aria-hidden="true">
+                  {{ (p.label or p.package_name)[0] | upper }}
+                </span>
+              {% endif %}
+            </td>
+            <td>
+              {# The package name is the identity that has to match the device, so
+                 it keeps its place under the name even without its own column. An
+                 unlabelled upload falls back to it rather than showing a bare
+                 dash — and then does not repeat it underneath. #}
+              {% if p.label %}
+                {{ p.label }}
+                <div class="mono muted" style="font-size:11px">{{ p.package_name }}</div>
+              {% else %}
+                <span class="mono">{{ p.package_name }}</span>
+              {% endif %}
+            </td>
+            <td class="mono">
+              {#
+                ⚠️ The newest build in the library, which is **not** a claim
+                about what any device is running (W139). There is no "deployed"
+                build any more — each policy names the one it installs, and two
+                policies can name different ones. The column says what is here,
+                and the earlier attempts to make it say what the fleet gets
+                (W124/W125/W127's "held" wording) went with the flag.
+              #}
+              {% set latest = p.versions | sort(attribute='version_code') | last %}
+              {% if latest %}
+                {{ latest.version_code }}{% if latest.version_name %} ({{ latest.version_name }}){% endif %}
+              {% else %}
+                <span class="pill warn">nothing uploaded</span>
+              {% endif %}
+              {% if p.versions %}
+                <div class="muted" style="font-size:11px">
+                  {% set n = p.versions | length %}
+                  <a href="?versions={{ p.id }}#tab-local">{{ n }} version{{ '' if n == 1 else 's' }} in the library</a>
+                </div>
+              {% endif %}
+            </td>
+            <td class="muted">
+              {{ (p.latest_version.files | length) if p.latest_version else 0 }}
+              {% if p.latest_version and p.latest_version.has_obb %}
+                <span class="pill" title="This package ships an OBB expansion file. A Device Owner cannot place OBB files on the device, so the APK installs WITHOUT it and the app will be missing the assets it expects. Assigning this package will mark a device degraded.">OBB</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if p.latest_version %}
+                <a class="btn ghost" href="/apps/versions/{{ p.latest_version.id }}/download"
+                   title="Download this build — several parts arrive as one .xapk">Download</a>
+              {% endif %}
+            </td>
+            <td>
+              <form method="post" action="/apps/{{ p.id }}/delete" style="margin:0"
+                    data-confirm="Delete {{ p.package_name }} and all its versions?">
+                {{ csrf_field(csrf_token) }}
+                <button type="submit" class="danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% if request.query_params.get('versions') == (p.id | string) %}
+          <tr>
+            {# Six columns since the icon column was added (W53). A short colspan
+               leaves the expansion panel narrower than the row above it. #}
+            <td colspan="6" style="background:var(--panel-2)">
+              <strong>Versions of {{ p.label or p.package_name }}</strong>
+              <p class="muted" style="font-size:12px; margin:4px 0 8px">
+                Every build here is installable. A policy names the one it
+                deploys, so uploading another changes nothing until someone
+                picks it — and two policies can deploy two different builds of
+                the same app to different devices.
+              </p>
+              <table>
+                <thead><tr><th>versionCode</th><th>Version</th><th>Architecture</th><th>Uploaded</th><th></th></tr></thead>
+                <tbody>
+                {% for v in p.versions | sort(attribute='version_code', reverse=true) %}
+                  <tr>
+                    <td class="mono">{{ v.version_code }}</td>
+                    <td>{{ v.version_name or '—' }}</td>
+                    {#
+                      ⚠️ Three states, not two (W96). NULL is "uploaded before
+                      anything looked"; empty is "looked, carries no native code",
+                      which is the build that installs on anything. Showing both
+                      as "any" would be the claim that left an SM-X520 degraded.
+                    #}
+                    <td>
+                      {% if v.abis is none %}
+                        <span class="muted" title="Uploaded before builds were scanned for native code.">not scanned</span>
+                      {% elif v.abis == '' %}
+                        <span class="pill good" title="No native code, so it installs on any architecture.">any</span>
+                      {% else %}
+                        <span class="mono" title="Installs only on these architectures.">{{ v.abis.replace(',', ', ') }}</span>
+                      {% endif %}
+                    </td>
+                    <td class="muted">{{ v.uploaded_at | localtime or '—' }}</td>
+                    <td>
+                      {# The Publish / Hold buttons stood here. They set a flag
+                         meaning "may be chosen automatically", and nothing is
+                         chosen automatically any more (W139) — a button that
+                         reported success and moved no device would be worse
+                         than no button.
+
+                         A split app comes back as .xapk, which is the shape
+                         this console reads on the way back in (W128). #}
+                      <a class="btn ghost"
+                         href="/apps/versions/{{ v.id }}/download">Download</a>
+                    </td>
+                  </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+              <p style="margin-top:8px"><a href="?#tab-local" class="muted">Close</a></p>
+            </td>
+          </tr>
+          {% endif %}
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="store" hidden>
+    <div class="panel">
+      <p class="sub">
+        A <strong>storefront</strong> is a version of the ATLAS store: a shelf of
+        apps a user may install for themselves. It reaches a device only when an
+        App&nbsp;Management policy assigns it, so different devices can be
+        offered different shelves. An offer is not a policy &mdash; nothing here
+        installs automatically. To install an app whether the user wants it or
+        not, make it a required app instead.
+      </p>
+      {#
+        ⚠️ Each entry names a build, the same way a required app does (W139). A
+        shelf that offered whichever build was newest would put automatic
+        selection back on the one surface nobody would think to check.
+      #}
+      <form method="post" action="/storefronts" class="stack" style="margin-bottom:18px">
+        {{ csrf_field(csrf_token) }}
+        <div class="row stacked">
+          <div>
+            <label for="sf-new-name">Name</label>
+            <input type="text" id="sf-new-name" name="name" maxlength="128" required
+                   autocomplete="off" class="field-full">
+          </div>
+          <div>
+            <label for="sf-new-desc">Description</label>
+            <input type="text" id="sf-new-desc" name="description" maxlength="500"
+                   autocomplete="off" class="field-full">
+          </div>
+          <div style="margin-top:12px">
+            <button type="submit">Create storefront</button>
+          </div>
+        </div>
+        <p class="field-tip">
+          You will land on its page, where its apps and their builds are chosen.
+        </p>
+      </form>
+
+      {% if not storefronts %}
+        {{ empty_state('No storefronts yet.') }}
+      {% else %}
+      <table data-sortable>
+        <thead><tr>
+          <th data-sort>Storefront</th><th data-sort>Apps</th><th>Description</th>
+        </tr></thead>
+        <tbody>
+        {% for sf in storefronts %}
+          <tr>
+            <td><a href="/storefronts/{{ sf.id }}"><strong>{{ sf.name }}</strong></a></td>
+            <td class="mono">{{ sf.items | length }}</td>
+            <td class="muted">{{ sf.description or '—' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="play" hidden>
+    {#
+      Google Play, as the account linked under Admin → Google Play (W101).
+
+      ⚠️ Its own tab rather than a row in the repository search: a result here
+      costs a Google credential and carries terms the others do not, and mixing
+      it in would hide that behind a shared search bar.
+    #}
+    <div class="card">
+      <h3 style="margin-top:0">Google Play</h3>
+      {#
+        ⚠️ One branch, not three (W149). The panel used to open with a paragraph
+        describing how fetches work and *then*, when nothing was linked, explain
+        the same account and the same device profile again — two versions of one
+        fact, the first of which described a capability the page did not have.
+
+        ⚠️ No search box without a linked account (W145). Play is the one source
+        that cannot be searched anonymously — every request is made *as* the
+        linked account — so offering the box first meant a search that failed at
+        the credential and surfaced as an error about Google, which reads like
+        Play being down rather than like a step not yet taken.
+      #}
+      {% if googleplay.link.status.value == 'linked' %}
+      <p class="muted" style="font-size:13px">
+        Fetches as the account linked under
+        <a href="/admin#tab-googleplay">Admin → Google Play</a>, using that link's
+        device profile — which decides the CPU architecture Play serves. Imports
+        arrive <strong>held</strong>, like every other source.
+      </p>
+      <p class="field-tip">
+        ⚠️ Play publishes no checksum here, so a download is checked by reading
+        the file after it arrives rather than against anything Google stated.
+        Using this path also carries the Terms of Service caveat shown on the
+        admin tab.
+      </p>
+
+      <div class="prefs-toolbar" style="margin-top:12px">
+        <input type="search" id="play-q" class="field-grow"
+               aria-label="Search Google Play" data-repo-query>
+        <button type="button" class="ghost" data-repo-search>Search</button>
+      </div>
+      <p class="field-tip">
+        Search by app name — <span class="mono">outlook</span> — or paste an exact
+        package id such as <span class="mono">com.oi.handtevy</span>. An exact id
+        is the way to reach something that does not surface in search.
+      </p>
+
+      <p class="muted" data-repo-status style="font-size:12px"></p>
+      <div data-repo-results></div>
+      {% else %}
+      <p class="sub">
+        <strong>No Google account is linked</strong>, so there is nothing to
+        search as.
+      </p>
+      <p>
+        Link one under <a href="/admin#tab-googleplay">Admin → Google Play</a>.
+        Play serves downloads to an account, not to a server, and the account's
+        device profile decides which CPU architecture you get back. Imports
+        arrive <strong>held</strong>, like every other source.
+      </p>
+      {% if googleplay.link.last_error %}
+        <div class="banner bad">{{ googleplay.link.last_error }}</div>
+      {% endif %}
+      {% endif %}
+    </div>
+
+    <div class="modal-backdrop" data-repo-modal hidden>
+      <div class="modal modal-wide">
+        <h2 data-repo-modal-title>Versions</h2>
+        <div data-repo-modal-body></div>
+        <div style="margin-top:12px; text-align:right">
+          <button type="button" class="ghost" data-repo-close>Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="repo" hidden>
+    {#
+      Look an app up in a third-party repository and pull a build into the
+      library (W97).
+
+      ⚠️ Everything shown here is the *catalogue's* claim. What gets recorded is
+      read from the downloaded file, the same rule the TPC import follows — so a
+      listing naming the wrong package cannot smuggle one in under it.
+    #}
+    <div class="card">
+      <h3 style="margin-top:0">Search every source</h3>
+      <p class="muted" style="font-size:13px">
+        One search across every repository below. Each result says where it came
+        from, because they are not equally trustworthy — and importing reaches no
+        device: the build joins the library, and a policy has to name it before
+        anything installs it.
+      </p>
+
+      <div class="prefs-toolbar" style="margin-top:12px">
+        <input type="search" id="repo-q" class="field-grow"
+               aria-label="Search all app sources" data-repo-query>
+        <button type="button" class="ghost" data-repo-search>Search</button>
+      </div>
+      <p class="field-tip">
+        Search by app name, or paste an exact package id such as
+        <code>net.osmand</code>.
+        {#
+          ⚠️ Stated here rather than discovered. apkeep answers for an exact id
+          and nothing else, so a name search will never return an APKPure row —
+          an operator who does not know that reads it as an outage (W98).
+        #}
+        <strong>APKPure only answers to an exact package id</strong>, never a name.
+      </p>
+
+      <details style="margin-top:10px">
+        <summary class="muted" style="font-size:12px; cursor:pointer">
+          What each source is
+        </summary>
+        <table style="margin-top:8px">
+          <thead><tr><th>Source</th><th>Verified</th><th></th></tr></thead>
+          <tbody>
+          {% for r in repo_sources %}
+            <tr>
+              <td><strong>{{ r.label }}</strong></td>
+              <td>
+                {% if r.kind != 'apkpure' %}
+                  <span class="pill good" title="Publishes a digest each download is checked against.">digest</span>
+                {% else %}
+                  <span class="pill" title="Publishes no checksum; the file is checked after it arrives.">none</span>
+                {% endif %}
+              </td>
+              <td class="muted" style="font-size:12px">{{ r.note }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </details>
+
+      <p class="muted" data-repo-status style="font-size:12px"></p>
+      <div data-repo-results></div>
+    </div>
+
+    {#
+      One modal for the whole flow: versions, what is known about each, and the
+      download once it starts. A large APK takes minutes, so the request that
+      begins it returns a job and this polls it.
+    #}
+    <div class="modal-backdrop" data-repo-modal hidden>
+      <div class="modal modal-wide">
+        <h2 data-repo-modal-title>Versions</h2>
+        <div data-repo-modal-body></div>
+        <div style="margin-top:12px; text-align:right">
+          <button type="button" class="ghost" data-repo-close>Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="tpc" hidden>
+    <div class="panel">
+      <h2>TAK.gov plugin catalog</h2>
+
+      {% if not tpc.linked %}
+        <p class="sub">
+          This server is <strong>not linked to a TAK.gov account</strong>, so
+          there is no catalog to show.
+        </p>
+        <p>
+          Link one under <a href="/admin#tab-takgov">Admin → TAK.gov</a>. It takes
+          entering a short code at tak.gov while signed in; the catalog then
+          reflects whatever that account is entitled to see.
+        </p>
+        {% if tpc.status == 'broken' %}
+          <div class="banner bad">
+            A link existed and stopped working. Re-link under Admin → TAK.gov.
+          </div>
+        {% endif %}
+
+      {% else %}
+        <p class="sub">
+          Plugins <span class="mono">{{ tpc.account_label or 'the linked account' }}</span>
+          is entitled to, for {{ tpc.product }} {{ tpc.product_version }}.
+          Listing only — nothing here is on a device until you assign it.
+        </p>
+        <form method="get" action="/apps" class="toolbar">
+          <input type="hidden" name="tab" value="tpc">
+          <label for="tpc-product" class="muted">Product</label>
+          <select id="tpc-product" name="product">
+            {% for p in tpc.products %}
+              <option value="{{ p }}" {{ 'selected' if p == tpc.product }}>{{ p }}</option>
+            {% endfor %}
+          </select>
+          <label for="tpc-version" class="muted">ATAK version</label>
+          <select id="tpc-version" name="product_version">
+            {% for v in tpc.product_versions %}
+              <option value="{{ v }}" {{ 'selected' if v == tpc.product_version }}>{{ v }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit">Show</button>
+        </form>
+        {% if tpc.product != 'ATAK-CIV' %}
+          {#
+            ⚠️ Two separate things, kept in one banner rather than stacked as
+            two. An operator who meets a wall of warnings reads none of them.
+          #}
+          <div class="banner warn">
+            <strong>{{ tpc.product }} plugins need the ATAK Flavor plugin.</strong>
+            A device does not run a {{ tpc.product }} build — it runs ATAK-CIV,
+            and the Flavor plugin unlocks {{ tpc.product }}. Without it installed,
+            the plugins below will install and ATAK will refuse to load them.
+          </div>
+          <div class="banner">
+            <strong>Licensing.</strong> ATAK-CIV object code carries a
+            distribution grant; GOV and MIL do not, and their plugins carry access
+            and export controls. Mirroring these into a fleet is the kind of thing
+            worth clearing in writing before you rely on it.
+          </div>
+        {% endif %}
+
+        {% if tpc.error %}
+          <div class="banner bad">{{ tpc.error }}</div>
+        {% endif %}
+        {% if request.query_params.get('imported') %}
+          <div class="banner good">
+            Imported <span class="mono">{{ request.query_params.get('imported') }}</span>
+            into the local library. It is on the <a href="/apps">Local apps</a> tab;
+            nothing is on a device until you assign it.
+          </div>
+        {% endif %}
+
+        {% if not tpc.loaded %}
+          <p class="muted">
+            Press <strong>Show</strong> to fetch the catalog. It is not loaded
+            automatically — that would put a call to tak.gov, and a token refresh,
+            in front of every visit to this page.
+          </p>
+        {% elif tpc.plugins %}
+        <div class="toolbar" style="margin-bottom:10px">
+          <p class="field-tip">Filter by name, package or description.</p>
+          <input type="search" id="tpc-filter" data-plugin-filter
+                
+                 style="min-width:340px" autocomplete="off">
+          {# Filters what is already on the page. The catalog is fetched once and
+             every row is present, so there is nothing to ask the server for and
+             no reason to make the operator wait between keystrokes. #}
+          <span class="muted" id="tpc-filter-count" data-plugin-filter-count></span>
+        </div>
+        <p data-plugin-total>
+          <strong>{{ tpc.plugins | length }}</strong>
+          plugin{{ '' if tpc.plugins | length == 1 else 's' }}
+          for {{ tpc.product }} {{ tpc.product_version }}.
+        </p>
+        <table data-sortable class="tpc-table">
+          <thead><tr>
+            <th data-sort>Plugin</th>
+            <th data-sort>Version</th>
+            <th data-sort>Size</th>
+            <th>Import</th>
+          </tr></thead>
+          <tbody>
+          {% for p in tpc.plugins %}
+            <tr>
+              <td>
+                {{ p.display_name or p.package_name }}
+                <div class="mono muted" style="font-size:11px">{{ p.package_name }}</div>
+                {% if p.description %}<div class="muted" style="font-size:12px">{{ p.description[:200] }}</div>{% endif %}
+              </td>
+              <td class="mono">{{ p.version or '—' }}</td>
+              <td class="muted mono">{{ p.apk_size_bytes | filesizeformat if p.apk_size_bytes else '—' }}</td>
+              <td>
+                {% if (p.package_name, p.revision_code) in tpc.imported %}
+                  <span class="pill good">imported</span>
+                {% elif not p.apk_url %}
+                  <span class="muted">no download</span>
+                {% else %}
+                  <button type="button" class="ghost" data-tpc-import
+                          data-identifier="{{ p.identifier }}"
+                          data-product="{{ tpc.product }}"
+                          data-product-version="{{ tpc.product_version }}"
+                          data-label="{{ p.display_name or p.package_name }}">Import</button>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% elif not tpc.error %}
+          {{ empty_state('The catalog returned no plugins for this product and version.') }}
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+
+  <div id="tpc-import-modal" class="modal-backdrop" hidden>
+    <div class="modal">
+      <h2 id="tpc-import-title">Importing</h2>
+      <p class="muted" id="tpc-import-detail">Contacting tak.gov…</p>
+      <div class="progress"><span id="tpc-import-bar"></span></div>
+      <p class="mono muted" id="tpc-import-bytes" style="font-size:12px; margin-top:8px"></p>
+      <div class="toolbar" style="margin-top:12px">
+        <button type="button" class="ghost" id="tpc-import-close" hidden>Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="groups" hidden>
+    <div class="panel">
+      <h2>New app group</h2>
+      <form method="post" action="/app-groups">
+        {{ csrf_field(csrf_token) }}
+        <div class="row">
+          <div>
+            <label for="group_name">Name</label>
+            <input id="group_name" name="name" required class="field-full">
+            <p class="field-tip">What this set of apps is called, e.g. “ATAK bundle”.</p>
+            <label for="group_desc">Description</label>
+            <input id="group_desc" name="description" class="field-full">
+          </div>
+          <div>
+            <label>Packages</label>
+            <div class="checks">
+              {% for p in packages %}
+                <label><input type="checkbox" name="package_ids" value="{{ p.id }}"> <span class="mono">{{ p.package_name }}</span></label>
+              {% else %}<p class="muted">Upload a package first.</p>{% endfor %}
+            </div>
+          </div>
+        </div>
+        <button type="submit" style="margin-top:12px">Create group</button>
+      </form>
+    </div>
+
+    {% for g in groups %}
+    <div class="panel">
+      <div class="toolbar">
+        <strong>{{ g.name }}</strong>
+        <span class="muted">{{ g.description or '' }}</span>
+        <span class="spacer"></span>
+        <form method="post" action="/app-groups/{{ g.id }}/delete" style="margin:0"
+              data-confirm="Delete the app group {{ g.name }}?">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit" class="danger">Delete</button>
+        </form>
+      </div>
+      <form method="post" action="/app-groups/{{ g.id }}/members">
+        {{ csrf_field(csrf_token) }}
+        {% set member_ids = g.packages | map(attribute='id') | list %}
+        <div class="checks">
+          {% for p in packages %}
+            <label>
+              <input type="checkbox" name="package_ids" value="{{ p.id }}"
+                     {% if p.id in member_ids %}checked{% endif %}>
+              <span class="mono">{{ p.package_name }}</span>
+            </label>
+          {% else %}<p class="muted">No packages to add.</p>{% endfor %}
+        </div>
+        <button type="submit" class="ghost" style="margin-top:8px">Save members</button>
+      </form>
+    </div>
+    {% else %}
+    <div class="panel">{{ empty_state('No app groups yet.') }}</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

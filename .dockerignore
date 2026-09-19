@@ -1,0 +1,54 @@
+# What goes into the api image, as an allowlist.
+#
+# ⚠️ **Everything is excluded and then re-included by name, on purpose.** This
+# was a denylist, and a denylist means every file added later is baked into the
+# image by default — so `SEC_AUDIT.md`, `PROJECT_STATE.md`, `CLAUDE.md` and
+# `docs/REMOTE_SERVER.md` all shipped inside the container on every box. Repo
+# visibility does nothing about that: the image is built on the box from the
+# clone. An allowlist inverts the default, so a new document stays out until
+# someone decides otherwise.
+#
+# ⚠️ Derived from the Dockerfile and the entrypoint, not guessed:
+#
+#   * `ENTRYPOINT ["/app/docker/entrypoint.sh"]`, and the build does
+#     `chmod +x` on it — excluding `docker/` fails the build outright.
+#   * the entrypoint runs `alembic upgrade head`, so `alembic/` and
+#     `alembic.ini` have to be here.
+#   * `app/version.py` reads `VERSION` at run time.
+#   * `dist/` is **not** needed: the seeder reads `${TAKMDM_SEED_DIR:-/seed}`,
+#     which compose bind-mounts from `./dist`. Keeping it out of the image saves
+#     28 MB of the 38 MB context and changes nothing, because nothing ever read
+#     `/app/dist`.
+#   * `pki/` is a bind mount and must never be baked in.
+#
+# `tests/`, `agent/`, `scripts/`, `docs/`, `.github/` and the working documents
+# are all absent from the image now. None of them is read at run time — every
+# reference to `tests/` in `app/` is prose in a comment.
+
+*
+
+# The application itself.
+!app
+!alembic
+!alembic.ini
+!VERSION
+
+# The entrypoint, which is also the image's ENTRYPOINT. The nginx and systemd
+# files beside it are host-side, and cost 36 KB to carry rather than split.
+!docker
+
+# Installed in an earlier layer, and kept so a rebuild inside the image is
+# possible without the repository.
+!requirements.txt
+
+# Apache 2.0 §4: a distribution that carries the work carries these. A container
+# image is a distribution, and 13 KB is not worth the argument.
+!LICENSE
+!NOTICE
+
+# ⚠️ Re-excluded *after* the re-includes above, because `!app` pulls in
+# everything beneath it. Caches and virtualenvs inside the tree would otherwise
+# ride along.
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
