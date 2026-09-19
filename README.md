@@ -141,6 +141,16 @@ ATLAS needs one DNS name and one extra open port beyond what InfraTAK already us
 - **Devices in the field** need to reach 80 during enrollment and 8449 afterwards. Both must be reachable from wherever the tablets are, whether that is the public internet, a VPN or a private LTE APN.
 - **Multi-agency deployments** get one hostname each, in the form `atlas.<agency>.<your-domain>`, and each needs its own DNS record. They share port 8449, because Caddy selects the right agency by hostname during the TLS handshake.
 
+### Who can sign in
+
+The console is protected by InfraTAK's Authentik, and signing in is not enough on its own. Authentik checks group membership before it lets anyone through to ATLAS, and ATLAS checks the same groups again on every admin request, so a missing or wrong group is a refusal rather than anonymous access.
+
+- **Global administrators** are members of Authentik's superuser group, named `authentik Admins` by default. They can open every ATLAS console on the box, and they are the only people who can open the plain, single-agency deployment.
+- **Each agency deployment gets its own Authentik group** when it is installed, named `atlas-<agency>-admins`. The installer creates the group, binds it to that agency's console only, and leaves it empty on purpose. Members of that group administer that one ATLAS and nothing else, and the group is not a superuser group, so it grants nothing in Authentik itself.
+- **Anyone who is not a global administrator must be added to the agency's group** before they can open its console. Do that in Authentik under Directory, Groups: open `atlas-<agency>-admins` and add the user. A user who is signed in to Authentik but in neither group is turned away with an access denied page.
+- **One person can be in several agency groups** and will see each of those consoles. Global administrators do not need to be added to any agency group.
+- **Uninstalling an agency removes its group.** The installer reports how many members it had rather than keeping it, so check the log if you expect to reuse the accounts.
+
 The repository is a release mirror: each tag is one commit with the exact tree an InfraTAK deployment installs, and no development history. The Android agent and launcher ship as signed APKs inside it.
 
 Bug reports, feature requests and field experience are welcome as GitHub issues on that repository. The most useful report names the device model, the One UI or Android version, and what the device page showed.
