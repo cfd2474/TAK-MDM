@@ -1,6 +1,6 @@
 # Introducing ATLAS
 
-2026-09-19
+2026-09-19 · @Someone
 
 ## What ATLAS is
 
@@ -102,9 +102,14 @@ The licensing is better than most people expect. Samsung's Knox Platform for Ent
 
 What Knox will add, chosen from the parts of Knox that standard Android has no answer for:
 
+- **Per-app firewall.** Allow, deny or redirect traffic by app, block domains, and report what was blocked. The single biggest gain for a device that must only ever talk to your TAK Server.
+- **Per-app VPN routing.** Send ATAK through the tunnel and leave everything else off it.
 - **Finer restrictions.** USB exceptions by device class, Settings lockdown, and control of the microphone, camera, headphone jack and home key beyond what Android's user restrictions allow.
+- **Enterprise Wi-Fi done properly.** EAP networks with certificates, replacing the limited Wi-Fi configuration API the plain build is confined to.
 - **Remote certificate enrollment.** SCEP-style issuance on the device, which maps directly onto TAK client certificates.
+- **Hardware-rooted attestation.** Proof that a device is genuine and unmodified before it is issued an identity.
 - **Forensic event logs** pulled off the device, and a battery-optimisation allow-list so the agent and ATAK are never put to sleep.
+- **Knox Mobile Enrollment.** Enrollment that survives a factory reset, for fleets that already use it.
 
 The roadmap deliberately skips Knox features that duplicate something Android Enterprise already does, because Samsung is retiring those and building on them would break under us.
 
@@ -118,6 +123,23 @@ ATLAS installs from the InfraTAK console. Open InfraTAK on your server, pick the
 | Source | [github.com/cfd2474/TAK-MDM](https://github.com/cfd2474/TAK-MDM) |
 | Installs through | [InfraTAK](https://github.com/takwerx/infra-TAK) |
 | Licence | Apache 2.0, by TAK-Solutions LLC |
+| Security reports | takwerx@gmail.com, not a public issue |
+
+### Ports and DNS
+
+ATLAS needs one DNS name and one extra open port beyond what InfraTAK already uses. The installer opens the port in the firewall for you and Caddy, InfraTAK's reverse proxy, obtains the Let's Encrypt certificate. You provide the DNS record.
+
+| What | Port | Who connects | Notes |
+| --- | --- | --- | --- |
+| Admin console | 443 | You, in a browser | `https://atlas.<your-domain>` behind InfraTAK's Authentik login, on the same 443 every InfraTAK service shares |
+| Device channel | 8449 | Enrolled devices | Mutual TLS. A connection without a device certificate issued by your ATLAS is refused before it reaches the application |
+| Agent download | 80 | A factory-reset device during setup | Plain HTTP on purpose: the setup wizard has no ATLAS trust yet and verifies the download against the signature checksum carried in the QR |
+
+- **DNS.** Create an A record for `atlas.<your-domain>` pointing at the server's public IP, alongside the records you already have for the TAK Server. Caddy requests a certificate for that name as soon as it resolves. Without a resolvable name ATLAS cannot generate an enrollment QR, because the QR has nowhere to point a device.
+- **Firewall.** Ports 80 and 443 are already open on an InfraTAK box. The ATLAS installer adds an allow rule for 8449 on both ufw and firewalld and reports if it could not.
+- **Nothing else is reachable.** The ATLAS application listens on loopback only and Caddy is the only thing that talks to it. The database never leaves the box.
+- **Devices in the field** need to reach 80 during enrollment and 8449 afterwards. Both must be reachable from wherever the tablets are, whether that is the public internet, a VPN or a private LTE APN.
+- **Multi-agency deployments** get one hostname each, in the form `atlas.<agency>.<your-domain>`, and each needs its own DNS record. They share port 8449, because Caddy selects the right agency by hostname during the TLS handshake.
 
 The repository is a release mirror: each tag is one commit with the exact tree an InfraTAK deployment installs, and no development history. The Android agent and launcher ship as signed APKs inside it.
 
