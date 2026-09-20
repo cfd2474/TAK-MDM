@@ -1,0 +1,7 @@
+# Files consumed inside Linux containers must keep LF endings. With CRLF, the
+# kernel reads the shebang as "/bin/sh\r" and the container dies with a confusing
+# "no such file or directory".
+*.sh text eol=lf
+docker/entrypoint.sh text eol=lf
+Dockerfile text eol=lf
+docker/nginx/*.conf text eol=lf
