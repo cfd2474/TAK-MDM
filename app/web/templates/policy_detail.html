@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf_field, device_label, deploy_pill, deployment_card with context %}
+{% from "_policy_form.html" import policy_subform, policy_search %}
+{% set nav = 'policies' %}
+{% block main_class %}wide{% endblock %}
+{% block title %}{{ policy.name }} — ATLAS{% endblock %}
+
+{% block content %}
+<h1>{{ policy.name }}</h1>
+<p class="sub">
+  <span class="pill">{{ policy.policy_type }}</span>
+  {% if policy.is_template %}<span class="pill accent">template</span>{% endif %}
+  {% if policy.archived_at %}<span class="pill bad">archived</span>{% endif %}
+  {{ deploy_pill(policy) }}
+  {{ policy.description or '' }}
+</p>
+
+{{ policy_search() }}
+
+{% if request.query_params.get('published') %}
+  <div class="banner">
+    New version published. Devices assigned to this policy were woken immediately.
+  </div>
+{% endif %}
+{% if request.query_params.get('assigned') %}
+  <div class="banner">Targets updated: {{ request.query_params.get('assigned') }} assignment(s).</div>
+{% endif %}
+{#
+  ⚠️ A refused assignment has to say so. The targets form posts and redirects
+  back, so without this the operator clicks Assign, the page returns looking
+  untouched, and nothing was saved — which reads as the button not working.
+#}
+{% if request.query_params.get('error') %}
+  <div class="banner bad">{{ request.query_params.get('error') }}</div>
+{% endif %}
+{#
+  ⚠️ The deployment confirmation is echoed, not assumed. The operator typed a
+  local wall-clock time and the system stored an instant; if the console
+  timezone is wrong the deployment lands in the middle of the night and nothing
+  else here would ever say so.
+#}
+{% if request.query_params.get('deployment') %}
+  <div class="banner">{{ request.query_params.get('deployment') }}</div>
+{% endif %}
+
+{% if policy.is_template %}
+<h2>Create a policy from this template</h2>
+<div class="panel">
+  <p class="sub">
+    A template is a blueprint — it is never assigned. Clone it into a policy, then
+    edit and assign that.
+  </p>
+  <form method="post" action="/policies/clone" class="toolbar">
+    {{ csrf_field(csrf_token) }}
+    <input type="hidden" name="source_id" value="{{ policy.id }}">
+    <input type="text" name="name" required style="min-width:280px" aria-label="New policy name">
+    <p class="field-tip">A name for the new policy.</p>
+    <button type="submit">Create policy</button>
+  </form>
+</div>
+{% else %}
+<h2>Assign to devices</h2>
+<div class="panel">
+  <p class="sub">
+    Pick the policy, then everything it applies to. Unticking removes the
+    assignment — this form describes the complete target set.
+  </p>
+  <form method="post" action="/policies/{{ policy.id }}/targets">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="rank">Rank (higher wins; scope only breaks ties)</label>
+    <input id="rank" name="rank" type="number" value="{{ current_rank }}" style="width:120px">
+
+    <div class="row" style="margin-top:14px">
+      <div>
+        <label>Devices</label>
+        <div class="checks">
+          {% for d in devices %}
+            <label>
+              <input type="checkbox" name="device_ids" value="{{ d.id }}"
+                     {% if d.id in assigned.device %}checked{% endif %}>
+              {{ device_label(d) }}
+            </label>
+          {% else %}<p class="muted">No devices enrolled.</p>{% endfor %}
+        </div>
+      </div>
+      <div>
+        <label>Groups</label>
+        <div class="checks">
+          {% for g in groups %}
+            <label>
+              <input type="checkbox" name="group_ids" value="{{ g.id }}"
+                     {% if g.id in assigned.group %}checked{% endif %}>
+              {{ g.name }}
+            </label>
+          {% else %}<p class="muted">No groups.</p>{% endfor %}
+        </div>
+      </div>
+      <div>
+        <label>Tags</label>
+        <div class="checks">
+          {% for t in tags %}
+            <label>
+              <input type="checkbox" name="tag_ids" value="{{ t.id }}"
+                     {% if t.id in assigned.tag %}checked{% endif %}>
+              {{ t.name }}
+            </label>
+          {% else %}<p class="muted">No tags.</p>{% endfor %}
+        </div>
+      </div>
+    </div>
+    <button type="submit" style="margin-top:14px">Apply</button>
+  </form>
+</div>
+{% endif %}
+
+<h2>Versions</h2>
+<div class="panel">
+  <p class="sub">
+    Published versions are immutable. Editing publishes a new one, so what a device
+    had in March stays answerable.
+  </p>
+  <table>
+    <thead><tr><th>Version</th><th>Published</th><th>Spec</th></tr></thead>
+    <tbody>
+    {% for v in policy.versions|reverse %}
+      <tr>
+        <td class="mono">v{{ v.version }}</td>
+        <td class="muted">{{ v.published_at | localtime }}</td>
+        <td>
+          {% set rows = v.spec | spec_rows(policy.policy_type, file_names) %}
+          {% if rows %}
+            <dl class="kv">
+              {% for r in rows %}<dt>{{ r.label }}</dt><dd>{{ r.value }}</dd>{% endfor %}
+            </dl>
+          {% else %}<span class="muted">empty</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Publish a new version</h2>
+<p class="sub">
+  Editing publishes a new immutable version. Each control shows how its field
+  merges when this policy stacks with another.
+</p>
+<form method="post" action="/policies/{{ policy.id }}/versions" data-policy-form>
+  {{ csrf_field(csrf_token) }}
+  <div class="railed">
+    {% if pages | length > 1 %}
+    <nav class="rail" data-rail data-rail-panels="pub-panels">
+      <ul>
+        {% for pg in pages %}
+        <li class="rail-cat" data-cat-group="{{ pg.slug }}">
+          <a class="rail-cat-head" data-page="{{ pg.slug }}:{{ pg.slug }}">
+            {{ pg.label }}{% if pg.slug in managed_pages %}<span class="rail-check">✓</span>{% endif %}
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+    </nav>
+    {% endif %}
+    <div class="rail-body" id="pub-panels">
+      {% for pg in pages %}
+      {# Hidden only when there is a rail to reveal it. A single-page policy type
+         renders no nav, so hiding its one panel unconditionally left the form
+         blank with nothing to click — FILES and NETWORKS have been like this
+         since the rail landed; WALLPAPER is simply the type that made it obvious. #}
+      <section class="tab-panel" data-page-panel="{{ pg.slug }}:{{ pg.slug }}"
+               {{ 'hidden' if pages | length > 1 }}>
+        <div class="panel">
+          {% if pages | length > 1 %}<h2>{{ pg.label }}</h2>{% endif %}
+          {{ policy_subform(pg.fields, current_spec, app_packages, managed_files, geofence_tiles, storefronts, app_kinds) }}
+        </div>
+      </section>
+      {% endfor %}
+      <div class="panel">
+        <button type="submit" style="margin-top:6px">Publish</button>
+      </div>
+    </div>
+  </div>
+</form>
+
+{% if not policy.is_template %}
+{{ deployment_card(policy, '/policies/' ~ policy.id ~ '/deployment', csrf_token) }}
+{% endif %}
+
+<h2>Manage</h2>
+<div class="panel">
+  <div class="toolbar">
+    {% if policy.archived_at %}
+      <form method="post" action="/policies/{{ policy.id }}/restore" style="margin:0">
+        {{ csrf_field(csrf_token) }}
+        <button type="submit">Restore</button>
+      </form>
+      <span class="muted">Un-archive. It may reach devices again immediately.</span>
+      <form method="post" action="/policies/{{ policy.id }}/delete" style="margin:0"
+            data-confirm="Permanently delete {{ policy.name }}? Every version it ever published goes with it. This cannot be undone.">
+        {{ csrf_field(csrf_token) }}
+        <button type="submit" class="danger">Delete permanently</button>
+      </form>
+    {% else %}
+      <form method="post" action="/policies/{{ policy.id }}/archive" style="margin:0"
+            data-confirm="Archive {{ policy.name }}? It stops applying to every device but its history is kept.">
+        {{ csrf_field(csrf_token) }}
+        <button type="submit" class="danger">Archive</button>
+      </form>
+      <span class="muted">Stops applying everywhere; its history is kept (D20).</span>
+    {% endif %}
+  </div>
+  {% if policy.archived_at %}
+  <p class="muted" style="margin-top:8px">
+    Deleting destroys this policy and every version it ever published — there is
+    no undo and no record left of what it once set. Keep it archived unless it
+    never reached a device.
+  </p>
+  {% endif %}
+
+  {% if not policy.is_template %}
+  <form method="post" action="/policies/clone" class="toolbar" style="margin-top:8px">
+    {{ csrf_field(csrf_token) }}
+    <input type="hidden" name="source_id" value="{{ policy.id }}">
+    <input type="hidden" name="as_template" value="true">
+    <input type="text" name="name" required value="{{ policy.name }} (template)" style="min-width:280px">
+    <button type="submit" class="ghost">Save as template</button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}
