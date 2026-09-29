@@ -1,0 +1,244 @@
+{#
+  Copyright 2026 TAK-Solutions LLC — Apache 2.0.
+
+  Shared markup for the ATLAS console. Import at the top of a template with:
+    {% from "_macros.html" import page_header, panel, tabs, modal, csrf_field, empty_state %}
+#}
+
+{% macro csrf_field(token) -%}
+<input type="hidden" name="csrf_token" value="{{ token }}">
+{%- endmacro %}
+
+{% macro page_header(title, sub=None) -%}
+<h1>{{ title }}</h1>
+{% if sub %}<p class="sub">{{ sub }}</p>{% endif %}
+{%- endmacro %}
+
+{% macro empty_state(message) -%}
+<p class="muted">{{ message }}</p>
+{%- endmacro %}
+
+{% macro stub(section, note) -%}
+<div class="panel stub">
+  <div class="big">{{ section }} is coming in a later chunk.</div>
+  <div>{{ note }}</div>
+</div>
+{%- endmacro %}
+
+{#
+  Tab bar. `items` is a list of (key, label) pairs. Renders the buttons only;
+  the caller supplies the matching <div class="tab-panel" data-tab-panel="key">
+  blocks and, if the panels live in a wrapper, sets data-tabs-scope to its id.
+#}
+{% macro tabs(items, active, scope=None) -%}
+<div class="tabs" data-tabs {% if scope %}data-tabs-scope="{{ scope }}"{% endif %}>
+  {% for key, label in items %}
+    <button type="button" class="tab {{ 'on' if key == active }}" data-tab="{{ key }}">{{ label }}</button>
+  {% endfor %}
+</div>
+{%- endmacro %}
+
+{#
+  Modal shell. Caller passes the body as the macro's `caller()` block:
+    {% call modal("new-policy", "New policy") %} ...form... {% endcall %}
+  Open it from anywhere with <button data-modal-open="new-policy">.
+#}
+{% macro modal(id, title) -%}
+<div class="modal-backdrop" id="{{ id }}" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-label="{{ title }}">
+    <h2>{{ title }}</h2>
+    {{ caller() }}
+  </div>
+</div>
+{%- endmacro %}
+
+{% macro device_label(d) -%}
+{#
+  How a device is named wherever one is chosen from a list.
+
+  ⚠️ The name **and** the serial, never one instead of the other. The name is what
+  an operator recognises - it is the whole reason they typed it - and the serial
+  is what identifies the tablet in their hand. The assignment pickers had one
+  each: policy_detail showed serial and model with no name, profile_editor showed
+  the name and dropped the serial, so neither could confirm both at once.
+
+  A device nobody has named falls back to the serial as its title, rather than
+  showing a blank line above it.
+#}
+{#
+  Wrapped, because `.checks label` is a flex row: two bare spans would sit beside
+  the checkbox and beside each other, which is the run-on line this exists to
+  avoid. The wrapper is the flex item; the lines stack inside it.
+#}
+<span class="dev">
+{%- if d.name %}
+  <span class="dev-name">{{ d.name }}</span>
+  <span class="mono dev-id">{{ d.serial_number }}{% if d.model %} · {{ d.model }}{% endif %}</span>
+{%- else %}
+  <span class="mono dev-name">{{ d.serial_number }}</span>
+  {%- if d.model %}<span class="dev-id">{{ d.model }}</span>{% endif %}
+{%- endif %}
+</span>
+{%- endmacro %}
+
+{#
+  Guidance for one field (W92).
+
+  ⚠️ Never a placeholder. Grey text inside the box reads as a value the field
+  already holds, so an operator leaves it and saves — and a required field then
+  rejects the entry the hint existed to help them fill. It also disappears the
+  moment they type.
+
+  `above` for guidance that must be read before typing; the default sits below,
+  where it stays legible while the field is being checked.
+#}
+{% macro tip(text, above=false) %}
+  <p class="field-tip{{ ' above' if above }}">{{ text }}</p>
+{% endmacro %}
+
+{#
+  What state a policy or profile's deployment is in (W191).
+
+  ⚠️ **Live renders nothing at all.** Almost every policy is live, and a badge on
+  every row is a badge nobody reads — which would make the two rows that matter
+  invisible among the hundred that do not. A pill here means "this is not
+  reaching devices", and that is the only reason to look.
+#}
+{% macro deploy_pill(item) -%}
+  {%- set state = deploy_status(item) -%}
+  {%- if state == 'held' -%}
+    <span class="pill warn" title="Not on any device until it is deployed">held</span>
+  {%- elif state == 'scheduled' -%}
+    <span class="pill accent" title="{{ item.effective_at | localtime('%Y-%m-%d %H:%M') }} {{ zone_label([item.effective_at]) }}">deploys {{ item.effective_at | localtime('%d %b, %H:%M') }}</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{#
+  The three-way deployment choice, on a policy or a profile.
+
+  ⚠️ **Radios, not a checkbox and a date.** "Held" and "scheduled for a date" are
+  different answers to one question, and a checkbox plus an optional field lets
+  an operator leave a date sitting in a disabled-looking box and believe it will
+  fire. One control, three mutually exclusive answers, and whichever is selected
+  is what happens.
+#}
+{% macro deployment_fields(item=None) -%}
+  {%- set state = deploy_status(item) if item else 'live' %}
+  <label class="deploy-choice">
+    <input type="radio" name="state" value="live" {{ 'checked' if state == 'live' }}>
+    <span><strong>Live</strong> — in force now, on everything it targets.</span>
+  </label>
+  <label class="deploy-choice">
+    <input type="radio" name="state" value="held" {{ 'checked' if state == 'held' }}>
+    <span><strong>Hold</strong> — reaches no device until you come back and deploy it.</span>
+  </label>
+  <label class="deploy-choice">
+    <input type="radio" name="state" value="scheduled" {{ 'checked' if state == 'scheduled' }}>
+    <span><strong>Deploy at</strong></span>
+    <input type="datetime-local" name="effective_at" value="{{ deploy_input(item) if item else '' }}"
+           aria-label="Date and time to deploy">
+    <span class="muted">{{ zone_label() }}</span>
+  </label>
+  {#
+    utc-by-design: this names UTC as prose, not as a label on a rendered time.
+    The point being made is that the confirmation shows both — which is the only
+    way a console timezone set wrongly ever becomes visible.
+  #}
+  {{ tip('Times are in the console timezone, set in Admin → General. The date you
+          pick is confirmed back in both that zone and UTC — check it, because a
+          timezone set wrongly puts the deployment in the middle of the night.') }}
+{%- endmacro %}
+
+{% macro deployment_card(item, action, csrf_token) -%}
+<h2>Deployment</h2>
+<div class="panel">
+  <p class="sub">
+    Targets can be set up before anything reaches a device. A held or scheduled
+    policy is complete and simply not in force yet.
+  </p>
+  <form method="post" action="{{ action }}">
+    {{ csrf_field(csrf_token) }}
+    {{ deployment_fields(item) }}
+    <button type="submit">Save deployment</button>
+  </form>
+</div>
+{%- endmacro %}
+
+{% macro gb(n) -%}
+{#- Bytes as an operator reads them. MB below a gigabyte, because "0.0 GB" for
+    a 379 MB library is a number that tells you nothing. -#}
+{%- if n >= 1073741824 -%}{{ '%.1f'|format(n / 1073741824) }} GB
+{%- elif n >= 1048576 -%}{{ '%.0f'|format(n / 1048576) }} MB
+{%- elif n > 0 -%}{{ '%.0f'|format(n / 1024) }} KB
+{%- else -%}0
+{%- endif -%}
+{%- endmacro %}
+
+{% macro storage_meter(usage) -%}
+  {#
+    How much of ATLAS's storage is in use (W208).
+
+    ⚠️ **Defined once and used by both the Apps and Content pages.** The same
+    shape of mistake as W202, where a feature shipped to one page and missed the
+    one people actually use — and here the operator asked for both by name.
+
+    ⚠️ **The bar is the filesystem; the breakdown is the database.** What runs
+    out is the filesystem, so it supplies used and free. What "apps" and "files"
+    mean only the database knows. They do **not** add up: the repository caches
+    and the database itself share this space, and that remainder is labelled
+    rather than hidden.
+  #}
+  {% if usage.total > 0 %}
+  <div class="panel storage-meter" data-storage-meter>
+    <div class="storage-head">
+      <strong>Storage</strong>
+      <span class="muted">
+        {{ gb(usage.used) }} of {{ gb(usage.total) }} used
+        · {{ gb(usage.free) }} free
+      </span>
+    </div>
+    <div class="progress" role="progressbar"
+         aria-valuenow="{{ '%.0f'|format(usage.percent_used) }}"
+         aria-valuemin="0" aria-valuemax="100"
+         aria-label="ATLAS storage used">
+      {# Inline width is the value itself, not styling: a bar is the number. #}
+      <span style="width: {{ '%.1f'|format(usage.percent_used) }}%"></span>
+    </div>
+    <div class="storage-legend muted">
+      <span><b>Apps</b> {{ gb(usage.apps) }}</span>
+      <span><b>Files</b> {{ gb(usage.files) }}</span>
+      {% if usage.shared %}
+        {#
+          ⚠️ Shown only when it is not zero, and worth showing when it is not:
+          a blob an app and a file both point at is stored once, so Apps + Files
+          is larger than what these uploads actually occupy.
+        #}
+        <span><b>Shared</b> {{ gb(usage.shared) }}</span>
+      {% endif %}
+      {#
+        ⚠️ **Only on a dedicated store.** On a shared disk `other` is
+        everything else on the box — measured at 111 GB on a development machine
+        with a 1 KB library — and putting that on ATLAS's storage panel reads as
+        ATLAS using it. The number is arithmetically right and the impression is
+        wrong, which is the worse kind of wrong for a dashboard.
+      #}
+      {% if usage.dedicated %}
+        <span><b>Other</b> {{ gb(usage.other) }}</span>
+      {% endif %}
+      <span><b>Free</b> {{ gb(usage.free) }}</span>
+    </div>
+    <p class="field-tip" style="margin:8px 0 0">
+      {% if usage.dedicated %}
+        Reserved for ATLAS — nothing else on this box can use it, and ATLAS
+        cannot exceed it.
+        <em>Other</em> is the repository caches, the database and the
+        filesystem's own structures.
+      {% else %}
+        ⚠️ Shared with the rest of this box. ATLAS has no reserved space here,
+        so uploads compete with everything else on the disk — and the used figure
+        above counts that everything else, not just ATLAS.
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
+{%- endmacro %}
