@@ -1,0 +1,607 @@
+# Copyright 2026 TAK-Solutions LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Operational commands.
+
+``python -m app.cli init-pki`` materializes the keys the server and its reverse
+proxy need. The app would create the device CA and bundle key lazily on first use,
+but nginx has to read the CA certificate *at startup* to verify client
+certificates — so in a containerized stack something must create it first.
+
+``python -m app.cli seed-packages`` loads the applications shipped in ``dist/``
+into the library, so a fresh deployment can enrol a device without an operator
+uploading the agent by hand first.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import datetime as dt
+import ipaddress
+from pathlib import Path
+
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
+
+from app.config import get_settings
+from app.security.bundle import BundleSigner
+from app.security.ca import (
+    CertificateAuthority,
+    CertificateError,
+    issue_intermediate,
+)
+from app.security import ca as ca_module
+from app.security import keyfiles
+
+
+def _write_dev_server_cert(
+    pki_dir: Path, hostname: str, extra_sans: list[str] | None = None
+) -> tuple[Path, Path]:
+    """A self-signed TLS certificate for the local reverse proxy.
+
+    **Development only.** A real deployment terminates TLS with a certificate from a
+    CA browsers and devices already trust; this exists so `docker compose up` yields
+    a working mTLS endpoint without external dependencies. It is deliberately kept
+    separate from the device CA — that one signs device identities and must not also
+    be a web server key.
+    """
+    key = ec.generate_private_key(ec.SECP256R1())
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)])
+    now = dt.datetime.now(dt.timezone.utc)
+
+    # A certificate is only valid for the names it lists. A tablet reaches this
+    # server by the PC's LAN address, not "localhost", so that address has to be in
+    # here or every connection from the device fails verification.
+    alt_names: list[x509.GeneralName] = [x509.DNSName("localhost")]
+    alt_names.append(x509.IPAddress(ipaddress.ip_address("127.0.0.1")))
+
+    for name in [hostname, *(extra_sans or [])]:
+        if not name or name == "localhost":
+            continue
+        try:
+            alt_names.append(x509.IPAddress(ipaddress.ip_address(name)))
+        except ValueError:
+            alt_names.append(x509.DNSName(name))
+
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - dt.timedelta(minutes=5))
+        .not_valid_after(now + dt.timedelta(days=825))
+        .add_extension(x509.SubjectAlternativeName(alt_names), critical=False)
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+
+    cert_path = pki_dir / "server.crt"
+    key_path = pki_dir / "server.key"
+    cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    # ⚠️ A sixth private key, found by the guard in `tests/test_key_custody.py`
+    # rather than by the audit that went looking for them — SEC_AUDIT S-2 counted
+    # five and there are six. The development server certificate is the least
+    # dangerous of them (it authenticates a dev listener, not a device or an
+    # operator), which is exactly why it was the one missed.
+    key_path.unlink(missing_ok=True)
+    keyfiles.write_private(
+        key_path,
+        key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ),
+    )
+    return cert_path, key_path
+
+
+def ca_status(args: argparse.Namespace) -> int:
+    """Report the certificate authority as JSON, for a tool to render.
+
+    ⚠️ Read-only and never raises on a half-finished ceremony. The state this is
+    most needed in is the broken one — root key removed, intermediate missing — and
+    a status command that threw there would leave an operator with a blank page
+    instead of the sentence explaining what to do.
+    """
+    import json as _json
+
+    settings = get_settings()
+    pki_dir = Path(args.pki_dir or settings.pki_dir)
+    report: dict = {
+        "pki_dir": str(pki_dir),
+        "root_certificate": (pki_dir / "ca.crt").exists(),
+        # ⚠️ The single most important field. `false` is the goal state, and an
+        # operator who has run the ceremony but left the key behind has changed
+        # nothing about their exposure (SEC_AUDIT S-2).
+        "root_key_on_server": ca_module.root_key_on_server(pki_dir),
+        "ok": False,
+    }
+
+    try:
+        ca = CertificateAuthority.load_or_create(
+            pki_dir,
+            common_name=settings.ca_common_name,
+            validity_days=settings.ca_validity_days,
+        )
+    except Exception as exc:
+        report["error"] = str(exc)
+        print(_json.dumps(report, indent=2))
+        return 0
+
+    certificate = ca.certificate
+    expires = certificate.not_valid_after_utc
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=dt.timezone.utc)
+    remaining = expires - dt.datetime.now(dt.timezone.utc)
+
+    report.update(
+        ok=True,
+        issuing_subject=certificate.subject.rfc4514_string(),
+        # utc-by-design: a certificate's validity is a UTC instant, and this is
+        # machine-readable output rather than a rendered page.
+        issuing_expires=expires.strftime("%Y-%m-%d"),
+        issuing_days_left=remaining.days,
+        # More than one anchor means the root has been separated from the signer.
+        trust_anchors=len(ca.trusted),
+        is_split=len(ca.trusted) > 1,
+        device_cert_validity_days=settings.device_cert_validity_days,
+        renew_within_days=settings.device_cert_renew_within_days,
+        # Months, because reissuing needs the root fetched from wherever it went.
+        needs_attention=remaining.days < 180,
+    )
+    print(_json.dumps(report, indent=2))
+    return 0
+
+
+
+# --------------------------------------------------------------------------- #
+# The recovery file (W187)
+#
+# The root key leaves the server as a file the customer saves, and comes back
+# twice a decade to sign a new intermediate. These three commands are what the
+# InfraTAK module's card drives; none of them is meant to be typed by hand.
+# --------------------------------------------------------------------------- #
+
+
+def ca_export_root(args: argparse.Namespace) -> int:
+    """Print the root private key so it can be handed to the operator.
+
+    ⚠️ **This is the most dangerous output this program produces.** It goes to
+    stdout on purpose — a caller pipes it somewhere — and it must never be
+    written to a file on this host by us. Whoever calls it is responsible for
+    what happens next.
+    """
+    pki_dir = Path(args.pki_dir or get_settings().pki_dir)
+    root_key = pki_dir / ca_module.ROOT_KEY
+    if not root_key.exists():
+        print(
+            f"there is no root key at {root_key}. Either it has already been "
+            f"moved off this server, or this deployment never had one.",
+            file=sys.stderr,
+        )
+        return 1
+    sys.stdout.write(root_key.read_text())
+    return 0
+
+
+def ca_verify_root(args: argparse.Namespace) -> int:
+    """Does the key on stdin actually belong to this CA?
+
+    ⚠️ **Compared against `ca.crt`, not against `ca.key`**, which is what makes
+    this work *after* the key has gone. The same command therefore backs both
+    halves of the product flow: "prove you saved it" before deletion, and "check
+    your recovery file still works" years later, which is the only way a customer
+    ever discovers they lost it before they need it.
+
+    Reads stdin rather than a path so the key never lands on this host's disk.
+    """
+    pki_dir = Path(args.pki_dir or get_settings().pki_dir)
+    root_cert_path = pki_dir / ca_module.ROOT_CERT
+    if not root_cert_path.exists():
+        print(f"no root certificate at {root_cert_path}", file=sys.stderr)
+        return 1
+
+    material = sys.stdin.read()
+    # Same shape as the delete guard above: the parser below refuses empty
+    # input anyway. This exists so "you uploaded nothing" does not arrive as
+    # "that is not a readable private key", which sends someone looking for a
+    # corrupt file they do not have.
+    if not material.strip():
+        print("no key on stdin", file=sys.stderr)
+        return 1
+
+    try:
+        candidate = serialization.load_pem_private_key(
+            material.encode(), password=None
+        )
+    except Exception as exc:
+        print(f"that is not a readable private key: {exc}", file=sys.stderr)
+        return 1
+
+    certificate = x509.load_pem_x509_certificate(root_cert_path.read_bytes())
+    expected = certificate.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    actual = candidate.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    if expected != actual:
+        print(
+            "that key does not match this deployment's certificate authority. "
+            "It may be the recovery file from a different ATLAS install.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print("ok: this key matches the certificate authority")
+    return 0
+
+
+def ca_delete_root(args: argparse.Namespace) -> int:
+    """Remove the root key from this server. The point of the whole exercise.
+
+    ⚠️ **Refuses unless something else can sign.** Deleting the root with no
+    intermediate in place does not harden the deployment, it destroys it: nothing
+    can issue a certificate, no device can enrol or renew, and the only way back
+    is the recovery file the customer may not have saved yet. The refusal is the
+    most important line in this file.
+    """
+    pki_dir = Path(args.pki_dir or get_settings().pki_dir)
+    root_key = pki_dir / ca_module.ROOT_KEY
+
+    if not root_key.exists():
+        # Already gone is success, not an error — the flow is resumable and a
+        # retried click must not look like a failure.
+        print("the root key is already off this server")
+        return 0
+
+    # ⚠️ **This check is a better message, not a second control.** The chain
+    # check below refuses this case too — a root-only PKI loads with one trust
+    # anchor. What this adds is the sentence naming `ca-issue-intermediate`,
+    # which is the difference between a customer who knows what to click and one
+    # who files a support ticket. A mutation sweep proved the point: deleting
+    # this branch changed no outcome, only the wording, so the test asserts the
+    # wording.
+    issuing_key = pki_dir / ca_module.ISSUING_KEY
+    issuing_cert = pki_dir / ca_module.ISSUING_CERT
+    if not (issuing_key.exists() and issuing_cert.exists()):
+        print(
+            "refusing: there is no intermediate to sign with. Deleting the root "
+            "now would leave this deployment unable to enrol or renew any "
+            "device. Run ca-issue-intermediate first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    # ⚠️ Not merely present on disk — **loadable**. A truncated or half-written
+    # issuing key is indistinguishable from a working one by `exists()`, and this
+    # is the last moment the root is here to fix it with.
+    #
+    # There was a `len(authority.trusted) < 2` check here as well. A mutation
+    # sweep showed it can never fire: if the issuing pair loads at all, the root
+    # and the intermediate are both anchors, so the count is always 2. It was
+    # removed rather than left in place looking load-bearing.
+    try:
+        ca_module.CertificateAuthority.load_or_create(
+            pki_dir,
+            common_name=get_settings().ca_common_name,
+            validity_days=get_settings().ca_validity_days,
+        )
+    except Exception as exc:
+        print(f"refusing: the intermediate is not usable ({exc})", file=sys.stderr)
+        return 1
+
+    keyfiles.shred(root_key)
+    print(f"the root key has been removed from {pki_dir}")
+    return 0
+
+
+def ca_issue_intermediate(args: argparse.Namespace) -> int:
+    """Issue the intermediate that signs from now on, and say what to do next.
+
+    ⚠️ The instructions matter as much as the certificate. An operator who runs
+    this and leaves `ca.key` on the server has changed the plumbing and gained
+    nothing: the root is still sitting on an internet-facing machine, which is the
+    entire finding (SEC_AUDIT S-2).
+    """
+    settings = get_settings()
+    pki_dir = Path(args.pki_dir or settings.pki_dir)
+
+    # ⚠️ A device authenticates only while its *issuer* is also valid, so an
+    # intermediate shorter than a device certificate silently caps every
+    # certificate it issues.
+    #
+    # ⚠️ **This warning used to say "there is no renewal — each one needs a
+    # factory reset and re-provision".** That was true when it was written and
+    # stopped being true in v1.22.0: `certificate_renewal.py` reaches `sign_csr`
+    # too, so a capped device renews against whatever is current rather than
+    # dying. The consequence is now inconvenience, not a re-provision, and the
+    # wording says so — a warning that overstates its own stakes is one an
+    # operator learns to scroll past.
+    device_days = settings.device_cert_validity_days
+    if args.days < device_days:
+        lost = device_days - args.days
+        print(f"WARNING: this intermediate is valid for {args.days} days, but device")
+        print(f"certificates are issued for {device_days}. Every certificate it signs")
+        print(f"will be truncated by up to {lost} days.")
+        print()
+        print("Devices renew themselves, so they recover on their next check-in rather")
+        print("than needing a re-provision. But an intermediate shorter than a device")
+        print("certificate means the fleet renews far more often than intended, and a")
+        print("device offline across the gap comes back unable to authenticate.")
+        print()
+        print(f"Use --days {device_days + 365} to leave a year of issuing at full device life.")
+        print()
+
+    try:
+        certificate = issue_intermediate(
+            pki_dir,
+            common_name=args.common_name or f"{settings.ca_common_name} Issuing CA",
+            validity_days=args.days,
+        )
+    except CertificateError as exc:
+        print(f"could not issue an intermediate: {exc}")
+        return 1
+
+    # utc-by-design: a certificate's validity window is a UTC instant by
+    # definition, this is a date printed in a terminal rather than rendered in the
+    # console, and the CLI has no session to read the display timezone from.
+    expires = certificate.not_valid_after_utc.strftime("%Y-%m-%d")
+    print(f"issuing CA:   {pki_dir / 'issuing.crt'}")
+    print(f"  subject:    {certificate.subject.rfc4514_string()}")
+    print(f"  expires:    {expires}")
+    print(f"  serial:     {certificate.serial_number:x}")
+    print()
+    print("ATLAS now signs device certificates with this intermediate.")
+    print("Nothing on any enrolled device changes: they chain to the root, which")
+    print("has not moved.")
+    print()
+    print("NEXT, and the only part that improves anything:")
+    print(f"  1. Copy {pki_dir / 'ca.key'} somewhere off this machine.")
+    print("     A password manager, an encrypted USB stick, a printed paper backup —")
+    print("     anywhere an attacker who owns this server cannot reach.")
+    print(f"  2. Delete {pki_dir / 'ca.key'} from this machine.")
+    print("  3. Restart ATLAS and confirm a device still checks in.")
+    print()
+    print("You need the root key again only to issue the next intermediate, or to")
+    print("revoke this one. Losing it means no new intermediate can ever be issued,")
+    print(f"and every device must re-enrol after {expires}.")
+    return 0
+
+
+def init_pki(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    pki_dir = Path(args.pki_dir or settings.pki_dir)
+    pki_dir.mkdir(parents=True, exist_ok=True)
+
+    # Both are load-or-create, so this command is idempotent: re-running it never
+    # rotates a key out from under enrolled devices.
+    CertificateAuthority.load_or_create(
+        pki_dir,
+        common_name=settings.ca_common_name,
+        validity_days=settings.ca_validity_days,
+    )
+    signer = BundleSigner.load_or_create(pki_dir)
+
+    print(f"device CA:          {pki_dir / 'ca.crt'}")
+    print(f"bundle signing key: {pki_dir / 'bundle_signing.key'}")
+    print(f"bundle public key:  {signer.public_key_base64()}")
+
+    if args.dev_server_cert:
+        server_cert = pki_dir / "server.crt"
+        if server_cert.exists() and not args.force_server_cert:
+            print(f"dev TLS cert:       {server_cert} (kept)")
+        else:
+            # Only the TLS cert is reissued. The device CA is untouched, so
+            # already-enrolled devices keep working.
+            cert_path, _ = _write_dev_server_cert(pki_dir, args.hostname, args.san)
+            names = ", ".join(["localhost", "127.0.0.1", args.hostname, *args.san])
+            print(f"dev TLS cert:       {cert_path} (self-signed, DEVELOPMENT ONLY)")
+            print(f"  valid for:        {names}")
+
+    return 0
+
+
+def seed_packages(args: argparse.Namespace) -> int:
+    """Ingest the applications bundled with the source. Idempotent, best-effort.
+
+    ⚠️ **A fresh deployment cannot enrol anything until the agent is in here.**
+    The provisioning QR carries the signing checksum of the agent APK this server
+    serves, so with an empty library there is no checksum to carry and the token
+    page refuses outright — which an operator meets several screens away from
+    anything that mentions an upload.
+
+    Idempotence rests on ``ingest`` refusing a version code it already holds: a
+    restart re-runs this and every build reports "already present". That is also
+    why a rebuilt APK needs a *higher* version code to take effect; same code
+    means same build, as far as the library is concerned.
+
+    ⚠️ Never fatal. This runs on the startup path, and a deployment that
+    refused to boot because a bundled APK could not be read would be far worse
+    than one that starts with an empty library and says so.
+    """
+    from app.api.deps import _artifact_storage
+    from app.db.base import SessionLocal
+    from app.services import agent_update as agent_update_service
+    from app.services import packages as package_service
+
+    settings = get_settings()
+    seed_dir = Path(args.directory or "/seed")
+    if not seed_dir.is_dir():
+        print(f"seed: {seed_dir} is not a directory — nothing to load")
+        return 0
+
+    files = sorted(
+        p for p in seed_dir.iterdir()
+        if p.suffix.lower() in (".apk", ".xapk", ".apks")
+    )
+    if not files:
+        print(f"seed: no applications in {seed_dir}")
+        return 0
+
+    storage = _artifact_storage(str(settings.artifact_dir))
+    #: Agent builds loaded on *this* run, versionCode → versionName.
+    new_agent_builds: dict[int, str] = {}
+    for path in files:
+        try:
+            with SessionLocal() as session:
+                result = package_service.ingest(session, storage, path.read_bytes())
+                name = result.package.package_name
+                version_name = result.version.version_name
+                version_code = result.version.version_code
+                session.commit()
+                print(f"seed: loaded {name} {version_name} (versionCode {version_code})")
+                if name == settings.agent_package_name:
+                    new_agent_builds[version_code] = version_name
+        except package_service.PackageError as exc:
+            # The ordinary case on every restart after the first.
+            print(f"seed: {path.name} not loaded — {exc}")
+        except Exception as exc:  # noqa: BLE001 - startup must survive this
+            print(f"seed: {path.name} FAILED — {type(exc).__name__}: {exc}")
+
+    # ⚠️ Offering the new agent to the fleet is part of loading it. The agent
+    # and the server are one release: an update that put a newer agent in the
+    # library and left every device on the old one would be a fleet quietly
+    # running a build this server no longer matches. Only on a *new* build — a
+    # restart re-runs this and must not overrule an operator who pinned or
+    # paused the channel.
+    #
+    # ⚠️ **Once, after every file, and the highest code wins.** `dist/` carries
+    # two builds of the agent since W241: `aosp` and, one versionCode above it,
+    # `knox` (docs/KNOX.md §3.2). Publishing per file in directory order would
+    # make the fleet build depend on how two filenames sort — `atlas-agent-knox`
+    # before `atlas-agent`, so the *aosp* build would have won by an accident
+    # of a hyphen. The operator's decision (2026-09-19) is that the knox build
+    # is the fleet build; the highest code is that build by construction.
+    if new_agent_builds:
+        code = max(new_agent_builds)
+        with SessionLocal() as session:
+            # ⚠️ **Never backwards.** "Highest among the files loaded on this
+            # run" is not "highest the fleet should run": a build already in
+            # the library — uploaded by hand, or seeded by an earlier release —
+            # is not *new*, so it is not in this dict, and a release whose
+            # only new file is the lower of the two would move the pointer
+            # down. Measured on the operator's first v1.52.0 update: the knox
+            # build (127) was already there, only aosp (126) was new, and the
+            # fleet pointer went 127 → 126. Nothing downgraded — the agent
+            # refuses a lower build — but a pointer that walks backwards on an
+            # update is a lie about what the release intends.
+            current = agent_update_service.current(session)
+            if current is not None and code <= current:
+                print(
+                    f"seed: {new_agent_builds[code]} (versionCode {code}) loaded; "
+                    f"the fleet stays on versionCode {current}, which is newer"
+                )
+                return 0
+            agent_update_service.publish(session, code, updated_by="seed")
+            session.commit()
+        print(
+            f"seed: offering {new_agent_builds[code]} (versionCode {code}) to the "
+            f"fleet (devices update on their next check-in)"
+        )
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="app.cli", description="ATLAS operations")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    init = subparsers.add_parser("init-pki", help="create the device CA and signing keys")
+    init.add_argument("--pki-dir", default=None, help="override the configured PKI directory")
+    init.add_argument(
+        "--dev-server-cert",
+        action="store_true",
+        help="also emit a self-signed TLS cert for the local proxy (development only)",
+    )
+    init.add_argument("--hostname", default="localhost", help="hostname for the dev TLS cert")
+    init.add_argument(
+        "--san",
+        action="append",
+        default=[],
+        metavar="NAME_OR_IP",
+        help="extra name or IP the dev TLS cert should be valid for (repeatable)",
+    )
+    init.add_argument(
+        "--force-server-cert",
+        action="store_true",
+        help="reissue the dev TLS cert even if one exists (leaves the device CA alone)",
+    )
+    init.set_defaults(func=init_pki)
+
+    status = subparsers.add_parser(
+        "ca-status", help="report the certificate authority as JSON"
+    )
+    status.add_argument("--pki-dir", default=None)
+    status.set_defaults(func=ca_status)
+
+    intermediate = subparsers.add_parser(
+        "ca-issue-intermediate",
+        help="sign an issuing CA with the root, so the root can go offline",
+    )
+    intermediate.add_argument("--pki-dir", default=None)
+    intermediate.add_argument("--common-name", default=None)
+    intermediate.add_argument(
+        "--days", type=int, default=1825,
+        help="how long the intermediate is valid. Five years by default: devices "
+             "renew their own certificates (W174) and roll onto the current "
+             "issuer by themselves, so rotating costs a ceremony and nothing "
+             "else. ⚠️ It must still exceed the device certificate validity, or "
+             "certificates are truncated between renewals.",
+    )
+    intermediate.set_defaults(func=ca_issue_intermediate)
+
+    export_root = subparsers.add_parser(
+        "ca-export-root",
+        help="print the root private key, for the operator to save (W187)",
+    )
+    export_root.add_argument("--pki-dir", default=None)
+    export_root.set_defaults(func=ca_export_root)
+
+    verify_root = subparsers.add_parser(
+        "ca-verify-root",
+        help="check a saved recovery file against this CA. Reads stdin.",
+    )
+    verify_root.add_argument("--pki-dir", default=None)
+    verify_root.set_defaults(func=ca_verify_root)
+
+    delete_root = subparsers.add_parser(
+        "ca-delete-root",
+        help="remove the root key from this server, once an intermediate exists",
+    )
+    delete_root.add_argument("--pki-dir", default=None)
+    delete_root.set_defaults(func=ca_delete_root)
+
+    seed = subparsers.add_parser(
+        "seed-packages", help="load the applications bundled in dist/ into the library"
+    )
+    seed.add_argument(
+        "directory",
+        nargs="?",
+        default=None,
+        help="directory of APKs to load (default: /seed)",
+    )
+    seed.set_defaults(func=seed_packages)
+
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
