@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf_field, deployment_fields with context %}
+{% from "_policy_form.html" import policy_subform, app_group_buttons, data_package_modal, data_package_check_modal %}
+{% set nav = 'policies' %}
+{% block title %}New single-concern policy — ATLAS{% endblock %}
+{% block main_class %}wide{% endblock %}
+
+{% block page_styles %}
+  <link rel="stylesheet" href="/static/vendor/leaflet.css?v={{ build.revision }}">
+{% endblock %}
+
+{% block page_scripts %}
+  {# For the geofence picker (W109). Both `defer`, so Leaflet is parsed before
+     the script that uses it — `async` would race and fail only sometimes. #}
+  <script src="/static/vendor/leaflet.js?v={{ build.revision }}" defer></script>
+  <script src="/static/atlas-map.js?v={{ build.revision }}" defer></script>
+{% endblock %}
+
+{% block content %}
+{{ data_package_modal(csrf_token) }}
+{{ data_package_check_modal() }}
+{{ page_header('New single-concern policy', 'One typed policy of a single kind, outside any bundle. Most operators use a composite policy instead.') }}
+<p class="sub"><a href="/policies">← policies</a> · <a href="/policies/new">build a composite policy</a></p>
+
+<div class="panel">
+  <form method="post" action="/policies">
+    {{ csrf_field(csrf_token) }}
+    <div class="row stacked">
+      <div>
+        <label for="name">Name</label>
+        <input id="name" name="name" required class="field-full">
+        <p class="field-tip">What this policy is called, e.g. “Baseline Password”.</p>
+      </div>
+      <div>
+        <label for="description">Description</label>
+        <input id="description" name="description" class="field-full">
+      </div>
+      <div>
+        <label for="policy_type">Type</label>
+        <select id="policy_type" name="policy_type" class="field-full"
+                data-reveals="[data-type-form]">
+          {% for t in wired_types %}
+            <option value="{{ t.policy_type }}">{{ t.label }} ({{ t.policy_type }})</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <label class="checks" style="display:flex; gap:8px; align-items:center; max-height:none; margin-top:10px">
+      <input type="checkbox" name="is_template" value="true" style="width:auto">
+      Save as a template (a reusable blueprint — never assigned, only cloned)
+    </label>
+
+    {#
+      ⚠️ The deployment choice belongs here, not only on the detail page.
+      A new policy has no targets yet, so creating it live is harmless — but the
+      operator then has to remember to hold it *before* adding targets, and
+      forgetting means the policy reaches the fleet the instant the first one is
+      ticked. Asking once, up front, removes that window entirely.
+    #}
+    <h2 style="margin-top:18px">Deployment</h2>
+    {{ deployment_fields() }}
+
+    {% for t in wired_types %}
+      <div data-type-form="{{ t.policy_type }}" {{ 'hidden' if not loop.first }}>
+        {% for pg in t.pages %}
+          <h2>{{ t.label }}{% if t.pages | length > 1 %} <span class="muted">· {{ pg.label }}</span>{% endif %}</h2>
+          {% if t.policy_type == 'APP_CATALOG' and pg.slug == 'required-apps' %}{{ app_group_buttons(app_groups) }}{% endif %}
+          {{ policy_subform(pg.fields, {}, app_packages, managed_files, geofence_tiles, storefronts, app_kinds) }}
+        {% endfor %}
+      </div>
+    {% endfor %}
+
+    <button type="submit" style="margin-top:12px">Create</button>
+  </form>
+</div>
+{% endblock %}
