@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, tabs %}
+{% set nav = 'manage' %}
+{% block title %}Manage — ATLAS{% endblock %}
+
+{% block content %}
+{{ page_header('Fleet', 'Enrolled devices, the policies reaching each one, and whether they have actually converged.') }}
+
+{% if request.query_params.get('deleted') %}
+  <div class="banner good">
+    Deleted <strong>{{ request.query_params.get('deleted') }}</strong>. Its devices
+    remain enrolled and converge on their next check-in.
+  </div>
+{% endif %}
+
+{{ tabs([('devices', 'Devices'), ('groups', 'Groups')],
+        active='devices', scope='manage-tabs') }}
+
+<div id="manage-tabs">
+<div class="tab-panel" data-tab-panel="devices">
+
+<div class="panel stat">
+  <div><span>{{ counts.devices }}</span><small>devices</small></div>
+  <div><span>{{ counts.policies }}</span><small>policies</small></div>
+  <div><span>{{ counts.packages }}</span><small>app packages</small></div>
+  <div><span>{{ counts.files }}</span><small>managed files</small></div>
+</div>
+
+<div class="panel">
+  {% if not rows %}
+    <p class="muted">
+      No devices yet. Create an enrollment token on the
+      <a href="/enrollment">Enroll</a> page and scan its QR from a factory-reset
+      tablet's setup wizard.
+    </p>
+  {% else %}
+  <div class="toolbar">
+    <div>
+      <input type="search" data-filter="#fleet-table" aria-label="Filter devices">
+      <p class="field-tip">Filter by name, serial, model or policy.</p>
+    </div>
+    <span class="muted" data-filter-count="#fleet-table">{{ rows|length }} devices</span>
+  </div>
+  <table id="fleet-table" data-sortable>
+    <thead>
+      <tr>
+        <th data-sort>Name</th>
+        <th data-sort>Serial</th>
+        <th data-sort>Model</th>
+        <th data-sort>OS / Agent</th>
+        <th data-sort>Policies</th>
+        <th data-sort>Convergence</th>
+        <th data-sort>Compliance</th>
+        <th data-sort>Last check-in</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in rows %}
+      {% set d = r.device %}
+      <tr>
+        <td>
+          <div class="stack-name">
+            <a href="/devices/{{ d.id }}">{{ d.name or d.serial_number }}</a>
+            {% if d.name %}<span class="mono">{{ d.serial_number }}</span>{% endif %}
+          </div>
+          {#
+            ⚠️ No rename here. A text box per row turned a list meant for
+            scanning a fleet into a wall of inputs, and put an edit one stray
+            keystroke away from every device on the page. Renaming lives on the
+            device's own page, where there is one device to be wrong about.
+          #}
+        </td>
+        <td class="mono">{{ d.serial_number }}</td>
+        <td>{{ d.model or '—' }}</td>
+        <td class="mono">{{ d.os_version or '?' }} / {{ d.agent_version or '—' }}</td>
+        <td>
+          {% if r.policy_names %}
+            <span class="pill accent" title="{{ r.policy_names | join(', ') }}">{{ r.policy_count }}</span>
+            <span class="muted">{{ r.policy_names | join(', ') }}</span>
+          {% else %}
+            <span class="muted">none</span>
+          {% endif %}
+        </td>
+        <td class="mono">
+          {# The gap between these two is the real convergence lag (D28). #}
+          {{ d.acked_state_version }} / {{ d.state_version }}
+          {% if d.acked_state_version < d.state_version %}
+            <span class="pill warn">behind</span>
+          {% endif %}
+        </td>
+        <td>
+          {% set c = d.compliance_status.value %}
+          <span class="pill {{ 'good' if c == 'compliant' else 'warn' if c == 'degraded' else 'bad' if c == 'failed' }}">{{ c }}</span>
+        </td>
+        <td class="muted">
+          {%- if d.last_checkin_at %}{{ d.last_checkin_at | localtime }}
+          {%- elif d.id in stalled %}
+            {# "never" is equally true of a device enrolled ten seconds ago. This
+               one enrolled long enough ago that it is stuck, not starting. #}
+            <span class="pill bad" title="{{ stalled_reason }}">never checked in</span>
+          {%- else %}never{% endif %}
+        </td>
+        <td>
+          <form method="post" action="/devices/{{ d.id }}/checkin" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="ghost">Check in</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
+</div><!-- /devices -->
+
+<div class="tab-panel" data-tab-panel="groups" hidden>
+  <div class="panel">
+    <h2>Create a group</h2>
+    <p class="sub">
+      A group is how one policy reaches many devices, and how an enrollment QR
+      can drop a tablet straight into its policy stack.
+    </p>
+    <form method="post" action="/groups" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div>
+        <label for="groups-name">Name</label>
+        <input type="text" id="groups-name" name="name" maxlength="128"
+               required autocomplete="off" style="min-width:260px">
+      </div>
+      <div>
+        <label for="groups-desc">Description</label>
+        <input type="text" id="groups-desc" name="description" maxlength="500"
+               autocomplete="off" style="min-width:360px">
+      </div>
+      <div><button type="submit">Create group</button></div>
+      <p class="field-tip">
+        You will land on its page, where devices and policies are added.
+      </p>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>Groups</h2>
+    {% if not group_rows %}
+      <p class="muted">
+        None yet. Worth creating as soon as two devices should get the same
+        policy — assign it once here rather than once per device.
+      </p>
+    {% else %}
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Description</th><th>Devices</th><th>Policies</th></tr>
+      </thead>
+      <tbody>
+      {% for row in group_rows %}
+        <tr>
+          <td><a href="/groups/{{ row.container.id }}">{{ row.container.name }}</a></td>
+          <td class="muted">{{ row.container.description or '—' }}</td>
+          <td class="mono">{{ row.device_count }}</td>
+          <td class="mono">{{ row.policy_count }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+
+</div><!-- /manage-tabs -->
+{% endblock %}
