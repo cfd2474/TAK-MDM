@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% set nav = 'enroll' %}
+{% block title %}Enrollment QR — ATLAS{% endblock %}
+
+{% block content %}
+<h1>{{ primary.name if primary else 'Enrollment QR' }}</h1>
+<p class="sub">
+  <a href="/enrollment">← back to enrollment</a>
+</p>
+
+{% if problem %}
+  <div class="banner bad">{{ problem }}</div>
+{% endif %}
+
+{% if primary %}
+<div class="row">
+  <div>
+    <h2>Wi-Fi for provisioning</h2>
+    <div class="panel">
+      <p class="sub">
+        A factory-reset tablet has no network. Embedding credentials lets it join
+        Wi-Fi and download the agent without anyone touching the setup wizard.
+      </p>
+      <form method="post" action="/enrollment/qr">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="wifi_ssid">Network name (SSID)</label>
+        <input id="wifi_ssid" name="wifi_ssid" style="width:100%"
+               value="{{ wifi_ssid or '' }}">
+        <p class="field-tip">The network a device joins during provisioning.</p>
+
+        <label for="wifi_password">Password</label>
+        <div class="input-group">
+          <input id="wifi_password" name="wifi_password" type="password">
+          <button type="button" class="btn ghost" data-toggle-password="wifi_password">Show</button>
+        </div>
+        <p class="field-tip">Leave blank for an open network.</p>
+
+        <label for="wifi_security">Security</label>
+        <select id="wifi_security" name="wifi_security" style="width:100%">
+          {% for option in ['WPA', 'WEP', 'NONE'] %}
+            <option value="{{ option }}" {% if wifi_security == option %}selected{% endif %}>{{ option }}</option>
+          {% endfor %}
+        </select>
+
+
+        <label for="qr_group" style="margin-top:12px">Enrol into group — optional</label>
+        <select id="qr_group" name="group_id" style="width:100%">
+          <option value="">No group</option>
+          {% for g in groups %}
+            <option value="{{ g.id }}"
+              {% if group and group.id == g.id %}selected{% endif %}>{{ g.name }}</option>
+          {% endfor %}
+        </select>
+        <p class="field-tip">
+          The tablet joins this group as it enrols and picks up the group's
+          policies on its first check-in — no second step.
+        </p>
+
+        {# ⚠️ Carries the current choice rather than resetting to off. Someone
+           adding Wi-Fi to a permanent QR means to keep it permanent, and
+           silently downgrading it would hand them a code that stops working
+           the next day with nothing said. #}
+        <label style="display:block; margin-top:12px">
+          <input type="checkbox" name="persistent" value="true"
+                 {% if persistent %}checked{% endif %}>
+          Never expires
+        </label>
+        <p class="field-tip">
+          A permanent QR stays a live enrollment credential until this token is
+          retired.
+        </p>
+
+        <button type="submit" style="margin-top:14px">OK — new QR</button>
+      </form>
+
+      <p class="muted" style="font-size:12px; margin-top:14px">
+        Not stored. Submitting mints a fresh QR — there is no standing record to
+        re-render — so the one on screen now keeps working until its own 15
+        minutes run out; nothing revokes it. A permanent QR is the exception:
+        it is the token's own code, so generating it again gives the same
+        picture back.
+      </p>
+    </div>
+  </div>
+
+  <div>
+    <h2>Scan from the setup wizard</h2>
+    <div class="panel">
+      {% if qr_svg %}
+        <p class="sub">
+          On a <strong>factory-reset</strong> tablet, tap the welcome screen six
+          times in the same spot to open the scanner, then scan this.
+          Device Owner can only be established during initial setup.
+        </p>
+        {#
+          A countdown rather than a time of day: the person reading this is
+          standing over a factory-reset tablet, and "expires 14:32:10 UTC" makes
+          them work out how long they have got. The `title` keeps the absolute
+          time for anyone who wants it.
+        #}
+        {% if persistent %}
+          {# ⚠️ Where someone standing over a tablet will read it, not in a
+             tooltip. This picture is a live enrollment credential for as long
+             as the token exists, and the only thing that ends it is named. #}
+          <p>
+            <span class="pill warn">does not expire</span>
+            <span class="muted">— good for any number of devices, indefinitely.
+            Retiring this token on the <a href="/enrollment">Enroll</a> page is
+            the only thing that stops it.</span>
+          </p>
+        {% else %}
+          <p>
+            <span class="pill warn" data-countdown="{{ qr_expires_in }}"
+                  data-countdown-expired="expired — generate a new QR"
+                  title="expires {{ qr_expires_at | localtime('%H:%M:%S %Z') }}">
+              expires in <span data-countdown-value>{{ '%d:%02d' % (qr_expires_in // 60, qr_expires_in % 60) }}</span>
+            </span>
+            <span class="muted">— good for any number of devices until then.</span>
+          </p>
+        {% endif %}
+        {# ⚠️ A QR is a picture and says nothing about what it does. The group
+           belongs beside it, and "no group" has to stay visibly distinct from a
+           group the operator forgot they picked. #}
+        {% if group %}
+          <p><span class="pill good">Enrols into group: {{ group.name }}</span></p>
+        {% else %}
+          <p><span class="pill">No group — the device enrols ungrouped</span></p>
+        {% endif %}
+        {% if wifi_ssid %}
+          <p><span class="pill good">Wi-Fi embedded: {{ wifi_ssid }}</span></p>
+        {% else %}
+          <p><span class="pill warn">No Wi-Fi embedded</span>
+             <span class="muted">— the tablet must be put on a network by hand.</span></p>
+        {% endif %}
+
+        <div style="background:#fff; padding:16px; display:inline-block; border-radius:8px"
+             data-qr-image>
+          {{ qr_svg | safe }}
+        </div>
+
+        {#
+          ⚠️ Permanent QRs only (W138). A saved copy of a fifteen-minute code is
+          a file that is useless by the time anyone opens it, and offering to
+          make one invites exactly that confusion. The filename carries the
+          group so two printed sheets are not interchangeable.
+        #}
+        {% if persistent %}
+          <p style="margin-top:12px">
+            <button type="button" class="btn ghost"
+                    data-save-qr="atlas-enrollment-qr{% if group %}-{{ group.name | lower | replace(' ', '-') }}{% endif %}">
+              Save QR
+            </button>
+            <span class="muted" style="font-size:12px">
+              — the saved file is a live enrollment credential, and stays one
+              until this token is retired.
+            </span>
+          </p>
+        {% endif %}
+
+        <details style="margin-top:16px">
+          <summary class="muted">Payload</summary>
+          <pre style="margin-top:8px">{{ payload | pretty_json }}</pre>
+        </details>
+        <details style="margin-top:8px">
+          <summary class="muted">
+            {% if persistent %}
+              QR secret — this is the token itself, and it does not expire
+            {% else %}
+              QR secret (expires {{ qr_expires_at | localtime('%H:%M:%S %Z') }})
+            {% endif %}
+          </summary>
+          <pre style="margin-top:8px">{{ secret }}</pre>
+        </details>
+      {% elif not problem %}
+        <p class="muted">No QR available.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
