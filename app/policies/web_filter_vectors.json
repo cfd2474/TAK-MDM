@@ -1,0 +1,33 @@
+{
+  "_comment": "W369: the shared truth for web-filter rules. The server's tests (tests/test_web_filter.py) and the filter app's tests both run every case here; a case that passes on one and not the other is a filter that decides differently on the device than the console's Test box says.",
+  "normalize": [
+    {"in": "Example.COM", "out": "example.com"},
+    {"in": "  example.com.  ", "out": "example.com"},
+    {"in": "*.Example.com", "out": "*.example.com"},
+    {"in": "*", "out": "*"},
+    {"in": "bücher.de", "out": "xn--bcher-kva.de"},
+    {"in": "*example.com", "error": true},
+    {"in": "ex*ample.com", "error": true},
+    {"in": "*.com", "error": true},
+    {"in": "https://example.com", "error": true},
+    {"in": "example.com/path", "error": true},
+    {"in": "example.com:443", "error": true},
+    {"in": "10.0.0.1", "error": true},
+    {"in": "-bad.example.com", "error": true},
+    {"in": "", "error": true}
+  ],
+  "evaluate": [
+    {"name": "no rules allows everything", "allow": [], "block": [], "host": "news.example.org", "allowed": true, "rule": null},
+    {"name": "block a site and its subdomains", "allow": [], "block": ["facebook.com", "*.facebook.com"], "host": "facebook.com", "allowed": false, "rule": "facebook.com"},
+    {"name": "subdomain rule", "allow": [], "block": ["facebook.com", "*.facebook.com"], "host": "m.facebook.com", "allowed": false, "rule": "*.facebook.com"},
+    {"name": "no suffix accident", "allow": [], "block": ["facebook.com", "*.facebook.com"], "host": "notfacebook.com", "allowed": true, "rule": null},
+    {"name": "*.example.com excludes the apex", "allow": [], "block": ["*.example.com"], "host": "example.com", "allowed": true, "rule": null},
+    {"name": "deny all", "allow": ["tak.gov", "*.tak.gov"], "block": ["*"], "host": "youtube.com", "allowed": false, "rule": "*"},
+    {"name": "allowed exact host under deny all", "allow": ["tak.gov", "*.tak.gov"], "block": ["*"], "host": "tak.gov", "allowed": true, "rule": "tak.gov"},
+    {"name": "allowed subdomain under deny all", "allow": ["tak.gov", "*.tak.gov"], "block": ["*"], "host": "repo.tak.gov", "allowed": true, "rule": "*.tak.gov"},
+    {"name": "a more specific block beats a broader allow", "allow": ["*.example.com"], "block": ["ads.example.com"], "host": "ads.example.com", "allowed": false, "rule": "ads.example.com"},
+    {"name": "a more specific allow beats a broader block", "allow": ["maps.example.com"], "block": ["*.example.com"], "host": "maps.example.com", "allowed": true, "rule": "maps.example.com"},
+    {"name": "a longer suffix beats a shorter one", "allow": ["*.ops.example.com"], "block": ["*.example.com"], "host": "a.ops.example.com", "allowed": true, "rule": "*.ops.example.com"},
+    {"name": "the same rule on both lists is blocked", "allow": ["example.com"], "block": ["example.com"], "host": "example.com", "allowed": false, "rule": "example.com"}
+  ]
+}
