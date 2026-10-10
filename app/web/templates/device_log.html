@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% set nav = 'manage' %}
+{% block title %}Log — {{ device.name or device.serial_number }} — ATLAS{% endblock %}
+
+{% block content %}
+{# The name if it has one, with the serial beneath - the same rule as every
+   other page that titles a device. #}
+<h1{% if not device.name %} class="mono"{% endif %}>{{ device.name or device.serial_number }}</h1>
+{% if device.name %}<p class="sub mono">{{ device.serial_number }}</p>{% endif %}
+<p class="sub">
+  <a href="/devices/{{ device.id }}#logs">← back to device</a> ·
+  collected {{ bundle.collected_at | localtime('%Y-%m-%d %H:%M:%S %Z') }} ·
+  agent {{ bundle.agent_version or '—' }} ·
+  {{ '%.1f'|format(bundle.size_bytes / 1024) }} KB
+</p>
+
+{% if bundle.truncated %}
+  <div class="banner warn">
+    <strong>Truncated.</strong>
+    The agent's buffer filled and dropped its oldest entries, so this record starts
+    part-way through. The beginning of whatever went wrong may be missing.
+  </div>
+{% endif %}
+
+<div class="panel">
+  <pre class="mono logdump">{{ bundle.content }}</pre>
+</div>
+{% endblock %}
