@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% set nav = 'manage' %}
+{% block main_class %}wide{% endblock %}
+{% block title %}Package list — {{ device.name or device.serial_number }} — ATLAS{% endblock %}
+
+{#
+  The Device Package List Report as a page (W335).
+
+  ⚠️ **This page is the PDF.** The operator chose a printable page over a PDF
+  library: the browser's Print → Save as PDF gives the file, and the print
+  styles below drop the console around the table so the PDF is the report and
+  nothing else.
+#}
+{% block page_styles %}
+<style>
+  /* W335: the first real report overflowed its panel, with package names
+     broken mid-word in a narrow column. Fewer columns, short headings, flags
+     that never wrap, and long names that break at their dots. */
+  .table-scroll { overflow-x: auto; }
+  .package-report { font-size: 12.5px; }
+  .package-report th { white-space: nowrap; }
+  .package-report td { vertical-align: top; }
+  .package-report .pkg { min-width: 24ch; }
+  .package-report .pkg, .package-report .src { overflow-wrap: anywhere; }
+  .package-report .ver { max-width: 22ch; overflow-wrap: anywhere; }
+  .package-report .flag, .package-report .when { white-space: nowrap; }
+  .package-report .flag { text-align: center; }
+  @media print {
+    header, footer, .site-footer, .no-print { display: none !important; }
+    body { background: #fff !important; color: #000 !important; }
+    .panel { border: 0 !important; box-shadow: none !important; padding: 0 !important; }
+    .package-report th, .package-report td { color: #000 !important; border-color: #999 !important; }
+    .package-report thead { display: table-header-group; }
+    .package-report tr { break-inside: avoid; }
+    @page { size: landscape; margin: 12mm; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<p class="sub no-print">
+  <a href="/devices/{{ device.id }}#packages">← back to {{ device.name or device.serial_number }}</a>
+</p>
+<h1>Device Package List Report</h1>
+<div class="panel">
+  <p>
+    <strong>{{ device.name or device.serial_number }}</strong>
+    &middot; {{ (device.model | device_name) or 'Unknown model' }}
+    &middot; serial <span class="mono">{{ device.serial_number }}</span>
+    &middot; Android {{ device.os_version or '?' }}
+  </p>
+  <p class="muted">
+    Collected {{ report.collected_at | localtime('%Y-%m-%d %H:%M %Z') }}
+    &middot; {{ report.package_count }} package{{ 's' if report.package_count != 1 }}
+    ({{ system_count }} system, {{ report.package_count - system_count }} other)
+    &middot; agent {{ report.agent_version or '—' }}
+    &middot; “factory image” means preinstalled and never updated
+  </p>
+  <p class="no-print">
+    <button type="button" data-print-page>Print / Save as PDF</button>
+    <a class="btn ghost" href="/devices/{{ device.id }}/package-report.csv">Download CSV</a>
+  </p>
+
+  <div class="table-scroll">
+  <table class="package-report">
+    <thead>
+      <tr>
+        <th>App name</th><th>Package</th><th>Version</th>
+        <th class="flag">System</th><th class="flag">Enabled</th>
+        <th class="flag" title="Hidden by ATLAS">Hidden</th>
+        <th>Installed by</th><th>First installed</th><th>Last updated</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.label }}</td>
+        {# A <wbr> after each dot, so a long package name breaks between its
+           parts, never mid-word. Each part is escaped. #}
+        <td class="mono pkg">{% for part in row.package_name.split('.') %}{{ part }}{% if not loop.last %}.<wbr>{% endif %}{% endfor %}</td>
+        <td class="ver">
+          {{ row.version_name }}
+          {% if row.version_code %}<div class="muted">code {{ row.version_code }}</div>{% endif %}
+        </td>
+        <td class="flag">{{ row.system }}</td>
+        <td class="flag">{{ row.enabled }}</td>
+        <td class="flag">{{ row.hidden }}</td>
+        <td class="mono src">{% for part in row.installer.split('.') %}{{ part }}{% if not loop.last %}.<wbr>{% endif %}{% endfor %}</td>
+        <td class="when{% if row.first_installed == factory_label %} muted{% endif %}">{{ row.first_installed }}</td>
+        <td class="when{% if row.last_updated == factory_label %} muted{% endif %}">{{ row.last_updated }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}
