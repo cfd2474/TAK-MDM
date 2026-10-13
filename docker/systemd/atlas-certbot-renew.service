@@ -1,0 +1,37 @@
+# Renew the console certificate for mdm.tak-solutions.com (W100).
+#
+# Installed on the host at /etc/systemd/system/, not run by compose: renewal has
+# to outlive any individual container, and the host is what owns /etc/letsencrypt.
+#
+# ⚠️ A systemd timer rather than cron, because this host has no cron installed —
+# `crontab` is not even on the PATH. The existing periodic work here
+# (logrotate, dpkg-db-backup) is all timers, so this follows the house style
+# rather than adding a second scheduler for one job.
+#
+# `certbot renew` is a no-op until a certificate is within 30 days of expiry, so
+# running it twice a day costs nothing and means a failure has many chances to
+# succeed before anything expires.
+
+[Unit]
+Description=Renew the ATLAS console TLS certificate
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker run --rm \
+    -v /etc/letsencrypt:/etc/letsencrypt \
+    -v /var/lib/letsencrypt:/var/lib/letsencrypt \
+    -v /opt/atlas/acme:/var/www/acme \
+    certbot/certbot renew --quiet
+
+# nginx keeps the certificate open, so a renewal is invisible to it until it is
+# told. Reloaded unconditionally: it is cheap, drops no connections, and doing it
+# only on renewal would mean parsing certbot's output to find out.
+#
+# `-` so a reload failure cannot mark the renewal itself as failed — the
+# certificate on disk is the part that matters, and a stale nginx is recoverable.
+ExecStartPost=-/usr/bin/docker compose --project-directory /opt/atlas exec -T proxy nginx -s reload
+
+[Install]
+WantedBy=multi-user.target
