@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf_field, icon_picker %}
+{% set nav = 'apps' %}
+{% block title %}{{ shortcut.label }} — Web shortcut — ATLAS{% endblock %}
+
+{% block content %}
+<p class="sub"><a href="/apps?tab=shortcuts">← back to web shortcuts</a></p>
+{{ page_header(shortcut.label, 'A web shortcut: an app that opens one address in the default browser (version ' ~ shortcut.version_code ~ ').') }}
+
+{% if request.query_params.get('built') %}
+  <div class="banner good">
+    Version {{ shortcut.version_code }} was built and added to the library.
+    {% if uses | selectattr('outdated') | list %}Devices get it when the policies marked below choose the new version.{% endif %}
+  </div>
+{% elif request.query_params.get('unchanged') %}
+  <div class="banner note">Nothing changed, so no new version was built.</div>
+{% endif %}
+
+{#
+  ⚠️ Saving deploys nothing (W139). An edit builds a new version; each policy
+  below keeps the version it names until someone chooses the new one there.
+#}
+{% if uses %}
+<div class="panel">
+  <h3>Policies using this shortcut</h3>
+  <ul>
+    {% for use in uses %}
+      <li>
+        <a href="{{ use.href }}">{{ use.name }}</a>
+        {% if use.outdated %}
+          <span class="pill warn">uses an older version</span>
+          <span class="muted">— open it and choose version {{ shortcut.version_code }} to update devices.</span>
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if not in_library %}
+  <div class="banner warn">
+    This shortcut's app is not in the library (it was deleted there). Saving
+    builds it again.
+  </div>
+{% endif %}
+
+<div class="panel">
+  <h3>Edit</h3>
+  <form method="post" action="/apps/shortcuts/{{ shortcut.id }}" enctype="multipart/form-data" data-shortcut-form>
+    {{ csrf_field(csrf_token) }}
+    <div class="row">
+      <div>
+        <label for="shortcut_label">Name</label>
+        <input id="shortcut_label" name="label" required maxlength="50" class="field-full"
+               value="{{ shortcut.label }}">
+      </div>
+      <div>
+        <label for="shortcut_url">Web address</label>
+        <input id="shortcut_url" name="url" type="url" required maxlength="2000"
+               pattern="https?://.+" class="field-full" value="{{ shortcut.url }}">
+      </div>
+    </div>
+    {{ icon_picker('#shortcut_label', '#shortcut_url',
+                   current_src='/apps/shortcuts/' ~ shortcut.id ~ '/icon.png',
+                   current_source=shortcut.icon_source) }}
+    <p class="field-tip">
+      Saving builds version {{ shortcut.version_code + 1 }}. Devices keep the
+      version their policy names until it is changed there.
+    </p>
+    <button type="submit" style="margin-top:8px">Save and build</button>
+  </form>
+</div>
+
+<div class="panel">
+  <h3>Delete</h3>
+  <p class="muted">
+    Removes the shortcut and its app from the library.
+    {% if uses %}Take it out of the policies above first.{% endif %}
+    Devices that have it keep it until a policy removes it.
+  </p>
+  <form method="post" action="/apps/shortcuts/{{ shortcut.id }}/delete"
+        data-confirm="Delete the web shortcut {{ shortcut.label }}? Its app is removed from the library.">
+    {{ csrf_field(csrf_token) }}
+    <button type="submit" class="ghost">Delete shortcut</button>
+  </form>
+</div>
+{% endblock %}
