@@ -1,0 +1,62 @@
+Agency-Owned Android Device End-User License and Acceptable Use Agreement
+
+This End-User License and Acceptable Use Agreement (“Agreement”) governs your use of Android mobile devices (“Devices”) owned and issued by [Agency Name] (“Agency”). By selecting “I Agree,” receiving, activating, or using a Device, you agree to these terms.
+
+1. Agency ownership and permitted use
+Devices, associated accessories, phone numbers, accounts, software, and data plans remain Agency property at all times. The Agency grants you a limited, revocable, non-transferable right to use the Device for authorized Agency business and, if permitted by Agency policy, limited incidental personal use.
+You may not sell, lend, lease, transfer, alter, or allow unauthorized persons to use the Device.
+
+2. Device management and Device Owner controls
+Each Device is configured as a fully managed Android Device Owner device through the Agency’s mobile device management (“MDM”) system. To protect Agency systems, information, personnel, and operations, the Agency may remotely configure, monitor, restrict, update, secure, locate, lock, wipe, or otherwise manage the Device.
+MDM controls may include:
+• Enforcing passcodes, encryption, operating-system updates, and security settings
+• Installing, updating, disabling, or removing applications
+• Restricting app installation, device settings, cameras, screenshots, sharing, copy/paste, Bluetooth, USB transfer, or network access
+• Configuring Agency email, calendars, VPN, Wi-Fi, certificates, and other services
+• Collecting device, security, compliance, application, network, and diagnostic information
+• Remotely locking, resetting, or erasing the entire Device and its contents
+• Locating the Device when enabled by Agency policy or required for security, recovery, emergency, or operational purposes
+You understand that Device Owner management applies to the entire Device, not just Agency applications or data.
+
+3. Privacy and monitoring
+You should have no expectation of privacy in Agency information or Agency use of the Device, except as required by applicable law. Agency monitoring and information collection will be conducted consistent with applicable law, Agency policy, collective bargaining obligations, and records-retention requirements.
+Because the Device is Agency-owned and fully managed, personal content, accounts, communications, applications, photographs, files, browsing activity, and location information may be inaccessible, restricted, visible to the Agency, or deleted during management, investigation, maintenance, recovery, or device reset activities.
+Do not use the Device for sensitive personal activities or store personal information on it unless expressly permitted by Agency policy. The Agency is not responsible for loss of personal data, accounts, applications, or content resulting from Device management or a remote wipe.
+
+4. Security responsibilities
+You must:
+• Keep the Device in your possession or secured against unauthorized access
+• Use the required screen lock and never share your password, PIN, biometric access, or authentication tokens
+• Promptly install required updates and comply with MDM security prompts
+• Immediately report a lost, stolen, damaged, compromised, or malfunctioning Device to your agency administrator and your supervisor
+• Return the Device promptly upon request, reassignment, leave, separation, or termination
+• Cooperate with reasonable security, inventory, incident-response, and forensic-review requests
+You must not attempt to bypass, disable, interfere with, or remove MDM controls, security software, encryption, certificates, restrictions, or other Agency configurations.
+
+5. Prohibited uses
+You may not use the Device to:
+• Violate law, Agency policy, ethical standards, records rules, or third-party rights
+• Access, distribute, create, or store unlawful, discriminatory, harassing, threatening, sexually explicit, or otherwise inappropriate material
+• Introduce malware; engage in hacking, scanning, credential theft, or unauthorized system access
+• Root, bootloader-unlock, jailbreak, modify, or use unauthorized firmware or operating systems
+• Install unapproved apps, connect unauthorized peripherals, or use unapproved cloud-storage, messaging, or file-sharing services for Agency information
+• Conduct commercial activity, political campaigning, gambling, or other non-Agency business
+• Use the Device while driving or otherwise in violation of traffic-safety laws or Agency safety policies
+
+6. Agency information and records
+All Agency information created, received, stored, transmitted, or accessed through the Device must be handled according to applicable security classifications, privacy requirements, records-retention schedules, and Agency policies. You must use approved Agency services for Agency records and must not transfer Agency information to personal accounts, personal devices, or unapproved services.
+Agency records stored on the Device may be subject to disclosure, preservation, audit, investigation, litigation hold, or public-records obligations.
+
+7. Costs, damage, and loss
+The Agency will determine authorized service plans, accessories, and reimbursement practices. You may be responsible for unauthorized charges, avoidable loss, intentional damage, or damage caused by misuse or negligence, to the extent permitted by applicable law and Agency policy.
+
+8. Enforcement
+Failure to comply with this Agreement may result in restriction or loss of Device access, remote lock or wipe, disciplinary action, recovery of Agency property, financial responsibility where lawful, and/or civil or criminal referral.
+The Agency may modify Device configurations, revoke access, or require immediate return of a Device at any time.
+
+9. No warranty
+The Device and related services are provided for Agency use without warranties beyond those required by law. The Agency does not guarantee uninterrupted availability, compatibility with personal services, preservation of personal data, or availability of cellular, Wi-Fi, GPS, or third-party services.
+
+10. Acceptance
+By selecting “I Agree,” you confirm that you have read, understood, and agree to comply with this Agreement. You acknowledge that the Device is Agency-owned and fully managed through Android Device Owner MDM controls, including the Agency’s ability to remotely manage and erase the entire Device.
+Selecting “I Do Not Agree” will prevent Device enrollment and access to Agency services.
