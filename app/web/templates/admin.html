@@ -1,0 +1,1289 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf_field, tabs, empty_state, knox_soon %}
+{% from "_policy_form.html" import policy_subform %}
+{% set nav = 'admin' %}
+{% block title %}Admin — ATLAS{% endblock %}
+
+{% block content %}
+{#
+  W436/W437: when an update-check alert runs. Every X days at a time, counted
+  from the day it is saved, in the console's timezone. `idp` keeps each copy's
+  ids apart, since the page carries one per add form and one per rule.
+#}
+{% macro schedule_fields(idp, schedule) -%}
+  <span class="muted">every</span>
+  <label class="sr-only" for="{{ idp }}-every">Number of days</label>
+  <input type="number" id="{{ idp }}-every" name="schedule_every" value="{{ schedule.every_days }}"
+         min="{{ alert_catalog.min_days }}" max="{{ alert_catalog.max_days }}" step="1" required
+         style="width:70px" data-schedule-every>
+  <span class="muted">day(s) at</span>
+  <label class="sr-only" for="{{ idp }}-time">Time</label>
+  <input type="time" id="{{ idp }}-time" name="schedule_time" value="{{ schedule.time }}" required
+         style="width:110px" data-schedule-time>
+  <span class="muted" style="font-size:12px">({{ alert_catalog.zone_name }})</span>
+{%- endmacro %}
+{{ page_header('Admin', 'Certificates, integration settings, and operator-defined device attributes.') }}
+
+{#
+  General leads, at the operator's request, and is therefore also where the page
+  lands. It is built from `setting_groups` like any other settings tab — named
+  explicitly here only so it can sit ahead of Certificates, which is otherwise
+  hard-coded first.
+#}
+{% set general = setting_groups | selectattr('group.key', 'equalto', 'general') | first %}
+{% set tab_items = [] %}
+{% if general %}{% set _ = tab_items.append(('general', general.group.title)) %}{% endif %}
+{% set _ = tab_items.append(('certificates', 'Certificates')) %}
+{% set _ = tab_items.append(('distrusted', 'Distrusted CAs')) %}
+{% for grp in setting_groups if grp.group.key != 'general' %}{% set _ = tab_items.append((grp.group.key, grp.group.title ~ (' (Coming Soon)' if grp.group.key == 'knox' and not knox_available() else ''))) %}{% endfor %}
+{% set _ = tab_items.append(('agent', 'Agent updates')) %}
+{% set _ = tab_items.append(('takgov', 'TAK.gov')) %}
+{% set _ = tab_items.append(('googleplay', 'Google Play')) %}
+{% set _ = tab_items.append(('breach', 'Breach mode')) %}
+{% set _ = tab_items.append(('attributes', 'Custom attributes')) %}
+{% set _ = tab_items.append(('integrations', 'Integrations')) %}
+{% set _ = tab_items.append(('environment', 'Environment')) %}
+{% set _ = tab_items.append(('audit', 'Audit log')) %}
+{{ tabs(tab_items, active=('general' if general else 'certificates'), scope='admin-tabs') }}
+
+{% if request.query_params.get('saved') %}
+  <div class="banner good">Saved {{ request.query_params.get('saved') }} settings.</div>
+{% endif %}
+
+<div id="admin-tabs">
+  <div class="tab-panel" data-tab-panel="certificates" hidden>
+    <div class="panel">
+      <h2>Device certificate authority</h2>
+      <p class="sub">
+        <span class="mono">{{ ca.common_name }}</span> ·
+        CA valid {{ ca.ca_validity_days }} days ·
+        device certificates valid {{ ca.device_cert_validity_days }} days,
+        renewed automatically {{ ca.renew_within_days }} days before they expire.
+        Revocation is a database check during auth (D25), not a CRL.
+      </p>
+      {# W419: the lifetime and renewal window, editable. #}
+      <form method="post" action="/admin/certificates/lifetime" class="toolbar" data-cert-lifetime>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label class="inline" for="cert-validity-days">Device certificates last (days)</label>
+        <input type="number" id="cert-validity-days" name="validity_days" value="{{ ca.device_cert_validity_days }}"
+               min="{{ ca.min_validity }}" max="{{ ca.max_validity }}" style="width:90px" required>
+        <label class="inline" for="cert-renew-within-days">Devices renew when this many days remain</label>
+        <input type="number" id="cert-renew-within-days" name="renew_within_days" value="{{ ca.renew_within_days }}"
+               min="1" style="width:90px" required>
+        <button type="submit" class="ghost">Save</button>
+      </form>
+      <p class="field-tip" data-cert-lifetime-summary>
+        {{ ca.cert_policy_summary }}
+        A new lifetime applies to certificates issued from now on; existing ones
+        keep their dates until they renew. A new renewal window reaches every
+        device at its next check-in. ⚠️ The renewal window is what decides how long
+        a device can be offline: one that goes dark just before it renews has only
+        that many days left.
+      </p>
+      {#
+        ⚠️ The *issuing* certificate's expiry, which the configured numbers above
+        do not mention. When it passes, every device it signed stops
+        authenticating — and reissuing needs the offline root fetched from
+        wherever it was put, so the warning starts months out rather than days.
+      #}
+      {% if ca.issuing_known %}
+        <p class="sub">
+          Signing with <span class="mono">{{ ca.issuing_name }}</span>,
+          {% if ca.is_split %}
+            an intermediate ({{ ca.trust_anchors }} trust anchors).
+          {% else %}
+            the root itself.
+          {% endif %}
+          Expires {{ ca.issuing_expires | localtime('%Y-%m-%d') }}
+          ({{ ca.issuing_days_left }} days).
+        </p>
+        {% if ca.issuing_warn %}
+          <p class="banner bad">
+            The issuing certificate expires in {{ ca.issuing_days_left }} days.
+            When it does, <strong>every device it signed stops authenticating</strong>.
+            Reissue it before then &mdash; see <code>docs/CA-OFFLINE-ROOT.md</code>.
+          </p>
+        {% endif %}
+      {% endif %}
+      {#
+        ⚠️ Read from the key file, never from `is_split`. Issuing an intermediate
+        and deleting `ca.key` are two separate steps, and an operator who does the
+        first and stops has changed nothing about their exposure — the ten-year
+        root is still on an internet-facing box. This panel used to infer it from
+        the chain shape and told exactly that operator the root was gone
+        (SEC_AUDIT.md S-2).
+      #}
+      {% if ca.root_key_on_server %}
+        <p class="banner bad">
+          <strong>The root private key is on this server</strong>, at
+          <code>pki/ca.key</code>. Anyone who reaches this machine can mint a
+          certificate for any device, for the life of the root, and the only
+          remedy is re-enrolling every tablet by hand.
+          {% if ca.is_split %}
+            An intermediate has been issued, which is the first half of the fix
+            &mdash; <strong>the root key still has to be moved off and deleted</strong>.
+          {% endif %}
+          It takes about fifteen minutes and no device is touched:
+          see <code>docs/CA-OFFLINE-ROOT.md</code>.
+        </p>
+      {% else %}
+        <p class="muted" style="font-size:12px">
+          The root private key is not on this server. Device certificates are
+          signed by the intermediate above; reissuing it needs the root fetched
+          from wherever you put it.
+        </p>
+      {% endif %}
+      <p class="muted" style="font-size:12px">
+        Enrollment tokens are managed on the <a href="/enrollment">Enroll</a> page.
+      </p>
+    </div>
+    <div class="panel">
+      <h3>Issued device certificates</h3>
+      {% if not certs %}
+        {{ empty_state('No certificates issued yet.') }}
+      {% else %}
+      <table data-sortable>
+        <thead><tr><th data-sort>Device</th><th data-sort>Serial (hex)</th><th data-sort>Issued</th><th data-sort>Expires</th><th data-sort>State</th><th></th></tr></thead>
+        <tbody>
+        {% for cert, serial in certs %}
+          <tr>
+            <td><a href="/devices/{{ cert.device_id }}" class="mono">{{ serial }}</a></td>
+            <td class="mono muted">{{ cert.serial_hex[:16] }}…</td>
+            <td class="muted">{{ cert.issued_at | localtime('%Y-%m-%d') }}</td>
+            <td class="muted">{{ cert.not_valid_after | localtime('%Y-%m-%d') }}</td>
+            <td>
+              {% if cert.revoked_at %}
+                <span class="pill bad">revoked</span>
+                <span class="muted">{{ cert.revoked_reason or '' }}</span>
+              {% elif cert.not_valid_after < now %}<span class="pill warn" data-cert-state="expired">expired</span>
+              {% else %}<span class="pill good">valid</span>{% endif %}
+            </td>
+            <td>
+              {% if not cert.revoked_at %}
+              <form method="post" action="/admin/certs/{{ cert.id }}/revoke" style="margin:0"
+                    data-confirm="Revoke this certificate? The device can no longer authenticate until it re-enrols.">
+                {{ csrf_field(csrf_token) }}
+                <button type="submit" class="danger">Revoke</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  {#
+    W432: CAs no device should trust. Every device receives the list in its
+    bundle and reports any it still trusts. Built-in entries ship with ATLAS
+    and can't be removed here.
+  #}
+  <div class="tab-panel" data-tab-panel="distrusted" hidden>
+    <div class="panel">
+      <h2>Distrusted CAs</h2>
+      <p class="sub">
+        Certificate authorities that no device should trust. Every device checks
+        its trusted certificates against this list and reports any it finds.
+        Devices are matched by SHA-256 fingerprint, never by name.
+      </p>
+      <p class="field-tip">
+        A device can't remove a system certificate itself: the fix is an OS or
+        Google Play system update.
+      </p>
+      <table data-distrusted-list>
+        <thead><tr><th>Certificate</th><th>Why</th><th>Added</th><th></th></tr></thead>
+        <tbody>
+        {% for e in distrusted %}
+          <tr data-distrusted-row{{ ' data-builtin' if e.builtin }}>
+            {#- The fingerprint under the name, small and wrapping anywhere: in a
+                column of its own it broke into three-character lines at phone
+                width (seen in Chrome on the W432 emulator test). #}
+            <td>{{ e.name }}
+              <div class="mono muted" style="font-size:12px;word-break:break-all;margin-top:4px">SHA-256 {{ e.sha256 }}</div></td>
+            <td class="muted">{{ e.reason or '—' }}{% if e.source %} <a href="{{ e.source }}" rel="noopener noreferrer" target="_blank">Source</a>{% endif %}</td>
+            <td class="muted">{{ e.added.isoformat() if e.added else '—' }}</td>
+            <td>
+              {% if e.builtin %}
+                <span class="pill">Built in</span>
+              {% else %}
+                <form method="post" action="/admin/distrusted-cas/{{ e.id }}/delete" style="margin:0"
+                      data-confirm="Remove {{ e.name }} from the distrusted CAs? Devices stop reporting it.">
+                  {{ csrf_field(csrf_token) }}
+                  <button type="submit" class="danger">Remove</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <h3>Add a certificate</h3>
+      <form method="post" action="/admin/distrusted-cas" class="toolbar" data-distrusted-add>
+        {{ csrf_field(csrf_token) }}
+        <label for="distrusted-sha256">SHA-256 fingerprint</label>
+        <input type="text" id="distrusted-sha256" name="sha256" required size="70">
+        <p class="field-tip">From the CA's advisory or CCADB. Colons are fine.</p>
+        <label for="distrusted-name">Name</label>
+        <input type="text" id="distrusted-name" name="name" required>
+        <p class="field-tip">Shown in device reports.</p>
+        <label for="distrusted-reason">Why</label>
+        <input type="text" id="distrusted-reason" name="reason">
+        <p class="field-tip">Optional.</p>
+        <button type="submit">Add</button>
+      </form>
+    </div>
+  </div>
+
+  {% for grp in setting_groups %}
+  {# General is the landing tab, so its panel is the one that starts visible. #}
+  <div class="tab-panel" data-tab-panel="{{ grp.group.key }}"{{ '' if grp.group.key == 'general' else ' hidden' }}>
+    <div class="panel">
+      <h2>{{ grp.group.title }}{% if grp.group.key == 'knox' %} {{ knox_soon() }}{% endif %}</h2>
+      <p class="sub">{{ grp.group.description }}</p>
+      {% if grp.group.key == 'knox' and not knox_available() %}
+        {#
+          W278. The field below still saves -- the operator asked for a flag,
+          not a lock-out -- so this says what is true rather than what is
+          disabled: nothing ATLAS does today needs a key.
+        #}
+        <div class="banner warn" data-knox-placeholder>
+          <strong>Placeholder.</strong> Samsung Knox licensing is delayed, so this
+          page is here ahead of it. Nothing ATLAS does today needs a Knox key &mdash;
+          every feature that works now works without one.
+        </div>
+      {% endif %}
+      {% if grp.group.key == 'smtp' %}
+        {#
+          ⚠️ **This used to say "ATLAS does not send mail yet"**, and it stayed
+          that way for two weeks after the alert sweep started sending through
+          `mail.deliver`. An operator read it on a box whose relay was running
+          and concluded mail was unsupported. What the page must say instead is
+          whether *this* deployment will send -- because `alerts.notify`
+          discards alerts when no server is set, and says nothing about it.
+        #}
+        {% if mail.configured %}
+          <p class="note">
+            ATLAS emails alert notifications through this server, to the
+            recipients listed under General &rarr; Alerts.
+          </p>
+        {% else %}
+          <p class="note" style="color:var(--warn)">
+            ⚠️ <strong>No mail server is selected, so alerts are discarded
+            rather than sent.</strong>
+            {% if not mail.inheriting and mail.relay_offered %}
+              InfraTAK's Email Relay is available on this box &mdash; tick
+              <em>Use InfraTAK's email configuration</em> above and save.
+            {% else %}
+              Enter your own server below, or deploy InfraTAK's Email Relay.
+            {% endif %}
+          </p>
+        {% endif %}
+        {% if mail.inheriting %}
+          <p class="note">
+            <strong>Using InfraTAK's Email Relay.</strong> The fields below are
+            what ATLAS would send through, and are managed by InfraTAK rather
+            than here. Untick the box and save to go back to your own server —
+            your settings are kept, not replaced.
+          </p>
+          {% if mail.looks_unconfigured %}
+            <p class="note" style="color:var(--warn)">
+              ⚠️ <strong>InfraTAK's Email Relay does not look configured.</strong>
+              ATLAS has no relay address from it, which usually means the relay
+              has never been deployed — deploy it from the InfraTAK console
+              first, or nothing will send. It can also mean the relay was set up
+              after ATLAS was, in which case running an ATLAS update will pick
+              the settings up.
+            </p>
+          {% endif %}
+        {% endif %}
+        {% if request.query_params.get('relay_ok') %}
+          <p class="note" style="color:var(--good)">
+            <strong>The relay answered.</strong>
+            <span class="mono">{{ request.query_params.get('relay_ok') }}</span>
+            <br>
+            ⚠️ That means a mail server is reachable and greeted ATLAS. It
+            does not mean mail will arrive — the provider can still refuse the
+            sender or the domain, and nothing in ATLAS sends any yet.
+          </p>
+        {% elif request.query_params.get('relay_bad') %}
+          <p class="note" style="color:var(--bad)">
+            <strong>No relay answered.</strong>
+            <span class="mono">{{ request.query_params.get('relay_bad') }}</span>
+          </p>
+        {% endif %}
+      {% endif %}
+      {% if grp.group.key == 'smtp' %}
+        {#
+          ⚠️ Its own form, outside the settings one. Nested forms are invalid
+          HTML and the browser drops the inner one, so a "test" button inside
+          the settings form would have submitted the settings instead — saving
+          a half-filled page as a side effect of pressing Test.
+        #}
+        <form method="post" action="/admin/mail/probe" style="margin:0 0 10px">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit" class="ghost">Test the relay</button>
+          <span class="muted">Opens a connection and reads the greeting. Sends nothing.</span>
+        </form>
+      {% endif %}
+      {% if grp.group.key == 'eula' %}
+        {#
+          W399: Generic (the operator's agreement, with the agency's name) or
+          Custom (their own text, as before). Both boxes always submit, so
+          switching back keeps what was typed; only one is shown.
+        #}
+        {% set mode = grp.current['eula.mode'] or 'custom' %}
+        <form method="post" action="/admin/settings/eula" data-eula-form>
+          {{ csrf_field(csrf_token) }}
+          <div class="eula-choice">
+            <div>
+              <label for="eula.mode">EULA</label>
+              <select id="eula.mode" name="eula.mode" data-reveals="[data-eula-mode]">
+                <option value="generic"{{ ' selected' if mode == 'generic' }}>Generic EULA</option>
+                <option value="custom"{{ ' selected' if mode != 'generic' }}>Custom EULA</option>
+              </select>
+            </div>
+            <div data-eula-mode="generic"{{ '' if mode == 'generic' else ' hidden' }}>
+              <label for="eula.agency_name">Agency Name</label>
+              <input id="eula.agency_name" name="eula.agency_name" type="text" class="field-full"
+                     value="{{ grp.current['eula.agency_name'] }}">
+            </div>
+          </div>
+          <div data-eula-mode="generic"{{ '' if mode == 'generic' else ' hidden' }}>
+            <p class="muted">The agreement devices show, with the name above in place of [Agency Name]. Saved changes to the name are shown again to every device.</p>
+            <pre class="eula-preview" data-eula-preview data-eula-template="{{ eula_template }}">{{ eula_preview }}</pre>
+          </div>
+          <div data-eula-mode="custom"{{ '' if mode != 'generic' else ' hidden' }}>
+            <label for="eula.text">EULA text <span class="muted">— leave empty for no EULA</span></label>
+            <textarea id="eula.text" name="eula.text" rows="8">{{ grp.current['eula.text'] }}</textarea>
+          </div>
+          <button type="submit" style="margin-top:12px">Save</button>
+        </form>
+      {% else %}
+      <form method="post" action="/admin/settings/{{ grp.group.key }}">
+        {{ csrf_field(csrf_token) }}
+        {% for field in grp.group.fields %}
+          {#
+            ⚠️ Greyed **server-side only**, with no live JavaScript (W194).
+            Ticking the box and saving is one step, and the page comes back
+            greyed with InfraTAK's values in place. Greying live would mean a
+            host the operator had just typed vanished on save without being
+            stored — disabled inputs submit nothing — which is a surprise for
+            no gain, and it would also have to invent the inherited values that
+            only a render can supply.
+          #}
+          {% set greyed = grp.group.key == 'smtp' and mail.inheriting
+                          and field.key != 'smtp.use_infratak_relay' %}
+          {% set val = mail.shown.get(field.key, '') if greyed else grp.current[field.key] %}
+          <label for="{{ field.key }}">{{ field.label }}{% if field.help %} <span class="muted">— {{ field.help }}</span>{% endif %}</label>
+          {% if field.kind == 'textarea' %}
+            <textarea id="{{ field.key }}" name="{{ field.key }}" rows="8">{{ val }}</textarea>
+          {% elif field.kind == 'bool' %}
+            <label class="muted" style="display:flex; gap:8px; align-items:center">
+              <input type="checkbox" name="{{ field.key }}" value="true" style="width:auto"
+                     {{ 'checked' if val == 'true' }} {{ 'disabled' if greyed }}> enabled
+            </label>
+          {% elif field.kind == 'select' %}
+            <select id="{{ field.key }}" name="{{ field.key }}" class="field-full">
+              {#
+                The stored value is listed even when it is not among the choices,
+                and selected. A zone the IANA database has since retired would
+                otherwise silently re-point the console at the first entry in the
+                list the moment someone opened this page to change something else.
+              #}
+              {% if val and val not in field.choices %}
+                <option value="{{ val }}" selected>{{ val }} (no longer a known zone)</option>
+              {% endif %}
+              {% for choice in field.choices %}
+                <option value="{{ choice }}"{{ ' selected' if choice == val else '' }}>{{ choice }}</option>
+              {% endfor %}
+            </select>
+          {% elif field.kind == 'password' %}
+            {#
+              ⚠️ While inheriting, this box is empty *and* says so — the relay
+              wants no password, and "set" would be a claim about a credential
+              that is not ATLAS's to hold. The operator's own stored password is
+              untouched underneath; see the save route.
+            #}
+            <input id="{{ field.key }}" name="{{ field.key }}" type="password" class="field-full"
+                   {{ 'disabled' if greyed }}
+                   placeholder="{{ 'not needed — the relay does not authenticate' if greyed else ('•••••••• (set — leave blank to keep)' if val else 'not set') }}">
+          {% else %}
+            <input id="{{ field.key }}" name="{{ field.key }}" type="{{ 'number' if field.kind == 'number' else 'text' }}"
+                   class="field-full" value="{{ val }}" {{ 'disabled' if greyed }}>
+          {% endif %}
+        {% endfor %}
+        <button type="submit" style="margin-top:12px">Save</button>
+      </form>
+      {% endif %}
+    </div>
+
+    {#
+      Alert recipients (W195). In **General** because that is where the operator
+      asked for alerting to live; it was proposed as its own tab and overruled.
+
+      ⚠️ The panel must not imply mail is flowing when it is not, or the first
+      real alert will be the moment somebody discovers it never was. It used to
+      do that by saying nothing sends at all -- true when written, false from
+      the day the sweep began sending, and it misled an operator. Now it says
+      what this box will actually do.
+    #}
+    {% if grp.group.key == 'general' %}
+    <div class="panel">
+      <h2>Alerts</h2>
+      <p class="sub">
+        What ATLAS tells you about. Alerts are emailed to the recipients below,
+        through the server on the Email (SMTP) tab.
+      </p>
+      {% if not mail.configured %}
+        <p class="note" style="color:var(--warn)">
+          ⚠️ No mail server is selected, so alerts are discarded rather than
+          sent. Set one on the Email (SMTP) tab.
+        </p>
+      {% endif %}
+
+      {% if alert_rules_list %}
+        <table style="margin-top:6px">
+          <thead><tr><th>Alert</th><th>Watches for</th><th>On</th><th></th></tr></thead>
+          <tbody>
+          {% for rule in alert_rules_list %}
+            <tr>
+              <td>{{ rule.name }}</td>
+              {#
+                ⚠️ Described from the stored config, never from a description
+                saved beside it. The second kind drifts the first time a rule is
+                edited, and a list of rules whose descriptions are stale is
+                worse than a list with none.
+              #}
+              <td class="muted">
+                {{ alert_catalog.describe(rule.kind, rule.config) }}
+                {% if rule.kind == alert_catalog.plugin_updates %}
+                  {% set next = alert_catalog.next_check(rule) %}
+                  <div style="font-size:11px" data-alert-schedule>
+                    Schedule: {{ alert_catalog.describe_schedule(rule.schedule) }} ({{ alert_catalog.zone_name }}){% if rule.enabled and next %}; next check {{ next | localtime('%Y-%m-%d %H:%M') }}{% elif not rule.enabled %}; paused{% endif %}.
+                  </div>
+                  <div style="font-size:11px" data-alert-last-check>
+                    {% if rule.last_checked_at %}Last checked {{ rule.last_checked_at | localtime('%Y-%m-%d %H:%M') }}: {{ rule.last_result }}
+                    {% else %}Not checked yet.{% endif %}
+                  </div>
+                  <details style="font-size:12px" data-alert-schedule-edit>
+                    <summary class="linklike">Change schedule</summary>
+                    <form method="post" action="/admin/alerts/rules/{{ rule.id }}/schedule" class="toolbar" style="margin:4px 0">
+                      {{ csrf_field(csrf_token) }}
+                      {{ schedule_fields('sched-' ~ rule.id, alert_catalog.schedule_of(rule.schedule)) }}
+                      <button type="submit">Save</button>
+                    </form>
+                  </details>
+                  <form method="post" action="/admin/alerts/rules/{{ rule.id }}/check" style="margin:0" data-alert-check-now>
+                    {{ csrf_field(csrf_token) }}
+                    <button type="submit" class="linklike">Check now</button>
+                  </form>
+                {% endif %}
+              </td>
+              <td>
+                <form method="post" action="/admin/alerts/rules/{{ rule.id }}/enabled" style="margin:0">
+                  {{ csrf_field(csrf_token) }}
+                  <input type="hidden" name="enabled" value="{{ 'false' if rule.enabled else 'true' }}">
+                  <button type="submit" class="linklike">
+                    {% if rule.enabled %}<span class="pill good">yes</span>{% else %}<span class="pill warn">paused</span>{% endif %}
+                  </button>
+                </form>
+              </td>
+              <td>
+                <form method="post" action="/admin/alerts/rules/{{ rule.id }}/delete" style="margin:0"
+                      data-confirm="Remove the alert {{ rule.name }}?">
+                  {{ csrf_field(csrf_token) }}
+                  <button type="submit" class="linklike">Remove</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        {{ empty_state('No alerts yet. Nothing below will be sent until one is added.') }}
+      {% endif %}
+
+      <h3 style="margin-top:18px">When something happens</h3>
+      <form method="post" action="/admin/alerts/rules" class="toolbar">
+        {{ csrf_field(csrf_token) }}
+        <input type="hidden" name="kind" value="event">
+        <select name="event" aria-label="Event">
+          {% for key, label in alert_catalog.events.items() %}
+            <option value="{{ key }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit">Add</button>
+      </form>
+
+      <h3 style="margin-top:18px">When a device goes quiet</h3>
+      <form method="post" action="/admin/alerts/rules" class="toolbar">
+        {{ csrf_field(csrf_token) }}
+        <input type="hidden" name="kind" value="stale">
+        <span class="muted">No check-in for</span>
+        <input type="number" name="amount" min="1" value="72" style="width:90px" aria-label="How long">
+        <select name="unit" aria-label="Unit">
+          {% for unit in alert_catalog.units %}
+            <option value="{{ unit }}" {{ 'selected' if unit == 'hours' }}>{{ unit }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit">Add</button>
+      </form>
+      <p class="field-tip">
+        Add as many as you need — a short one to notice a device dropping off,
+        a long one to catch a tablet nobody has picked up in a fortnight.
+        ⚠️ A device that has <em>never</em> checked in is a different problem
+        and is not covered by these.
+      </p>
+
+      <h3 style="margin-top:18px">When a device looks like this</h3>
+      <form method="post" action="/admin/alerts/rules" class="toolbar" data-alert-rule>
+        {{ csrf_field(csrf_token) }}
+        <input type="hidden" name="kind" value="custom">
+        <input type="text" name="name" placeholder="not set" aria-label="Alert name" style="min-width:200px">
+        <select name="field" aria-label="Device field">
+          {% for f in alert_catalog.fields %}
+            <option value="{{ f.name }}">{{ f.label }}</option>
+          {% endfor %}
+        </select>
+        <select name="op" aria-label="Test">
+          {#
+            Every operator any field allows. The server refuses a pairing the
+            field's type does not permit — "less than" over a model name would
+            compare alphabetically and answer something nobody meant.
+          #}
+          {% for kind, ops in alert_catalog.operators.items() %}
+            {% for key, label in ops.items() %}
+              <option value="{{ key }}">{{ label }}</option>
+            {% endfor %}
+          {% endfor %}
+        </select>
+        <input type="text" name="value" aria-label="Value" style="width:140px">
+        <button type="submit">Add</button>
+      </form>
+      <p class="field-tip">
+        One condition to start with; the alert fires on devices that match.
+        Give it a name you will recognise in a list.
+      </p>
+
+      {# W422: one catalog per rule, as asked; watching both is two rules. #}
+      <h3 style="margin-top:18px">When an app or plugin in the library has a newer release</h3>
+      <form method="post" action="/admin/alerts/rules" class="toolbar" data-alert-plugin-updates="takwerx">
+        {{ csrf_field(csrf_token) }}
+        <input type="hidden" name="kind" value="{{ alert_catalog.plugin_updates }}">
+        <input type="hidden" name="source" value="takwerx">
+        <span class="muted">TAKWERX marketplace, for ATAK</span>
+        <label class="inline sr-only" for="alert-takwerx-version">ATAK version</label>
+        <input type="text" id="alert-takwerx-version" name="atak_version" list="alert-takwerx-versions"
+               value="{{ alert_catalog.takwerx_versions[0] }}" style="width:120px" required>
+        <datalist id="alert-takwerx-versions">
+          {% for v in alert_catalog.takwerx_versions %}<option value="{{ v }}">{% endfor %}
+        </datalist>
+        {{ schedule_fields('add-takwerx', alert_catalog.schedule_default) }}
+        <button type="submit">Add</button>
+      </form>
+      <form method="post" action="/admin/alerts/rules" class="toolbar" data-alert-plugin-updates="tpc">
+        {{ csrf_field(csrf_token) }}
+        <input type="hidden" name="kind" value="{{ alert_catalog.plugin_updates }}">
+        <input type="hidden" name="source" value="tpc">
+        <span class="muted">TAK.gov (TPC) plugins, for</span>
+        <select name="product" aria-label="ATAK edition">
+          {% for p in alert_catalog.tpc_products %}
+            <option value="{{ p }}" {{ 'selected' if p == alert_catalog.tpc_default_product }}>{{ p }}</option>
+          {% endfor %}
+        </select>
+        <select name="tpc_atak_version" aria-label="ATAK version">
+          {% for v in alert_catalog.tpc_versions %}
+            <option value="{{ v }}" {{ 'selected' if v == alert_catalog.tpc_default_version }}>{{ v }}</option>
+          {% endfor %}
+        </select>
+        {{ schedule_fields('add-tpc', alert_catalog.schedule_default) }}
+        <button type="submit">Add</button>
+      </form>
+      {#
+        W435: the apps the library took from Google Play, asked as one fleet
+        device. A fleet device only: Play answers per device, and the Flagship
+        is GPL data ATLAS keeps no copy of.
+      #}
+      {% if alert_catalog.play_devices %}
+      <form method="post" action="/admin/alerts/rules" class="toolbar" data-alert-plugin-updates="google-play">
+        {{ csrf_field(csrf_token) }}
+        <input type="hidden" name="kind" value="{{ alert_catalog.plugin_updates }}">
+        <input type="hidden" name="source" value="google-play">
+        <span class="muted">Google Play apps, as</span>
+        <select name="device_profile" aria-label="Device">
+          {% for c in alert_catalog.play_devices %}
+            <option value="{{ c.value }}">{{ c.label }}</option>
+          {% endfor %}
+        </select>
+        {{ schedule_fields('add-google-play', alert_catalog.schedule_default) }}
+        <button type="submit">Add</button>
+      </form>
+      {% else %}
+      <p class="field-tip" data-alert-play-no-fleet>
+        Google Play apps can be watched once an enrolled device has checked in:
+        Play is asked as one of your own devices.
+      </p>
+      {% endif %}
+      <p class="field-tip">
+        Checked every so many days at the time you choose (every day at 06:00 unless
+        you change it), counted from the day you save it, against what is already in
+        your library. Each newer build
+        is emailed once; you hear again only when an even newer one appears. TAK.gov needs
+        the account linked on the TAK.gov tab, and Google Play the account linked on the
+        Google Play tab; Google Play checks only the apps you imported from it. Add one of
+        each to watch several.
+      </p>
+    </div>
+
+    <div class="panel">
+      <h2>Alert recipients</h2>
+      <p class="sub">
+        Who is emailed when the fleet needs attention.
+      </p>
+
+      <form method="post" action="/admin/alerts/recipients" class="toolbar">
+        {{ csrf_field(csrf_token) }}
+        <input type="email" name="address" required aria-label="Email address"
+               autocomplete="off" style="min-width:260px">
+        <input type="text" name="label" aria-label="Name" style="min-width:160px">
+        <button type="submit">Add recipient</button>
+      </form>
+      <p class="field-tip">
+        The address, and optionally what to call them. Names are for the console
+        only — the address is what receives the mail.
+      </p>
+
+      {% if alert_recipients %}
+        <table style="margin-top:10px">
+          <thead><tr>
+            <th>Address</th><th>Name</th><th>Receiving</th><th></th>
+          </tr></thead>
+          <tbody>
+          {% for r in alert_recipients %}
+            <tr>
+              <td class="mono">{{ r.address }}</td>
+              <td class="muted">{{ r.label or '—' }}</td>
+              <td>
+                {#
+                  ⚠️ Off is not gone, and both are offered. An address that
+                  starts bouncing has to stop receiving today; deleting the row
+                  to achieve that is how a list loses the person who should have
+                  been told.
+                #}
+                <form method="post"
+                      action="/admin/alerts/recipients/{{ r.id }}/enabled"
+                      style="margin:0">
+                  {{ csrf_field(csrf_token) }}
+                  <input type="hidden" name="enabled" value="{{ 'false' if r.enabled else 'true' }}">
+                  <button type="submit" class="linklike">
+                    {% if r.enabled %}<span class="pill good">yes</span>{% else %}<span class="pill warn">paused</span>{% endif %}
+                  </button>
+                </form>
+              </td>
+              <td>
+                <form method="post"
+                      action="/admin/alerts/recipients/{{ r.id }}/delete"
+                      style="margin:0"
+                      data-confirm="Remove {{ r.address }} from the alert list?">
+                  {{ csrf_field(csrf_token) }}
+                  <button type="submit" class="linklike">Remove</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        {{ empty_state('No recipients yet. Alerts with nobody to send to are not sent.') }}
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  <div class="tab-panel" data-tab-panel="googleplay" hidden>
+    <div class="panel">
+      <h2>Google Play account</h2>
+      <p class="sub">
+        Lets <a href="/apps#tab-play">Apps &rsaquo; Google Play</a> search and fetch
+        as one nominated account. Downloads arrive <strong>held</strong>, like
+        every other source.
+      </p>
+
+      {% if request.query_params.get('play_linked') %}
+        <div class="banner good">Linked. <a href="/apps#tab-play">Apps &rsaquo; Google Play</a> can search now.</div>
+      {% endif %}
+      {% if request.query_params.get('play_unlinked') %}
+        <div class="banner good">
+          Unlinked, and the stored token has been destroyed.
+          {#
+            ⚠️ Said explicitly: forgetting a token here does not revoke it at
+            Google. Implying otherwise would leave an operator believing they had
+            closed something they had not.
+          #}
+          This does <strong>not</strong> revoke it at Google — remove this
+          server's access from that account's security settings as well.
+        </div>
+      {% endif %}
+      {% if request.query_params.get('play_error') %}
+        <div class="banner bad">{{ request.query_params.get('play_error') }}</div>
+      {% endif %}
+
+      <div class="banner bad">
+        ⚠️ <strong>Using this violates Google Play's Terms of Service §3.3</strong>,
+        and Google may lock the account. Use an account kept for this purpose —
+        never one carrying Workspace mail, where a lock takes the mailbox with it.
+        Linking also accepts Play's terms on that account's behalf.
+      </div>
+
+      {% if googleplay.link.status.value == 'linked' %}
+        <p>
+          <span class="pill good">linked</span>
+          as <span class="mono">{{ googleplay.link.email }}</span>
+          &middot; the device is chosen per download on
+          <a href="/apps?tab=play#tab-play">Apps › Google Play</a>
+          {% if googleplay.link.linked_at %}
+            <span class="muted">since {{ googleplay.link.linked_at | localtime }}</span>
+          {% endif %}
+        </p>
+        {#
+          ⚠️ No device choice here any more (W313). Play's device is chosen per
+          download on Apps → Google Play: the Flagship Smartphone, or an enrolled
+          device's exact model. An account-wide default was the profile searches
+          kept using behind the operator's back.
+        #}
+        <form method="post" action="/admin/google-play/unlink" style="margin-top:12px"
+              data-confirm="Unlink and destroy the stored token?">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit" class="danger">Unlink</button>
+        </form>
+      {% else %}
+        {% if googleplay.link.last_error %}
+          <div class="banner bad">{{ googleplay.link.last_error }}</div>
+        {% endif %}
+
+        <h3>How to get a token</h3>
+        <ol class="sub">
+          <li>Open <a href="https://accounts.google.com/EmbeddedSetup" target="_blank"
+                      rel="noopener noreferrer">accounts.google.com/EmbeddedSetup</a>
+              with your browser's developer console on the <strong>Network</strong> tab.</li>
+          <li>Sign in with the account you want ATLAS to download as. Accept the
+              Google terms if prompted — there may be a pause afterwards.</li>
+          <li>Select the last request to <span class="mono">accounts.google.com</span>,
+              open its <strong>Cookies</strong> tab, and find the response cookie
+              named <span class="mono">oauth_token</span>.</li>
+          <li>Copy its <strong>value</strong> — it begins
+              <span class="mono">oauth2_4/</span> — and paste it below.</li>
+        </ol>
+        <p class="field-tip">
+          ⚠️ That value works <strong>once</strong>. ATLAS exchanges it for a
+          long-lived token, stores that encrypted, and never shows it again. If the
+          exchange fails you will need a fresh one — the old is spent either way.
+        </p>
+
+        <form method="post" action="/admin/google-play/link">
+          {{ csrf_field(csrf_token) }}
+          <label for="gp-email">Google account email</label>
+          <input type="email" id="gp-email" name="email" class="field-full" required>
+
+          <label for="gp-token">One-time oauth token</label>
+          <input type="password" id="gp-token" name="oauth_token" class="field-full"
+                 autocomplete="off" required>
+          <p class="field-tip">Starts with <span class="mono">oauth2_4/</span>.</p>
+
+          <p class="field-tip">
+            The device Play serves builds for is chosen per download on
+            Apps › Google Play, not here.
+          </p>
+
+          <button type="submit">Link account</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="takgov" hidden>
+    <div class="panel">
+      <h2>TAK.gov account</h2>
+      <p class="sub">
+        Links this server to a TAK.gov account so the
+        <a href="/apps">Apps</a> page can list the plugin catalog. This is the
+        same "Link EUD" flow ATAK itself uses — you enter a short code at
+        tak.gov, and the server keeps the credential afterwards.
+      </p>
+
+      {% if request.query_params.get('unbound') %}
+        <div class="banner good">
+          The TAK.gov account has been unbound. ATLAS no longer holds a
+          credential for it.
+        </div>
+      {% endif %}
+
+
+      {% if takgov.link.status.value == 'linked' %}
+        <p>
+          <span class="pill good">linked</span>
+          {% if takgov.link.account_label %}
+            as <span class="mono">{{ takgov.link.account_label }}</span>
+          {% endif %}
+          {% if takgov.link.linked_at %}
+            <span class="muted">since {{ takgov.link.linked_at | localtime }}</span>
+          {% endif %}
+        </p>
+        <div class="banner">
+          The catalog shows exactly what <strong>this account</strong> is entitled
+          to see — the credential is a person, not a service account.
+        </div>
+        <form method="post" action="/admin/takgov/unlink" style="margin-top:12px"
+              data-confirm="Unbind this TAK.gov account? The plugin catalog stops loading until an account is linked again.">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit" class="danger">Unlink</button>
+        </form>
+
+      {% elif takgov.link.status.value == 'pending' %}
+        <p><span class="pill warn">waiting for you at tak.gov</span></p>
+        <p>
+          Enter this code at
+          <a href="{{ takgov.link.verification_uri }}" target="_blank" rel="noopener">{{ takgov.link.verification_uri }}</a>
+          while signed in to TAK.gov:
+        </p>
+        <p class="mono" style="font-size:28px; letter-spacing:3px">{{ takgov.link.user_code }}</p>
+        {% if takgov.link.verification_uri_complete %}
+          <p>
+            Or open
+            <a href="{{ takgov.link.verification_uri_complete }}" target="_blank" rel="noopener">this link</a>,
+            which carries the code for you.
+          </p>
+        {% endif %}
+        {% if takgov.expires_in_seconds %}
+          <p class="muted">The code expires in about {{ takgov.expires_in_seconds // 60 }} min {{ takgov.expires_in_seconds % 60 }} s.</p>
+        {% endif %}
+        <form method="post" action="/admin/takgov/poll" class="toolbar">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit">I have entered the code</button>
+        </form>
+        <form method="post" action="/admin/takgov/unlink" style="margin-top:8px">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit" class="ghost">Cancel</button>
+        </form>
+
+      {% else %}
+        {% if takgov.link.status.value == 'broken' %}
+          <p><span class="pill bad">link broken</span></p>
+        {% else %}
+          <p><span class="pill">not linked</span> The Apps page cannot show the TAK.gov catalog.</p>
+        {% endif %}
+        <div class="banner">
+          Link with the TAK.gov account whose entitlements you want this server to
+          inherit. Its credential does not expire on its own, so treat it like a
+          password for that account — and note that
+          <strong>ATAK-CIV carries a distribution grant while ATAK-MIL does
+          not</strong>. Mirroring GOV/MIL plugins to devices is subject to access
+          and export controls, and is worth clearing in writing first.
+        </div>
+        <form method="post" action="/admin/takgov/start" style="margin-top:12px">
+          {{ csrf_field(csrf_token) }}
+          <button type="submit">Link a TAK.gov account</button>
+        </form>
+      {% endif %}
+
+      {% if takgov.link.last_error %}
+        <div class="banner bad" style="margin-top:12px">
+          Last error from tak.gov: {{ takgov.link.last_error }}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="agent" hidden>
+    <div class="panel">
+      <h2>Agent updates</h2>
+      <p class="sub">
+        Publishing a build tells every enrolled device to replace its own agent
+        with it, at its next check-in. Devices that are failing to apply policy
+        are skipped until they recover, and a device is left alone until it has
+        checked in cleanly once on the build it is already running.
+      </p>
+      <div class="banner">
+        <strong>There is no rollback.</strong> Android refuses to install an
+        older <span class="mono">versionCode</span> over a newer one, so a build
+        that will not start cannot be recalled from here — the only cure is
+        another build with a higher code, delivered by hand to every device that
+        took the bad one. Publish builds you have already run on a test instance.
+      </div>
+
+      {#
+        ⚠️ An APK this release ships that the library would not take. Before
+        W188 this was a line in `docker logs` and nothing else: the console
+        reported the old agent as current, showed no error, and gave nobody a
+        reason to look — while every device went on being offered a build the
+        release no longer contains.
+
+        Re-derived on each render rather than recorded when the seeder ran, so
+        it disappears by itself once the cause is fixed.
+      #}
+      {% for item in agent.refused %}
+        <p class="banner bad">
+          <strong>{{ item.filename }} is not in the library.</strong>
+          This release ships <span class="mono">{{ item.package_name }}</span>
+          {{ item.version_name }} (versionCode {{ item.version_code }}), but
+          {{ item.reason }}
+        </p>
+      {% endfor %}
+
+      {% if agent.rollout.published %}
+      <p>
+        Published: <span class="pill good">{{ agent.rollout.published }}</span>
+        {% if agent.published_name %}<span class="mono">{{ agent.published_name }}</span>{% endif %}
+        {% if not agent.published_uploaded %}
+          <span class="pill bad">this build is no longer uploaded — nothing is being offered</span>
+        {% endif %}
+      </p>
+      <table>
+        <thead><tr><th>On this build</th><th>Behind</th><th>Never reported</th><th>Not healthy</th><th>Enrolled</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>{{ agent.rollout.on_published }}</td>
+            <td>{{ agent.rollout.behind }}</td>
+            <td>{{ agent.rollout.unreported }}</td>
+            <td>{{ agent.rollout.unhealthy or '—' }}</td>
+            <td>{{ agent.rollout.total }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="muted">
+        "Not healthy" counts devices failing to apply policy for any reason, not
+        only an agent fault — but a count that climbs right after publishing is
+        the signal to stop and look. A device that installs the build and then
+        cannot apply anything would otherwise read as a completed rollout.
+      </p>
+      <form method="post" action="/admin/agent/publish" style="margin-top:12px"
+            data-confirm="Stop offering an agent update to the fleet? Devices already on {{ agent.rollout.published }} keep it.">
+        {{ csrf_field(csrf_token) }}
+        <input type="hidden" name="version_code" value="">
+        <button type="submit" class="danger">Unpublish</button>
+      </form>
+      {% else %}
+      <p><span class="pill warn">nothing published</span> No device is being offered an agent update.</p>
+      {% endif %}
+    </div>
+
+    <div class="panel">
+      <h2>Uploaded builds</h2>
+      <p class="sub">
+        Every <span class="mono">{{ agent.package_name }}</span> build in the
+        library. Upload new ones on the <a href="/apps">Apps</a> page.
+      </p>
+      {% if agent.versions %}
+      <table>
+        <thead><tr><th>versionCode</th><th>Version</th><th>Uploaded</th><th></th></tr></thead>
+        <tbody>
+        {% for v in agent.versions %}
+          <tr>
+            <td class="mono">{{ v.version_code }}</td>
+            <td>{{ v.version_name or '—' }}</td>
+            <td class="muted">{{ v.uploaded_at | localtime or '—' }}</td>
+            <td>
+              {% if v.version_code == agent.rollout.published %}
+                <span class="pill good">published</span>
+              {% else %}
+                <form method="post" action="/admin/agent/publish" style="margin:0"
+                      data-confirm="Publish {{ v.version_code }} to every enrolled device? This cannot be undone for a device that takes it.">
+                  {{ csrf_field(csrf_token) }}
+                  <input type="hidden" name="version_code" value="{{ v.version_code }}">
+                  <button type="submit">Publish</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}{{ empty_state('No agent builds uploaded yet.') }}{% endif %}
+    </div>
+
+    <div class="panel">
+      <h2>Reported agent versions</h2>
+      {% if agent.devices %}
+      <table>
+        <thead><tr><th>Device</th><th>versionCode</th><th>Compliance</th><th>Last check-in</th></tr></thead>
+        <tbody>
+        {% for d in agent.devices %}
+          <tr>
+            <td><a href="/devices/{{ d.id }}">{{ d.name or d.serial_number }}</a></td>
+            <td class="mono">
+              {% if d.agent_version_code is none %}<span class="pill warn">not reported</span>
+              {% elif d.agent_version_code == agent.rollout.published %}{{ d.agent_version_code }}
+              {% else %}<span class="pill">{{ d.agent_version_code }}</span>{% endif %}
+            </td>
+            <td>{{ d.compliance_status.value }}</td>
+            <td class="muted">{{ d.last_checkin_at | localtime or 'never' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}{{ empty_state('No enrolled devices.') }}{% endif %}
+    </div>
+  </div>
+
+  {#
+    Breach mode (W193). What a device reported lost or stolen is given, and what
+    it destroys.
+
+    ⚠️ **Configured here and nowhere else.** These are sections of a reserved
+    policy profile that no picker offers and both assignment routes refuse, so
+    this page is the only way to read or change what the button will do. The
+    profile is created the first time this tab is opened, deliberately: an
+    operator must be able to review it *before* pressing anything.
+  #}
+  <div class="tab-panel" data-tab-panel="breach" hidden>
+    <div class="panel">
+      <h2>Breach mode</h2>
+      <p class="sub">
+        For a device in the wrong hands. Engaging it on a device's own page
+        <strong>replaces every policy that device has</strong> with the settings
+        below — it does not add to them.
+      </p>
+      <p class="note" style="margin-top:10px">
+        ⚠️ <strong>Nothing here can be undone on the device.</strong> Apps are
+        uninstalled and the directories below are emptied. Taking a device back
+        out of breach mode restores its policies, not its data: the operator
+        doctrine is that a breached device is factory wiped and reprovisioned
+        before it is trusted again.
+      </p>
+      <p class="note">
+        Breach mode deliberately stops short of a factory wipe, because a wiped
+        device stops reporting where it is — which is the one thing still worth
+        having from a tablet somebody else is holding.
+      </p>
+    </div>
+
+    <div class="panel">
+      <div class="card-title">Apps removed</div>
+      <p class="sub">
+        Every app and plugin in the library, blocked — uninstalled where the
+        device allows it, hidden where it does not. Generated, not edited: the
+        list is taken from the library at the moment a device is breached.
+      </p>
+      <p class="note">
+        The ATLAS agent and launcher are never on it. Removing them would leave
+        nothing on the device able to report where it is, which is the whole
+        point of the mode.
+      </p>
+      {% if breach.blocklist %}
+        <ul class="mono" style="columns:2; margin:8px 0 0">
+          {% for name in breach.blocklist %}<li>{{ name }}</li>{% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted">The library is empty, so there is nothing to block yet.</p>
+      {% endif %}
+    </div>
+
+    {% for section in breach.sections %}
+    <div class="panel">
+      <div class="card-title">{{ section.heading }}</div>
+      <form method="post" action="/admin/breach/{{ section.key }}">
+        {{ csrf_field(csrf_token) }}
+        {{ policy_subform(section.fields, section.spec, app_packages, managed_files,
+                          geofence_tiles, storefronts, app_kinds) }}
+        <button type="submit" style="margin-top:10px">Save</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="tab-panel" data-tab-panel="attributes" hidden>
+    <div class="panel">
+      <h2>Custom attributes</h2>
+      <p class="sub">
+        Operator-defined fields on devices — asset tag, owning unit, deployment
+        date. Not interpreted by the MDM; set each device's value on its page.
+      </p>
+      <form method="post" action="/admin/attributes" class="toolbar">
+        {{ csrf_field(csrf_token) }}
+        <input type="text" name="name" required aria-label="Attribute name">
+        <p class="field-tip">The attribute's name, e.g. “asset tag”.</p>
+        <select name="attr_type">
+          {% for t in ['string', 'number', 'boolean', 'date'] %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+        </select>
+        <input type="text" name="description" aria-label="Description">
+        <p class="field-tip">Optional.</p>
+        <button type="submit">Add</button>
+      </form>
+      {% if attributes %}
+      <table>
+        <thead><tr><th>Name</th><th>Type</th><th>Description</th><th></th></tr></thead>
+        <tbody>
+        {% for a in attributes %}
+          <tr>
+            <td>{{ a.name }}</td>
+            <td><span class="pill">{{ a.attr_type }}</span></td>
+            <td class="muted">{{ a.description or '—' }}</td>
+            <td>
+              <form method="post" action="/admin/attributes/{{ a.id }}/delete" style="margin:0"
+                    data-confirm="Delete the attribute {{ a.name }} and every device value for it?">
+                {{ csrf_field(csrf_token) }}
+                <button type="submit" class="danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}{{ empty_state('No custom attributes defined.') }}{% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="integrations" hidden>
+    <div class="panel">
+      <h2>Samsung Knox {{ knox_soon() }}</h2>
+      <p class="muted">
+        Placeholder. KME and KPE licensing are gated on the pending Knox partner
+        application (R3). The AOSP path works without Knox; Knox is additive.
+      </p>
+    </div>
+    <div class="panel">
+      <h2>Android Enterprise</h2>
+      <p class="muted">
+        Placeholder. This deployment is Device Owner via sideload, with no managed
+        Google Play — Android Enterprise enrolment settings land here if that changes.
+      </p>
+    </div>
+  </div>
+
+  {# W421: the latest of the audit log; the whole of it, filtered, on its own page. #}
+  <div class="tab-panel" data-tab-panel="audit" hidden>
+    <div class="panel">
+      <h2>Audit log</h2>
+      <p class="sub">
+        Every change made through the console or the API is recorded with who made it,
+        from where, and whether it worked. Entries are chained, so one changed or removed
+        outside ATLAS is detected by <em>Verify chain</em>.
+      </p>
+      <p class="toolbar">
+        <a class="btn" href="/admin/audit">Open the audit log</a>
+        <a class="btn ghost" href="/admin/audit?verify=1">Verify chain</a>
+        <a class="btn ghost" href="/admin/audit.csv">CSV</a>
+      </p>
+      <form method="post" action="/admin/audit/retention" class="toolbar" data-audit-retention>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label class="inline" for="audit-retention-days">Keep the audit log for (days)</label>
+        <input type="number" id="audit-retention-days" name="retention_days" value="{{ audit_retention_days }}"
+               min="0" style="width:90px" required>
+        <button type="submit" class="ghost">Save</button>
+      </form>
+      <p class="field-tip">
+        Entries older than this are removed once a day, oldest first, and each removal is
+        itself recorded, so Verify chain still checks what remains. At least {{ audit_retention_min }}
+        days; 0 keeps everything.
+      </p>
+      <h3>Today</h3>
+      {% if not audit_today %}
+        {{ empty_state('Nobody has used the console today.') }}
+      {% else %}
+      <table data-audit-today>
+        <thead><tr><th>User</th><th>First seen</th><th>Last seen</th><th>Changes</th></tr></thead>
+        <tbody>
+        {% for p in audit_today %}
+          <tr>
+            <td><a href="/admin/audit?actor={{ p.actor | urlencode }}">{{ p.actor }}</a></td>
+            <td class="muted">{{ p.first_seen | localtime('%H:%M') }}</td>
+            <td class="muted">{{ p.last_seen | localtime('%H:%M') }}</td>
+            <td>{{ p.changes }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      <h3>Latest</h3>
+      {% if not audit_recent %}
+        {{ empty_state('Nothing has been recorded yet.') }}
+      {% else %}
+      <table data-audit-recent>
+        <thead><tr><th>When</th><th>User</th><th>What</th><th>Outcome</th></tr></thead>
+        <tbody>
+        {% for e in audit_recent %}
+          <tr>
+            <td class="muted" style="white-space:nowrap">{{ e.occurred_at | localtime('%Y-%m-%d %H:%M') }}</td>
+            <td>{{ e.actor }}</td>
+            <td>{% if e.summary %}{{ e.summary }}{% else %}<span class="mono">{{ e.method }} {{ e.path }}</span>{% endif %}</td>
+            <td>{{ e.outcome }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="environment" hidden>
+    <div class="panel">
+      <h2>Security code</h2>
+      <p class="sub">
+        <strong>Typed on a device, this code does two things:</strong>
+      </p>
+      <ul class="sub">
+        <li><strong>It is the master bypass code used to skip the permissions step
+          during provisioning,</strong> when setup is blocked because a required
+          permission hasn't been granted. The device reports as DEGRADED and gets
+          no agent updates until the permissions are granted.</li>
+        <li><strong>Restores a device whose certificate expired</strong> while it
+          was offline, for up to 180 days after expiry, without a factory reset.
+          The device keeps its record and policies. It never works for a device
+          that is retired, has its certificate revoked, is in breach mode, or has
+          a disenrollment it hasn't acknowledged yet.
+          {% if not reinstate_enabled %}<strong>Turned off below.</strong>{% endif %}</li>
+      </ul>
+      <p class="mono" style="font-size:28px; letter-spacing:6px; padding:8px 0;">
+        {{ bypass_pin }}
+      </p>
+      <p class="field-tip">
+        Each install has its own code. This server checks it, so the device must
+        be able to reach the server; the code is never sent to a device or put in
+        an enrollment QR. It grants no access to this server or its console.
+        Both uses need the device itself, and guessing is
+        limited to {{ bypass_attempts_max }} tries (per enrollment token while
+        provisioning, per device when restoring).
+      </p>
+      <form method="post" action="/admin/security-code/regenerate" class="toolbar">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="ghost" data-regenerate-security-code
+                data-confirm="Generate a new security code? The current code stops working at once, for provisioning and for restoring devices.">Regenerate code</button>
+        <span class="muted">If the code has been shared more widely than you'd like.</span>
+      </form>
+      {# W419: the operator's switch for the second use. #}
+      <form method="post" action="/admin/security-code/reinstate" class="toolbar" data-reinstate-setting>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label class="inline">
+          <input type="checkbox" name="enabled" value="on" {{ 'checked' if reinstate_enabled }}>
+          Allow devices with an expired certificate to be restored with the security code
+        </label>
+        <button type="submit" class="ghost">Save</button>
+      </form>
+      <p class="field-tip">
+        When this is off, a device whose certificate has expired can't
+        re-authenticate with the code and has to be set up again. Provisioning
+        is not affected.
+      </p>
+    </div>
+
+    <div class="panel">
+      <h2>Environment settings</h2>
+      <p class="sub">
+        Set in the deployment environment, not here — they are load-bearing for
+        provisioning and the trust model.
+      </p>
+      <table>
+        <thead><tr><th>Variable</th><th>Value</th></tr></thead>
+        <tbody>
+        {% for name, value in env_settings.items() %}
+          <tr><td class="mono">{{ name }}</td><td class="mono">{{ value }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
