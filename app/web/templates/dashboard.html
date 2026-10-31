@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% set nav = 'dashboard' %}
+{% block title %}Dashboard — ATLAS{% endblock %}
+
+{% block page_styles %}
+  <link rel="stylesheet" href="/static/vendor/leaflet.css?v={{ build.asset_tag }}">
+{% endblock %}
+
+{% block page_scripts %}
+  <script src="/static/atlas-dashboard.js?v={{ build.asset_tag }}" defer></script>
+  <script src="/static/vendor/leaflet.js?v={{ build.asset_tag }}" defer></script>
+  <script src="/static/atlas-dashboard-map.js?v={{ build.asset_tag }}" defer></script>
+  <script src="/static/atlas-dashboard-trends.js?v={{ build.asset_tag }}" defer></script>
+{% endblock %}
+
+{#
+  W440. Drawn here from `view`, then refreshed every 60 s from
+  /dashboard/data by atlas-dashboard.js, which only rewrites the
+  `data-dash-*` hooks below: the page is whole without the script.
+  ⚠️ A figure that could not be read shows a dash, never 0 %: a ring at zero
+  reads as "idle", which is a claim.
+#}
+{% macro ring(r) %}
+  {% set circumference = 289.03 %}
+  <div class="dash-ring" data-dash-ring="{{ r.key }}">
+    <svg viewBox="0 0 110 110" role="img" aria-label="{{ r.label }} {{ '%.1f' | format(r.percent) ~ '%' if r.percent is not none else 'unknown' }}">
+      <circle class="dash-ring-track" cx="55" cy="55" r="46"></circle>
+      <circle class="dash-ring-fill {{ 'bad' if r.percent is not none and r.percent >= 90 else 'warn' if r.percent is not none and r.percent >= 75 else '' }}"
+              cx="55" cy="55" r="46" transform="rotate(-90 55 55)"
+              stroke-dasharray="{{ circumference }}"
+              stroke-dashoffset="{{ circumference * (1 - (r.percent or 0) / 100) }}"
+              {% if r.percent is none %}hidden{% endif %}></circle>
+      <text x="55" y="55" class="dash-ring-value">{{ '%.1f' | format(r.percent) ~ '%' if r.percent is not none else '—' }}</text>
+    </svg>
+    <div class="dash-ring-label">{{ r.label }}</div>
+    <div class="dash-ring-detail muted">{{ r.detail }}</div>
+  </div>
+{% endmacro %}
+
+
+{#
+  W442: a stacked bar of check-in buckets. `scale` is the bar's own length as
+  a share of the row (the group bars are drawn to the largest group's size).
+  Each segment's width is its share of the bar, so the bar always fills.
+#}
+{% macro bucket_bar(counts, scale=100) %}
+  <div class="dash-bar-track"><div class="dash-bar" style="width: {{ scale }}%">
+    {%- for b in view.buckets %}{% set n = counts.buckets[b.key] %}{% if n %}
+      <span class="dash-seg b-{{ b.key }}" style="width: {{ n * 100 / counts.total }}%" title="{{ b.label }}: {{ n }}"></span>
+    {%- endif %}{% endfor -%}
+  </div></div>
+{% endmacro %}
+
+{% macro bar_note(counts) -%}
+  {{ "{:,}".format(counts.total) }} · {{ "{:,}".format(counts.stale) }} stale ({{ '%.0f' | format(counts.stale_share) }}%) · {{ "{:,}".format(counts.old) }} &gt;1y
+{%- endmacro %}
+
+{% macro legend() %}
+  <ul class="dash-legend">
+    {% for b in view.buckets %}<li><span class="dash-swatch b-{{ b.key }}"></span>{{ b.label }}</li>{% endfor %}
+  </ul>
+{% endmacro %}
+
+{% macro group_rows(groups) %}
+  {% set largest = (groups | map(attribute='total') | max) if groups else 1 %}
+  {% for g in groups %}
+    <div class="dash-bar-row">
+      <div class="dash-bar-name">{{ g.name }}</div>
+      {{ bucket_bar(g, (g.total * 100 / largest) if largest else 0) }}
+      <div class="dash-bar-note muted">{{ bar_note(g) }}</div>
+    </div>
+  {% endfor %}
+{% endmacro %}
+
+{% block content %}
+{{ page_header('Dashboard', 'This server and ATLAS at a glance. Updates every minute.') }}
+<p class="dash-summary" data-dash-summary>{{ view.summary }}</p>
+
+<div class="dash-banner" data-dash-banner role="status" {% if not view.banner %}hidden{% endif %}>
+  <ul>
+    {% for b in view.banner %}<li><strong>{{ b.label }}: {{ b.value }}.</strong> {{ b.detail }}</li>{% endfor %}
+  </ul>
+</div>
+
+<section class="dash-section" aria-labelledby="dash-resources">
+  <h2 id="dash-resources">Server resources</h2>
+  <div class="dash-rings">
+    {% for r in view.rings %}{{ ring(r) }}{% endfor %}
+  </div>
+</section>
+
+<section class="dash-section" aria-labelledby="dash-status">
+  <h2 id="dash-status">Status</h2>
+  <div class="dash-tiles">
+    {% for t in view.tiles %}
+      <div class="dash-tile {{ t.level }}" data-dash-tile="{{ t.key }}" title="{{ t.detail }}">
+        <div class="dash-tile-label">{{ t.label }}</div>
+        <div class="dash-tile-value">{{ t.value }}</div>
+        <div class="dash-tile-detail muted">{{ t.detail }}</div>
+      </div>
+    {% endfor %}
+  </div>
+  <p class="muted dash-footer">
+    <span data-dash-footer>{{ view.footer }}</span>
+    <span class="dash-asof" data-dash-asof></span>
+  </p>
+</section>
+
+<section class="dash-section" aria-labelledby="dash-fleet" data-dash-fleet>
+  <h2 id="dash-fleet">Fleet by last check-in</h2>
+  {{ legend() }}
+  <p class="muted dash-note" data-dash-fleet-details>{{ view.fleet_details }}</p>
+  <div class="dash-bar-row dash-bar-row-all">
+    <div class="dash-bar-name" data-dash-fleet-name>All {{ "{:,}".format(view.fleet.total) }} devices</div>
+    <div data-dash-fleet-bar>{{ bucket_bar(view.fleet) }}</div>
+    <div class="dash-bar-note muted" data-dash-fleet-note>{{ bar_note(view.fleet) }}</div>
+  </div>
+  <table class="dash-bucket-table">
+    <tbody data-dash-fleet-table>
+      {% for b in view.buckets %}{% set n = view.fleet.buckets[b.key] %}
+        <tr><td class="muted">{{ b.label }}</td>
+            <td>{{ "{:,}".format(n) }} ({{ '%.0f' | format(n * 100 / view.fleet.total if view.fleet.total else 0) }}%)</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="dash-section" aria-labelledby="dash-groups">
+  <h2 id="dash-groups">Groups: active vs stale</h2>
+  <div class="dash-tabs" role="group" aria-label="Sort groups by">
+    {% for o in view.sorts %}
+      <button type="button" class="dash-tab" data-dash-sort="{{ o.key }}" aria-pressed="{{ 'true' if loop.first else 'false' }}">{{ o.label }}</button>
+    {% endfor %}
+  </div>
+  {{ legend() }}
+  <p class="muted dash-note" data-dash-groups-note>All {{ view.fleet.groups | length }} group{{ '' if view.fleet.groups | length == 1 else 's' }}; bar length is device count. A device in several groups counts in each.</p>
+  {# The rows' figures as data, so a sort tab redraws at once without a request. #}
+  <div class="dash-groups" data-dash-groups
+       data-dash-view='{{ {"buckets": view.buckets, "groups": view.fleet.groups} | tojson }}'>{{ group_rows(view.fleet.groups) }}</div>
+</section>
+
+<section class="dash-section" aria-labelledby="dash-map">
+  <h2 id="dash-map">Last known device locations</h2>
+  {#
+    W442. Drawn by atlas-dashboard-map.js from /dashboard/map; without the
+    script it says so rather than showing an empty box.
+  #}
+  <div class="dash-map-controls">
+    <div class="dash-switches" role="group" aria-label="Check-in buckets shown">
+      {% for b in view.buckets %}
+        <label class="dash-switch"><input type="checkbox" data-dash-map-bucket="{{ b.key }}" checked>
+          <span class="dash-swatch b-{{ b.key }}"></span>{{ b.label }}</label>
+      {% endfor %}
+    </div>
+    <label class="dash-map-group">Group
+      <select data-dash-map-group><option value="">All groups</option></select>
+    </label>
+  </div>
+  <p class="muted dash-note">Dots group devices within about 1 km per group, sized by count, coloured by
+    the oldest bucket shown. Select a dot for its devices.</p>
+  <div class="dash-map" data-dash-map><p class="muted dash-map-empty">The map needs JavaScript.</p></div>
+  <p class="muted dash-note" data-dash-map-count></p>
+</section>
+
+<section class="dash-section" aria-labelledby="dash-trends">
+  <h2 id="dash-trends">Trends</h2>
+  <div class="dash-tabs" role="group" aria-label="Show the last">
+    {% for days in (30, 90, 365) %}
+      <button type="button" class="dash-tab" data-dash-range="{{ days }}" aria-pressed="{{ 'true' if loop.first else 'false' }}">{{ days }} days</button>
+    {% endfor %}
+  </div>
+  <div class="dash-charts" data-dash-trends>
+    <p class="muted">The charts need JavaScript.</p>
+  </div>
+  <p class="muted dash-note" data-dash-trends-note></p>
+</section>
+{% endblock %}
