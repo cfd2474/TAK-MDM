@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% set nav = 'dashboard' %}
+{% block title %}Dashboard — ATLAS{% endblock %}
+
+{% block page_scripts %}
+  <script src="/static/atlas-dashboard.js?v={{ build.asset_tag }}" defer></script>
+{% endblock %}
+
+{#
+  W440. Drawn here from `view`, then refreshed every 60 s from
+  /dashboard/data by atlas-dashboard.js, which only rewrites the
+  `data-dash-*` hooks below: the page is whole without the script.
+  ⚠️ A figure that could not be read shows a dash, never 0 %: a ring at zero
+  reads as "idle", which is a claim.
+#}
+{% macro ring(r) %}
+  {% set circumference = 289.03 %}
+  <div class="dash-ring" data-dash-ring="{{ r.key }}">
+    <svg viewBox="0 0 110 110" role="img" aria-label="{{ r.label }} {{ '%.1f' | format(r.percent) ~ '%' if r.percent is not none else 'unknown' }}">
+      <circle class="dash-ring-track" cx="55" cy="55" r="46"></circle>
+      <circle class="dash-ring-fill {{ 'bad' if r.percent is not none and r.percent >= 90 else 'warn' if r.percent is not none and r.percent >= 75 else '' }}"
+              cx="55" cy="55" r="46" transform="rotate(-90 55 55)"
+              stroke-dasharray="{{ circumference }}"
+              stroke-dashoffset="{{ circumference * (1 - (r.percent or 0) / 100) }}"
+              {% if r.percent is none %}hidden{% endif %}></circle>
+      <text x="55" y="55" class="dash-ring-value">{{ '%.1f' | format(r.percent) ~ '%' if r.percent is not none else '—' }}</text>
+    </svg>
+    <div class="dash-ring-label">{{ r.label }}</div>
+    <div class="dash-ring-detail muted">{{ r.detail }}</div>
+  </div>
+{% endmacro %}
+
+{% block content %}
+{{ page_header('Dashboard', 'This server and ATLAS at a glance. Updates every minute.') }}
+
+<section class="dash-section" aria-labelledby="dash-resources">
+  <h2 id="dash-resources">Server resources</h2>
+  <div class="dash-rings">
+    {% for r in view.rings %}{{ ring(r) }}{% endfor %}
+  </div>
+</section>
+
+<section class="dash-section" aria-labelledby="dash-status">
+  <h2 id="dash-status">Status</h2>
+  <div class="dash-tiles">
+    {% for t in view.tiles %}
+      <div class="dash-tile {{ t.level }}" data-dash-tile="{{ t.key }}" title="{{ t.detail }}">
+        <div class="dash-tile-label">{{ t.label }}</div>
+        <div class="dash-tile-value">{{ t.value }}</div>
+        <div class="dash-tile-detail muted">{{ t.detail }}</div>
+      </div>
+    {% endfor %}
+  </div>
+  <p class="muted dash-footer">
+    <span data-dash-footer>{{ view.footer }}</span>
+    <span class="dash-asof" data-dash-asof></span>
+  </p>
+</section>
+{% endblock %}
