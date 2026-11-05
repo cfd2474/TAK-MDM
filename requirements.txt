@@ -1,0 +1,27 @@
+fastapi==0.141.1
+# Pinned because it is otherwise transitive and versions disagree about whether
+# `anyio.from_thread` resolves without an explicit submodule import — a drift the
+# test suite cannot see when the venv and the image resolve differently.
+anyio==4.14.2
+uvicorn[standard]==0.53.0
+sqlalchemy==2.0.53
+alembic==1.13.3
+psycopg[binary]==3.2.3
+# The IANA timezone database, for the console's display zone (W163).
+#
+# ⚠️ Declared directly even though psycopg already pulls it in. `zoneinfo` has no
+# database of its own, and neither python:3.13-slim nor Windows ships one — so
+# until this line the console's timezone support existed purely as a side effect
+# of a database driver's dependencies. A psycopg release that dropped it would
+# turn every timestamp in the console into an exception.
+tzdata>=2024.1
+pydantic==2.13.5
+pydantic-settings==2.5.2
+cryptography==50.0.1
+python-multipart==0.0.32
+jinja2==3.1.6
+# SVG output, so no Pillow dependency is pulled in for the enrollment QR codes.
+qrcode==8.0
+httpx==0.27.2
+# tak.gov's eud_api refuses HTTP/1.1 with 421; httpx needs h2 to speak HTTP/2.
+h2==4.4.1
