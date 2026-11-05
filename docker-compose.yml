@@ -1,0 +1,205 @@
+name: takmdm
+
+services:
+  db:
+    image: postgres:16-alpine
+    # ⚠️ A deployment must survive a host reboot. Without this the stack
+    # simply does not come back: the box boots, every other add-on
+    # restarts itself, ATLAS is gone, the console still lists the
+    # deployment and nothing says why (W258). `init` stays `no` --
+    # it is one-shot and restarting it would loop.
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: takmdm
+      # ⚠️ Not a literal any more. A deployment that generates its own password
+      # sets TAKMDM_DB_PASSWORD; the default keeps a `docker compose up` on a
+      # laptop working exactly as before. An InfraTAK module must generate this
+      # (their §17), and a hardcoded credential is a security-scan finding.
+      POSTGRES_PASSWORD: ${TAKMDM_DB_PASSWORD:-takmdm}
+      POSTGRES_DB: takmdm
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U takmdm -d takmdm"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # One-shot. nginx must be able to read the device CA at startup to verify client
+  # certificates, so the PKI cannot be created lazily on first request.
+  init:
+    build: .
+    # TAKMDM_LAN_ADDRESS comes from .env, written by scripts/setup_for_tablet.py, so
+    # a fresh PKI is valid for the address a tablet actually uses.
+    command:
+      - python
+      - -m
+      - app.cli
+      - init-pki
+      - --dev-server-cert
+      - --hostname
+      - ${TAKMDM_LAN_ADDRESS:-localhost}
+    environment:
+      TAKMDM_PKI_DIR: /pki
+      TAKMDM_SKIP_DB_WAIT: "1"
+    volumes:
+      - ./pki:/pki
+    restart: "no"
+
+  api:
+    build: .
+    restart: unless-stopped
+    # ⚠️ How the container reaches InfraTAK's relay, which runs on the host
+    # rather than in this stack (W194). Without the mapping the default
+    # `infratak_mail_host` resolves to nothing and inheriting cannot work.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      TAKMDM_DATABASE_URL: postgresql+psycopg://takmdm:${TAKMDM_DB_PASSWORD:-takmdm}@db:5432/takmdm
+      TAKMDM_PKI_DIR: /pki
+      # ⚠️ Declared here or it does not exist. This file has no `env_file`, so a
+      # variable in `.env` reaches the container only where compose names it —
+      # writing TAKMDM_INCLUDE_SERVER_CA into .env and stopping there set
+      # nothing at all, and provisioning went on pinning a CA it should not.
+      # Blank means "decide by looking"; see Settings.include_server_ca.
+      TAKMDM_INCLUDE_SERVER_CA: ${TAKMDM_INCLUDE_SERVER_CA:-}
+      # ⚠️ And the same trap caught the next one. The InfraTAK module wrote
+      # TAKMDM_TRUSTED_PROXIES into `.env`, the value was correct, and the
+      # application logged "is not set" for a release — because nothing named it
+      # here. SEC_AUDIT.md S-1's mitigation shipped and did nothing.
+      #
+      # The comment above was written after the first time and read before the
+      # second, which is the useful lesson: a warning in a file is not a control.
+      # `tests/test_compose_env.py` is.
+      TAKMDM_TRUSTED_PROXIES: ${TAKMDM_TRUSTED_PROXIES:-}
+      # InfraTAK's Email Relay (W194). Postfix on the host, which accepts mail
+      # from the Docker bridge unauthenticated — so there is no credential here
+      # and there will not be one: the provider password stays in
+      # /etc/postfix/sasl_passwd where Postfix uses it.
+      #
+      # ⚠️ Named here before the module writes them, not after. This file has no
+      # `env_file`, and the last two times a module started writing a TAKMDM_*
+      # that compose did not name, the value was correct and the application
+      # never saw it — twice, with a warning comment in between.
+      TAKMDM_INFRATAK_MAIL_HOST: ${TAKMDM_INFRATAK_MAIL_HOST:-}
+      TAKMDM_INFRATAK_MAIL_PORT: ${TAKMDM_INFRATAK_MAIL_PORT:-}
+      TAKMDM_INFRATAK_MAIL_FROM: ${TAKMDM_INFRATAK_MAIL_FROM:-}
+      # ⚠️ **The fourth time.** The module wrote TAKMDM_AGENCY_NAME into `.env`,
+      # the value was correct, the footer code was in the release — and the
+      # container never saw the variable, because nothing named it here. The
+      # comment above was written after the first occurrence, `test_compose_env`
+      # after the second, and both were in place for this one: the list there is
+      # hand-maintained and lives in a different repository from the module that
+      # writes the file. `deploy` now checks the two against each other on the
+      # box, where both exist at the same moment.
+      #
+      # ⚠️ `-` and not `:-`: an explicitly empty name is "no agency", which is
+      # the ordinary case and must survive rather than fall back to a default.
+      TAKMDM_AGENCY_NAME: ${TAKMDM_AGENCY_NAME-}
+      TAKMDM_ARTIFACT_DIR: /artifacts
+      TAKMDM_CACHE_DIR: /cache
+      # Baked into enrollment QR codes, so it must be an address the tablet can
+      # reach — not localhost, which a device would resolve to itself.
+      TAKMDM_SERVER_URL: ${TAKMDM_SERVER_URL:-https://localhost:8443}
+      # Set by uploading the agent APK: the response's provisioning_checksum is
+      # exactly what Android verifies the download against. Without it, QR payload
+      # generation is withheld rather than producing something that fails on device.
+      # "disabled" leaves the console open and is for local development only.
+      # Set to forward_auth once an Authentik proxy provider is in front; see
+      # docker/nginx/admin.conf.example.
+      TAKMDM_ADMIN_AUTH_MODE: ${TAKMDM_ADMIN_AUTH_MODE:-disabled}
+      # ⚠️ `-` and not `:-`, so an explicitly empty value survives.
+      #
+      # Blank means "any user the identity provider let through", which is the
+      # right answer when the proxy already restricts the application — an
+      # InfraTAK deployment binds its ATLAS app to the admins policy, and a
+      # second group defined here would be a place to manage access that nobody
+      # would think to look at. With `:-` an empty value silently became
+      # `takmdm-admins`, a group no Authentik has, and every administrator was
+      # refused with nothing to explain why.
+      TAKMDM_ADMIN_GROUP: ${TAKMDM_ADMIN_GROUP-takmdm-admins}
+      # Proves an admin request came through the authenticating proxy
+      # (SEC_AUDIT.md S-1). Caddy attaches it only after forward_auth passes, so
+      # a forged X-Authentik-Username from any host-local process is refused.
+      #
+      # ⚠️ `-` and not `:-`, so an explicitly empty value survives and the check
+      # stays off. A deployment whose proxy does not inject the header must not
+      # find itself rejecting every administrator, with the console as the thing
+      # it would use to fix that.
+      TAKMDM_PROXY_AUTH_SECRET: ${TAKMDM_PROXY_AUTH_SECRET-}
+      # The console's public origin, used to reject cross-origin unsafe
+      # requests. Blank disables that check; the app warns loudly at startup
+      # when auth is on and this is unset.
+      TAKMDM_CONSOLE_ORIGIN: ${TAKMDM_CONSOLE_ORIGIN:-}
+      TAKMDM_AGENT_SIGNATURE_CHECKSUM: ${TAKMDM_AGENT_SIGNATURE_CHECKSUM:-}
+      TAKMDM_AGENT_APK_URL: ${TAKMDM_AGENT_APK_URL:-https://localhost:8443/api/v1/provisioning/agent.apk}
+    volumes:
+      - ./pki:/pki
+      # Uploaded APKs live outside the image so a rebuild does not discard them.
+      - ./artifacts:/artifacts
+      # ⚠️ The repository indexes, for exactly the same reason (W103). Inside the
+      # image they were destroyed by every `up -d --build`, so each deploy
+      # re-downloaded 184 MB from F-Droid and the first search afterwards took 35
+      # seconds. A cache wiped on every deploy is not a cache.
+      - ./cache:/cache
+      # The applications shipped with the source. Read-only: the seeder copies
+      # them into the artifact store, and nothing should ever write back here.
+      - ./dist:/seed:ro
+    # ⚠️ **No published port.** The app is reachable only through the proxy, on
+    # the compose network. A `127.0.0.1:8000:8000` binding stood here — loopback
+    # only, but it bypasses the proxy and therefore bypasses mTLS, which is the
+    # exposure R7 exists to forbid. InfraTAK's module scan treats a listener
+    # that bypasses mutual TLS as a **High finding if it ships**, and High is a
+    # hard fail rather than a negotiation (W143).
+    #
+    # For local development, `docker compose -f docker-compose.yml -f
+    # docker-compose.dev.yml up` puts it back. Opt-in, so the production build
+    # cannot acquire it by forgetting to take something out.
+    depends_on:
+      db:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+      # Plaintext, serving only the provisioning APK — see docker/nginx/nginx.conf.
+      # Android's setup wizard cannot trust a self-signed certificate, and the
+      # signature checksum is what guarantees integrity here.
+      - "8080:8080"
+      # The same APK-only endpoint on a friendly port, because restrictive
+      # networks block 8080 and the device downloads over whatever connection it
+      # has during setup. Defaults to 80; override when the host already runs a
+      # web server there, which a self-hosted box very often does.
+      - "${TAKMDM_APK_HTTP_PORT:-80}:80"
+      # Admin console, Basic auth over TLS (W36). Separate from the device port:
+      # 8443 authenticates devices by certificate, 9443 authenticates people.
+      - "9443:9443"
+      # The console under its own hostname, with a real certificate (W100).
+      # 9443 stays exactly as it was, so nothing depending on it changes.
+      - "443:443"
+    volumes:
+      # ./pki is a bind mount rather than a named volume so the host can read the
+      # CA and the dev TLS certificate directly — scripts/dev_enroll.py needs both.
+      # On a Linux host you may need `sudo chown -R 1000:1000 ./pki` once.
+      - ./pki:/pki:ro
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # The shared auth-boundary snippet both console listeners include (W100).
+      - ./docker/nginx/console-proxy.inc:/etc/nginx/console-proxy.inc:ro
+      # ACME challenge webroot (W100). certbot writes here, nginx only reads —
+      # hence :ro on this side.
+      - ./acme:/var/www/acme:ro
+      # Issued certificates. Read-only here for the same reason: the proxy serves
+      # them and has no business changing them.
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      api:
+        condition: service_started
+      init:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
