@@ -1,0 +1,421 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf_field, empty_state, storage_meter, knox_soon %}
+{% set nav = 'content' %}
+{% block title %}Content — ATLAS{% endblock %}
+
+{% block content %}
+{{ page_header('Content', 'Files published for deployment. A file’s destination, persistence and zip-expansion live on the FILES policy that places it — shown here per file, with editable defaults the policy editor pre-fills.') }}
+
+{{ storage_meter(storage_usage) }}
+
+<div class="panel">
+  <h2>Upload a file</h2>
+  <form method="post" action="/content/upload" enctype="multipart/form-data" class="toolbar"
+        data-upload-processing="Uploaded — the server is storing it…"
+        data-upload-cancelled="Nothing was added.">
+    {{ csrf_field(csrf_token) }}
+    <input type="file" name="file" required>
+    <div>
+      <input type="text" name="name" aria-label="Name">
+      <p class="field-tip">Defaults to the filename.</p>
+    </div>
+    <div>
+      <input type="text" name="description" aria-label="Description">
+      <p class="field-tip">Optional.</p>
+    </div>
+    <button type="submit">Upload</button>
+  </form>
+  <p class="muted" style="font-size:12px">
+    Any file — a zip, a <code>.pref</code>, a certificate, an ATAK map source. Zips
+    are detected at upload so a policy can mark them for extraction (F5).
+  </p>
+</div>
+
+{#
+  W465 K2b-5 (operator, 2026-11-10): the animation maker. The operator names it
+  and says bootup or shutdown; ATLAS adds _boot / _bootloop / _shutdown, so a
+  Knox Configurations policy offers it by that name. Samsung's rules are in
+  app/services/animation_maker.py.
+#}
+<div class="panel" id="animations" data-animation-maker>
+  <h2>Boot/shutdown animations {{ knox_soon() }}</h2>
+  <p class="sub">
+    Make a Samsung boot or shutdown animation (<code>.qmg</code>) for the
+    <strong>Knox Configurations</strong> policy. A <strong>bootup sequence</strong>
+    makes two files, <em>name</em><code>_boot</code> (plays once) and
+    <em>name</em><code>_bootloop</code> (repeats until the device is ready). A
+    <strong>shutdown sequence</strong> makes <em>name</em><code>_shutdown</code>.
+    Animations play at 12 frames per second.
+  </p>
+  {% if animation_made %}<div class="banner good">Made {{ animation_made }}. Choose it in a Knox Configurations policy.</div>{% endif %}
+  {# K2b-5d: the animation modal below reports progress and the outcome, so
+     the generic upload bar stays out of this form. #}
+  <form method="post" action="/content/animations" enctype="multipart/form-data" class="stack"
+        data-no-upload-progress data-animation-form>
+    {{ csrf_field(csrf_token) }}
+    <div class="row">
+      <div>
+        <label for="animation-name" data-required>Name</label>
+        <input type="text" id="animation-name" name="name" required maxlength="81">
+        <p class="field-tip">Your name for it. ATLAS adds _boot, _bootloop or _shutdown.</p>
+      </div>
+      <fieldset style="border:0; padding:0; margin:0">
+        <legend data-required>Sequence</legend>
+        <label><input type="radio" name="kind" value="bootup" required checked data-animation-kind> Bootup sequence</label>
+        <label><input type="radio" name="kind" value="shutdown" data-animation-kind> Shutdown sequence</label>
+      </fieldset>
+    </div>
+    <div>
+      <label data-required>Made from</label>
+      <label><input type="radio" name="source" value="frames" checked data-animation-source> PNG frames, one by one</label>
+      <label><input type="radio" name="source" value="zip" data-animation-source> A zip of PNG frames</label>
+      <label><input type="radio" name="source" value="qmg" data-animation-source> Ready-made .qmg files</label>
+    </div>
+    <div data-animation-for="frames zip">
+      <label for="animation-size" data-required>Screen size</label>
+      <select id="animation-size" name="size" data-animation-size>
+        {% for label, value, tablet in animation_sizes %}<option value="{{ value }}" data-tablet="{{ 'yes' if tablet else 'no' }}">{{ label }}</option>{% endfor %}
+        <option value="custom">Another size…</option>
+      </select>
+      <input type="text" name="size_custom" aria-label="Width x height" data-animation-size-custom hidden>
+      <p class="field-tip">Frames are scaled to this size. Choose the model the animation is for, or type width x height (multiples of 4).</p>
+      {#
+        K2b-5f, measured on the SM-X520: the shutdown player shows the animation
+        turned 90° counter-clockwise on a tablet held in landscape, and plays at
+        the frame time in the file. So a shutdown can be turned, and given a
+        length.
+      #}
+      <div data-animation-for-kind="shutdown" hidden data-shutdown-options>
+        <label><input type="checkbox" name="turn_shutdown" value="on" data-turn-shutdown>
+          Landscape tablet: turn the shutdown animation</label>
+        <p class="field-tip">On a tablet held in landscape, Samsung shows the shutdown animation turned on its side.
+          With this on, ATLAS turns your frames so landscape art shows the right way up. On by default for
+          tablets; measured on the SM-X520.</p>
+        <label for="shutdown-seconds">Shutdown length</label>
+        <select id="shutdown-seconds" name="shutdown_seconds">
+          {% for s in [1, 2, 3, 4, 5] %}<option value="{{ s }}" {{ 'selected' if s == 3 }}>{{ s }} second{{ '' if s == 1 else 's' }}</option>{% endfor %}
+        </select>
+        <p class="field-tip">The frames are spread over this time. Samsung allows up to 30 shutdown frames.</p>
+      </div>
+    </div>
+    {#
+      K2b-5c (operator: "a UI that helps them with each sequential frame"): one
+      lane per part, frames in play order. atlas.js keeps the order and sends
+      the frames in it; the server names them bootup01, bootup02, ... itself.
+    #}
+    <div data-animation-for="frames" data-frame-builder>
+      {% for lane, label, limit, kind in [('bootup', 'Boot animation — plays once when the device starts', 99, 'bootup'),
+                                          ('bootloop', 'Boot loop — then repeats until the device is ready', 99, 'bootup'),
+                                          ('shutdown', 'Shutdown animation', 30, 'shutdown')] %}
+        <div class="frame-lane" data-frame-lane="{{ lane }}" data-frame-limit="{{ limit }}" data-animation-for-kind="{{ kind }}">
+          <label for="frames-add-{{ lane }}">{{ label }}</label>
+          <div class="toolbar">
+            <input type="file" id="frames-add-{{ lane }}" accept=".png,image/png" multiple data-frame-add>
+            <span class="muted" data-frame-count>0 of {{ limit }} frames</span>
+          </div>
+          <ol class="frame-list" data-frame-list></ol>
+        </div>
+      {% endfor %}
+      <p class="field-tip">
+        Add PNG frames in the order they play; several chosen at once are added
+        by file name. Move a frame with the arrows. Each frame up to 2 MB; up to
+        99 frames for the boot animation and the loop, 30 for shutdown.
+        <span data-animation-for-kind="bootup"><strong>One lane is enough</strong> for a bootup sequence:
+        with frames only in the boot animation, the loop holds its last frame; with frames only in the
+        loop, they also play once first.</span>
+      </p>
+    </div>
+    <div data-animation-for="zip">
+      <label for="animation-zip" data-required>Zip of PNG frames</label>
+      <input type="file" id="animation-zip" name="zip" accept=".zip,application/zip">
+      <p class="field-tip">
+        Name the frames as in Samsung's guide, in time order:
+        <span data-animation-for-kind="bootup"><code>bootup01.png</code>… and/or <code>bootloop01.png</code>… (up to 99 of each; one set is enough)</span>
+        <span data-animation-for-kind="shutdown" hidden><code>shutdown01.png</code>… (up to 30)</span>.
+        Each PNG up to 2 MB, the zip up to 50 MB. See
+        <a href="{{ animation_reference }}" rel="noopener" target="_blank">Samsung: Custom boot and shutdown animations</a>.
+      </p>
+    </div>
+    <div data-animation-for="qmg" hidden>
+      <div data-animation-for-kind="bootup">
+        <label>bootup.qmg</label> <input type="file" name="qmg_bootup" accept=".qmg">
+        <label>bootloop.qmg</label> <input type="file" name="qmg_bootloop" accept=".qmg">
+      </div>
+      <div data-animation-for-kind="shutdown" hidden>
+        <label>shutdown.qmg</label> <input type="file" name="qmg_shutdown" accept=".qmg">
+      </div>
+      <p class="field-tip">For example, files Samsung made for you from a support ticket.</p>
+    </div>
+    <div><button type="submit">Make animation</button></div>
+  </form>
+
+  {% if animations %}
+    <table style="margin-top:14px">
+      <thead><tr><th>Animation</th><th>Made</th><th>Size</th></tr></thead>
+      <tbody>
+        {% for f in animations %}
+          <tr data-animation-row="{{ f.name }}">
+            <td class="mono">{{ f.name }}</td>
+            <td class="muted">{{ f.created_at | localtime('%Y-%m-%d %H:%M') if f.created_at else '' }}</td>
+            <td class="muted">{{ f.description or '' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="field-tip">Delete one from the file list below.</p>
+  {% else %}
+    <p class="muted">No animations yet.</p>
+  {% endif %}
+</div>
+
+{#
+  K2b-5d (operator: "a modal that shows the progress of what is happening and
+  the outcome"). Four steps; atlas.js marks each one as it goes. Blocking while
+  it uploads, like the upload modal (W276): Cancel is the only way out.
+#}
+<div class="modal-backdrop" id="animation-modal" hidden data-animation-modal>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="animation-modal-title">
+    <h2 id="animation-modal-title" data-animation-modal-title>Making the animation</h2>
+    <ol class="animation-steps" style="padding-left:20px">
+      <li data-animation-step="check"><strong>Check</strong> <span class="muted" data-step-detail>the name and the frames</span></li>
+      <li data-animation-step="upload"><strong>Upload</strong> <span class="muted" data-step-detail>waiting</span>
+        <div class="progress" style="margin-top:6px"><span data-animation-bar></span></div></li>
+      <li data-animation-step="make"><strong>Make</strong> <span class="muted" data-step-detail>waiting</span></li>
+      <li data-animation-step="done"><strong>Outcome</strong> <span class="muted" data-step-detail>waiting</span></li>
+    </ol>
+    <div data-animation-outcome hidden></div>
+    <div class="modal-actions">
+      <button type="button" class="danger" data-animation-cancel>Cancel upload</button>
+      <button type="button" class="ghost" data-animation-back hidden>Back to the form</button>
+      <button type="button" data-animation-close hidden>Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>ATAK data packages</h2>
+  <p class="sub" style="margin-bottom:14px">
+    A data package is a zip carrying <code>MANIFEST/manifest.xml</code>. ATAK
+    imports it and files the contents itself, so nothing here needs a destination.
+    ⚠️ Delivered to a device <strong>once</strong> and never re-sent — ATAK
+    consumes the file, and importing the same package repeatedly can take the app
+    down.
+  </p>
+
+  <div class="row">
+    <div>
+      <label data-required>Upload packages you already have</label>
+      {#
+        W343: one zip or several. Several are sent one at a time (atlas.js,
+        "Bulk data packages"), each checked and reported on its own, so one
+        refused package or a dropped connection costs one file, not the batch.
+      #}
+      <form method="post" action="/content/data-package/upload"
+            enctype="multipart/form-data" class="toolbar" data-bulk-packages
+            data-upload-processing="Uploaded — the server is checking the data package…"
+            data-upload-cancelled="No data package was added.">
+        {{ csrf_field(csrf_token) }}
+        <input type="file" name="file" accept=".zip,application/zip" multiple required>
+        <input type="text" name="name" aria-label="Name" data-bulk-name>
+        <p class="field-tip" data-bulk-tip>Defaults to the name inside the package's manifest. Choose several zips to upload them together; each is then named from its own manifest.</p>
+        <button type="submit">Upload</button>
+      </form>
+      <p class="muted" style="font-size:12px">
+        Checked against ATAK's own rules before it is cataloged. A zip without a
+        valid manifest is refused here, where you can see why.
+      </p>
+    </div>
+    <div>
+      <label>Or build one from loose files</label>
+      <div class="toolbar">
+        <button type="button" data-package-create-open>Create Data Package</button>
+      </div>
+      <p class="muted" style="font-size:12px">
+        Name it, add the files, and ATLAS writes the manifest.
+      </p>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="package-create" hidden>
+  <div class="modal">
+    <h3>Create data package</h3>
+    <form method="post" action="/content/data-package/create" enctype="multipart/form-data"
+          data-upload-processing="Uploaded — the server is building the data package…"
+          data-upload-cancelled="No data package was made.">
+      {{ csrf_field(csrf_token) }}
+      <label for="pkg-name">Package name</label>
+      <p class="field-tip">Shown in the console and written into the package's manifest, e.g. “Ops overlay — north”.</p>
+      <input id="pkg-name" name="name" class="field-full" required>
+      <label for="pkg-desc">Description (optional)</label>
+      <input id="pkg-desc" name="description" class="field-full">
+
+      {# Names the whole list, whose rows are added on demand — `for` could
+         only ever point at the first one, so the marker is opted into. #}
+      <label data-required>Files</label>
+      <div data-package-files>
+        <div class="rs-row"><input type="file" name="files" required></div>
+      </div>
+      <button type="button" class="ghost" data-package-add-file>Add another file</button>
+      <p class="muted" style="font-size:12px; margin-top:10px">
+        Every file is listed in the manifest ATLAS writes. ⚠️ Names must be
+        unique, and nothing can be placed inside <code>MANIFEST/</code> — the
+        package is rejected rather than silently renamed.
+      </p>
+
+      <div class="toolbar" style="margin-top:16px; justify-content:flex-end">
+        <button type="button" class="ghost" data-modal-close>Cancel</button>
+        <button type="submit">Create package</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if not rows %}
+  <div class="panel">{{ empty_state('No files uploaded yet.') }}</div>
+{% endif %}
+
+{% for row in rows %}
+{% set f = row.file %}
+<div class="panel" id="package-{{ f.id }}">
+  <div class="toolbar">
+    <strong>{{ f.name }}</strong>
+    {% if f.is_data_package %}<span class="pill accent">data package</span>{% endif %}
+
+    {% if f.is_archive %}<span class="pill accent">archive</span>{% endif %}
+    <span class="muted">{{ f.original_filename }} · {{ row.size_bytes | filesizeformat }} · {{ f.media_type }}</span>
+    <span class="spacer"></span>
+    {% set mf = manifests.get(f.id | string) if manifests else none %}
+    {% if f.is_data_package and mf %}
+      <span class="muted" style="font-size:12px">
+        · {{ mf.content_count }} file{{ '' if mf.content_count == 1 else 's' }}
+        · manifest name “{{ mf.name }}”
+      </span>
+    {% endif %}
+    {# W426: saved to this machine, as ATLAS holds it. #}
+    <a class="btn ghost" href="/content/{{ f.id }}/download" data-content-download download>Download</a>
+    <form method="post" action="/content/{{ f.id }}/delete" style="margin:0"
+          data-confirm="Delete {{ f.name }}?">
+      {{ csrf_field(csrf_token) }}
+      <button type="submit" class="danger">Delete</button>
+    </form>
+  </div>
+  {% if f.description %}<p class="sub">{{ f.description }}</p>{% endif %}
+  {% set mf = manifests.get(f.id | string) if manifests else none %}
+  {% if f.is_data_package and mf %}
+    {#
+      W349: "an editable toggle on the data package in the content section. When
+      the user toggles it, it makes the manifest change". ATAK hides a file on
+      import only when its <Content> says visible="false"; map items (CoT) are
+      imported by another path and always show, so they are not counted.
+    #}
+    {% set vis = mf.overlay_visibility %}
+    {% set overlays = mf.overlays | length %}
+    {% if vis %}
+      {% set used = (package_use or {}).get(f.id | string, 0) %}
+      <form method="post" action="/content/{{ f.id }}/visibility" class="toolbar" style="margin-top:8px"
+            data-package-visibility
+            {% if used %}data-switch-confirm="This rewrites the manifest of “{{ f.name }}”. Devices on {{ used }} {{ 'policy' if used == 1 else 'policies' }} will receive it again once, and ATAK will import it again. Continue?"{% endif %}>
+        {{ csrf_field(csrf_token) }}
+        <input type="hidden" name="visible" value="{{ 'false' if vis == 'shown' else 'true' }}">
+        <label style="display:flex; gap:8px; align-items:center; margin:0">
+          <input type="checkbox" style="width:auto" data-submit-on-change
+                 {{ 'checked' if vis == 'shown' }} {{ 'data-indeterminate' if vis == 'mixed' }}>
+          Show on the map when imported
+        </label>
+        <span class="muted" style="font-size:12px" data-visibility-note>
+          {% if vis == 'mixed' %}
+            {{ mf.overlays_shown }} of {{ overlays }} overlays show now; switching on shows them all.
+          {% elif vis == 'shown' %}
+            {{ overlays }} {{ 'overlay appears' if overlays == 1 else 'overlays appear' }} on the map when ATAK imports this package.
+          {% else %}
+            {{ overlays }} {{ 'overlay arrives' if overlays == 1 else 'overlays arrive' }} hidden; turn {{ 'it' if overlays == 1 else 'them' }} on in ATAK's Overlay Manager.
+          {% endif %}
+          {% if overlays < mf.content_count %}Map items always show.{% endif %}
+        </span>
+        <noscript><button type="submit" class="ghost">{{ 'Hide' if vis == 'shown' else 'Show' }} on import</button></noscript>
+      </form>
+    {% else %}
+      <p class="muted" style="font-size:12px; margin-top:8px">
+        Only map items, which ATAK always shows, so there is no visibility to set.
+      </p>
+    {% endif %}
+  {% endif %}
+  {% if mf and mf.missing %}
+    {#
+      ATAK tolerates this — it imports what is there — so it is a warning, not a
+      refusal. The operator still wants telling: a package that silently carries
+      less than its manifest claims is one nobody notices is short.
+    #}
+    <div class="banner warn" style="margin-top:10px">
+      The manifest names {{ mf.missing | length }} file(s) this zip does not
+      contain: {{ mf.missing | join(', ') }}. ATAK will import what is present.
+    </div>
+  {% endif %}
+
+  <h3>Deployed by</h3>
+  {% if not row.references %}
+    <p class="muted">No policy places this file yet.</p>
+  {% else %}
+  <table>
+    <thead><tr><th>Policy</th><th>Destination</th><th>Tier</th><th>Persist</th><th>Extract</th><th>Overwrite</th></tr></thead>
+    <tbody>
+    {% for r in row.references %}
+      <tr>
+        <td><a href="{{ r.href }}">{{ r.policy_name }}</a></td>
+        <td class="mono">{{ r.dest_path }}</td>
+        <td><span class="pill {{ 'warn' if r.availability == 'optional' }}">{{ r.availability }}</span></td>
+        <td>{{ {none: '—', true: 'yes', false: 'no'}[r.persist] }}</td>
+        <td class="mono">{{ r.extract_to if r.extract else '—' }}</td>
+        <td class="muted">{{ r.overwrite }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <details style="margin-top:10px">
+    <summary class="muted">Metadata &amp; suggested deployment defaults</summary>
+    <form method="post" action="/content/{{ f.id }}/edit" style="margin-top:10px">
+      {{ csrf_field(csrf_token) }}
+      <div class="row">
+        <div>
+          <label>Name</label>
+          <input name="name" value="{{ f.name }}" class="field-full">
+          <label>Description</label>
+          <input name="description" value="{{ f.description or '' }}" class="field-full">
+        </div>
+        <div>
+          <label>Default destination</label>
+          <input name="default_dest_path" value="{{ f.default_dest_path or '' }}" class="field-full">
+          <label>Default persist</label>
+          <select name="default_persist" class="field-full">
+            <option value="inherit" {{ 'selected' if f.default_persist == none }}>inherit from tier</option>
+            <option value="yes" {{ 'selected' if f.default_persist == true }}>yes — keep it present</option>
+            <option value="no" {{ 'selected' if f.default_persist == false }}>no — place once</option>
+          </select>
+        </div>
+        <div>
+          <label>Default extraction</label>
+          <label class="muted" style="display:flex; gap:8px; align-items:center">
+            <input type="checkbox" name="default_extract" value="true" style="width:auto"
+                   {{ 'checked' if f.default_extract }}>
+            expand this archive on the device
+          </label>
+          <label>Default extract-to</label>
+          <input name="default_extract_to" value="{{ f.default_extract_to or '' }}" class="field-full">
+          <label>Default overwrite</label>
+          <select name="default_overwrite" class="field-full">
+            <option value="" {{ 'selected' if not f.default_overwrite }}>—</option>
+            {% for o in ['always', 'if_newer', 'if_absent'] %}
+              <option value="{{ o }}" {{ 'selected' if f.default_overwrite == o }}>{{ o }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <button type="submit" style="margin-top:10px">Save</button>
+    </form>
+  </details>
+</div>
+{% endfor %}
+{% endblock %}
