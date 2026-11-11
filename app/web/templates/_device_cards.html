@@ -1,0 +1,117 @@
+{#
+  Copyright 2026 TAK-Solutions LLC — Apache 2.0.
+
+  W390: a device section as a card, and its Details window. Both read a
+  `device_sections.Section`, so the card's numbers, the window's tables, each
+  table's CSV and the device report ZIP cannot disagree.
+
+    {% from "_device_cards.html" import section_card, section_modal %}
+    <div class="dcard-grid">{% for s in policy_sections %}{{ section_card(s) }}{% endfor %}</div>
+    {% for s in policy_sections %}{{ section_modal(s, device) }}{% endfor %}
+
+  ⚠️ The page passes them as `device_cards`, not `sections`: base.html already
+  has a `sections` (the navigation), and the page's own would be shadowed.
+
+  ⚠️ The window is rendered once per section, after the grid, not inside its
+  card: a modal nested in a grid cell inherits the cell's stacking and clips.
+#}
+
+{#
+  section_card(s, anchor="", extra_class="", details=false)
+    `anchor` is the card's id, so `/devices/x#logs` still lands on it.
+    `details` shows Details even when the section has no table rows, for a
+    window holding the panel's own controls. `arrive_open` reopens the window
+    when the page is reached at the card's anchor, after an action taken in it. A `call` block adds content to
+    the card itself (the location map).
+
+  section_modal(s, device, tables=true)
+    With `tables`, the section's tables, sortable, each with its CSV. Without,
+    the `call` block is the window (a panel's own forms and markup, kept as it
+    was), followed by one CSV link per table.
+#}
+{% macro section_card(s, anchor="", extra_class="", details=false, arrive_open=false) -%}
+<article class="dcard {{ extra_class }}" data-section="{{ s.key }}"{% if anchor %} id="{{ anchor }}"{% endif %}{% if arrive_open %} data-arrive-open{% endif %}>
+  <div class="dcard-head">
+    <h3>{{ s.title }}</h3>
+    {% if s.has_rows or details %}
+      <button type="button" class="ghost dcard-details" data-modal-open="section-{{ s.key }}"
+              aria-label="Details of {{ s.title }}">Details</button>
+    {% endif %}
+  </div>
+  {% if s.stats %}
+  <div class="dcard-stats">
+    {% for st in s.stats %}
+      <div class="dstat{% if st.tone %} dstat-{{ st.tone }}{% endif %}" data-stat="{{ st.label }}">
+        <span>{{ st.value }}</span><small>{{ st.label }}</small>
+      </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if s.summary %}<p class="dcard-summary">{{ s.summary }}</p>{% endif %}
+  {% if caller %}{{ caller() }}{% endif %}
+</article>
+{%- endmacro %}
+
+{% macro _csv_links(s, device) -%}
+{% set with_rows = s.tables | selectattr('rows') | list %}
+{% if with_rows %}
+  <p class="dcsv-links" data-csv-links>
+    Download CSV:
+    {% for t in with_rows %}
+      <a href="/devices/{{ device.id }}/sections/{{ s.key }}/{{ t.key }}.csv" data-csv>{{ t.title }}</a>{{ ' · ' if not loop.last }}
+    {% endfor %}
+  </p>
+{% endif %}
+{%- endmacro %}
+
+{% macro section_modal(s, device, tables=true) -%}
+{% if s.has_rows or caller %}
+<div class="modal-backdrop" id="section-{{ s.key }}" hidden data-section-modal="{{ s.key }}">
+  <div class="modal modal-wide dmodal" role="dialog" aria-modal="true" aria-label="{{ s.title }}">
+    <div class="dmodal-head">
+      <h2>{{ s.title }}</h2>
+      <button type="button" class="ghost" data-modal-close aria-label="Close">Close</button>
+    </div>
+    {% if s.stats %}
+    <div class="dcard-stats">
+      {% for st in s.stats %}
+        <div class="dstat{% if st.tone %} dstat-{{ st.tone }}{% endif %}"><span>{{ st.value }}</span><small>{{ st.label }}</small></div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if not tables %}
+      <div class="dmodal-body">{{ caller() }}</div>
+      {{ _csv_links(s, device) }}
+    {% else %}
+    {% if caller %}<div class="dmodal-body">{{ caller() }}</div>{% endif %}
+    {% for t in s.tables %}
+      <section class="dtable" data-table="{{ t.key }}">
+        <div class="dtable-head">
+          <h3>{{ t.title }}</h3>
+          {% if t.rows %}
+            <a class="btn ghost" data-csv
+               href="/devices/{{ device.id }}/sections/{{ s.key }}/{{ t.key }}.csv">Download CSV</a>
+          {% endif %}
+        </div>
+        {% if t.note %}<p class="field-tip">{{ t.note }}</p>{% endif %}
+        {% if t.rows %}
+          <div class="dtable-scroll">
+            <table data-sortable>
+              <thead><tr>{% for c in t.columns %}<th data-sort>{{ c }}</th>{% endfor %}</tr></thead>
+              <tbody>
+              {% for row in t.rows %}
+                <tr>{% for cell in row %}<td>{% if cell %}{{ cell }}{% else %}<span class="muted">—</span>{% endif %}</td>{% endfor %}</tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="muted">Nothing here.</p>
+        {% endif %}
+      </section>
+    {% endfor %}
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{%- endmacro %}
