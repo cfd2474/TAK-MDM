@@ -1,0 +1,11 @@
+# Files consumed inside Linux containers must keep LF endings. With CRLF, the
+# kernel reads the shebang as "/bin/sh\r" and the container dies with a confusing
+# "no such file or directory".
+*.sh text eol=lf
+docker/entrypoint.sh text eol=lf
+Dockerfile text eol=lf
+docker/nginx/*.conf text eol=lf
+
+# W491: the stock boot/shutdown animations. Samsung's binary format; with
+# autocrlf a guessed "text" would rewrite bytes inside a frame.
+*.qmg binary

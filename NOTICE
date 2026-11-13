@@ -1,0 +1,37 @@
+ATLAS — ATAK Tactical Lifecycle & Administration System
+Copyright 2026 TAK-Solutions LLC
+
+This product includes software developed by TAK-Solutions LLC.
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file.
+
+---
+
+This product bundles Leaflet 1.9.4, which is available under the BSD 2-Clause
+License. Leaflet is Copyright (c) 2010-2023, Volodymyr Agafonkin and
+Copyright (c) 2010-2011, CloudMade. The full licence text is retained alongside
+the bundled files at app/web/static/vendor/LEAFLET-LICENSE.txt.
+
+Leaflet is vendored rather than loaded from a CDN so that the console keeps
+working without reaching a third party, and so that the exact bytes served are
+the ones reviewed here.
+
+---
+
+app/services/app_sources/play_details.py follows the Google Play request
+sequence of the gpapi crate (https://github.com/EFForg/rs-google-play), and
+carries its request constants (the client signature and the X-DFE-Encoded-Targets
+and X-DFE-Phenotype values). gpapi is available under the MIT License and is
+Copyright (c) 2021 David Weinstein. The full licence text is retained at
+app/services/app_sources/GPAPI-LICENSE.txt.
+
+---
+
+The ATLAS server image includes qmgc (https://github.com/BroBordd/qmgc), a
+Qmage (.qmg) encoder, used to make Samsung boot and shutdown animations. qmgc is
+Copyright (C) 2026 Bedoo and is available under the GNU General Public License,
+version 3 or later. It is built from its complete source in third_party/qmgc,
+with one modification described in third_party/qmgc/ATLAS.md, and runs as a
+separate program; it is not part of ATLAS's Apache-2.0 licensed code. Upstream
+states that its codec tables are derived from FFmpeg's LGPL-2.1-or-later
+qmagedec.c/qmagedata.h.
