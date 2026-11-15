@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, empty_state %}
+{% set nav = 'admin' %}
+{% block title %}Audit log — ATLAS{% endblock %}
+
+{% block content %}
+<p class="muted" style="margin:0"><a href="/admin#tab-audit">&larr; Admin</a></p>
+{{ page_header('Audit log', 'Every change made through the console or the API: who, from where, what, and whether it worked. Times are ' ~ tz ~ '.') }}
+
+{% if check %}
+  {% if check.ok %}
+    <div class="banner good" data-audit-chain="ok">
+      The chain is intact: {{ check.checked }} entr{{ 'y' if check.checked == 1 else 'ies' }} checked, none altered or removed.
+    </div>
+  {% else %}
+    <div class="banner bad" data-audit-chain="broken">
+      <strong>The chain is broken at entry #{{ check.broken_at.seq }}</strong>
+      ({{ check.broken_at.occurred_at | localtime('%Y-%m-%d %H:%M:%S') }}):
+      {{ check.reason }}. Something changed the log outside ATLAS.
+      {{ check.checked }} entr{{ 'y' if check.checked == 1 else 'ies' }} before it check out.
+    </div>
+  {% endif %}
+{% endif %}
+
+<div class="panel">
+  <h3>Today</h3>
+  {% if not today %}
+    {{ empty_state('Nobody has used the console today.') }}
+  {% else %}
+  <table data-audit-today>
+    <thead><tr><th>User</th><th>First seen</th><th>Last seen</th><th>Changes</th></tr></thead>
+    <tbody>
+    {% for p in today %}
+      <tr>
+        <td><a href="/admin/audit?actor={{ p.actor | urlencode }}">{{ p.actor }}</a></td>
+        <td class="muted">{{ p.first_seen | localtime('%H:%M') }}</td>
+        <td class="muted">{{ p.last_seen | localtime('%H:%M') }}</td>
+        <td>{{ p.changes }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <form method="get" action="/admin/audit" class="toolbar" data-audit-filters>
+    <label class="inline" for="audit-actor">User</label>
+    <select id="audit-actor" name="actor">
+      <option value="">Anyone</option>
+      {% for a in actors %}<option value="{{ a }}"{{ ' selected' if a == filters.actor }}>{{ a }}</option>{% endfor %}
+    </select>
+    <label class="inline" for="audit-action">Action</label>
+    <select id="audit-action" name="action">
+      <option value="">Any</option>
+      {% for prefix in action_groups %}
+        <option value="{{ prefix }}"{{ ' selected' if prefix == filters.action }}>{{ prefix }}*</option>
+      {% endfor %}
+      {% for a in actions %}<option value="{{ a }}"{{ ' selected' if a == filters.action }}>{{ a }}</option>{% endfor %}
+    </select>
+    <label class="inline" for="audit-outcome">Outcome</label>
+    <select id="audit-outcome" name="outcome">
+      <option value="">Any</option>
+      {% for o in ('ok', 'refused', 'failed') %}<option value="{{ o }}"{{ ' selected' if o == filters.outcome }}>{{ o }}</option>{% endfor %}
+    </select>
+    <label class="inline" for="audit-since">From</label>
+    <input type="date" id="audit-since" name="since" value="{{ filters.since or '' }}">
+    <label class="inline" for="audit-until">To</label>
+    <input type="date" id="audit-until" name="until" value="{{ filters.until or '' }}">
+    {% if filters.target_id %}
+      <input type="hidden" name="target_type" value="{{ filters.target_type }}">
+      <input type="hidden" name="target_id" value="{{ filters.target_id }}">
+      <span class="pill">{{ filters.target_type or 'target' }} {{ filters.target_id[:8] }}…
+        <a href="/admin/audit?{{ query_without_target | urlencode }}" aria-label="Clear the target filter">&times;</a></span>
+    {% endif %}
+    <button type="submit" class="ghost">Filter</button>
+    {% if filters.any %}<a class="btn ghost" href="/admin/audit">Clear</a>{% endif %}
+    <span style="flex:1"></span>
+    <a class="btn ghost" href="/admin/audit.csv?{{ query | urlencode }}" data-audit-csv>CSV</a>
+    <a class="btn ghost" href="/admin/audit?{{ query | urlencode }}{{ '&' if query else '' }}verify=1" data-audit-verify>Verify chain</a>
+  </form>
+
+  <p class="muted" style="font-size:12px">{{ total }} entr{{ 'y' if total == 1 else 'ies' }}{{ ' match' if filters.any else '' }}.</p>
+  {% if addresses_from_proxy %}
+    <p class="field-tip" data-audit-proxy-addresses>
+      "From" is the address of the proxy in front of ATLAS, not the operator's, because
+      <code>TAKMDM_TRUSTED_PROXIES</code> is not set. Name the proxy's network there to record
+      where each change really came from; InfraTAK installs set it for you. It also limits the
+      console to requests arriving through that proxy.
+    </p>
+  {% endif %}
+
+  {% if not rows %}
+    {{ empty_state('No entries.' if filters.any else 'Nothing has been recorded yet.') }}
+  {% else %}
+  <table data-audit-rows>
+    <thead><tr><th>#</th><th>When</th><th>User</th><th>From</th><th>What</th><th>Outcome</th></tr></thead>
+    <tbody>
+    {% for e in rows %}
+      <tr>
+        <td class="mono muted">{{ e.seq }}</td>
+        <td class="muted" style="white-space:nowrap">{{ e.occurred_at | localtime('%Y-%m-%d %H:%M:%S') }}</td>
+        <td>{{ e.actor }}</td>
+        <td class="mono muted">{{ e.source_ip or '' }}</td>
+        <td>
+          {% if e.summary %}{{ e.summary }}{% else %}<span class="mono">{{ e.method }} {{ e.path }}</span>{% endif %}
+          <div class="muted" style="font-size:11px">
+            <span class="mono">{{ e.action }}</span>
+            {% if e.target_id %} · <a href="/admin/audit?target_type={{ e.target_type or '' }}&target_id={{ e.target_id }}">every entry for this {{ e.target_type or 'target' }}</a>{% endif %}
+          </div>
+        </td>
+        <td>
+          {% if e.outcome == 'ok' %}<span class="pill good">ok</span>
+          {% elif e.outcome == 'refused' %}<span class="pill warn">refused</span>
+          {% else %}<span class="pill bad">failed</span>{% endif %}
+          {% if e.status_code and e.outcome != 'ok' %}<span class="muted">{{ e.status_code }}</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if pages > 1 %}
+    <p class="toolbar">
+      {% if page > 1 %}<a class="btn ghost" href="/admin/audit?{{ query | urlencode }}{{ '&' if query else '' }}page={{ page - 1 }}">Newer</a>{% endif %}
+      <span class="muted">Page {{ page }} of {{ pages }}</span>
+      {% if page < pages %}<a class="btn ghost" href="/admin/audit?{{ query | urlencode }}{{ '&' if query else '' }}page={{ page + 1 }}">Older</a>{% endif %}
+    </p>
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}
