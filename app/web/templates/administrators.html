@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, empty_state %}
+{% set nav = 'admin' %}
+{% block title %}Administrators — ATLAS{% endblock %}
+
+{% block content %}
+<p class="muted" style="margin:0"><a href="/admin#tab-administrators">&larr; Admin</a></p>
+{{ page_header('Administrators', 'Super admins can do everything. Standard admins reach only the devices, groups and actions you give them here.') }}
+
+{% if request.query_params.get('saved') %}
+  <div class="banner good" data-admin-saved>Saved what {{ request.query_params.get('saved') }} may reach.</div>
+{% endif %}
+{% if request.query_params.get('forgotten') %}
+  <div class="banner good" data-admin-forgotten>Forgot what {{ request.query_params.get('forgotten') }} may reach.</div>
+{% endif %}
+
+{% if not role_enabled %}
+  <div class="banner warn" data-role-off>
+    The standard admin role is off on this server: TAKMDM_STANDARD_ADMIN_GROUP is not set.
+    Every administrator is a super admin. InfraTAK sets it when it updates this deployment.
+  </div>
+{% endif %}
+
+{% if not roster.configured %}
+  <div class="banner warn" data-roster-off>
+    This server has no Authentik roster token, so it cannot list who is in each group.
+    You can still set up a standard admin by their Authentik username below.
+  </div>
+{% elif roster.error %}
+  <div class="banner bad" data-roster-error>
+    Could not read the administrators from Authentik: {{ roster.error }}
+    You can still set up a standard admin by their Authentik username below.
+  </div>
+{% endif %}
+
+<div class="panel">
+  <h2>Standard admins</h2>
+  <p class="sub">
+    Members of the Authentik group <span class="mono">{{ standard_group or '—' }}</span>.
+    Add or remove people in Authentik; set what each one may reach here.
+  </p>
+  {% if roster.available and not standard_rows %}
+    {{ empty_state('Nobody is in the standard admin group yet.') }}
+  {% elif standard_rows %}
+  <table data-standard-admins>
+    <thead><tr><th>User</th><th>Name</th><th>May reach</th><th></th></tr></thead>
+    <tbody>
+    {% for row in standard_rows %}
+      <tr>
+        <td class="mono">{{ row.member.username }}{% if not row.member.is_active %} <span class="muted">(inactive)</span>{% endif %}</td>
+        <td>{{ row.member.name or '—' }}</td>
+        <td class="muted">{{ row.summary }}</td>
+        <td><a class="btn ghost" href="/admin/administrators/{{ row.member.username | urlencode }}">Edit</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <form method="get" action="/admin/administrators" class="toolbar" data-admin-by-username>
+    <label class="inline" for="admin-username">Set up by Authentik username</label>
+    <input type="text" id="admin-username" name="username" maxlength="150" required>
+    <button type="submit" class="ghost">Open</button>
+  </form>
+</div>
+
+{% if other_rows %}
+<div class="panel">
+  <h2>Not in the standard admin group</h2>
+  <p class="sub">
+    Stored scopes for people the roster does not list. They reach nothing unless they are in the group.
+  </p>
+  <table data-other-scopes>
+    <thead><tr><th>User</th><th>May reach</th><th></th></tr></thead>
+    <tbody>
+    {% for row in other_rows %}
+      <tr>
+        <td class="mono">{{ row.username }}</td>
+        <td class="muted">{{ row.summary }}</td>
+        <td class="toolbar">
+          <a class="btn ghost" href="/admin/administrators/{{ row.username | urlencode }}">Edit</a>
+          <form method="post" action="/admin/administrators/{{ row.username | urlencode }}/forget">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="ghost">Forget</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="panel">
+  <h2>Super admins</h2>
+  <p class="sub">The agency's own super admin group. Global Authentik administrators are not listed.</p>
+  {% if not roster.available %}
+    {{ empty_state('Shown when the roster can be read.') }}
+  {% elif not roster.super_admins %}
+    {{ empty_state('Nobody is in the agency super admin group.') }}
+  {% else %}
+  <table data-super-admins>
+    <thead><tr><th>User</th><th>Name</th></tr></thead>
+    <tbody>
+    {% for m in roster.super_admins %}
+      <tr><td class="mono">{{ m.username }}</td><td>{{ m.name or '—' }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endblock %}
