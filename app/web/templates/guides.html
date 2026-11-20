@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, tabs, empty_state %}
+{% set nav = 'guides' %}
+{% block title %}Guides — ATLAS{% endblock %}
+
+{% block content %}
+{{ page_header('Guides', 'How to run ATLAS, common questions, and what changed.') }}
+
+{{ tabs([
+  ('howto', 'How-to'),
+  ('faq', 'FAQ'),
+  ('release-notes', 'Release notes'),
+], active='howto', scope='guide-tabs') }}
+
+<div id="guide-tabs">
+  <div class="tab-panel" data-tab-panel="howto">
+    <div class="panel">
+      {% if not howto %}{{ empty_state('No how-to articles yet.') }}{% else %}
+      <ul>
+        {% for g in howto %}
+          <li><a href="/guides/howto/{{ g.slug }}">{{ g.title }}</a></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="faq" hidden>
+    <div class="panel">
+      {% if not faq %}{{ empty_state('No FAQ entries yet.') }}{% else %}
+      <ul>
+        {% for g in faq %}
+          <li><a href="/guides/faq/{{ g.slug }}">{{ g.title }}</a></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel" data-tab-panel="release-notes" hidden>
+    <div class="panel prose">
+      {{ release_notes | safe }}
+    </div>
+  </div>
+</div>
+{% endblock %}
