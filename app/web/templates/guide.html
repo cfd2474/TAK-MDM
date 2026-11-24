@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% set nav = 'guides' %}
+{% block title %}{{ guide_title }} — ATLAS{% endblock %}
+
+{% block content %}
+<p class="sub"><a href="/guides">← all guides</a></p>
+<div class="panel prose">
+  {{ guide_body | safe }}
+</div>
+{% endblock %}
