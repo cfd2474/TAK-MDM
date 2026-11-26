@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, device_label %}
+{% set nav = 'manage' %}
+{% block title %}Import names and attributes — ATLAS{% endblock %}
+
+{#
+  W370 C8: what importing the file would change, before anything is written.
+  Apply posts the same text back; the server re-plans it against the fleet as
+  it is then, so a device edited in between is not overwritten from a stale
+  preview's idea of it.
+#}
+{% block content %}
+{{ page_header('Import names and attributes', 'Nothing has changed yet. Check the list, then apply.') }}
+
+<div class="panel" data-inventory-preview>
+  {% if plan.devices %}
+    <p class="sub">
+      {{ plan.change_count }} change{{ '' if plan.change_count == 1 else 's' }} on
+      {{ plan.devices | length }} device{{ '' if plan.devices | length == 1 else 's' }}.
+      Columns imported: {{ plan.columns | join(', ') }}.
+    </p>
+    <table data-inventory-changes>
+      <thead><tr><th>Device</th><th>Field</th><th>Now</th><th>After import</th></tr></thead>
+      <tbody>
+      {% for d in plan.devices %}
+        {% for c in d.changes %}
+          <tr>
+            {% if loop.first %}<td rowspan="{{ d.changes | length }}"><a href="/devices/{{ d.device.id }}">{{ device_label(d.device) }}</a></td>{% endif %}
+            <td>{{ c.field }}</td>
+            <td class="mono">{% if c.old %}{{ c.old }}{% else %}<span class="muted">blank</span>{% endif %}</td>
+            <td class="mono">{% if c.new %}{{ c.new }}{% else %}<span class="muted">cleared</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+      {% endfor %}
+      </tbody>
+    </table>
+  {% elif not plan.added %}
+    <p class="sub" data-inventory-nothing>Nothing in this file differs from what the devices already have.</p>
+  {% endif %}
+
+  {#- W502: serials with no device, staged to wait for enrollment. -#}
+  {% if plan.added %}
+    <h2>Will be added, waiting to enroll</h2>
+    <p class="sub">
+      {{ plan.added | length }} serial{{ '' if plan.added | length == 1 else 's' }} match no device.
+      Each becomes a record waiting to enroll. A device with that serial takes it when
+      it scans an enrollment QR. Its group comes from the QR.
+    </p>
+    <table data-inventory-added>
+      <thead><tr><th>Serial</th><th>Values</th></tr></thead>
+      <tbody>
+      {% for n in plan.added %}
+        <tr>
+          <td class="mono">{{ n.serial }}</td>
+          <td>{% if n.values %}{% for k, v in n.values.items() %}<span class="muted">{{ k }}:</span> {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}{% else %}<span class="muted">none</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+
+  {% if plan.skipped %}
+    <h2>Not used</h2>
+    <ul data-inventory-skipped>
+      {% for s in plan.skipped %}<li>{{ s }}</li>{% endfor %}
+    </ul>
+  {% endif %}
+
+  <div class="toolbar" style="margin-top:16px">
+    <a class="button ghost" href="/fleet">Cancel</a>
+    {% if plan.devices or plan.added %}
+      <form method="post" action="/fleet/inventory/apply" class="inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <textarea name="text" hidden>{{ text }}</textarea>
+        {% if add_missing %}<input type="hidden" name="add_missing" value="true">{% endif %}
+        <button type="submit" data-inventory-apply>Apply
+          {%- if plan.devices %} {{ plan.change_count }} change{{ '' if plan.change_count == 1 else 's' }}{% endif %}
+          {%- if plan.devices and plan.added %} and{% endif %}
+          {%- if plan.added %} add {{ plan.added | length }} device{{ '' if plan.added | length == 1 else 's' }}{% endif %}</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
