@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% set nav = 'reports' %}
+{% block title %}Reports — ATLAS{% endblock %}
+
+{% block content %}
+{{ page_header('Reports', 'Point-in-time views over the fleet. Every report downloads as CSV.') }}
+
+<div class="panel">
+  <table>
+    <thead><tr><th>Report</th><th>What it shows</th><th></th></tr></thead>
+    <tbody>
+    {% for r in reports %}
+      <tr>
+        <td><a href="/reports/{{ r.key }}">{{ r.title }}</a></td>
+        <td class="muted">{{ r.description }}</td>
+        <td><a class="btn ghost" href="/reports/{{ r.key }}?format=csv">CSV</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<p class="muted" style="font-size:12px">
+  Physical telemetry (battery, storage, signal) is not here yet — the agent does
+  not report those fields. Fleet inventory covers what devices do send.
+</p>
+{% endblock %}

@@ -1,0 +1,705 @@
+# Copyright 2026 TAK-Solutions LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Administrator authentication via an Authentik forward-auth proxy.
+
+Authentik terminates the OIDC flow and forwards the resulting identity as headers.
+This module reads them; it deliberately implements no OIDC itself. Discovery, PKCE,
+token exchange, refresh and session handling are a large amount of security-critical
+code solving a problem an identity provider already solves, and duplicating it here
+would add risk without adding capability.
+
+The trust model matches the mTLS one already in use for devices:
+
+* the proxy is authoritative,
+* the proxy **must** strip inbound copies of these headers, and
+* the application must never be directly reachable.
+
+Both surfaces therefore share one discipline rather than each inventing their own.
+
+Devices are unaffected — they cannot perform an interactive login, so the
+device-facing port keeps mTLS with no Authentik in the path.
+"""
+
+from __future__ import annotations
+
+import enum
+import hmac
+import ipaddress
+import logging
+from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
+
+from fastapi import Depends, HTTPException, Request, status
+
+from app.config import Settings, get_settings
+from app.security import admin_jwt
+from app.security import sign_in_refusal
+from app.security import csrf
+
+logger = logging.getLogger(__name__)
+
+
+class AuthMode(str, enum.Enum):
+    """How the admin surface is protected.
+
+    Only two values, deliberately. A partial or best-effort mode would be a mode
+    nobody can reason about, and "is the console protected right now?" must have a
+    yes/no answer.
+    """
+
+    DISABLED = "disabled"  # local development only
+    FORWARD_AUTH = "forward_auth"  # Authentik proxy provider in front
+
+
+class AdminRole(str, enum.Enum):
+    """Which kind of administrator this is (W495).
+
+    Authentik says *who* holds each role, through group membership; what a
+    standard admin may reach is stored in ATLAS and checked by
+    `app.security.permissions`.
+    """
+
+    SUPER = "super"  # everything, as every administrator could before W495
+    STANDARD = "standard"  # only what the super admin grants
+
+
+@dataclass(frozen=True)
+class AdminIdentity:
+    """An authenticated administrator."""
+
+    username: str
+    email: str | None = None
+    display_name: str | None = None
+    groups: tuple[str, ...] = field(default_factory=tuple)
+    # True when authentication is switched off, so callers and the UI can say so
+    # rather than showing a fabricated user.
+    is_anonymous: bool = False
+    # ⚠️ Defaults to SUPER because that is what every identity meant before
+    # W495. Only `identify` makes a STANDARD one, and only from the group.
+    role: AdminRole = AdminRole.SUPER
+
+    @property
+    def label(self) -> str:
+        return self.display_name or self.username
+
+    @property
+    def is_standard(self) -> bool:
+        return self.role is AdminRole.STANDARD
+
+
+ANONYMOUS = AdminIdentity(
+    username="anonymous",
+    display_name="Unauthenticated (auth disabled)",
+    is_anonymous=True,
+)
+
+
+#: The separator Authentik puts between group names in `X-Authentik-Groups`.
+GROUP_SEPARATOR = "|"
+
+
+def _split_groups(raw: str | None) -> tuple[str, ...]:
+    """The group names in Authentik's groups header, split on `|` only.
+
+    📖 Authentik: groups "separated by pipes" (proxy provider docs).
+
+    ⚠️ Never on commas (W504): a comma can be part of a group name. See
+    `tests/test_admin_group_separator.py` before changing this.
+    """
+    if not raw:
+        return ()
+    return tuple(part.strip() for part in raw.split(GROUP_SEPARATOR) if part.strip())
+
+
+def unmatchable_group_names(settings: Settings) -> tuple[str, ...]:
+    """Configured admin group names that can never match the header (W504).
+
+    A name holding `|` is split apart on arrival, so it never matches, and the
+    operator who wrote it would be locked out with no reason given.
+    """
+    names = [part.strip() for part in (settings.admin_group or "").split(",")]
+    names.append((settings.standard_admin_group or "").strip())
+    return tuple(name for name in names if name and GROUP_SEPARATOR in name)
+
+
+def required_groups(settings: Settings) -> tuple[str, ...]:
+    """The groups any one of which grants administration, or none.
+
+    ⚠️ **A list, because one server runs an ATLAS per agency.** Each has its own
+    admin group, and a global administrator who supports all of them belongs to
+    none of those groups. A single required name would either lock that person
+    out of every agency console or leave every console unenforced.
+
+    ⚠️ Commas only. Authentik joins the groups it *sends* with `|`, and reusing
+    that separator here would make a configured value indistinguishable from a
+    header — different directions, different syntax, and confusing them is how a
+    setting comes to mean something nobody chose.
+    """
+    # ⚠️ No early return for the empty case: `"".split(",")` is `[""]`, which
+    # the filter drops anyway. A branch that cannot change the answer is a
+    # branch a reader has to prove harmless, and a mutation can sit in
+    # untouched.
+    raw = settings.admin_group or ""
+    # ⚠️ The standard-admin group never grants full administration, even when
+    # someone lists it here: that would make every standard admin a super one.
+    # `warn_if_unprotected` says so at startup.
+    standard = standard_group(settings)
+    return tuple(
+        name for name in (part.strip() for part in raw.split(","))
+        if name and name != standard
+    )
+
+
+def standard_group(settings: Settings) -> str | None:
+    """The group whose members are standard administrators, or None (W495)."""
+    return (settings.standard_admin_group or "").strip() or None
+
+
+def resolve_role(
+    groups: tuple[str, ...], settings: Settings
+) -> AdminRole | None:
+    """Which role these groups give, or None when they give no access.
+
+    Order matters, and each step is a decision:
+
+    1. **A super group wins.** A person in both groups is a super admin.
+    2. **Then the standard group**, and *before* the blank-`TAKMDM_ADMIN_GROUP`
+       rule below. W240 once left that setting blank on every non-root box,
+       where it admits everyone Authentik admits as a full administrator; a
+       standard admin on such a box must still be standard.
+    3. **No super group configured** admits everyone else as super, as before.
+       ⚠️ Only when `TAKMDM_ADMIN_GROUP` is really blank. If it names only the
+       standard group, `required_groups` drops that name and is empty too, and
+       treating that as "blank" would make everyone a full administrator — the
+       W495 security review found it. That case admits nobody but the standard
+       admins (fail closed); startup logs why.
+    """
+    required = required_groups(settings)
+    member_of = set(groups)
+    if required and member_of & set(required):
+        return AdminRole.SUPER
+    standard = standard_group(settings)
+    if standard and standard in member_of:
+        return AdminRole.STANDARD
+    if not required and not (settings.admin_group or "").replace(",", "").strip():
+        return AdminRole.SUPER
+    return None
+
+
+#: The literal that means "I have decided not to enforce this".
+ANY = "any"
+
+#: Whether this process has already said which groups the proxy sends.
+_ANNOUNCED_GROUPS = False
+
+
+def _proxy_auth_ok(request: Request, settings: Settings) -> bool:
+    """Did this request really come through the authenticating proxy?
+
+    ⚠️ **The peer check cannot answer this and never could.** Caddy runs on the
+    host and reaches the container through the bridge gateway; so does every
+    other process on that host, so `TAKMDM_TRUSTED_PROXIES` admits them all
+    equally. This is the half that separates them: the proxy holds a secret and
+    attaches it only after `forward_auth` has passed.
+
+    Unset means unchecked, deliberately — see the setting. `compare_digest`
+    rather than `==` because the comparison is against a secret.
+    """
+    expected = (settings.proxy_auth_secret or "").strip()
+    if not expected:
+        return True
+    presented = request.headers.get(settings.proxy_auth_header) or ""
+    return hmac.compare_digest(presented, expected)
+
+
+def _trusted_networks(raw: str) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    """Parse the configured peers. Unparseable entries are dropped, loudly.
+
+    ⚠️ A typo must not silently widen the control to nothing, nor narrow it to
+    everything. Dropping the bad entry keeps the good ones enforcing, and the
+    warning names the entry — the alternative is an operator who believes a
+    restriction is in force because they wrote it down.
+    """
+    networks = []
+    for entry in (part.strip() for part in raw.split(",")):
+        if not entry or entry.lower() == ANY:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            logger.warning(
+                "TAKMDM_TRUSTED_PROXIES entry %r is not an IP or CIDR; ignoring it",
+                entry,
+            )
+    return tuple(networks)
+
+
+def _peer_is_trusted(request: Request, settings: Settings) -> bool:
+    """Did this request arrive from somewhere the admin surface is served to?
+
+    ⚠️ **`request.client` must be the real peer**, and uvicorn will overwrite it
+    from `X-Forwarded-For` when proxy headers are trusted. That would make this
+    check bypassable by exactly the class of forged header it exists to defend
+    against, so the image runs uvicorn with `--no-proxy-headers` and nothing here
+    reads a forwarded address.
+    """
+    raw = (settings.trusted_proxies or "").strip()
+    if not raw or raw.lower() == ANY:
+        return True
+
+    networks = _trusted_networks(raw)
+    if not networks:
+        # Every entry was unparseable. Enforcing nothing is the honest outcome —
+        # the warnings above already said so — because the alternative is locking
+        # an operator out of the console over a typo.
+        return True
+
+    client = request.client
+    if client is None or not client.host:
+        # No peer address at all. ASGI permits it; a real TCP connection always
+        # has one, so this is a test client or an unusual transport.
+        return True
+
+    try:
+        peer = ipaddress.ip_address(client.host)
+    except ValueError:
+        logger.warning("could not read the peer address %r; refusing", client.host)
+        return False
+
+    return any(peer in network for network in networks)
+
+
+def identify(request: Request, settings: Settings) -> AdminIdentity:
+    """Resolve the caller, or raise 401/403. Never returns an unauthorized user."""
+    mode = AuthMode(settings.admin_auth_mode)
+
+    if mode is AuthMode.DISABLED:
+        return ANONYMOUS
+
+    # ⚠️ Before the identity headers are read, for the same reason the peer
+    # check is: a refused caller must never be authenticated, even briefly.
+    if not _proxy_auth_ok(request, settings):
+        logger.error(
+            "admin request refused: %s is missing or wrong. The reverse proxy "
+            "attaches it after forward_auth; a request without it did not come "
+            "through the proxy. To disable this check, clear "
+            "TAKMDM_PROXY_AUTH_SECRET.",
+            settings.proxy_auth_header,
+        )
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "this endpoint must be reached through the authenticating proxy",
+        )
+
+    if not _peer_is_trusted(request, settings):
+        # ⚠️ Logged at ERROR with both halves of the comparison, because the
+        # recovery for a misconfiguration is to read this line: it names what
+        # arrived and what was allowed. Without that an operator locked out of
+        # the console has a 403 and nothing to act on.
+        peer = request.client.host if request.client else "unknown"
+        logger.error(
+            "admin request from %s refused: not within TAKMDM_TRUSTED_PROXIES (%s). "
+            "If this is the proxy, correct the setting; to disable the check set "
+            "it to 'any'.",
+            peer,
+            settings.trusted_proxies,
+        )
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "the administrative interface is not served to this address",
+        )
+
+    claimed = _claimed_identity(request, settings)
+    username, groups = claimed.username, claimed.groups
+    required = required_groups(settings)
+
+    # ⚠️ Logged once per process, at INFO, and only on success. Choosing a value
+    # for TAKMDM_ADMIN_GROUP otherwise means guessing what Authentik actually
+    # sends — and guessing wrong locks every administrator out of the console
+    # they would use to correct it. One line makes the setting verifiable.
+    global _ANNOUNCED_GROUPS
+    if not _ANNOUNCED_GROUPS:
+        _ANNOUNCED_GROUPS = True
+        logger.info(
+            "admin %s authenticated; groups as received: %s. Set "
+            "TAKMDM_ADMIN_GROUP to one of these to have ATLAS check membership "
+            "itself rather than trusting the proxy's binding alone (H-1).",
+            username, ", ".join(groups) or "none",
+        )
+
+    # ⚠️ **Any one of them, not all.** The agency's own admins and the global
+    # administrators are alternatives, and requiring both would mean nobody.
+    role = resolve_role(groups, settings)
+    if role is None:
+        # Authenticated but not authorized. Logged because it is the interesting
+        # case operationally: someone signed in and was turned away.
+        logger.warning(
+            "admin access denied for %s: in none of %s (groups: %s)",
+            username, ", ".join(required), ", ".join(groups) or "none",
+        )
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "administrator access requires membership of "
+            + " or ".join(repr(name) for name in required),
+        )
+
+    return AdminIdentity(
+        username=username,
+        email=claimed.email,
+        display_name=claimed.name or username,
+        groups=groups,
+        role=role,
+    )
+
+
+def _claimed_identity(request: Request, settings: Settings) -> admin_jwt.TokenIdentity:
+    """Who the proxy says this is, from the configured source (W504).
+
+    Raises 401 when there is no usable identity. Membership is decided by the
+    caller; this only reads.
+    """
+    if settings.admin_identity_source == "jwt":
+        return _identity_from_token(request, settings)
+
+    username = request.headers.get(settings.admin_user_header)
+    if not username:
+        # Fail closed. A missing header means the proxy did not authenticate this
+        # request — treating that as anonymous access would make a misconfigured
+        # proxy silently equivalent to no protection at all.
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "no authenticated administrator; this endpoint must be reached through "
+            "the Authentik proxy",
+        )
+    return admin_jwt.TokenIdentity(
+        username=username,
+        groups=_split_groups(request.headers.get(settings.admin_groups_header)),
+        email=request.headers.get(settings.admin_email_header),
+        name=request.headers.get(settings.admin_name_header),
+    )
+
+
+def jwt_settings_missing(settings: Settings) -> tuple[str, ...]:
+    """The settings `jwt` needs that are blank."""
+    missing = []
+    if not (settings.admin_jwt_audience or "").strip():
+        missing.append("TAKMDM_ADMIN_JWT_AUDIENCE")
+    # The keys must be found somewhere: an address of their own, or beside
+    # the issuer.
+    if not ((settings.admin_jwt_jwks_url or "").strip()
+            or (settings.admin_jwt_issuer or "").strip()):
+        missing.append("TAKMDM_ADMIN_JWT_JWKS_URL (or TAKMDM_ADMIN_JWT_ISSUER)")
+    return tuple(missing)
+
+
+#: Seam for tests: the key source for a JWKS address.
+_keys_at = admin_jwt.keys_at
+
+
+def _identity_from_token(request: Request, settings: Settings) -> admin_jwt.TokenIdentity:
+    """The identity in Authentik's signed token, or 401.
+
+    ⚠️ **The user and group headers are not read at all in this mode**, not even
+    as a fallback: a fallback would be the way round the check.
+    """
+    missing = jwt_settings_missing(settings)
+    if missing:
+        # Fail closed: a token that cannot be checked is not trusted.
+        logger.error(
+            "admin request refused: TAKMDM_ADMIN_IDENTITY_SOURCE is jwt but %s "
+            "is blank, so no token can be checked.", ", ".join(missing),
+        )
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "sign-in cannot be checked: the server's token settings are incomplete",
+        )
+    issuer = (settings.admin_jwt_issuer or "").strip() or None
+    try:
+        return admin_jwt.verify(
+            request.headers.get(settings.admin_jwt_header),
+            _keys_at(admin_jwt.jwks_url(issuer, settings.admin_jwt_jwks_url)),
+            issuer=issuer,
+            audience=settings.admin_jwt_audience.strip(),
+        )
+    except admin_jwt.TokenRefused as refused:
+        logger.warning("admin request refused: sign-in token not accepted (%s)", refused)
+        if refused.expired:
+            # A reload works here: the outpost's session ends with its token.
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED,
+                "your sign-in has expired; reload the page to sign in again",
+            ) from None
+        # ⚠️ Not "reload": the outpost keeps sending this same token until its
+        # session ends, so the way out is to sign out of it.
+        raise sign_in_refusal.SignInRefused() from None
+
+
+def admin_required(
+    request: Request, settings: Settings = Depends(get_settings)
+) -> AdminIdentity:
+    """FastAPI dependency guarding every administrative route."""
+    return identify(request, settings)
+
+
+async def csrf_protected(
+    request: Request,
+    identity: AdminIdentity = Depends(admin_required),
+    settings: Settings = Depends(get_settings),
+) -> AdminIdentity:
+    """Reject an unsafe request that this administrator did not deliberately make.
+
+    Applied at router registration alongside `admin_required`, not per endpoint, so
+    a new admin route is protected by default and forgetting a decorator cannot
+    quietly open one (the D70 principle).
+
+    **What needs the token** (W414, SEC_AUDIT.md H2 and M1):
+
+    * **Anything a browser sends that is not JSON, in every auth mode.** That is
+      the only shape a hostile page can produce without the browser stopping it
+      first. "From a browser" means it carries `Origin`, `Referer` or
+      `Sec-Fetch-Site`; every current browser sends at least one on a POST.
+    * **In `forward_auth`, any form-shaped body as well**, browser headers or
+      not, as before.
+
+    ⚠️ **`disabled` mode is no longer exempt** (H2). It used to return at once
+    on the theory that with no session there was nothing for a hostile page to
+    ride. Behind the standalone nginx's Basic auth that is false: the browser
+    caches the credentials and replays them on a cross-site form post, so any
+    page an operator opened could retire enrollment or stop agent updates. The
+    console mints the token in that mode too (as "anonymous"), so its own
+    pages are unaffected. A script or test sends none of the browser headers
+    and is untouched, as it always was.
+
+    ⚠️ **`text/plain` is no longer a way round the token** (M1). It used to
+    fall to the origin check alone, which does nothing while
+    `TAKMDM_CONSOLE_ORIGIN` is unset (the default), and Starlette parses such
+    a body as an empty form, so any route whose fields all default simply ran.
+
+    **JSON stays exempt.** A form cannot send `application/json`, and a
+    cross-origin `fetch` that does triggers a CORS preflight this application
+    answers no headers for, so the browser refuses it before we see it.
+    Demanding a token there would break every script and close nothing.
+
+    Safe methods pass untouched: a GET must never require a token, or the console
+    could not issue one in the first place.
+    """
+    if not csrf.is_unsafe(request.method):
+        return identity
+    enforcing = AuthMode(settings.admin_auth_mode) is not AuthMode.DISABLED
+
+    try:
+        if enforcing:
+            # First, because it covers what an HTML form can reach that carries
+            # no body at all, such as a bodyless POST to
+            # /api/v1/devices/{id}/retire.
+            csrf.check_origin(
+                request.headers.get("origin"),
+                request.headers.get("referer"),
+                settings.console_origin,
+            )
+
+        if _needs_token(request, enforcing):
+            submitted = request.headers.get(csrf.HEADER_NAME) or await _form_token(request)
+            cookie = request.cookies.get(csrf.COOKIE_NAME)
+            if not cookie:
+                raise csrf.CsrfError("no CSRF cookie; reload the page and retry")
+            if submitted != cookie:
+                # Double submit: a cross-site page can cause the cookie to be sent
+                # but cannot read it, so it cannot put a matching value in the body.
+                raise csrf.CsrfError("CSRF token does not match its cookie")
+
+            _guard(settings).verify(submitted, identity.username)
+    except csrf.CsrfError as exc:
+        logger.warning(
+            "CSRF check failed for %s %s (%s): %s",
+            request.method, request.url.path, identity.username, exc,
+        )
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+
+    return identity
+
+
+#: Headers a browser sends on a POST and a script or test does not (W414).
+_BROWSER_HEADERS = ("origin", "referer", "sec-fetch-site")
+
+
+def _browser_made(request: Request) -> bool:
+    """True when a browser sent this request, so a page could have caused it."""
+    return any(request.headers.get(name) for name in _BROWSER_HEADERS)
+
+
+def _is_json(request: Request) -> bool:
+    """A JSON body: what a form cannot send and CORS keeps cross-site pages from."""
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    return content_type == "application/json"
+
+
+def _needs_token(request: Request, enforcing: bool) -> bool:
+    """Whether this unsafe request must carry the CSRF token (W414)."""
+    if _is_json(request):
+        return False
+    if _browser_made(request):
+        return True
+    # A non-browser client: as before, only a form body in an authenticating
+    # mode. `disabled` mode leaves scripts and tests alone.
+    return enforcing and _is_form_shaped(request)
+
+
+_FORM_CONTENT_TYPES = ("application/x-www-form-urlencoded", "multipart/form-data")
+
+
+def _is_form_shaped(request: Request) -> bool:
+    """True when this request is something a cross-site HTML form could have sent.
+
+    A form can only submit `application/x-www-form-urlencoded` or
+    `multipart/form-data`, and it always sets one of them — including when the
+    form has no fields at all, which is the shape that reaches a bodyless endpoint
+    such as `/api/v1/devices/{id}/retire`.
+
+    Anything else came from a script or a `fetch`, and is covered by the origin
+    check instead.
+    """
+    return request.headers.get("content-type", "").startswith(_FORM_CONTENT_TYPES)
+
+
+async def _form_token(request: Request) -> str | None:
+    """Read the token out of a submitted form.
+
+    Safe to do here even though the endpoint will parse the body again: Starlette
+    caches the parsed form on the request, so the second read is the same object
+    rather than an attempt to consume an already-drained stream.
+
+    Only for form content types. Calling `form()` on a JSON body would parse
+    nothing useful, and on a malformed multipart body it raises — neither of which
+    should surface as a CSRF failure.
+    """
+    content_type = request.headers.get("content-type", "")
+    if not content_type.startswith(
+        ("application/x-www-form-urlencoded", "multipart/form-data")
+    ):
+        return None
+
+    try:
+        form = await request.form()
+    except Exception:  # noqa: BLE001 — a malformed body is not a CSRF verdict
+        return None
+    value = form.get(csrf.FORM_FIELD)
+    return value if isinstance(value, str) else None
+
+
+@lru_cache(maxsize=4)
+def _guard_for(pki_dir: str) -> csrf.CsrfGuard:
+    return csrf.CsrfGuard.load_or_create(Path(pki_dir))
+
+
+def _guard(settings: Settings) -> csrf.CsrfGuard:
+    return _guard_for(str(settings.pki_dir))
+
+
+def issue_csrf_token(identity: AdminIdentity, settings: Settings) -> str:
+    """Mint a token for embedding in a form."""
+    return _guard(settings).issue(identity.username)
+
+
+def warn_if_unprotected(settings: Settings) -> None:
+    """Say so loudly at startup. Silence here is how a console ends up open."""
+    if AuthMode(settings.admin_auth_mode) is AuthMode.DISABLED:
+        logger.warning(
+            "ADMIN AUTHENTICATION IS DISABLED. The console and write API are "
+            "unauthenticated: anyone who reaches them is an administrator. "
+            "Browser requests still need the console's CSRF token, so another "
+            "website cannot act through an operator's browser, but that does "
+            "not stand in for authentication. Acceptable only on a "
+            "loopback-bound development instance, or behind a proxy that "
+            "authenticates; set TAKMDM_ADMIN_AUTH_MODE=forward_auth behind "
+            "Authentik before this is reachable by anyone else."
+        )
+        return
+
+    if settings.admin_identity_source == "jwt":
+        missing = jwt_settings_missing(settings)
+        if missing:
+            logger.error(
+                "TAKMDM_ADMIN_IDENTITY_SOURCE is jwt but %s is blank. Every "
+                "administrator is refused until it is set.", ", ".join(missing),
+            )
+
+    for name in unmatchable_group_names(settings):
+        logger.error(
+            "Admin group %r contains '|', which Authentik uses between group "
+            "names. It can never match, so nobody is admitted through it. "
+            "Rename the group in Authentik and in the setting.",
+            name,
+        )
+
+    standard = standard_group(settings)
+    listed = {part.strip() for part in (settings.admin_group or "").split(",")}
+    if standard and standard in listed:
+        # W495: listing it would make every standard admin a full one, so it is
+        # ignored there (`required_groups`). Said loudly because the operator
+        # who wrote it believes it does something.
+        logger.error(
+            "TAKMDM_STANDARD_ADMIN_GROUP %r is also listed in TAKMDM_ADMIN_GROUP. "
+            "It is ignored there: its members are standard administrators, not "
+            "full ones. Remove it from TAKMDM_ADMIN_GROUP. If it was the only "
+            "group listed, nobody is a super admin until one is named.",
+            standard,
+        )
+
+    if not (settings.admin_group or "").replace(",", "").strip():
+        # ⚠️ Not a misconfiguration — on infra-TAK this is deliberate, because a
+        # group ATLAS required would be a second place to manage access and a
+        # bootstrap nobody could complete (the module's .env says so at length).
+        # It is logged because the consequence is easy to lose: with no group of
+        # its own, **every identity the proxy forwards is a full administrator**,
+        # and the only thing narrowing that is the Authentik application binding.
+        # That binding was once found absent on a live box. SEC_AUDIT.md H-1.
+        logger.warning(
+            "TAKMDM_ADMIN_GROUP is empty: every identity the proxy forwards is a "
+            "full administrator of this console. Authorization rests entirely on "
+            "the Authentik application binding — confirm it exists, or set a group "
+            "here to have ATLAS check as well."
+        )
+
+    trusted = (settings.trusted_proxies or "").strip()
+    if not trusted:
+        # ⚠️ Same reasoning as the origin warning below, and the same reason it is
+        # not a refusal to start: the module rewrites `.env` on deploy but not on
+        # update, so failing closed here would take an existing deployment down on
+        # a routine update.
+        logger.warning(
+            "TAKMDM_TRUSTED_PROXIES is not set. The administrative interface will "
+            "accept an identity header from any address that can reach this port, "
+            "so its only protection is where the port is published. Set it to the "
+            "proxy's address, e.g. 172.24.0.1 or 172.24.0.0/16."
+        )
+    elif trusted.lower() == ANY:
+        logger.warning(
+            "TAKMDM_TRUSTED_PROXIES is 'any' — the peer check is deliberately off."
+        )
+
+    if not settings.console_origin:
+        # The token covers form submissions, which is the classic attack. What it
+        # does not cover is a cross-origin `fetch` sending JSON or text/plain to a
+        # bodyless endpoint, and the origin check is the only thing that does —
+        # so an unset origin is a real gap, not a cosmetic one. Said out loud for
+        # the same reason the disabled-auth warning is (D73).
+        logger.warning(
+            "TAKMDM_CONSOLE_ORIGIN is not set. CSRF tokens still protect the "
+            "console's forms, but cross-origin requests cannot be rejected by "
+            "origin, which is what covers the admin API's bodyless endpoints. "
+            "Set it to the console's public origin, e.g. https://atlas.example.org"
+        )
