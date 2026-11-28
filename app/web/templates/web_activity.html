@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% set nav = 'manage' %}
+{% block title %}Web activity — {{ device.name or device.serial_number }}{% endblock %}
+
+{% block content %}
+<p class="crumbs">
+  <a href="/fleet">Manage</a> /
+  <a href="/devices/{{ device.id }}">{{ device.name or device.serial_number }}</a> /
+  Web activity
+</p>
+
+<h1>Web activity</h1>
+<p class="muted">{{ device.name or device.serial_number }}</p>
+
+<div class="panel">
+  <form method="get" class="location-filters" data-web-activity-form>
+    <label>
+      <span>Day</span>
+      <input type="date" name="day" value="{{ day }}">
+    </label>
+    <label>
+      <span>Apps</span>
+      <select name="view">
+        <option value="browsers" {{ 'selected' if view == 'browsers' }}>Browsers only</option>
+        <option value="all" {{ 'selected' if view == 'all' }}>All apps</option>
+      </select>
+    </label>
+    <button type="submit" class="primary">Show</button>
+  </form>
+  <p>
+    <a href="?day={{ previous_day }}&amp;view={{ view }}">&larr; {{ previous_day }}</a>
+    {% if next_day %}&nbsp;·&nbsp;<a href="?day={{ next_day }}&amp;view={{ view }}">{{ next_day }} &rarr;</a>{% endif %}
+  </p>
+  <p class="field-tip">
+    Sites the ATLAS filter saw this device look up, grouped by site
+    (www.cnn.com and edition.cnn.com are cnn.com). Site names only: never full
+    addresses, pages or content. Times are when the device first looked a name up
+    in each few minutes, in the console's timezone. A page pulls in many other
+    sites (ads, fonts, analytics), so the busiest sites are not always the ones
+    the user opened. Kept {{ retention_days if retention_days else 'for ever' }}{{ ' days' if retention_days }}.
+  </p>
+</div>
+
+{% if usage %}
+<h2>Time in apps</h2>
+<div class="panel">
+  <table class="grid" data-web-activity-usage>
+    <thead><tr><th>App</th><th>Time in front</th></tr></thead>
+    <tbody>
+      {% for u in usage %}
+        <tr><td class="mono">{{ u.package_name }}</td><td>{{ duration_text(u.foreground_ms) }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="field-tip">From Android's usage statistics, for the device's own calendar day. Only on
+    devices where the user allowed ATLAS usage access.</p>
+</div>
+{% endif %}
+
+<h2>Sites ({{ sites | length }})</h2>
+<div class="panel">
+  {% if sites %}
+    <table class="grid" data-web-activity-sites>
+      <thead>
+        <tr>
+          <th>Site</th>
+          <th>First ({{ zone_label(sites | map(attribute='first') | list) }})</th>
+          <th>Last</th>
+          <th title="Lookups closer than 10 minutes joined into one visit. An estimate: a site open but idle makes no lookups.">Visits (estimate)</th>
+          <th>Lookups</th>
+          <th>App</th>
+          <th>Names</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in sites %}
+        <tr data-site="{{ row.site }}">
+          <td>
+            {{ row.site }}
+            {% if row.blocked %}<span class="pill warn" title="Web Filtering blocked at least one lookup">blocked</span>{% endif %}
+          </td>
+          <td class="mono">{{ row.first | localtime('%H:%M:%S') }}</td>
+          <td class="mono">{{ row.last | localtime('%H:%M:%S') }}</td>
+          <td class="mono">
+            {%- for start, end in row.visits -%}
+              {{ start | localtime('%H:%M') }}{% if end != start %}&ndash;{{ end | localtime('%H:%M') }}{% endif %}{% if not loop.last %}, {% endif %}
+            {%- endfor -%}
+          </td>
+          <td>{{ row.lookups }}</td>
+          <td class="mono">{{ row.apps | sort | join(', ') }}</td>
+          <td>
+            {% if row.hosts | length > 1 %}
+              <details><summary>{{ row.hosts | length }}</summary>
+                <span class="mono">{{ row.hosts | sort | join(', ') }}</span>
+              </details>
+            {% else %}
+              <span class="mono">{{ row.hosts | first }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% elif total %}
+    <p class="muted">No browser activity on this day. Choose <strong>All apps</strong> to see the {{ total }} lookup group(s) other apps made.</p>
+  {% else %}
+    <p class="muted">Nothing recorded on this day.</p>
+  {% endif %}
+</div>
+
+<h2>Records</h2>
+<div class="panel">
+  <p>
+    <a class="button" href="/devices/{{ device.id }}/web-activity.csv">Export all web activity</a>
+    {# utc-by-design: the export's columns say _utc; an export outlives the console's setting. #}
+    <span class="field-tip">Every stored lookup for this device, all apps and all days, times in UTC.</span>
+  </p>
+  <p class="field-tip">Opening this page and exporting it are both written to the audit log.
+    <a href="/web-activity">Which devices reached a site?</a></p>
+</div>
+{% endblock %}

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% set nav = 'manage' %}
+{% block title %}Web activity search{% endblock %}
+
+{% block content %}
+<p class="crumbs"><a href="/fleet">Manage</a> / Web activity search</p>
+
+<h1>Which devices reached a site</h1>
+
+<div class="panel">
+  <form method="get" class="location-filters" data-web-activity-search>
+    <label for="web-activity-site">
+      <span>Site</span>
+    </label>
+    <input type="text" id="web-activity-site" name="site" value="{{ site }}" required>
+    <label>
+      <span>Last</span>
+      <select name="days">
+        {% for n in (1, 7, 30, 90) %}
+          <option value="{{ n }}" {{ 'selected' if days == n }}>{{ n }} day{{ 's' if n > 1 }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit" class="primary">Search</button>
+  </form>
+  <p class="field-tip">
+    Type a site such as example.com. It finds the site and every name under it (example.com also finds www.example.com),
+    in every app, on devices that log web activity. Each search is written to the
+    audit log.
+  </p>
+</div>
+
+{% if site %}
+<h2>{{ hits | length }} device{{ 's' if hits | length != 1 }}</h2>
+<div class="panel">
+  {% if hits %}
+    <table class="grid" data-web-activity-hits>
+      <thead>
+        <tr><th>Device</th><th>First</th><th>Last ({{ zone_label(hits | map(attribute='last') | list) }})</th><th>Lookups</th></tr>
+      </thead>
+      <tbody>
+        {% for hit in hits %}
+          {% set d = devices.get(hit.device_id) %}
+          <tr>
+            <td><a href="/devices/{{ hit.device_id }}/web-activity?day={{ hit.last | localtime('%Y-%m-%d') }}&amp;view=all">{{ (d.name or d.serial_number) if d else hit.device_id }}</a></td>
+            <td class="mono">{{ hit.first | localtime('%Y-%m-%d %H:%M') }}</td>
+            <td class="mono">{{ hit.last | localtime('%Y-%m-%d %H:%M') }}</td>
+            <td>{{ hit.lookups }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No device looked up {{ site }} in the last {{ days }} day{{ 's' if days > 1 }}.</p>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}
