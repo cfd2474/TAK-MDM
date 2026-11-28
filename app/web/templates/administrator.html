@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, empty_state %}
+{% set nav = 'admin' %}
+{% block title %}{{ username }} — Administrators — ATLAS{% endblock %}
+
+{% block content %}
+<p class="muted" style="margin:0"><a href="/admin/administrators">&larr; Administrators</a></p>
+{{ page_header(username, 'What this standard admin may reach. They reach nothing unless they are in the standard admin group in Authentik.') }}
+
+{% if request.query_params.get('error') %}
+  <div class="banner bad" data-admin-error>{{ request.query_params.get('error') }}</div>
+{% endif %}
+{% if row %}
+  <p class="muted">Last set{% if row.updated_by %} by {{ row.updated_by }}{% endif %} {{ row.updated_at | localtime('%Y-%m-%d %H:%M') }}.</p>
+{% endif %}
+
+<form method="post" action="/admin/administrators/{{ username | urlencode }}" class="stack" data-admin-scope>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+  <div class="panel">
+    <h2>Actions</h2>
+    <p class="sub">Each one applies only to the devices and groups chosen below. Guides and their own audit log are always open to them.</p>
+    <table data-admin-categories>
+      <thead><tr><th></th><th>Action</th><th>What it allows</th></tr></thead>
+      <tbody>
+      {% for permission, (label, description) in categories %}
+        <tr>
+          <td><input type="checkbox" name="categories" value="{{ permission.value }}" id="cat-{{ loop.index }}"
+                     {% if permission in granted %}checked{% endif %}></td>
+          <td><label for="cat-{{ loop.index }}"><strong>{{ label }}</strong></label></td>
+          <td class="muted">{{ description }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2>Device groups</h2>
+    <p class="sub">Every device in these groups, including devices added to them later.</p>
+    {% if not groups %}
+      {{ empty_state('There are no device groups yet.') }}
+    {% else %}
+    <table data-admin-groups>
+      <thead><tr><th></th><th>Group</th><th>Devices</th></tr></thead>
+      <tbody>
+      {% for g in groups %}
+        <tr>
+          <td><input type="checkbox" name="group_ids" value="{{ g.id }}" id="grp-{{ g.id }}"
+                     {% if g.id in chosen_groups %}checked{% endif %}></td>
+          <td><label for="grp-{{ g.id }}">{{ g.name }}</label></td>
+          <td class="muted">{{ g.devices | length }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>Single devices</h2>
+    <p class="sub">Devices outside those groups. Naming a device does not give its groups.</p>
+    {% if not devices %}
+      {{ empty_state('No devices are enrolled yet.') }}
+    {% else %}
+    <table data-admin-devices>
+      <thead><tr><th></th><th>Name</th><th>Serial</th><th>Model</th></tr></thead>
+      <tbody>
+      {% for d in devices %}
+        <tr>
+          <td><input type="checkbox" name="device_ids" value="{{ d.id }}" id="dev-{{ d.id }}"
+                     {% if d.id in chosen_devices %}checked{% endif %}></td>
+          <td><label for="dev-{{ d.id }}">{{ d.name or d.serial_number }}</label></td>
+          <td class="mono">{{ d.serial_number }}</td>
+          <td class="muted">{{ d.model or '—' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>Templates</h2>
+    <p class="sub">Templates they may create policies from. The new policy is theirs to assign to their devices. They cannot open or change the template itself.</p>
+    {% if not profile_templates and not policy_templates %}
+      {{ empty_state('There are no templates yet.') }}
+    {% else %}
+    <table data-admin-templates>
+      <thead><tr><th></th><th>Template</th><th>Kind</th></tr></thead>
+      <tbody>
+      {% for t in profile_templates %}
+        <tr>
+          <td><input type="checkbox" name="profile_template_ids" value="{{ t.id }}" id="ptpl-{{ t.id }}"
+                     {% if t.id in chosen_profile_templates %}checked{% endif %}></td>
+          <td><label for="ptpl-{{ t.id }}">{{ t.name }}</label></td>
+          <td class="muted">Policy</td>
+        </tr>
+      {% endfor %}
+      {% for t in policy_templates %}
+        <tr>
+          <td><input type="checkbox" name="policy_template_ids" value="{{ t.id }}" id="stpl-{{ t.id }}"
+                     {% if t.id in chosen_policy_templates %}checked{% endif %}></td>
+          <td><label for="stpl-{{ t.id }}">{{ t.name }}</label></td>
+          <td class="muted">{{ t.policy_type }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+
+  <p class="toolbar"><button type="submit">Save</button></p>
+</form>
+
+{% if row %}
+<form method="post" action="/admin/administrators/{{ username | urlencode }}/forget" class="toolbar" data-admin-forget>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <button type="submit" class="ghost">Forget this admin's scope</button>
+</form>
+{% endif %}
+{% endblock %}
