@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% set nav = 'manage' %}
+{% block title %}{{ device.name or device.serial_number }} — ATLAS{% endblock %}
+
+{#
+  W502 (issue #12): a record staged from the CSV import, waiting for a device
+  with this serial to enroll. There is no device behind it yet, so nothing on
+  this page talks to one: no commands, no policies shown as applied. Only what
+  can be set before enrollment — the name and the custom attributes — and
+  deleting the record. The group is not set here: the QR the device scans
+  decides it.
+#}
+{% block content %}
+<h1{% if not device.name %} class="mono"{% endif %}>{{ device.name or device.serial_number }}</h1>
+<p class="sub">
+  {% if device.name %}<span class="mono">{{ device.serial_number }}</span> · {% endif %}
+  <span class="pill" data-waiting-to-enroll>waiting to enroll</span>
+</p>
+
+<div class="banner note" data-waiting-banner>
+  <strong>This device has not enrolled yet.</strong>
+  It was added from a CSV import, before its reset. When a device with the serial
+  <span class="mono">{{ device.serial_number }}</span> scans an enrollment QR, it
+  takes this record, with the name and attributes below. Its group comes from the
+  QR it scans.
+</div>
+
+{% if may('devices.edit') %}
+<form method="post" action="/devices/{{ device.id }}/rename" class="rename-row device-rename" data-device-rename>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label for="device-name">Device name</label>
+  <input type="text" id="device-name" name="name" value="{{ device.name or '' }}" maxlength="128">
+  <button type="submit" class="ghost">Save</button>
+</form>
+{% endif %}
+{% if not device.name %}
+  <p class="field-tip">Unnamed — shown as its serial until you name it.</p>
+{% endif %}
+
+<div class="panel">
+  <h2>Custom attributes</h2>
+  {% if not attributes %}
+    <p class="muted">
+      No custom attributes defined. Add them on the
+      <a href="/admin#tab-attributes">Admin</a> page.
+    </p>
+  {% else %}
+    {% for attr, value in attributes %}
+      <form method="post" action="/devices/{{ device.id }}/attributes" class="toolbar" style="margin:4px 0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="attribute_id" value="{{ attr.id }}">
+        <label style="margin:0; min-width:160px">{{ attr.name }} <span class="muted">({{ attr.attr_type }})</span></label>
+        <input type="text" name="value" value="{{ value }}" style="min-width:220px"
+               {% if not may('devices.edit') %}disabled{% endif %}>
+        {% if may('devices.edit') %}<button type="submit" class="ghost">Save</button>{% endif %}
+      </form>
+    {% endfor %}
+  {% endif %}
+</div>
+
+{% if may('devices.wipe') %}
+<div class="panel">
+  <h2>Remove</h2>
+  <form method="post" action="/devices/{{ device.id }}/delete"
+        data-confirm="Delete the waiting record for {{ device.serial_number }}? A device with this serial can still enroll later, as a new device.">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="danger" data-delete-waiting>Delete this record</button>
+    <span class="muted">
+      Use this for a serial that was imported by mistake. A device with this serial
+      can still enroll; it then gets a new record without this name.
+    </span>
+  </form>
+</div>
+{% endif %}
+{% endblock %}
